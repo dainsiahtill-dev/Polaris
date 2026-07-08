@@ -6,6 +6,7 @@ FIX-20250421: 彻底替换字符串匹配的 Phase 判定，用工具实际执�
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -70,6 +71,29 @@ _VERIFICATION_TOOLS: frozenset[str] = frozenset(
         "run_tests",
         "python",
         "node",
+    }
+)
+
+_EFFECT_RECEIPT_TOOL_NAME = "effect_receipt"
+_EFFECT_RECEIPT_SUCCESS_STATUSES: frozenset[str] = frozenset(
+    {"success", "succeeded", "ok", "completed", "complete"}
+)
+_EFFECT_RECEIPT_FAILURE_VALUES: frozenset[str] = frozenset(
+    {"false", "0", "no", "failed", "failure", "error", "errored"}
+)
+_EFFECT_RECEIPT_WRITE_OPERATIONS: frozenset[str] = frozenset(
+    {
+        "append",
+        "create",
+        "delete",
+        "edit",
+        "file_apply_service.write_files",
+        "modify",
+        "remove",
+        "replace",
+        "tool_write",
+        "write",
+        "write_files",
     }
 )
 
@@ -386,13 +410,98 @@ class PhaseManager:
 
 
 # 便捷函数：从 batch_receipt 构造 ToolResult 列表
+def _effect_receipt_status_is_success(receipt: Mapping[str, Any]) -> bool:
+    """Return whether an effect receipt represents a successful side effect."""
+    for key in ("ok", "success"):
+        value = receipt.get(key)
+        if isinstance(value, bool):
+            if not value:
+                return False
+            continue
+        if value is not None:
+            normalized = str(value).strip().lower()
+            if normalized in _EFFECT_RECEIPT_FAILURE_VALUES:
+                return False
+
+    status = receipt.get("status")
+    if status is None:
+        return True
+    if isinstance(status, bool):
+        return status
+
+    normalized_status = str(status).strip().lower()
+    if not normalized_status:
+        return True
+    return normalized_status in _EFFECT_RECEIPT_SUCCESS_STATUSES
+
+
+def _effect_receipt_has_write_semantics(receipt: Mapping[str, Any]) -> bool:
+    """Return whether effect receipt metadata describes a write side effect."""
+    tool_name = str(receipt.get("tool_name") or receipt.get("tool") or "").strip()
+    if tool_name in WRITE_TOOLS or tool_name.lower() in WRITE_TOOLS:
+        return True
+
+    operation = str(receipt.get("operation") or "").strip().lower()
+    if not operation:
+        return False
+
+    operation_root = operation.split(":", 1)[0]
+    return (
+        operation in WRITE_TOOLS
+        or operation_root in WRITE_TOOLS
+        or operation in _EFFECT_RECEIPT_WRITE_OPERATIONS
+        or operation_root in _EFFECT_RECEIPT_WRITE_OPERATIONS
+    )
+
+
+def _tool_result_from_effect_receipt(receipt: Mapping[str, Any]) -> ToolResult | None:
+    """Derive phase evidence from a top-level effect receipt.
+
+    Effect receipts are not provider tool result rows. This projection is kept
+    deliberately narrow: it only exists to let phase and mutation obligations
+    observe successful workspace write effects that were elevated to the batch
+    receipt top level by Run Ledger convergence.
+    """
+    if not _effect_receipt_has_write_semantics(receipt):
+        return None
+
+    target_path = extract_target_path_from_payload(receipt)
+    if not target_path:
+        return None
+
+    return ToolResult(
+        tool_name=_EFFECT_RECEIPT_TOOL_NAME,
+        success=_effect_receipt_status_is_success(receipt),
+        is_write=True,
+        is_authoritative_write=is_authoritative_write_path(target_path),
+        target_path=target_path,
+    )
+
+
+def _tool_results_from_effect_receipts(effect_receipts: Any) -> list[ToolResult]:
+    """Derive phase-only ToolResult evidence from top-level effect receipts."""
+    if not isinstance(effect_receipts, list):
+        return []
+
+    tool_results: list[ToolResult] = []
+    for receipt in effect_receipts:
+        if not isinstance(receipt, Mapping):
+            continue
+        result = _tool_result_from_effect_receipt(receipt)
+        if result is not None:
+            tool_results.append(result)
+    return tool_results
+
+
 def extract_tool_results_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> list[ToolResult]:
     """从 batch_receipt 提取所有工具结果。"""
     if not batch_receipt:
         return []
 
     results = batch_receipt.get("results") or batch_receipt.get("raw_results") or []
-    return [ToolResult.from_batch_result(r) for r in results if isinstance(r, dict)]
+    tool_results = [ToolResult.from_batch_result(r) for r in results if isinstance(r, dict)]
+    tool_results.extend(_tool_results_from_effect_receipts(batch_receipt.get("effect_receipts")))
+    return tool_results
 
 
 def has_authoritative_write_receipt(batch_receipt: dict[str, Any] | None) -> bool:

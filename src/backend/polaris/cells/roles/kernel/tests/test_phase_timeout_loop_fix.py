@@ -516,3 +516,100 @@ class TestPhaseManagerTimeout:
             )
             is False
         )
+
+
+class TestEffectReceiptPhaseEvidence:
+    """Top-level effect receipts may drive phase evidence without tool row projection."""
+
+    def test_top_level_effect_receipt_counts_as_authoritative_write(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+            extract_tool_results_from_batch_receipt,
+            has_authoritative_write_receipt,
+        )
+
+        batch_receipt = {
+            "effect_receipts": [
+                {
+                    "schema_version": "effect_receipt.v1",
+                    "operation": "write_file:create",
+                    "file": "src/app.py",
+                }
+            ]
+        }
+
+        tool_results = extract_tool_results_from_batch_receipt(batch_receipt)
+
+        assert has_authoritative_write_receipt(batch_receipt) is True
+        assert len(tool_results) == 1
+        assert tool_results[0].tool_name == "effect_receipt"
+        assert tool_results[0].success is True
+        assert tool_results[0].is_write is True
+        assert tool_results[0].is_authoritative_write is True
+        assert tool_results[0].target_path == "src/app.py"
+
+        phase_manager = PhaseManager()
+        assert phase_manager.transition(tool_results) == Phase.IMPLEMENTING
+
+    @pytest.mark.parametrize(
+        "effect_receipt",
+        [
+            {
+                "operation": "write_file",
+                "file": ".polaris/runtime/tasks/task_1.json",
+                "status": "success",
+            },
+            {
+                "operation": "write_file",
+                "file": "X:/.polaris/projects/backend/runtime/tasks/task_1.json",
+                "status": "success",
+            },
+            {"operation": "write_file", "status": "success"},
+            {"operation": "write_file", "file": "src/app.py", "status": "failed"},
+            {"operation": "write_file", "file": "src/app.py", "ok": False},
+            {"operation": "read", "file": "src/app.py", "status": "success"},
+            {"file": "src/app.py", "status": "success"},
+        ],
+    )
+    def test_top_level_effect_receipts_fail_closed_for_non_authoritative_shapes(
+        self,
+        effect_receipt: dict[str, Any],
+    ) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.phase_manager import has_authoritative_write_receipt
+
+        assert has_authoritative_write_receipt({"effect_receipts": [effect_receipt]}) is False
+
+    def test_existing_result_and_raw_result_parsing_remains_unchanged(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+            extract_tool_results_from_batch_receipt,
+            has_authoritative_write_receipt,
+        )
+
+        results_take_precedence = {
+            "results": [{"tool_name": "read_file", "status": "success", "result": "abc"}],
+            "raw_results": [
+                {
+                    "tool_name": "write_file",
+                    "status": "success",
+                    "arguments": {"file": "src/raw.py"},
+                    "result": {"file": "src/raw.py"},
+                }
+            ],
+        }
+
+        tool_results = extract_tool_results_from_batch_receipt(results_take_precedence)
+        assert len(tool_results) == 1
+        assert tool_results[0].tool_name == "read_file"
+        assert tool_results[0].bytes_read == 3
+        assert has_authoritative_write_receipt(results_take_precedence) is False
+
+        raw_results_only = {
+            "raw_results": [
+                {
+                    "tool_name": "write_file",
+                    "status": "success",
+                    "arguments": {"file": "src/raw.py"},
+                    "result": {"file": "src/raw.py"},
+                }
+            ]
+        }
+        assert has_authoritative_write_receipt(raw_results_only) is True

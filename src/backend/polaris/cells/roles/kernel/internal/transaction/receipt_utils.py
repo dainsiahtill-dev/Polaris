@@ -57,7 +57,7 @@ def _to_plain_mapping(payload: Any) -> dict[str, Any]:
     return {}
 
 
-def _normalize_result_items(payload: Any) -> list[dict[str, Any]]:
+def _normalize_mapping_items(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
         return []
     normalized_items: list[dict[str, Any]] = []
@@ -66,6 +66,15 @@ def _normalize_result_items(payload: Any) -> list[dict[str, Any]]:
         if normalized:
             normalized_items.append(normalized)
     return normalized_items
+
+
+def _normalize_result_items(payload: Any) -> list[dict[str, Any]]:
+    return _normalize_mapping_items(payload)
+
+
+def _normalize_effect_receipts(payload: Any) -> list[dict[str, Any]]:
+    """Normalize top-level effect receipts without treating them as tool rows."""
+    return _normalize_mapping_items(payload)
 
 
 def normalize_batch_receipt(receipt: Any) -> dict[str, Any]:
@@ -77,6 +86,9 @@ def normalize_batch_receipt(receipt: Any) -> dict[str, Any]:
     canonical = dict(normalized)
     canonical["results"] = _normalize_result_items(canonical.get("results"))
     canonical["raw_results"] = _normalize_result_items(canonical.get("raw_results"))
+    canonical["effect_receipts"] = _normalize_effect_receipts(
+        canonical.get("effect_receipts")
+    )
     canonical["batch_id"] = str(canonical.get("batch_id", "") or "")
     canonical["turn_id"] = str(canonical.get("turn_id", "") or "")
     canonical["success_count"] = int(canonical.get("success_count", 0) or 0)
@@ -104,6 +116,7 @@ def merge_batch_receipts(receipts: Iterable[Any]) -> dict[str, Any] | None:
 
     merged_results: list[dict[str, Any]] = []
     merged_raw_results: list[dict[str, Any]] = []
+    merged_effect_receipts: list[dict[str, Any]] = []
     success_count = 0
     failure_count = 0
     pending_async_count = 0
@@ -119,6 +132,9 @@ def merge_batch_receipts(receipts: Iterable[Any]) -> dict[str, Any] | None:
 
         merged_results.extend(_normalize_result_items(receipt.get("results")))
         merged_raw_results.extend(_normalize_result_items(receipt.get("raw_results")))
+        merged_effect_receipts.extend(
+            _normalize_effect_receipts(receipt.get("effect_receipts"))
+        )
         success_count += int(receipt.get("success_count", 0) or 0)
         failure_count += int(receipt.get("failure_count", 0) or 0)
         pending_async_count += int(receipt.get("pending_async_count", 0) or 0)
@@ -130,6 +146,7 @@ def merge_batch_receipts(receipts: Iterable[Any]) -> dict[str, Any] | None:
         "turn_id": turn_id,
         "results": merged_results,
         "raw_results": merged_raw_results,
+        "effect_receipts": merged_effect_receipts,
         "success_count": success_count,
         "failure_count": failure_count,
         "pending_async_count": pending_async_count,

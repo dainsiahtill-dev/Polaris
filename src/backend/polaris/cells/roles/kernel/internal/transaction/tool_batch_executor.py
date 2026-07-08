@@ -892,25 +892,39 @@ def _capability_token_from_effect_receipt(receipt: dict[str, Any]) -> dict[str, 
     return {}
 
 
+def _append_effect_receipt_copy(effect_receipts: list[dict[str, Any]], candidate: Any) -> None:
+    if isinstance(candidate, dict):
+        effect_receipts.append(dict(candidate))
+
+
+def _append_top_level_effect_receipts(effect_receipts: list[dict[str, Any]], candidates: Any) -> None:
+    if not isinstance(candidates, list):
+        return
+    for candidate in candidates:
+        _append_effect_receipt_copy(effect_receipts, candidate)
+
+
+def _append_result_effect_receipts(effect_receipts: list[dict[str, Any]], raw_results: Any) -> None:
+    if not isinstance(raw_results, list):
+        return
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        direct = item.get("effect_receipt")
+        if isinstance(direct, dict):
+            _append_effect_receipt_copy(effect_receipts, direct)
+            continue
+        result = item.get("result")
+        if isinstance(result, dict):
+            _append_effect_receipt_copy(effect_receipts, result.get("effect_receipt"))
+
+
 def _effect_receipts_from_batch_receipts(receipts: list[Any]) -> list[dict[str, Any]]:
     effect_receipts: list[dict[str, Any]] = []
     for receipt in normalize_batch_receipts(receipts):
+        _append_top_level_effect_receipts(effect_receipts, receipt.get("effect_receipts"))
         for key in ("results", "raw_results"):
-            raw_results = receipt.get(key)
-            if not isinstance(raw_results, list):
-                continue
-            for item in raw_results:
-                if not isinstance(item, dict):
-                    continue
-                direct = item.get("effect_receipt")
-                if isinstance(direct, dict):
-                    effect_receipts.append(dict(direct))
-                    continue
-                result = item.get("result")
-                if isinstance(result, dict):
-                    nested = result.get("effect_receipt")
-                    if isinstance(nested, dict):
-                        effect_receipts.append(dict(nested))
+            _append_result_effect_receipts(effect_receipts, receipt.get(key))
     return effect_receipts
 
 
