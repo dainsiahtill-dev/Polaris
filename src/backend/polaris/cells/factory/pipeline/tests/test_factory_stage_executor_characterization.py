@@ -6959,3 +6959,67 @@ class TestExistingTargetFileSummaries:
     def test_no_existing_files_returns_empty(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         assert executor._read_existing_target_file_summaries({"target_files": ["src/main.py"]}) == []
+
+
+# ---------------------------------------------------------------------------
+# WS4 typed-quality-issue seam regression guards
+# ---------------------------------------------------------------------------
+
+
+def test_workspace_quality_repair_issue_payloads_preserves_scanner_typed_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    raw = "typed scanner diagnostic for src/main.py"
+    typed_issue = {
+        "code": "syntax_error",
+        "message": raw,
+        "path": "src/main.py",
+        "severity": "error",
+        "source": "source_syntax_checker",
+        "metadata": {
+            "raw": raw,
+            "diagnostic_kind": "syntax_error",
+            "scanner_owned": True,
+        },
+    }
+
+    def fake_scan_workspace_artifact_quality_evidence(workspace: str) -> SimpleNamespace:
+        assert workspace == str(tmp_path)
+        return SimpleNamespace(errors=(raw,), issues=(typed_issue,))
+
+    monkeypatch.setattr(
+        "polaris.kernelone.quality.scan_workspace_artifact_quality_evidence",
+        fake_scan_workspace_artifact_quality_evidence,
+    )
+
+    payloads = _executor(tmp_path)._workspace_quality_repair_issue_payloads([raw])
+
+    assert len(payloads) == 1
+    assert payloads[0]["code"] == "syntax_error"
+    assert payloads[0]["path"] == "src/main.py"
+    assert payloads[0]["source"] == "source_syntax_checker"
+    assert payloads[0]["metadata"]["diagnostic_kind"] == "syntax_error"
+    assert payloads[0]["metadata"]["scanner_owned"] is True
+
+
+def test_workspace_quality_repair_issue_payloads_falls_back_to_string_projection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    raw = "Artifact quality scan failed: workspace path does not exist"
+
+    def broken_scan_workspace_artifact_quality_evidence(workspace: str) -> SimpleNamespace:
+        assert workspace == str(tmp_path)
+        raise OSError("scanner unavailable")
+
+    monkeypatch.setattr(
+        "polaris.kernelone.quality.scan_workspace_artifact_quality_evidence",
+        broken_scan_workspace_artifact_quality_evidence,
+    )
+
+    payloads = _executor(tmp_path)._workspace_quality_repair_issue_payloads([raw])
+
+    assert len(payloads) == 1
+    assert payloads[0]["message"] == raw.removeprefix("Artifact quality scan failed:").strip()
+    assert payloads[0]["metadata"]["raw"] == raw

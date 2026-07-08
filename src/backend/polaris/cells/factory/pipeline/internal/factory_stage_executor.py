@@ -5300,9 +5300,10 @@ class OrchestrationStageExecutor:
             )
 
         try:
-            from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality
+            from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence
 
-            errors.extend(scan_workspace_artifact_quality(str(self.workspace)))
+            evidence = scan_workspace_artifact_quality_evidence(str(self.workspace))
+            errors.extend(evidence.errors)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             errors.append(f"Artifact quality scan failed: workspace quality repair scan failed: {exc}")
 
@@ -5316,8 +5317,22 @@ class OrchestrationStageExecutor:
             deduped.append(normalized)
         return deduped
 
-    @staticmethod
-    def _workspace_quality_repair_issue_payloads(artifact_quality_errors: list[str]) -> tuple[dict[str, Any], ...]:
+    def _workspace_quality_repair_issue_payloads(
+        self,
+        artifact_quality_errors: list[str],
+    ) -> tuple[dict[str, Any], ...]:
+        if not artifact_quality_errors:
+            return ()
+        try:
+            from polaris.kernelone.quality import (
+                artifact_quality_issues_for_errors,
+                scan_workspace_artifact_quality_evidence,
+            )
+
+            evidence = scan_workspace_artifact_quality_evidence(str(self.workspace))
+            return artifact_quality_issues_for_errors(artifact_quality_errors, evidence.issues)
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+            pass
         try:
             from polaris.kernelone.quality import artifact_quality_issues_from_errors
 
@@ -5325,8 +5340,7 @@ class OrchestrationStageExecutor:
         except (ImportError, RuntimeError, TypeError, ValueError):
             return ()
 
-    @staticmethod
-    def _workspace_quality_repair_coverage_report(artifact_quality_errors: list[str]) -> dict[str, Any]:
+    def _workspace_quality_repair_coverage_report(self, artifact_quality_errors: list[str]) -> dict[str, Any]:
         if not artifact_quality_errors:
             return {}
         try:
@@ -5338,9 +5352,7 @@ class OrchestrationStageExecutor:
             return query_director_repair_coverage(
                 QueryDirectorRepairCoverageV1(
                     artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
-                    artifact_quality_issues=OrchestrationStageExecutor._workspace_quality_repair_issue_payloads(
-                        artifact_quality_errors
-                    ),
+                    artifact_quality_issues=self._workspace_quality_repair_issue_payloads(artifact_quality_errors),
                 )
             ).to_dict()
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:
