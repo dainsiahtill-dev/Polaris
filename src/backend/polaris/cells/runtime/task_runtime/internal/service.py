@@ -403,6 +403,38 @@ class TaskRuntimeService:
             return None, None
         return normalized, self._board.get(normalized)
 
+    def _task_entity_for_claim_execution(self, task_id: Any) -> tuple[int | None, Task | None]:
+        """Resolve raw owner-cell task entity for claim/lease execution.
+
+        Boundary:
+            Claim execution owns the lease-backed transition from a raw task row
+            into an execution session. This helper is the claim/lease owner-cell
+            raw ``Task`` entity boundary: it normalizes caller input and performs
+            the single ``TaskBoard.get`` lookup. It is not an execution
+            finalization transition boundary; finalization paths must continue
+            using ``_task_entity_for_transition``. Dependency-unblock refresh
+            remains owned by ``claim_execution`` because it is a claim policy
+            side effect, not a raw entity lookup concern. Observable readers
+            must keep using fact-overlaid task-row projections.
+
+        Complexity:
+            O(k) to normalize the task-id token plus one O(1) in-memory
+            ``TaskBoard`` lookup. Invalid ids return ``(None, None)``; missing
+            rows return ``(normalized_id, None)`` so claim result shapes remain
+            ``invalid_task_id`` / ``task_not_found``.
+
+        Extension point:
+            Future compare-and-swap or version checks for claim/lease ownership
+            should attach here before session or lease mutation, keeping version
+            validation local to the owner cell without changing downstream
+            claim, renew, rejection, or execution-event semantics.
+        """
+
+        normalized = self.normalize_task_id(task_id)
+        if normalized is None:
+            return None, None
+        return normalized, self._board.get(normalized)
+
     def _task_entity_for_owner_terminal_transition(self, task_id: Any) -> tuple[int | None, Task | None]:
         """Resolve raw owner-cell task entity for row-only terminal transitions.
 
@@ -1643,8 +1675,9 @@ class TaskRuntimeService:
         # claimed.  ``refresh_dependency_unblocks`` is idempotent and uses the
         # fact-overlay-aware status projection under the hood.
         self.refresh_dependency_unblocks()
-
-        task = self._board.get(normalized)
+        normalized, task = self._task_entity_for_claim_execution(task_id)
+        if normalized is None:
+            return build_task_execution_claim_result(success=False, reason="invalid_task_id")
         if task is None:
             return build_task_execution_claim_result(success=False, reason="task_not_found")
 

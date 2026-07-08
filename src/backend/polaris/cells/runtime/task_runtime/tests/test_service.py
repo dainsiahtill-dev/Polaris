@@ -584,6 +584,206 @@ def test_task_entity_for_dependency_side_effect_normalizes_and_reads_raw_board_o
     assert get_calls == [created_id]
 
 
+def test_task_entity_for_claim_execution_normalizes_and_reads_raw_board_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="claim helper boundary")
+    created_id = int(created["id"])
+
+    original_get = service._board.get
+    get_calls: list[object] = []
+
+    def tracing_get(task_id: object) -> Any:
+        get_calls.append(task_id)
+        return original_get(task_id)
+
+    def reject_refresh_dependency_unblocks() -> None:
+        raise AssertionError("_task_entity_for_claim_execution must not own claim refresh side effects")
+
+    monkeypatch.setattr(service._board, "get", tracing_get)
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", reject_refresh_dependency_unblocks)
+
+    helper = getattr(service, "_task_entity_for_claim_execution", None)
+    assert callable(helper), "TaskRuntimeService must expose _task_entity_for_claim_execution"
+
+    normalized, task = helper(f"task-{created_id}-extra")
+
+    assert normalized == created_id
+    assert task is not None
+    assert task.id == created_id
+    assert get_calls == [created_id]
+    assert helper("bad-id") == (None, None)
+    assert get_calls == [created_id]
+
+
+def test_claim_execution_uses_task_entity_helper_and_preserves_success_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="claim helper success")
+    created_id = int(created["id"])
+    task = service._board.get(created_id)
+    assert task is not None
+
+    helper_calls: list[object] = []
+    claim_steps: list[str] = []
+    direct_board_get_calls: list[object] = []
+
+    def task_entity_for_claim_execution(task_id: object) -> tuple[int | None, Any | None]:
+        claim_steps.append("helper")
+        helper_calls.append(task_id)
+        return service.normalize_task_id(task_id), task
+
+    def record_refresh_dependency_unblocks() -> None:
+        claim_steps.append("refresh")
+
+    def reject_direct_board_get(task_id: object) -> Any:
+        direct_board_get_calls.append(task_id)
+        raise AssertionError("claim_execution must read task entities through _task_entity_for_claim_execution")
+
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_claim_execution",
+        task_entity_for_claim_execution,
+        raising=False,
+    )
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", record_refresh_dependency_unblocks)
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+
+    claimed = service.claim_execution(
+        f"task-{created_id}",
+        worker_id="director",
+        role_id="director",
+        run_id="run-claim-helper-success",
+        selection_source="unit",
+    )
+
+    assert helper_calls == [f"task-{created_id}"]
+    assert claim_steps == ["refresh", "helper"]
+    assert direct_board_get_calls == []
+    assert claimed["success"] is True
+    assert claimed["reason"] == "claimed"
+    assert claimed["claim_applied"] is True
+    assert claimed["resumed"] is False
+    assert claimed["task"]["id"] == created_id
+    assert claimed["task"]["status"] == "in_progress"
+    assert claimed["session"]["task_id"] == created_id
+    assert claimed["session"]["role_id"] == "director"
+    assert claimed["session"]["worker_id"] == "director"
+    assert claimed["session"]["run_id"] == "run-claim-helper-success"
+    assert claimed["session"]["status"] == "active"
+    execution_event = claimed["execution_event"]
+    assert execution_event["ok"] is True
+    assert execution_event["event_type"] == "claimed"
+    assert "published" in execution_event
+    assert execution_event["fact_stream"] == "task_runtime.execution"
+    assert isinstance(execution_event.get("fact_event_id"), str)
+    assert execution_event["fact_event_id"]
+    assert isinstance(execution_event.get("fact_event_seq"), int)
+    assert "requested_reason" not in claimed
+    assert "failure_class" not in claimed
+    assert "state_mutation_applied" not in claimed
+
+
+@pytest.mark.parametrize(
+    ("boundary_name", "task_id", "helper_result", "expected_reason", "expected_refresh_calls"),
+    (
+        ("invalid_task_id", "not-a-task", (None, None), "invalid_task_id", []),
+        ("task_not_found", "task-7001", (7001, None), "task_not_found", ["refresh"]),
+    ),
+    ids=("invalid_task_id", "task_not_found"),
+)
+def test_claim_execution_short_circuits_from_task_entity_helper_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary_name: str,
+    task_id: object,
+    helper_result: tuple[int | None, Any | None],
+    expected_reason: str,
+    expected_refresh_calls: list[str],
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    sentinel = service.create_task_row(subject=f"claim helper {boundary_name} sentinel")
+    sentinel_id = int(sentinel["id"])
+    sentinel_before = json.loads(_task_file_path(workspace, sentinel_id).read_text(encoding="utf-8"))
+    helper_calls: list[object] = []
+    refresh_calls: list[str] = []
+    direct_board_get_calls: list[object] = []
+    session_lock_calls: list[object] = []
+    session_read_calls: list[object] = []
+    update_calls: list[object] = []
+    event_calls: list[str] = []
+
+    def task_entity_for_claim_execution(raw_task_id: object) -> tuple[int | None, Any | None]:
+        helper_calls.append(raw_task_id)
+        return helper_result
+
+    def record_refresh_dependency_unblocks() -> None:
+        refresh_calls.append("refresh")
+
+    def reject_direct_board_get(raw_task_id: object) -> Any:
+        direct_board_get_calls.append(raw_task_id)
+        raise AssertionError(f"claim_execution must short-circuit raw board reads for {boundary_name}")
+
+    def reject_session_lock(normalized_task_id: object) -> Any:
+        session_lock_calls.append(normalized_task_id)
+        raise AssertionError(f"claim_execution must not acquire session locks for {boundary_name}")
+
+    def reject_session_read(normalized_task_id: object) -> Any:
+        session_read_calls.append(normalized_task_id)
+        raise AssertionError(f"claim_execution must not read sessions for {boundary_name}")
+
+    def reject_board_update(*args: object, **_kwargs: object) -> Any:
+        update_calls.append(args)
+        raise AssertionError(f"claim_execution must not mutate rows for {boundary_name}")
+
+    def reject_append_execution_event(event_type: str, **_kwargs: Any) -> dict[str, Any]:
+        event_calls.append(event_type)
+        raise AssertionError(f"claim_execution must not append events for {boundary_name}")
+
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_claim_execution",
+        task_entity_for_claim_execution,
+        raising=False,
+    )
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", record_refresh_dependency_unblocks)
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+    monkeypatch.setattr(service, "_get_session_lock", reject_session_lock)
+    monkeypatch.setattr(service, "_read_session", reject_session_read)
+    monkeypatch.setattr(service._board, "update", reject_board_update)
+    monkeypatch.setattr(service, "_append_execution_event", reject_append_execution_event)
+
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-claim-helper-boundary",
+        selection_source="unit",
+    )
+
+    assert helper_calls == ([] if expected_reason == "invalid_task_id" else [task_id])
+    assert refresh_calls == expected_refresh_calls
+    assert direct_board_get_calls == []
+    assert session_lock_calls == []
+    assert session_read_calls == []
+    assert update_calls == []
+    assert event_calls == []
+    assert claimed == {"success": False, "reason": expected_reason}
+    sentinel_after = json.loads(_task_file_path(workspace, sentinel_id).read_text(encoding="utf-8"))
+    assert sentinel_after == sentinel_before
+    assert not _session_file_path(workspace, sentinel_id).exists()
+
+
 def test_apply_reverse_dependency_links_uses_dependency_side_effect_helper_and_preserves_event_shape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

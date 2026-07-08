@@ -169,9 +169,11 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_list_file_task_entities", "list_all"): 1,
     ("_task_entity_for_transition", "get"): 1,
     ("_task_entity_for_owner_terminal_transition", "get"): 1,
-    ("claim_execution", "get"): 1,
+    ("_task_entity_for_claim_execution", "get"): 1,
 }
 TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER = "_list_file_task_entities"
+TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_HELPER = "_task_entity_for_claim_execution"
+TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_CONSUMERS = frozenset({"claim_execution"})
 TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_HELPER = "_task_entity_for_transition"
 TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_CONSUMERS = frozenset(
     {
@@ -2079,6 +2081,71 @@ def test_task_runtime_service_raw_board_reads_are_reviewed() -> None:
         "TaskRuntimeService is the reviewed owner for raw TaskBoard reads. "
         "New raw Board read calls must be audited against the observable "
         "read-model boundary and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS:\n" + "\n".join(offenders)
+    )
+
+
+def test_claim_execution_routes_task_entity_read_through_claim_helper() -> None:
+    """WS2 claim entity-read fence.
+
+    ``claim_execution()`` needs the raw ``Task`` entity before it can create
+    or renew a lease-backed execution session. That raw owner-cell read must
+    stay centralized in ``_task_entity_for_claim_execution()`` so claim
+    normalization, missing-row semantics, and future trace/log enrichment
+    have a single audited bridge.
+    """
+
+    methods = _task_runtime_service_method_defs()
+    helper_name = TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_HELPER
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)
+    required_methods = TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_CONSUMERS | {helper_name}
+    missing = sorted(required_methods.difference(methods))
+
+    assert not missing, f"Missing expected TaskRuntimeService methods: {missing}"
+
+    helper_get_calls = _direct_self_board_get_calls(methods[helper_name])
+    direct_get_offenders: list[str] = []
+    missing_helper_offenders: list[str] = []
+    unauthorized_helper_consumers: list[str] = []
+
+    for method_name in sorted(TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_CONSUMERS):
+        method_def = methods[method_name]
+        direct_get_offenders.extend(
+            f"{rel}:{call.lineno} TaskRuntimeService.{method_name}() calls self._board.get() directly"
+            for call in _direct_self_board_get_calls(method_def)
+        )
+        helper_calls = _direct_self_method_calls(method_def, helper_name)
+        if not helper_calls:
+            missing_helper_offenders.append(f"TaskRuntimeService.{method_name}()")
+
+    for method_name, method_def in sorted(methods.items()):
+        if method_name == helper_name or method_name in TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_CONSUMERS:
+            continue
+        for call in _direct_self_method_calls(method_def, helper_name):
+            unauthorized_helper_consumers.append(
+                f"{rel}:{call.lineno} TaskRuntimeService.{method_name}() calls self.{helper_name}()"
+            )
+
+    assert len(helper_get_calls) == 1, (
+        f"TaskRuntimeService.{helper_name}() must be the single direct "
+        "self._board.get() bridge for claim raw entity reads; "
+        f"found {len(helper_get_calls)} direct calls."
+    )
+    assert not direct_get_offenders, (
+        "TaskRuntimeService.claim_execution() must not call "
+        f"self._board.get() directly; route raw Task entity reads through "
+        f"self.{helper_name}() so claim normalization and missing-row "
+        "semantics remain centralized. Offenders:\n" + "\n".join(direct_get_offenders)
+    )
+    assert not missing_helper_offenders, (
+        "TaskRuntimeService.claim_execution() must call "
+        f"self.{helper_name}() instead of owning raw TaskBoard.get() reads "
+        "itself. Offenders:\n" + "\n".join(missing_helper_offenders)
+    )
+    assert not unauthorized_helper_consumers, (
+        f"TaskRuntimeService.{helper_name}() is the reviewed raw Task entity "
+        "bridge only for claim_execution(). New consumers must be explicitly "
+        "reviewed in TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_CONSUMERS. "
+        "Offenders:\n" + "\n".join(unauthorized_helper_consumers)
     )
 
 
@@ -4397,7 +4464,7 @@ def test_complete_execution_dependency_event_failures_are_fail_closed() -> None:
 #     so it must be consulted *before* the lease/session is created. A claim
 #     that ignores the fact veto regresses to raw-file-only claim authority.
 #
-# Both fences are structural: they walk the ``claim_execution`` AST, locate
+# The fences are structural: they walk the ``claim_execution`` AST, locate
 # the relevant call sites by name (not by line number), and verify ordering.
 
 CLAIM_EXECUTION_FACT_AWARE_HELPERS: frozenset[str] = frozenset(
@@ -4490,65 +4557,75 @@ def _iter_qualified_call_nodes_anywhere(
     return matches
 
 
-def _call_arg_references_local(call_node: ast.Call, local_name: str) -> bool:
-    """True if any positional arg of ``call_node`` is the bare local ``local_name``."""
-
-    return any(isinstance(arg, ast.Name) and arg.id == local_name for arg in call_node.args)
-
-
-def _check_claim_execution_refreshes_dependency_unblocks_before_raw_claim() -> list[str]:
+def _check_claim_execution_refreshes_dependency_unblocks_before_claim_entity_read() -> list[str]:
     """WS2 claim refresh fence.
 
-    Locate the first ``self._board.get(normalized)`` call site in
-    ``claim_execution`` and require that a ``self.refresh_dependency_unblocks()``
-    call exists earlier in the function body. The dependency-unblock refresh
-    is the WS2 path that consults the latest ``task_runtime.execution``
-    completion facts to wake BLOCKED rows. Skipping it on the direct claim
-    path lets a BLOCKED row be claimed before its dependencies are reconciled.
+    Locate the first ``self._task_entity_for_claim_execution(...)`` call site in
+    ``claim_execution()`` and require that ``self.refresh_dependency_unblocks()``
+    exists earlier in the claim body. The dependency-unblock refresh is the WS2
+    path that consults the latest ``task_runtime.execution`` completion facts to
+    wake BLOCKED rows. Keeping the refresh in ``claim_execution`` preserves the
+    policy side effect on the claim entry point while the helper stays a pure
+    normalize + raw entity lookup bridge.
     """
 
-    method_def = _claim_execution_function_def()
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    helper_name = TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_HELPER
     offenders: list[str] = []
+    methods = _task_runtime_service_method_defs()
 
-    raw_claim_calls = [
-        call
-        for call in ast.walk(method_def)
-        if isinstance(call, ast.Call)
-        and _call_name(call.func) == "self._board.get"
-        and _call_arg_references_local(call, "normalized")
-    ]
-    if not raw_claim_calls:
+    claim_def = methods.get("claim_execution")
+    helper_def = methods.get(helper_name)
+    if claim_def is None or helper_def is None:
         offenders.append(
-            f"{rel}:TaskRuntimeService.claim_execution() no longer has the "
-            "self._board.get(normalized) raw claim path. If the claim entry "
-            "point was removed, the WS2 claim refresh fence becomes vacuous "
-            "and the entire function should be retired."
+            f"{rel}:TaskRuntimeService.claim_execution() and "
+            f"TaskRuntimeService.{helper_name}() must both exist so the claim "
+            "raw-read refresh fence has a concrete owner boundary."
         )
         return offenders
 
-    first_raw_claim = raw_claim_calls[0]
-    refresh_calls = _iter_self_method_calls(method_def, "refresh_dependency_unblocks")
+    claim_entity_calls = _direct_self_method_calls(claim_def, helper_name)
+    if not claim_entity_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.claim_execution() no longer calls "
+            f"self.{helper_name}(...). claim_execution must read the raw Task "
+            "entity through the reviewed claim helper; if the claim entry "
+            "point was removed, retire the entire fence."
+        )
+        return offenders
+
+    raw_get_calls = _direct_self_board_get_calls(helper_def)
+    if not raw_get_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{helper_name}() no longer has the "
+            "reviewed self._board.get(...) raw entity claim path. If claim no "
+            "longer needs a raw Task entity, retire the raw-read allowance and "
+            "this refresh fence together."
+        )
+        return offenders
+
+    first_claim_entity_call = claim_entity_calls[0]
+    refresh_calls = _iter_self_method_calls(claim_def, "refresh_dependency_unblocks")
 
     if not refresh_calls:
         offenders.append(
-            f"{rel}:TaskRuntimeService.claim_execution():{first_raw_claim.lineno} "
-            "is the raw self._board.get(normalized) claim path, but the function "
-            "does not call self.refresh_dependency_unblocks() before it. Late "
+            f"{rel}:TaskRuntimeService.claim_execution():{first_claim_entity_call.lineno} "
+            f"calls self.{helper_name}(...), but claim_execution does not call "
+            "self.refresh_dependency_unblocks() before it. Late "
             "task_runtime.execution completion facts can unblock dependencies "
             "that the raw file-backed row still reports as BLOCKED; the direct "
             "claim path must refresh dependency unblocks first."
         )
         return offenders
 
-    if any(call.lineno < first_raw_claim.lineno for call in refresh_calls):
+    if any(call.lineno < first_claim_entity_call.lineno for call in refresh_calls):
         return offenders
 
     offenders.append(
         f"{rel}:TaskRuntimeService.claim_execution() calls "
         "self.refresh_dependency_unblocks() only at line "
-        f"{refresh_calls[0].lineno}, AFTER the raw self._board.get(normalized) "
-        f"claim path at line {first_raw_claim.lineno}. The refresh must "
+        f"{refresh_calls[0].lineno}, AFTER the raw self._board.get(...) "
+        f"claim helper path at line {first_claim_entity_call.lineno}. The refresh must "
         "precede the raw claim so dependency unblock evidence from "
         "task_runtime.execution facts is consulted first."
     )
@@ -4642,34 +4719,34 @@ def _check_claim_execution_consults_fact_aware_helper_and_terminal_veto() -> lis
     return offenders
 
 
-def test_claim_execution_refreshes_dependency_unblocks_before_raw_claim_path() -> None:
+def test_claim_execution_refreshes_dependency_unblocks_before_claim_entity_read() -> None:
     """WS2 claim refresh fence.
 
     ``TaskRuntimeService.claim_execution()`` is the direct claim entry point
     used by the worker pool (``TaskRuntimePort.claim_execution``) and the
     director adapter. It must call ``self.refresh_dependency_unblocks()``
-    *before* the raw ``self._board.get(normalized)`` claim path so late
+    *before* calling the raw entity helper, so late
     ``task_runtime.execution`` completion facts (and any in-flight execution
-    overlay) wake BLOCKED rows before the claim commits.
+    overlay) wake BLOCKED rows before the claim reads the raw Task entity.
 
-    The fence is structural: it walks the ``claim_execution`` AST, locates
-    the first ``self._board.get(normalized)`` call site, and verifies that
+    The fence is structural: it walks the claim AST, locates the first
+    ``self._task_entity_for_claim_execution(...)`` call site, and verifies that
     at least one ``self.refresh_dependency_unblocks()`` call precedes it. It
-    does not weaken the existing raw-board read/write allowlists; the
-    reviewed call counts in ``REVIEWED_TASK_RUNTIME_SERVICE_BOARD_*`` are
-    intentionally unchanged.
+    does not weaken the existing raw-board read/write allowlists; the claim raw
+    read is reviewed on the dedicated helper, not on ``claim_execution()``
+    itself.
     """
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
-    offenders = _check_claim_execution_refreshes_dependency_unblocks_before_raw_claim()
+    offenders = _check_claim_execution_refreshes_dependency_unblocks_before_claim_entity_read()
 
     assert not offenders, (
         "WS2 claim refresh fence: "
-        f"{rel}:TaskRuntimeService.claim_execution() must call "
-        "self.refresh_dependency_unblocks() before the raw "
-        "self._board.get(normalized) claim path so dependency unblock "
-        "evidence from task_runtime.execution facts is consulted before "
-        "the claim commits. Offenders:\n" + "\n".join(offenders)
+        f"{rel}:TaskRuntimeService._task_entity_for_claim_execution() must "
+        "call self.refresh_dependency_unblocks() before self._board.get(...) "
+        "so dependency unblock evidence from task_runtime.execution facts is "
+        "consulted before the claim reads the raw Task entity. "
+        "Offenders:\n" + "\n".join(offenders)
     )
 
 
