@@ -869,6 +869,76 @@ def test_normalizer_preserves_flat_scanner_artifact_fields() -> None:
     assert metadata["syntax_error"] == "TS1005"
 
 
+def test_normalizer_preserves_diagnostic_kind_from_top_level_when_metadata_absent() -> None:
+    """Regression: scanner emits diagnostic_kind at top level with no metadata dict.
+
+    The normalizer must copy diagnostic_kind into RepairDiagnostic.metadata
+    rather than silently dropping it at the scanner->repair boundary.
+    """
+    payload = {
+        "source": "go_compile_scanner",
+        "code": "go_compile_error",
+        "message": "undefined: Identifier",
+        "path": "cmd/main.go",
+        "line": 42,
+        "column": 5,
+        "raw": "cmd/main.go:42:5: undefined: Identifier",
+        "diagnostic_kind": "undefined_identifier",
+    }
+    diagnostics = normalize_artifact_quality_errors([payload])
+
+    assert len(diagnostics) == 1
+    diag = diagnostics[0]
+    # Core fields must not degrade.
+    assert diag.source == "go_compile_scanner"
+    assert diag.code == "go_compile_error"
+    assert diag.message == "undefined: Identifier"
+    assert diag.path == "cmd/main.go"
+    assert diag.line == 42
+    assert diag.column == 5
+    # diagnostic_kind must survive even when the input has no metadata dict.
+    assert diag.metadata["diagnostic_kind"] == "undefined_identifier"
+
+
+def test_normalizer_preserves_diagnostic_kind_from_top_level_when_metadata_present() -> None:
+    """Regression: scanner emits diagnostic_kind at top level alongside a
+    metadata dict that does NOT contain diagnostic_kind.
+
+    The normalizer must still hoist diagnostic_kind into RepairDiagnostic.metadata
+    so downstream repair rules can key on it.
+    """
+    payload = {
+        "source": "go_compile_scanner",
+        "code": "go_compile_error",
+        "message": "undefined: Identifier",
+        "path": "cmd/main.go",
+        "line": 42,
+        "column": 5,
+        "raw": "cmd/main.go:42:5: undefined: Identifier",
+        "diagnostic_kind": "undefined_identifier",
+        "metadata": {
+            "language": "go",
+            "identifier": "Identifier",
+        },
+    }
+    diagnostics = normalize_artifact_quality_errors([payload])
+
+    assert len(diagnostics) == 1
+    diag = diagnostics[0]
+    # Core fields must not degrade.
+    assert diag.source == "go_compile_scanner"
+    assert diag.code == "go_compile_error"
+    assert diag.message == "undefined: Identifier"
+    assert diag.path == "cmd/main.go"
+    assert diag.line == 42
+    assert diag.column == 5
+    # Existing metadata keys must survive.
+    assert diag.metadata["language"] == "go"
+    assert diag.metadata["identifier"] == "Identifier"
+    # diagnostic_kind must be hoisted when metadata does not contain it.
+    assert diag.metadata["diagnostic_kind"] == "undefined_identifier"
+
+
 def test_cross_artifact_unresolved_symbol_routes_to_python_rule_for_python_paths() -> None:
     diagnostics = normalize_artifact_quality_errors(
         [

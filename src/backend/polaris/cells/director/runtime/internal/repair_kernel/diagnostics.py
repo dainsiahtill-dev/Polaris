@@ -180,6 +180,7 @@ def _normalize_structured_error(raw: Mapping[str, Any]) -> RepairDiagnostic | No
         "confidence",
         "archetype",
         "diagnostic_archetype",
+        "diagnostic_kind",
         "details",
         "path",
         "source",
