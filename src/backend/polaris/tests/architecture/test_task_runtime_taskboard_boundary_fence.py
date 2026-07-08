@@ -5032,6 +5032,7 @@ TASK_RUNTIME_SERVICE_SELECTION_READINESS_METHODS = (
     "claim_next_execution",
     "list_ready_task_rows",
 )
+TASK_RUNTIME_SERVICE_SELECTION_REFRESH_METHODS = TASK_RUNTIME_SERVICE_SELECTION_READINESS_METHODS
 
 
 def _selection_readiness_method_function_def(name: str) -> ast.FunctionDef:
@@ -5126,6 +5127,40 @@ def _check_selection_readiness_uses_observable_rows() -> list[str]:
     return offenders
 
 
+def _check_selection_readiness_refreshes_before_observable_rows() -> list[str]:
+    """Emit offenders if selection/readiness methods skip explicit refresh."""
+
+    offenders: list[str] = []
+    for method_name in TASK_RUNTIME_SERVICE_SELECTION_REFRESH_METHODS:
+        try:
+            method_def = _selection_readiness_method_function_def(method_name)
+        except AssertionError as exc:  # pragma: no cover - structural guard
+            offenders.append(str(exc))
+            continue
+
+        refresh_calls = _direct_self_method_calls(method_def, "refresh_dependency_unblocks")
+        observable_calls = _direct_self_method_calls(method_def, "list_observable_task_rows")
+        if not refresh_calls:
+            offenders.append(
+                f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}:"
+                f"TaskRuntimeService.{method_name}() does not call "
+                "self.refresh_dependency_unblocks(); observable rows are a "
+                "pure read projection, so selection/readiness entrypoints must "
+                "make dependency refresh explicit."
+            )
+            continue
+        if not observable_calls:
+            continue
+        if min(call.lineno for call in refresh_calls) > min(call.lineno for call in observable_calls):
+            offenders.append(
+                f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}:"
+                f"TaskRuntimeService.{method_name}() reads observable rows "
+                "before refreshing dependency unblocks; refresh must happen "
+                "first so stale blocked rows can become claimable."
+            )
+    return offenders
+
+
 def test_selection_and_readiness_methods_use_observable_rows_not_raw_list() -> None:
     """WS2 selection/readiness fence.
 
@@ -5160,6 +5195,20 @@ def test_selection_and_readiness_methods_use_observable_rows_not_raw_list() -> N
         "readiness. Direct list_task_rows() calls inside write/mutation paths "
         "and inside list_observable_task_rows() itself remain allowed. "
         "Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_selection_and_readiness_methods_refresh_before_observable_rows() -> None:
+    """WS2 selection/readiness explicit-refresh fence."""
+
+    offenders = _check_selection_readiness_refreshes_before_observable_rows()
+
+    assert not offenders, (
+        "WS2 selection/readiness refresh fence: observable rows are now a "
+        "read-only projection, so TaskRuntimeService.select_next_task(), "
+        "claim_next_execution(), and list_ready_task_rows() must explicitly "
+        "call self.refresh_dependency_unblocks() before reading "
+        "self.list_observable_task_rows(). Offenders:\n" + "\n".join(offenders)
     )
 
 

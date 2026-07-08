@@ -794,6 +794,44 @@ def test_list_ready_task_rows_refreshes_before_observable_projection(
     assert events == ["refresh_dependency_unblocks", "list_observable_task_rows"]
 
 
+def test_selection_entrypoints_refresh_before_observable_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    events: list[str] = []
+
+    def record_refresh_dependency_unblocks() -> dict[str, Any]:
+        events.append("refresh_dependency_unblocks")
+        return {"unblocked_task_ids": [], "execution_events": []}
+
+    def list_observable_task_rows() -> list[dict[str, Any]]:
+        events.append("list_observable_task_rows")
+        return []
+
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", record_refresh_dependency_unblocks)
+    monkeypatch.setattr(service, "list_observable_task_rows", list_observable_task_rows)
+
+    selected = service.select_next_task()
+    claim_next = service.claim_next_execution(
+        worker_id="director",
+        role_id="director",
+        selection_source="test-selection-refresh",
+    )
+
+    assert selected is None
+    assert claim_next["success"] is False
+    assert claim_next["reason"] == "no_claimable_tasks"
+    assert events == [
+        "refresh_dependency_unblocks",
+        "list_observable_task_rows",
+        "refresh_dependency_unblocks",
+        "list_observable_task_rows",
+    ]
+
+
 def test_list_observable_task_rows_consumes_fact_overlay_without_refresh(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
