@@ -126,11 +126,37 @@ class _GetattrAliasVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+class _NativeCallNameParsingVisitor(ast.NodeVisitor):
+    """Collect local native-call name parsing outside the facade."""
+
+    _NATIVE_CALL_VARIABLES = frozenset({"native_call", "native_tool_call"})
+
+    def __init__(self, filename: str) -> None:
+        self._filename = filename
+        self.violations: list[str] = []
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in self._NATIVE_CALL_VARIABLES
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "function"
+        ):
+            self.violations.append(
+                f"{self._filename}:{node.lineno}: "
+                "native tool-call name parsing must use native_tool_call_name()"
+            )
+        self.generic_visit(node)
+
+
 def _production_internal_python_files(root: Path) -> list[Path]:
     result: list[Path] = []
     for py_file in root.rglob("*.py"):
         parts = py_file.relative_to(root).parts
-        if _TESTING_DIR in parts or py_file.name == _FACADE_MODULE:
+        if _TESTING_DIR in parts or py_file.name in {_FACADE_MODULE, "tool_helpers.py"}:
             continue
         result.append(py_file)
     return sorted(result)
@@ -159,4 +185,21 @@ def test_response_alias_parsing_stays_in_tool_call_envelope_facade() -> None:
     assert violations == [], (
         "Response alias parsing found outside the tool_call_envelope facade. "
         "Use native_tool_calls_from_response() instead:\n" + "\n".join(f"  - {item}" for item in violations)
+    )
+
+
+def test_native_tool_call_name_parsing_stays_in_facade() -> None:
+    """Prevent retry/logging paths from hand-parsing native call names."""
+
+    violations: list[str] = []
+    for py_file in _production_internal_python_files(_KERNEL_INTERNAL):
+        source = py_file.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(py_file))
+        visitor = _NativeCallNameParsingVisitor(filename=str(py_file.relative_to(_KERNEL_INTERNAL)))
+        visitor.visit(tree)
+        violations.extend(visitor.violations)
+
+    assert violations == [], (
+        "Native tool-call name parsing found outside the tool_call_envelope facade. "
+        "Use native_tool_call_name() instead:\n" + "\n".join(f"  - {item}" for item in violations)
     )

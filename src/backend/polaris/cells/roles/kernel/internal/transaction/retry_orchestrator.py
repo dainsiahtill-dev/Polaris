@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, Protocol, cast
 
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
+from polaris.cells.roles.kernel.internal.tool_call_envelope import native_tool_call_name
 from polaris.cells.roles.kernel.internal.transaction.bootstrap_followup import (
     _extract_decision_invocations,
     _should_force_leaf_bootstrap_followup_write_file,
@@ -678,11 +679,7 @@ class RetryOrchestrator:
             for native_call in retry_response.native_tool_calls:
                 if not isinstance(native_call, Mapping):
                     continue
-                function_payload = native_call.get("function")
-                if isinstance(function_payload, Mapping):
-                    native_name = str(function_payload.get("name") or "").strip()
-                else:
-                    native_name = str(native_call.get("name") or "").strip()
+                native_name = native_tool_call_name(native_call)
                 if native_name:
                     raw_native_names.append(native_name)
             logger.warning(
