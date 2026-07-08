@@ -5760,6 +5760,81 @@ def test_task_exists_returns_false_for_unknown_task_id_when_facts_present(tmp_pa
 
 
 # ---------------------------------------------------------------------------
+# _fact_overlaid_dependency_status_rows observable projection regression
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService._fact_overlaid_dependency_status_rows`` is the private
+# dependency-status read model consumed by dependency refresh and blocker
+# checks. It must share the pure observable projection helper used by the
+# public read model, while still avoiding the public ``list_observable_task_rows``
+# API so dependency mutation paths do not depend on an external read endpoint.
+
+
+def test_fact_overlaid_dependency_status_rows_reuses_observable_projection_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    file_rows: list[dict[str, Any]] = [
+        {
+            "id": 41,
+            "task_id": "41",
+            "subject": "stale file-backed dependency",
+            "status": "pending",
+            "metadata": {"source": "file_row"},
+        }
+    ]
+    fact_rows: list[dict[str, Any]] = [
+        {
+            "id": 41,
+            "task_id": "41",
+            "subject": "completed fact-backed dependency",
+            "status": "completed",
+            "metadata": {"source": "task_runtime.execution_fact"},
+        }
+    ]
+    project_calls: list[tuple[list[dict[str, Any]], list[dict[str, Any]]]] = []
+    public_read_calls: list[str] = []
+    original_projection = service._project_observable_task_rows
+
+    def list_file_task_rows(*, include_terminal: bool = True) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        return [dict(row) for row in file_rows]
+
+    def list_fact_rows() -> list[dict[str, Any]]:
+        return [dict(row) for row in fact_rows]
+
+    def reject_public_observable_rows() -> NoReturn:
+        public_read_calls.append("list_observable_task_rows")
+        raise AssertionError("_fact_overlaid_dependency_status_rows must not call the public observable read API")
+
+    def project_observable_task_rows(
+        projected_file_rows: list[dict[str, Any]],
+        projected_fact_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        project_calls.append(
+            (
+                [dict(row) for row in projected_file_rows],
+                [dict(row) for row in projected_fact_rows],
+            )
+        )
+        return original_projection(projected_file_rows, projected_fact_rows)
+
+    monkeypatch.setattr(service, "_list_file_task_rows", list_file_task_rows)
+    monkeypatch.setattr(service, "list_task_rows_from_execution_facts", list_fact_rows)
+    monkeypatch.setattr(service, "list_observable_task_rows", reject_public_observable_rows)
+    monkeypatch.setattr(service, "_project_observable_task_rows", project_observable_task_rows)
+
+    status_by_id = service._fact_overlaid_dependency_status_rows()
+
+    assert status_by_id == {41: service_module.TaskStatus.COMPLETED}
+    assert project_calls == [(file_rows, fact_rows)]
+    assert public_read_calls == []
+
+
+# ---------------------------------------------------------------------------
 # _task_has_unresolved_dependencies observable fact-overlay regression
 # ---------------------------------------------------------------------------
 #

@@ -1211,17 +1211,15 @@ class TaskRuntimeService:
     def _fact_overlaid_dependency_status_rows(self) -> dict[int, TaskStatus]:
         """Return ``task_id -> TaskStatus`` using the fact-overlay-aware read model.
 
-        This projection overlays the latest ``task_runtime.execution`` facts
-        onto the file-backed rows without calling ``list_task_rows`` (which
-        triggers ``refresh_dependency_unblocks``) or
-        ``list_observable_task_rows`` (which is the external read-only
-        projection API). Callers that need to mutate persisted tasks still
-        iterate the
-        ``TaskBoard.list_all()`` output; this helper only provides the status
-        anchor they should consult for dependency decisions. It intentionally
-        duplicates the observable overlay inputs instead of calling
-        ``list_observable_task_rows`` so dependency mutation code never depends
-        on the external read-projection API.
+        This projection loads the same file-backed rows and latest
+        ``task_runtime.execution`` facts as the observable read API, then
+        reuses ``_project_observable_task_rows`` as the pure in-memory
+        projection helper. It does not call ``list_task_rows`` (which triggers
+        ``refresh_dependency_unblocks``) or ``list_observable_task_rows`` (which
+        is the external read-only projection API). Callers that need to mutate
+        persisted tasks still iterate the ``TaskBoard.list_all()`` output; this
+        helper only provides the status anchor they should consult for
+        dependency decisions.
 
         Unknown or non-terminal fact statuses fall back to the file-backed
         status so that the dependency decision matches what a downstream
@@ -1230,9 +1228,7 @@ class TaskRuntimeService:
 
         file_rows = self._list_file_task_rows()
         fact_rows = self.list_task_rows_from_execution_facts()
-        overlay_source: list[dict[str, Any]] = list(file_rows)
-        if fact_rows:
-            overlay_source = self._overlay_execution_fact_rows(list(file_rows), fact_rows)
+        overlay_source = self._project_observable_task_rows(file_rows, fact_rows)
 
         status_by_id: dict[int, TaskStatus] = {}
         for row in overlay_source:
@@ -1464,7 +1460,10 @@ class TaskRuntimeService:
         ``fact_rows`` is the append-only ``task_runtime.execution`` projection.
         The fact rows overlay matching file rows, while facts for tasks no
         longer present in files remain observable. Inputs are shallow-copied so
-        callers can safely reuse their loaded rows after projection.
+        callers can safely reuse their loaded rows after projection. This
+        helper is the shared pure projection point for observable rows and
+        dependency-status read-model synthesis; callers load their own inputs
+        so mutation paths do not depend on external read APIs.
 
         Complexity:
             O(r + f) time and memory over file-backed rows and latest fact rows.
