@@ -4,7 +4,7 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 from polaris.cells.events.fact_stream.public.service import (
@@ -29,6 +29,70 @@ def _task_file_path(workspace: Path, task_id: object) -> Path:
 
 def _session_file_path(workspace: Path, task_id: object) -> Path:
     return Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task_id}.session.json"))
+
+
+ExecutionTransitionInvoker = Callable[[TaskRuntimeService, object, str], dict[str, Any]]
+
+
+def _complete_execution_transition(
+    service: TaskRuntimeService,
+    task_id: object,
+    session_id: str,
+) -> dict[str, Any]:
+    return service.complete_execution(
+        task_id,
+        session_id=session_id,
+        result_summary="done",
+    )
+
+
+def _fail_execution_transition(
+    service: TaskRuntimeService,
+    task_id: object,
+    session_id: str,
+) -> dict[str, Any]:
+    return service.fail_execution(
+        task_id,
+        session_id=session_id,
+        error="director execution failed",
+    )
+
+
+def _suspend_execution_transition(
+    service: TaskRuntimeService,
+    task_id: object,
+    session_id: str,
+) -> dict[str, Any]:
+    return service.suspend_execution(
+        task_id,
+        session_id=session_id,
+        reason="factory_stage_timeout",
+    )
+
+
+_EXECUTION_TRANSITION_HELPER_CASES: tuple[tuple[str, str, str, ExecutionTransitionInvoker], ...] = (
+    ("complete_execution", "completed", "completed", _complete_execution_transition),
+    ("fail_execution", "failed", "failed", _fail_execution_transition),
+    ("suspend_execution", "suspended", "pending", _suspend_execution_transition),
+)
+
+
+def _claimed_execution_for_transition(
+    service: TaskRuntimeService,
+    *,
+    subject: str,
+    run_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    created = service.create_task_row(subject=subject)
+    claimed = service.claim_execution(
+        created["id"],
+        worker_id="director",
+        role_id="director",
+        run_id=run_id,
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    return created, claimed
 
 
 def test_task_runtime_service_normalizes_task_ids() -> None:
@@ -397,6 +461,150 @@ def test_claim_execution_fails_closed_on_execution_event_append_failure(
         "error": "fact stream unavailable",
     }
     assert claimed["task"]["status"] == "in_progress"
+
+
+def test_task_entity_for_transition_normalizes_and_reads_raw_board_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="transition helper boundary")
+    created_id = int(created["id"])
+
+    original_get = service._board.get
+    get_calls: list[object] = []
+
+    def tracing_get(task_id: object) -> Any:
+        get_calls.append(task_id)
+        return original_get(task_id)
+
+    monkeypatch.setattr(service._board, "get", tracing_get)
+
+    normalized, task = service._task_entity_for_transition(f"task-{created_id}-extra")
+
+    assert normalized == created_id
+    assert task is not None
+    assert task.id == created_id
+    assert get_calls == [created_id]
+    assert service._task_entity_for_transition("bad-id") == (None, None)
+    assert get_calls == [created_id]
+
+
+@pytest.mark.parametrize(
+    ("transition_name", "expected_reason", "expected_task_status", "invoke_transition"),
+    _EXECUTION_TRANSITION_HELPER_CASES,
+    ids=[case[0] for case in _EXECUTION_TRANSITION_HELPER_CASES],
+)
+def test_execution_transitions_use_task_entity_helper_and_preserve_success_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    transition_name: str,
+    expected_reason: str,
+    expected_task_status: str,
+    invoke_transition: ExecutionTransitionInvoker,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created, claimed = _claimed_execution_for_transition(
+        service,
+        subject=f"{transition_name} helper success",
+        run_id=f"run-{transition_name}-helper-success",
+    )
+    created_id = int(created["id"])
+    task = service._board.get(created_id)
+    assert task is not None
+
+    helper_calls: list[object] = []
+    direct_board_get_calls: list[object] = []
+
+    def task_entity_for_transition(task_id: object) -> tuple[int | None, Any | None]:
+        helper_calls.append(task_id)
+        return service.normalize_task_id(task_id), task
+
+    def reject_direct_board_get(task_id: object) -> Any:
+        direct_board_get_calls.append(task_id)
+        raise AssertionError("execution transitions must read task entities through _task_entity_for_transition")
+
+    def append_execution_event(event_type: str, **_kwargs: Any) -> dict[str, Any]:
+        return {"ok": True, "event_type": event_type, "published": True}
+
+    monkeypatch.setattr(service, "_task_entity_for_transition", task_entity_for_transition)
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+    monkeypatch.setattr(service, "_append_execution_event", append_execution_event)
+
+    result = invoke_transition(
+        service,
+        f"task-{created_id}",
+        str(claimed["session"]["session_id"]),
+    )
+
+    assert helper_calls == [f"task-{created_id}"]
+    assert direct_board_get_calls == []
+    assert result["success"] is True
+    assert result["reason"] == expected_reason
+    assert result["task"]["id"] == created_id
+    assert result["task"]["status"] == expected_task_status
+    assert result["session"]["session_id"] == claimed["session"]["session_id"]
+    assert result["execution_event"] == {
+        "ok": True,
+        "event_type": expected_reason,
+        "published": True,
+    }
+    assert "requested_reason" not in result
+    assert "failure_class" not in result
+    assert "state_mutation_applied" not in result
+
+
+@pytest.mark.parametrize(
+    ("boundary_name", "task_id", "helper_normalized", "expected_reason"),
+    (
+        ("invalid_task_id", "not-a-task", None, "invalid_task_id"),
+        ("task_not_found", "task-7001", 7001, "task_not_found"),
+    ),
+    ids=("invalid_task_id", "task_not_found"),
+)
+@pytest.mark.parametrize(
+    ("transition_name", "_expected_reason", "_expected_task_status", "invoke_transition"),
+    _EXECUTION_TRANSITION_HELPER_CASES,
+    ids=[case[0] for case in _EXECUTION_TRANSITION_HELPER_CASES],
+)
+def test_execution_transitions_short_circuit_from_task_entity_helper_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary_name: str,
+    task_id: object,
+    helper_normalized: int | None,
+    expected_reason: str,
+    transition_name: str,
+    _expected_reason: str,
+    _expected_task_status: str,
+    invoke_transition: ExecutionTransitionInvoker,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    helper_calls: list[object] = []
+    session_lock_calls: list[object] = []
+
+    def task_entity_for_transition(raw_task_id: object) -> tuple[int | None, Any | None]:
+        helper_calls.append(raw_task_id)
+        return helper_normalized, None
+
+    def reject_session_lock(normalized_task_id: object) -> Any:
+        session_lock_calls.append(normalized_task_id)
+        raise AssertionError(f"{transition_name} must short-circuit before session reads for {boundary_name}")
+
+    monkeypatch.setattr(service, "_task_entity_for_transition", task_entity_for_transition)
+    monkeypatch.setattr(service, "_get_session_lock", reject_session_lock)
+
+    result = invoke_transition(service, task_id, "unused-session-id")
+
+    assert helper_calls == [task_id]
+    assert session_lock_calls == []
+    assert result == {"success": False, "reason": expected_reason}
 
 
 def test_complete_execution_fails_closed_on_execution_event_append_failure(

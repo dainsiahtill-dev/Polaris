@@ -387,6 +387,22 @@ class TaskRuntimeService:
             return int(match.group(1))
         return None
 
+    def _task_entity_for_transition(self, task_id: Any) -> tuple[int | None, Task | None]:
+        """Resolve the raw task entity required by execution transitions.
+
+        Boundary:
+            Execution finalization transitions need the persisted ``Task``
+            entity for legacy fallback row projection when ``TaskBoard.update``
+            returns ``None``.  Keep that raw owner-cell read centralized here;
+            observable readers must continue using fact-overlaid task-row
+            projections.
+        """
+
+        normalized = self.normalize_task_id(task_id)
+        if normalized is None:
+            return None, None
+        return normalized, self._board.get(normalized)
+
     @staticmethod
     def _task_row_payload_for_reexecution(payload: Mapping[str, Any]) -> dict[str, Any]:
         reset = dict(payload)
@@ -1858,10 +1874,9 @@ class TaskRuntimeService:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Finalize a claimed task as completed."""
-        normalized = self.normalize_task_id(task_id)
+        normalized, task = self._task_entity_for_transition(task_id)
         if normalized is None:
             return build_task_execution_transition_result(success=False, reason="invalid_task_id")
-        task = self._board.get(normalized)
         if task is None:
             return build_task_execution_transition_result(success=False, reason="task_not_found")
         session_lock = self._get_session_lock(normalized)
@@ -1919,10 +1934,9 @@ class TaskRuntimeService:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Finalize a claimed task as failed."""
-        normalized = self.normalize_task_id(task_id)
+        normalized, task = self._task_entity_for_transition(task_id)
         if normalized is None:
             return build_task_execution_transition_result(success=False, reason="invalid_task_id")
-        task = self._board.get(normalized)
         if task is None:
             return build_task_execution_transition_result(success=False, reason="task_not_found")
         session_lock = self._get_session_lock(normalized)
@@ -1974,10 +1988,9 @@ class TaskRuntimeService:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Suspend a claimed task so it can be resumed later."""
-        normalized = self.normalize_task_id(task_id)
+        normalized, task = self._task_entity_for_transition(task_id)
         if normalized is None:
             return build_task_execution_transition_result(success=False, reason="invalid_task_id")
-        task = self._board.get(normalized)
         if task is None:
             return build_task_execution_transition_result(success=False, reason="task_not_found")
         session_lock = self._get_session_lock(normalized)

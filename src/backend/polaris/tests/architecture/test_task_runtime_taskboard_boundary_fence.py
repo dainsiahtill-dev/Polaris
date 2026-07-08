@@ -168,14 +168,20 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_apply_reverse_dependency_links", "get"): 1,
     ("_apply_terminal_session_reconcile", "get"): 3,
     ("_list_file_task_entities", "list_all"): 1,
+    ("_task_entity_for_transition", "get"): 1,
     ("cancel_task_row_for_deduplication", "get"): 1,
     ("claim_execution", "get"): 1,
-    ("complete_execution", "get"): 1,
-    ("fail_execution", "get"): 1,
     ("fail_task_row_from_role_adapter", "get"): 1,
-    ("suspend_execution", "get"): 1,
 }
 TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER = "_list_file_task_entities"
+TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_HELPER = "_task_entity_for_transition"
+TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_CONSUMERS = frozenset(
+    {
+        "complete_execution",
+        "fail_execution",
+        "suspend_execution",
+    }
+)
 TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
     {
         "_list_file_task_rows",
@@ -688,6 +694,14 @@ def _direct_self_board_list_all_calls(method_def: ast.FunctionDef) -> list[ast.C
         node
         for node in _walk_task_runtime_method_body(method_def)
         if isinstance(node, ast.Call) and _call_name(node.func) == "self._board.list_all"
+    ]
+
+
+def _direct_self_board_get_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
+    return [
+        node
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._board.get"
     ]
 
 
@@ -2045,6 +2059,57 @@ def test_task_runtime_service_raw_board_reads_are_reviewed() -> None:
         "TaskRuntimeService is the reviewed owner for raw TaskBoard reads. "
         "New raw Board read calls must be audited against the observable "
         "read-model boundary and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS:\n" + "\n".join(offenders)
+    )
+
+
+def test_execution_transition_methods_route_task_entity_reads_through_helper() -> None:
+    """WS2 execution-transition entity-read fence.
+
+    ``complete_execution()``, ``fail_execution()``, and
+    ``suspend_execution()`` need the raw ``Task`` entity only as a legacy
+    fallback when ``TaskBoard.update`` returns ``None``. That raw owner-cell
+    read must stay centralized in ``_task_entity_for_transition()`` so future
+    execution transitions cannot quietly grow separate ``self._board.get()``
+    paths with different normalization, error handling, or read-model
+    semantics.
+    """
+
+    methods = _task_runtime_service_method_defs()
+    helper_name = TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_HELPER
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)
+    required_methods = TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_CONSUMERS | {helper_name}
+    missing = sorted(required_methods.difference(methods))
+
+    assert not missing, f"Missing expected TaskRuntimeService methods: {missing}"
+
+    helper_get_calls = _direct_self_board_get_calls(methods[helper_name])
+    direct_get_offenders: list[str] = []
+    missing_helper_offenders: list[str] = []
+
+    for method_name in sorted(TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_CONSUMERS):
+        method_def = methods[method_name]
+        direct_get_offenders.extend(
+            f"{rel}:{call.lineno} TaskRuntimeService.{method_name}() calls self._board.get() directly"
+            for call in _direct_self_board_get_calls(method_def)
+        )
+        if not _method_body_directly_calls_self_method(method_def, helper_name):
+            missing_helper_offenders.append(f"TaskRuntimeService.{method_name}()")
+
+    assert len(helper_get_calls) == 1, (
+        f"TaskRuntimeService.{helper_name}() must be the single direct "
+        f"self._board.get() bridge for execution transitions; found "
+        f"{len(helper_get_calls)} direct calls."
+    )
+    assert not direct_get_offenders, (
+        "Execution transition methods must not call self._board.get() "
+        f"directly; route raw Task entity reads through self.{helper_name}() "
+        "so normalization and fallback semantics remain centralized. "
+        "Offenders:\n" + "\n".join(direct_get_offenders)
+    )
+    assert not missing_helper_offenders, (
+        "Execution transition methods that need raw Task entity fallback "
+        f"must call self.{helper_name}() instead of owning raw TaskBoard.get() "
+        "reads themselves. Offenders:\n" + "\n".join(missing_helper_offenders)
     )
 
 
