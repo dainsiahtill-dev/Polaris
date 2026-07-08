@@ -3320,11 +3320,33 @@ PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER = "_find_projected_runtime_execution_
 PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER = "_find_projected_runtime_execution_session_locked"
 PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE = "_find_projected_runtime_execution_session_from_file_rows"
 PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE = "_list_file_task_rows"
+TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD = "_transitional_task_row_read_model_rows"
 OBSERVABLE_TASK_ROWS_METHOD = "list_observable_task_rows"
 OBSERVABLE_TASK_ROWS_FILE_SOURCE = "_list_file_task_rows"
 OBSERVABLE_TASK_ROWS_FACT_SOURCE = "list_task_rows_from_execution_facts"
+OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE = "_project_observable_task_rows"
+TRANSITIONAL_TASK_ROW_READ_MODEL_REQUIRED_SELF_CALLS: frozenset[str] = frozenset(
+    {
+        OBSERVABLE_TASK_ROWS_FILE_SOURCE,
+        OBSERVABLE_TASK_ROWS_FACT_SOURCE,
+        OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE,
+    }
+)
+TRANSITIONAL_TASK_ROW_READ_MODEL_FORBIDDEN_SELF_CALLS: frozenset[str] = frozenset(
+    {
+        "_list_file_task_entities",
+        "_overlay_execution_fact_rows",
+        "list_task_rows",
+        "refresh_dependency_unblocks",
+    }
+)
 OBSERVABLE_TASK_ROWS_FORBIDDEN_SELF_CALLS = frozenset(
     {
+        "_list_file_task_entities",
+        "_overlay_execution_fact_rows",
+        OBSERVABLE_TASK_ROWS_FACT_SOURCE,
+        OBSERVABLE_TASK_ROWS_FILE_SOURCE,
+        OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE,
         "list_task_rows",
         "refresh_dependency_unblocks",
     }
@@ -3557,25 +3579,69 @@ def _observable_task_rows_function_def() -> ast.FunctionDef:
     return _task_runtime_service_method_def(OBSERVABLE_TASK_ROWS_METHOD)
 
 
-def _check_observable_task_rows_projection_sources() -> list[str]:
-    """Emit offenders if observable rows stop consuming required row sources."""
+def _transitional_task_row_read_model_rows_function_def() -> ast.FunctionDef:
+    """Return the transitional task-row read-model helper AST node."""
 
-    method_def = _observable_task_rows_function_def()
+    return _task_runtime_service_method_def(TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD)
+
+
+def _check_transitional_task_row_read_model_rows_projection_sources() -> list[str]:
+    """Emit offenders if transitional rows stop consuming required row sources."""
+
+    method_def = _transitional_task_row_read_model_rows_function_def()
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
-    required_sources = {
-        OBSERVABLE_TASK_ROWS_FILE_SOURCE,
-        OBSERVABLE_TASK_ROWS_FACT_SOURCE,
-    }
     offenders: list[str] = []
 
-    for source_method in sorted(required_sources):
+    for source_method in sorted(TRANSITIONAL_TASK_ROW_READ_MODEL_REQUIRED_SELF_CALLS):
         source_calls = _direct_self_method_calls(method_def, source_method)
         if not source_calls:
             offenders.append(
-                f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() "
-                f"does not call self.{source_method}(); observable rows must "
-                "merge file-backed task rows with task_runtime.execution facts."
+                f"{rel}:TaskRuntimeService.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}() "
+                f"does not call self.{source_method}(); the transitional helper "
+                "must assemble file-backed rows, task_runtime.execution fact "
+                "rows, and the observable row projection in one explicit "
+                "read-model boundary."
             )
+
+    for forbidden_method in sorted(TRANSITIONAL_TASK_ROW_READ_MODEL_FORBIDDEN_SELF_CALLS):
+        for call in _direct_self_method_calls(method_def, forbidden_method):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}():"
+                f"{call.lineno} calls self.{forbidden_method}(); transitional "
+                "row assembly must not refresh dependencies, read raw Task "
+                "entities, or bypass the observable projection helper."
+            )
+
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}():"
+                f"{node.lineno} calls {callee}(); transitional row assembly "
+                "must consume reviewed row loaders instead of raw TaskBoard "
+                "methods."
+            )
+
+    return offenders
+
+
+def _check_observable_task_rows_projection_sources() -> list[str]:
+    """Emit offenders if observable rows stop delegating to transitional rows."""
+
+    method_def = _observable_task_rows_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    source_calls = _direct_self_method_calls(method_def, TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD)
+    if not source_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() "
+            f"does not call self.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}(); "
+            "observable rows must delegate transitional read-model assembly "
+            "instead of rebuilding file/fact/projection inputs inline."
+        )
 
     return offenders
 
@@ -3596,8 +3662,9 @@ def _check_observable_task_rows_read_only_projection_boundary() -> list[str]:
                 offenders.append(
                     f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}():"
                     f"{node.lineno} calls self.{forbidden_method}(); observable "
-                    "task rows are a read-only projection and must not trigger "
-                    "dependency refresh writes."
+                    "task rows must delegate to the transitional read-model "
+                    "helper instead of calling lower-level loaders, projection "
+                    "helpers, or dependency-refresh paths directly."
                 )
         if callee.startswith("self._board."):
             offenders.append(
@@ -3609,7 +3676,24 @@ def _check_observable_task_rows_read_only_projection_boundary() -> list[str]:
     return offenders
 
 
-def test_observable_task_rows_use_file_rows_and_execution_facts() -> None:
+def test_transitional_task_row_read_model_rows_load_file_rows_execution_facts_and_projection() -> None:
+    """WS2 transitional task-row read-model fence (positive invariant)."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_transitional_task_row_read_model_rows_projection_sources()
+
+    assert not offenders, (
+        "WS2 transitional task-row read-model fence: "
+        f"{rel}:TaskRuntimeService.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}() "
+        "must directly load file-backed rows through self._list_file_task_rows(), "
+        "load execution fact rows through self.list_task_rows_from_execution_facts(), "
+        "and project them through self._project_observable_task_rows(...). "
+        "This helper is the single transitional assembly boundary for observable "
+        "rows and dependency-status read-model rows. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_observable_task_rows_delegate_to_transitional_task_row_read_model() -> None:
     """WS2 observable task-row projection fence (positive invariant)."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
@@ -3617,10 +3701,10 @@ def test_observable_task_rows_use_file_rows_and_execution_facts() -> None:
 
     assert not offenders, (
         "WS2 observable task-row projection fence: "
-        f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() must build "
-        "the read model from self._list_file_task_rows() and "
-        "self.list_task_rows_from_execution_facts() so file-backed rows and "
-        "task_runtime.execution facts remain the observable SSoT. Offenders:\n" + "\n".join(offenders)
+        f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() must delegate "
+        f"to self.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}() so file-backed "
+        "rows, task_runtime.execution facts, and observable projection stay "
+        "centralized in one transitional read-model helper. Offenders:\n" + "\n".join(offenders)
     )
 
 
@@ -3633,8 +3717,10 @@ def test_observable_task_rows_do_not_refresh_dependencies_or_read_raw_board() ->
     assert not offenders, (
         "WS2 observable task-row projection fence: "
         f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() is a "
-        "read-only projection and must not call refresh_dependency_unblocks(), "
-        "list_task_rows(), or self._board.*. Keep dependency refresh behavior "
+        "read-only projection and must not call lower-level row loaders, "
+        "projection helpers, refresh_dependency_unblocks(), list_task_rows(), "
+        "self._list_file_task_entities(), or self._board.*. Keep transitional "
+        "assembly behind the dedicated helper and dependency refresh behavior "
         "behind list_task_rows() and owner maintenance flows. Offenders:\n" + "\n".join(offenders)
     )
 
@@ -7591,15 +7677,26 @@ FACT_OVERLAID_DEPENDENCY_FORBIDDEN_SELF_CALLS: frozenset[str] = frozenset(
         "_list_file_task_rows",
         "_overlay_execution_fact_rows",
         "_project_observable_task_rows",
+        TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD,
         "list_task_rows_from_execution_facts",
         "list_observable_task_rows",
     }
 )
 DEPENDENCY_STATUS_READ_MODEL_REQUIRED_SELF_CALLS: frozenset[str] = frozenset(
     {
-        "_list_file_task_rows",
-        "_project_observable_task_rows",
-        "list_task_rows_from_execution_facts",
+        TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD,
+    }
+)
+DEPENDENCY_STATUS_READ_MODEL_FORBIDDEN_SELF_CALLS: frozenset[str] = frozenset(
+    {
+        "_list_file_task_entities",
+        "_overlay_execution_fact_rows",
+        OBSERVABLE_TASK_ROWS_FACT_SOURCE,
+        OBSERVABLE_TASK_ROWS_FILE_SOURCE,
+        OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE,
+        "list_observable_task_rows",
+        "list_task_rows",
+        "refresh_dependency_unblocks",
     }
 )
 DEPENDENCY_HELPER_REQUIRED_STATUS_CALL = "self._fact_overlaid_dependency_status_rows"
@@ -7680,7 +7777,7 @@ def test_fact_overlaid_dependency_status_rows_delegates_to_observable_projection
 
 
 def _check_dependency_status_read_model_rows_loads_transitional_rows() -> list[str]:
-    """Emit offenders when the read-model helper stops owning row projection inputs."""
+    """Emit offenders when dependency-status rows bypass transitional rows."""
 
     method_def = _dependency_status_read_model_rows_function_def()
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
@@ -7693,11 +7790,32 @@ def _check_dependency_status_read_model_rows_loads_transitional_rows() -> list[s
             f"{rel}:TaskRuntimeService.{DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD}() must call self.{required_call}()"
         )
 
+    for forbidden_call in sorted(DEPENDENCY_STATUS_READ_MODEL_FORBIDDEN_SELF_CALLS):
+        for call in _direct_self_method_calls(method_def, forbidden_call):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD}():"
+                f"{call.lineno} must not call self.{forbidden_call}(); "
+                "dependency-status read-model rows must delegate to the "
+                "transitional row helper instead of rebuilding lower-level "
+                "file/fact/projection inputs inline."
+            )
+
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD}():"
+                f"{node.lineno} must not call {callee}(); dependency-status "
+                "read-model rows must not read raw TaskBoard paths."
+            )
+
     return offenders
 
 
-def test_dependency_status_read_model_rows_loads_transitional_projection_inputs() -> None:
-    """The dependency status read-model helper must own transitional row loading."""
+def test_dependency_status_read_model_rows_delegates_to_transitional_task_row_read_model() -> None:
+    """The dependency status read-model helper must delegate transitional rows."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     offenders = _check_dependency_status_read_model_rows_loads_transitional_rows()
@@ -7705,11 +7823,11 @@ def test_dependency_status_read_model_rows_loads_transitional_projection_inputs(
     assert not offenders, (
         "WS2 dependency-status read-model fence: "
         f"{rel}:TaskRuntimeService.{DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD}() "
-        "must load file-backed rows through self._list_file_task_rows(), load "
-        "execution fact rows through self.list_task_rows_from_execution_facts(), "
-        "and project them through self._project_observable_task_rows(...). "
-        "This helper is the single boundary for transitional dependency-status "
-        "read-model rows. Offenders:\n" + "\n".join(offenders)
+        f"must call self.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}() and "
+        "must not directly load file rows, execution fact rows, observable "
+        "projection rows, TaskBoard entities, or self._board.* rows. The "
+        "transitional helper is the single assembly boundary shared by "
+        "observable rows and dependency-status read-model rows. Offenders:\n" + "\n".join(offenders)
     )
 
 

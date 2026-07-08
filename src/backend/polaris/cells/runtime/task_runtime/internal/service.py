@@ -1242,14 +1242,12 @@ class TaskRuntimeService:
         rows.sort(key=self._row_sort_key)
         return rows
 
-    def _dependency_status_read_model_rows(self) -> list[dict[str, Any]]:
-        """Load transitional dependency-status read-model rows.
+    def _transitional_task_row_read_model_rows(self) -> list[dict[str, Any]]:
+        """Load transitional task-row read-model rows.
 
-        This helper is the only dependency-status row loader for the
-        transitional read model: it reads file-backed task rows, reads
-        ``task_runtime.execution`` fact rows, and returns their observable
-        projection. It is not a mutation API and does not authorize task claims,
-        writes, or dependency transitions.
+        This transitional read model loader combines file-backed TaskBoard rows
+        with append-only ``task_runtime.execution`` fact rows and returns their
+        observable projection. It is not a mutation, claim, or write API.
 
         Complexity:
             O(r + f) time and memory over file-backed rows and latest fact rows.
@@ -1258,6 +1256,20 @@ class TaskRuntimeService:
         file_rows = self._list_file_task_rows()
         fact_rows = self.list_task_rows_from_execution_facts()
         return self._project_observable_task_rows(file_rows, fact_rows)
+
+    def _dependency_status_read_model_rows(self) -> list[dict[str, Any]]:
+        """Load transitional dependency-status read-model rows.
+
+        This helper is the dependency-status loader seam for the transitional
+        read model and can be replaced when the file-backed fallback is removed.
+        It is not a mutation API and does not authorize task claims, writes, or
+        dependency transitions.
+
+        Complexity:
+            O(r + f) time and memory over file-backed rows and latest fact rows.
+        """
+
+        return self._transitional_task_row_read_model_rows()
 
     def _fact_overlaid_dependency_status_rows(self) -> dict[int, TaskStatus]:
         """Return ``task_id -> TaskStatus`` using the fact-overlay-aware read model.
@@ -1483,9 +1495,7 @@ class TaskRuntimeService:
             O(r + f) time and memory over file-backed rows and latest fact rows.
         """
 
-        rows = self._list_file_task_rows()
-        fact_rows = self.list_task_rows_from_execution_facts()
-        return self._project_observable_task_rows(rows, fact_rows)
+        return self._transitional_task_row_read_model_rows()
 
     def _project_observable_task_rows(
         self,

@@ -1514,6 +1514,53 @@ def test_list_observable_task_rows_does_not_refresh_dependency_unblocks(
     assert refresh_calls == []
 
 
+def test_list_observable_task_rows_delegates_to_transitional_read_model_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    sentinel_rows: list[dict[str, Any]] = [
+        {
+            "id": 61,
+            "task_id": "sentinel-observable",
+            "subject": "observable helper sentinel",
+            "status": "in_progress",
+            "metadata": {"source": "transitional_helper"},
+        }
+    ]
+    helper_calls: list[str] = []
+
+    def transitional_task_row_read_model_rows() -> list[dict[str, Any]]:
+        helper_calls.append("_transitional_task_row_read_model_rows")
+        return sentinel_rows
+
+    def reject_file_rows(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("list_observable_task_rows must delegate file/fact loading to the transitional helper")
+
+    def reject_fact_rows(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("list_observable_task_rows must not load execution facts outside the transitional helper")
+
+    def reject_projection(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("list_observable_task_rows must not project rows outside the transitional helper")
+
+    monkeypatch.setattr(
+        service,
+        "_transitional_task_row_read_model_rows",
+        transitional_task_row_read_model_rows,
+        raising=False,
+    )
+    monkeypatch.setattr(service, "_list_file_task_rows", reject_file_rows)
+    monkeypatch.setattr(service, "list_task_rows_from_execution_facts", reject_fact_rows)
+    monkeypatch.setattr(service, "_project_observable_task_rows", reject_projection)
+
+    rows = service.list_observable_task_rows()
+
+    assert rows is sentinel_rows
+    assert helper_calls == ["_transitional_task_row_read_model_rows"]
+
+
 def test_list_task_rows_continues_to_refresh_dependency_unblocks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7061,6 +7108,53 @@ def test_task_exists_returns_false_for_unknown_task_id_when_facts_present(tmp_pa
 # checks. It must share the pure observable projection helper used by the
 # public read model, while still avoiding the public ``list_observable_task_rows``
 # API so dependency mutation paths do not depend on an external read endpoint.
+
+
+def test_dependency_status_read_model_rows_delegates_to_transitional_read_model_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    sentinel_rows: list[dict[str, Any]] = [
+        {
+            "id": 71,
+            "task_id": "sentinel-dependency",
+            "subject": "dependency helper sentinel",
+            "status": "completed",
+            "metadata": {"source": "transitional_helper"},
+        }
+    ]
+    helper_calls: list[str] = []
+
+    def transitional_task_row_read_model_rows() -> list[dict[str, Any]]:
+        helper_calls.append("_transitional_task_row_read_model_rows")
+        return sentinel_rows
+
+    def reject_file_rows(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("_dependency_status_read_model_rows must delegate file loading to the transitional helper")
+
+    def reject_fact_rows(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("_dependency_status_read_model_rows must not load execution facts directly")
+
+    def reject_projection(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("_dependency_status_read_model_rows must not project rows outside the transitional helper")
+
+    monkeypatch.setattr(
+        service,
+        "_transitional_task_row_read_model_rows",
+        transitional_task_row_read_model_rows,
+        raising=False,
+    )
+    monkeypatch.setattr(service, "_list_file_task_rows", reject_file_rows)
+    monkeypatch.setattr(service, "list_task_rows_from_execution_facts", reject_fact_rows)
+    monkeypatch.setattr(service, "_project_observable_task_rows", reject_projection)
+
+    rows = service._dependency_status_read_model_rows()
+
+    assert rows is sentinel_rows
+    assert helper_calls == ["_transitional_task_row_read_model_rows"]
 
 
 def test_fact_overlaid_dependency_status_rows_reuses_observable_projection_helper(
