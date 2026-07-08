@@ -3302,20 +3302,23 @@ def test_key_task_runtime_methods_route_raw_entities_through_file_task_entities(
 
 
 # ---------------------------------------------------------------------------
-# WS2 projected runtime execution session - read-only row projection consumer
+# WS2 projected runtime execution session - explicit legacy bridge boundary
 # ---------------------------------------------------------------------------
 #
-# ``TaskRuntimeService._find_projected_runtime_execution_session()`` is a
-# read-only consumer that resolves ``metadata.runtime_execution`` from already
-# projected row state after checking execution facts. It must not become a raw
-# TaskBoard entity reader; the raw entity bridge stays limited to the owner/path
-# methods in ``TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS``.
+# ``TaskRuntimeService._find_projected_runtime_execution_session()`` and the
+# locked variant are read-only consumers that resolve execution facts first and
+# then delegate file-backed ``metadata.runtime_execution`` compatibility lookup
+# to one explicit legacy bridge. Keeping the fallback behind a named bridge
+# makes the old metadata path auditable without deleting it.
 #
-# The accepted source is ``self._list_file_task_rows()``. Passing
-# ``include_terminal=True`` explicitly is preferred, and omitting the keyword is
-# also allowed because the helper default is ``True``.
+# The only helper allowed to directly scan file rows for this legacy fallback is
+# ``_find_projected_runtime_execution_session_from_file_rows``. It must request
+# terminal rows explicitly and accept/pass ``augment_runtime_state`` so locked
+# and unlocked callers cannot silently share the wrong projection mode.
 
 PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER = "_find_projected_runtime_execution_session"
+PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER = "_find_projected_runtime_execution_session_locked"
+PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE = "_find_projected_runtime_execution_session_from_file_rows"
 PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE = "_list_file_task_rows"
 OBSERVABLE_TASK_ROWS_METHOD = "list_observable_task_rows"
 OBSERVABLE_TASK_ROWS_FILE_SOURCE = "_list_file_task_rows"
@@ -3336,6 +3339,46 @@ def _projected_runtime_execution_session_function_def() -> ast.FunctionDef:
     return _task_runtime_service_method_def(PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER)
 
 
+def _projected_runtime_execution_session_method_defs() -> dict[str, ast.FunctionDef]:
+    """Return projected runtime execution-session helper AST nodes."""
+
+    helper_names = {
+        PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER,
+        PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER,
+        PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE,
+    }
+    return {helper_name: _task_runtime_service_method_def(helper_name) for helper_name in helper_names}
+
+
+def _call_keyword(call_node: ast.Call, keyword_name: str) -> ast.expr | None:
+    """Return a call keyword value by name."""
+
+    for keyword in call_node.keywords:
+        if keyword.arg == keyword_name:
+            return keyword.value
+    return None
+
+
+def _keyword_is_bool(call_node: ast.Call, keyword_name: str, expected: bool) -> bool:
+    """Return whether a call keyword is the expected boolean constant."""
+
+    keyword_value = _call_keyword(call_node, keyword_name)
+    return isinstance(keyword_value, ast.Constant) and keyword_value.value is expected
+
+
+def _keyword_forwards_name(call_node: ast.Call, keyword_name: str, expected_name: str) -> bool:
+    """Return whether a call keyword forwards a local name unchanged."""
+
+    keyword_value = _call_keyword(call_node, keyword_name)
+    return isinstance(keyword_value, ast.Name) and keyword_value.id == expected_name
+
+
+def _method_accepts_argument(method_def: ast.FunctionDef, argument_name: str) -> bool:
+    """Return whether a method accepts an argument by name."""
+
+    return any(argument.arg == argument_name for argument in (*method_def.args.args, *method_def.args.kwonlyargs))
+
+
 def _list_file_task_rows_call_keeps_terminal_rows(call_node: ast.Call) -> bool:
     """Return whether ``self._list_file_task_rows(...)`` includes terminal rows."""
 
@@ -3346,73 +3389,149 @@ def _list_file_task_rows_call_keeps_terminal_rows(call_node: ast.Call) -> bool:
     return True
 
 
-def _check_projected_runtime_execution_session_uses_file_task_rows() -> list[str]:
-    """Emit offenders if projected session lookup does not use row projections."""
+def _check_projected_runtime_execution_session_uses_legacy_bridge() -> list[str]:
+    """Emit offenders if projected session lookup bypasses the legacy bridge."""
 
-    method_def = _projected_runtime_execution_session_function_def()
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
-    row_calls = _direct_self_method_calls(method_def, PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE)
-
-    if not row_calls:
-        return [
-            f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}() "
-            f"does not call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}(); "
-            "metadata.runtime_execution fallback must scan projected task rows "
-            "instead of raw Task entities."
-        ]
-
-    return [
-        f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}():"
-        f"{call_node.lineno} calls self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}() "
-        "without terminal rows; projected runtime execution sessions can live "
-        "on terminal task rows, so pass include_terminal=True or omit the "
-        "keyword to use the helper default."
-        for call_node in row_calls
-        if not _list_file_task_rows_call_keeps_terminal_rows(call_node)
-    ]
-
-
-def _check_projected_runtime_execution_session_forbidden_raw_reads() -> list[str]:
-    """Emit offenders if projected session lookup reads raw TaskBoard state."""
-
-    method_def = _projected_runtime_execution_session_function_def()
-    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    methods = _projected_runtime_execution_session_method_defs()
+    expected_bridge_call_modes = {
+        PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER: True,
+        PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER: False,
+    }
     offenders: list[str] = []
 
-    for node in _walk_task_runtime_method_body(method_def):
-        if not isinstance(node, ast.Call):
-            continue
-        callee = _call_name(node.func)
-        if callee == f"self.{TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER}":
+    for method_name, expected_augment in expected_bridge_call_modes.items():
+        method_def = methods[method_name]
+        bridge_calls = _direct_self_method_calls(
+            method_def,
+            PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE,
+        )
+        if not bridge_calls:
             offenders.append(
-                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}():"
-                f"{node.lineno} calls {callee}(); read-only projected session "
-                "lookup must consume self._list_file_task_rows() rows, not raw "
-                "Task entities."
+                f"{rel}:TaskRuntimeService.{method_name}() does not call "
+                f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}(); "
+                "metadata.runtime_execution file-row fallback must be isolated "
+                "behind the explicit legacy bridge."
             )
-            continue
-        if callee.startswith("self._board."):
+        for call_node in bridge_calls:
+            if not _keyword_is_bool(call_node, "augment_runtime_state", expected_augment):
+                offenders.append(
+                    f"{rel}:TaskRuntimeService.{method_name}():{call_node.lineno} "
+                    f"must call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}"
+                    f"(..., augment_runtime_state={expected_augment!r}) so locked "
+                    "and unlocked projections remain distinct."
+                )
+        for call_node in _direct_self_method_calls(method_def, PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE):
             offenders.append(
-                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}():"
-                f"{node.lineno} calls {callee}(); read-only projected session "
-                "lookup must not access raw TaskBoard methods."
+                f"{rel}:TaskRuntimeService.{method_name}():{call_node.lineno} calls "
+                f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}() directly; "
+                "main projected session helpers must delegate legacy file-row "
+                f"fallback to self.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}()."
             )
 
     return offenders
 
 
-def test_projected_runtime_execution_session_uses_file_task_rows() -> None:
+def _check_projected_runtime_execution_session_legacy_bridge_contract() -> list[str]:
+    """Emit offenders if the legacy bridge stops owning file-row fallback details."""
+
+    bridge_def = _task_runtime_service_method_def(PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE)
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    if not _method_accepts_argument(bridge_def, "augment_runtime_state"):
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}() "
+            "must accept augment_runtime_state so callers can choose locked or "
+            "unlocked row augmentation explicitly."
+        )
+
+    row_calls = _direct_self_method_calls(bridge_def, PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE)
+    if not row_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}() "
+            f"does not call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}(); "
+            "the legacy bridge must own the file-backed metadata.runtime_execution "
+            "fallback."
+        )
+
+    for call_node in row_calls:
+        if not _list_file_task_rows_call_keeps_terminal_rows(call_node):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}():"
+                f"{call_node.lineno} calls self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}() "
+                "without terminal rows; legacy runtime_execution metadata can live "
+                "on terminal task rows, so pass include_terminal=True."
+            )
+        if not _keyword_forwards_name(call_node, "augment_runtime_state", "augment_runtime_state"):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}():"
+                f"{call_node.lineno} must pass augment_runtime_state=augment_runtime_state "
+                f"to self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}()."
+            )
+
+    return offenders
+
+
+def _check_projected_runtime_execution_session_forbidden_raw_reads() -> list[str]:
+    """Emit offenders if projected session lookup reads raw TaskBoard state."""
+
+    methods = _projected_runtime_execution_session_method_defs()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for method_name, method_def in sorted(methods.items()):
+        for node in _walk_task_runtime_method_body(method_def):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = _call_name(node.func)
+            if callee == f"self.{TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER}":
+                offenders.append(
+                    f"{rel}:TaskRuntimeService.{method_name}():{node.lineno} calls "
+                    f"{callee}(); projected session lookup must consume row "
+                    "projections, not raw Task entities."
+                )
+                continue
+            if callee.startswith("self._board."):
+                offenders.append(
+                    f"{rel}:TaskRuntimeService.{method_name}():{node.lineno} calls "
+                    f"{callee}(); projected session lookup must not access raw "
+                    "TaskBoard methods."
+                )
+
+    return offenders
+
+
+def test_projected_runtime_execution_session_uses_legacy_file_rows_bridge() -> None:
     """WS2 projected runtime execution-session fence (positive invariant)."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
-    offenders = _check_projected_runtime_execution_session_uses_file_task_rows()
+    offenders = _check_projected_runtime_execution_session_uses_legacy_bridge()
 
     assert not offenders, (
         "WS2 projected runtime execution-session fence: "
         f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}() "
-        "must call self._list_file_task_rows(include_terminal=True) or at "
-        "least self._list_file_task_rows() so metadata.runtime_execution is "
-        "resolved from projected rows after fact lookup. Offenders:\n" + "\n".join(offenders)
+        f"and {PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER}() must not "
+        f"call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}() directly. "
+        f"They must delegate metadata.runtime_execution file-row fallback to "
+        f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}() with explicit "
+        "augment_runtime_state values. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_projected_runtime_execution_session_legacy_bridge_scans_terminal_file_rows() -> None:
+    """WS2 projected runtime execution-session legacy bridge contract."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_projected_runtime_execution_session_legacy_bridge_contract()
+
+    assert not offenders, (
+        "WS2 projected runtime execution-session legacy bridge fence: "
+        f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}() "
+        f"is the explicit legacy metadata.runtime_execution file-row fallback. "
+        f"It must call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}"
+        "(include_terminal=True, augment_runtime_state=augment_runtime_state). "
+        "Offenders:\n" + "\n".join(offenders)
     )
 
 

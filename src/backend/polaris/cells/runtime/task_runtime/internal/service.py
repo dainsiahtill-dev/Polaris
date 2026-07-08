@@ -2794,18 +2794,10 @@ class TaskRuntimeService:
         if fact_session is not None:
             return fact_session
 
-        normalized_id = self.normalize_task_id(task_id)
-        if normalized_id is None:
-            return None
-        target_task_id = str(normalized_id).strip()
-        if not target_task_id:
-            return None
-
-        for row in self._list_file_task_rows(include_terminal=True):
-            if self._observable_row_task_id(row) != target_task_id:
-                continue
-            return self._runtime_execution_session_from_projected_row(row)
-        return None
+        return self._find_projected_runtime_execution_session_from_file_rows(
+            task_id,
+            augment_runtime_state=True,
+        )
 
     def _find_projected_runtime_execution_session_locked(
         self,
@@ -2818,6 +2810,19 @@ class TaskRuntimeService:
         if fact_session is not None:
             return fact_session
 
+        return self._find_projected_runtime_execution_session_from_file_rows(
+            task_id,
+            augment_runtime_state=False,
+        )
+
+    def _find_projected_runtime_execution_session_from_file_rows(
+        self,
+        task_id: int,
+        *,
+        augment_runtime_state: bool = True,
+    ) -> TaskExecutionSession | None:
+        """Return legacy file-row ``metadata.runtime_execution`` projection."""
+
         normalized_id = self.normalize_task_id(task_id)
         if normalized_id is None:
             return None
@@ -2827,7 +2832,7 @@ class TaskRuntimeService:
 
         for row in self._list_file_task_rows(
             include_terminal=True,
-            augment_runtime_state=False,
+            augment_runtime_state=augment_runtime_state,
         ):
             if self._observable_row_task_id(row) != target_task_id:
                 continue

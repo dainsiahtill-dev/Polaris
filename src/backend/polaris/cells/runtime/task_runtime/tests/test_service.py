@@ -3341,8 +3341,13 @@ def test_find_terminal_session_snapshot_reads_row_metadata_without_raw_board_get
     )
     assert _session_file_path(workspace, task_id).exists()
 
-    def projected_file_rows(*, include_terminal: bool = True) -> list[dict[str, Any]]:
+    def projected_file_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = True,
+    ) -> list[dict[str, Any]]:
         assert include_terminal is True
+        assert augment_runtime_state is True
         return [
             {
                 "id": str(task_id),
@@ -3398,8 +3403,13 @@ def test_find_projected_runtime_execution_session_reads_row_projection_without_r
         },
     ]
 
-    def projected_file_rows(*, include_terminal: bool = True) -> list[dict[str, Any]]:
+    def projected_file_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = True,
+    ) -> list[dict[str, Any]]:
         assert include_terminal is True
+        assert augment_runtime_state is True
         return projected_rows
 
     def reject_raw_task_entities() -> list[Any]:
@@ -3418,6 +3428,104 @@ def test_find_projected_runtime_execution_session_reads_row_projection_without_r
     assert session.worker_id == "director-worker"
     assert session.attempt == 2
     assert session.resume_count == 1
+
+
+def test_find_projected_runtime_execution_session_delegates_file_row_fallback_after_fact_miss(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unlocked lookup must delegate legacy file-row fallback to the bridge helper."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    task_id = 408
+    fallback_session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="run-file-row-bridge-unlocked",
+        lease_ttl_seconds=120,
+        attempt=3,
+        resume_count=2,
+        origin="unit",
+        selection_source="task_id_lookup",
+    )
+    helper_calls: list[tuple[int, bool]] = []
+
+    def file_row_bridge_helper(
+        task_id_arg: int,
+        *,
+        augment_runtime_state: bool = True,
+    ) -> TaskExecutionSession | None:
+        helper_calls.append((task_id_arg, augment_runtime_state))
+        return fallback_session
+
+    def reject_direct_file_row_access(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("file-row fallback must be isolated behind the legacy bridge helper")
+
+    monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda _task_id: None)
+    monkeypatch.setattr(
+        service,
+        "_find_projected_runtime_execution_session_from_file_rows",
+        file_row_bridge_helper,
+    )
+    monkeypatch.setattr(service, "_list_file_task_rows", reject_direct_file_row_access)
+
+    session = service._find_projected_runtime_execution_session(task_id)
+
+    assert session is fallback_session
+    assert helper_calls == [(task_id, True)]
+
+
+def test_find_projected_runtime_execution_session_locked_delegates_file_row_fallback_without_augmentation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Locked lookup must reuse the bridge helper without runtime-state augmentation."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    task_id = 409
+    fallback_session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="run-file-row-bridge-locked",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="unit",
+        selection_source="task_id_lookup",
+    )
+    helper_calls: list[tuple[int, bool]] = []
+
+    def file_row_bridge_helper(
+        task_id_arg: int,
+        *,
+        augment_runtime_state: bool = True,
+    ) -> TaskExecutionSession | None:
+        helper_calls.append((task_id_arg, augment_runtime_state))
+        return fallback_session
+
+    def reject_direct_file_row_access(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("locked file-row fallback must be isolated behind the legacy bridge helper")
+
+    monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda _task_id: None)
+    monkeypatch.setattr(
+        service,
+        "_find_projected_runtime_execution_session_from_file_rows",
+        file_row_bridge_helper,
+    )
+    monkeypatch.setattr(service, "_list_file_task_rows", reject_direct_file_row_access)
+
+    session = service._find_projected_runtime_execution_session_locked(task_id)
+
+    assert session is fallback_session
+    assert helper_calls == [(task_id, False)]
 
 
 def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_rejects_reclaim(tmp_path: Path) -> None:
