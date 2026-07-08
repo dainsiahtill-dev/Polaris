@@ -832,6 +832,78 @@ def test_artifact_quality_issue_projection_extracts_unresolved_import_symbol_met
     }
 
 
+def test_artifact_quality_evidence_maps_cross_artifact_diagnostic_kind(tmp_path: Path) -> None:
+    package_dir = tmp_path / "src" / "models"
+    engine_dir = tmp_path / "src" / "engine"
+    package_dir.mkdir(parents=True)
+    engine_dir.mkdir(parents=True)
+    (package_dir / "weather.py").write_text("class WeatherReport:\n    pass\n", encoding="utf-8")
+    (engine_dir / "forecast.py").write_text(
+        "from src.models.weather import WeatherKind\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path))
+    issues = [issue.to_dict() for issue in evidence.issues]
+
+    issue = next(item for item in issues if item["code"] == "unresolved_import_symbol")
+    assert issue["source"] == "cross_artifact_consistency"
+    assert issue["path"] == "src/engine/forecast.py"
+    assert issue["metadata"]["diagnostic_kind"] == "unresolved_import_symbol"
+    assert issue["metadata"]["importer_path"] == "src/engine/forecast.py"
+    assert issue["metadata"]["owner_path"] == "src/models/weather.py"
+    assert issue["metadata"]["symbol"] == "WeatherKind"
+    assert issue["metadata"]["details"] == {"available_exports": ["WeatherReport"]}
+
+
+def test_artifact_quality_issue_projection_maps_cross_artifact_metadata_only_kind() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "cross_artifact_consistency",
+                "message": "contract requires an owner export",
+                "metadata": {
+                    "diagnostic_kind": "contract_export_missing",
+                    "owner_path": "src/models/weather.py",
+                    "symbol": "WeatherReport",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "contract_export_missing"
+    assert issues[0]["source"] == "cross_artifact_consistency"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "contract_export_missing"
+
+
+def test_artifact_quality_issue_projection_rejects_wrong_cross_artifact_kind_source() -> None:
+    wrong_source_issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "file_artifact_scanner",
+                "message": "symbol import did not resolve",
+                "metadata": {
+                    "diagnostic_kind": "unresolved_import_symbol",
+                    "symbol": "WeatherKind",
+                },
+            },
+        )
+    )
+    unknown_kind_issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "cross_artifact_consistency",
+                "message": "cross artifact diagnostic without legacy hints",
+                "metadata": {"diagnostic_kind": "future_cross_artifact_code"},
+            },
+        )
+    )
+
+    assert wrong_source_issues[0]["code"] != "unresolved_import_symbol"
+    assert unknown_kind_issues[0]["code"] != "future_cross_artifact_code"
+
+
 def test_artifact_quality_issue_projection_extracts_unresolved_relative_import_metadata() -> None:
     error = "Artifact quality scan failed: unresolved relative import './engine/runner' in src/index.ts"
 

@@ -123,6 +123,13 @@ _FILE_ARTIFACT_SCANNER_DIAGNOSTIC_KINDS: frozenset[str] = frozenset(
         "repeated_trivial_arithmetic_tests",
     )
 )
+_CROSS_ARTIFACT_CONSISTENCY_DIAGNOSTIC_KINDS: frozenset[str] = frozenset(
+    (
+        "unresolved_import_symbol",
+        "contract_export_missing",
+        "contract_signature_mismatch",
+    )
+)
 _SOURCE_NARRATION_LEAK_RE = re.compile(
     r"(?is)^\s*(?:"
     r"i(?:'|’)ll\s+|"
@@ -685,6 +692,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
         and diagnostic_kind in _FILE_ARTIFACT_SCANNER_DIAGNOSTIC_KINDS
     ):
         return diagnostic_kind
+    if (
+        source_token == "cross_artifact_consistency"
+        and diagnostic_kind in _CROSS_ARTIFACT_CONSISTENCY_DIAGNOSTIC_KINDS
+    ):
+        return diagnostic_kind
     return ""
 
 
@@ -1179,19 +1191,22 @@ def _artifact_quality_issue_from_cross_artifact_issue(
     """Project cross-file interface evidence without reparsing its message."""
 
     raw_message = issue.to_error_message()
+    metadata: dict[str, Any] = {
+        "raw": raw_message,
+        "importer_path": issue.importer_path,
+        "owner_path": issue.owner_path,
+        "symbol": issue.symbol,
+        "details": dict(issue.details),
+    }
+    if issue.code in _CROSS_ARTIFACT_CONSISTENCY_DIAGNOSTIC_KINDS:
+        metadata["diagnostic_kind"] = issue.code
     return ArtifactQualityIssue(
         code=issue.code,
         message=issue.message,
         path=issue.importer_path or issue.owner_path or None,
         severity=issue.severity,
         source="cross_artifact_consistency",
-        metadata={
-            "raw": raw_message,
-            "importer_path": issue.importer_path,
-            "owner_path": issue.owner_path,
-            "symbol": issue.symbol,
-            "details": dict(issue.details),
-        },
+        metadata=metadata,
     )
 
 
