@@ -15,6 +15,10 @@ from polaris.cells.events.fact_stream.public.service import (
     query_fact_events,
 )
 from polaris.cells.runtime.task_runtime.internal import service as service_module
+from polaris.cells.runtime.task_runtime.internal.execution_session import (
+    TaskExecutionSession,
+    terminal_session_timestamp,
+)
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -804,6 +808,70 @@ def test_task_runtime_claim_next_honors_deliberate_retry_projection(tmp_path: Pa
     assert reclaimed["success"] is True
     assert reclaimed["task"]["id"] == created_id
     assert reclaimed["task"]["status"] == "in_progress"
+
+
+def test_augment_task_row_authorizes_terminal_session_superseded_from_passed_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_augment_task_row`` must not re-read raw TaskBoard state for retry authority.
+
+    The file-backed row passed into the helper is the row authority at this
+    boundary. When it carries a sanctioned ``terminal_reset_at`` newer than
+    the terminal session timestamp, the row must authorize superseding the
+    stale terminal session even if raw ``TaskBoard.get`` is unavailable.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="augment row owns retry authority")
+    created_id = int(created["id"])
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-augment-row-authority",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+
+    failed = service.fail_execution(
+        created_id,
+        session_id=str(claimed["session"]["session_id"]),
+        error="retryable execution failure",
+    )
+    assert failed["success"] is True
+
+    time.sleep(0.02)
+    reset = service.update_task_row(created_id, status="pending")
+    assert reset is not None
+    assert reset["status"] == "pending"
+
+    file_backed_row = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    session = TaskExecutionSession.from_dict(
+        json.loads(_session_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    )
+    reset_at = float(file_backed_row["metadata"]["terminal_reset_at"])
+    session_terminal_at = terminal_session_timestamp(session)
+    assert session_terminal_at is not None
+    assert reset_at > session_terminal_at
+
+    def reject_raw_board_get(_task_id: object) -> object:
+        raise AssertionError("_augment_task_row must use the passed row, not raw TaskBoard.get")
+
+    monkeypatch.setattr(service._board, "get", reject_raw_board_get)
+
+    augmented = service._augment_task_row(file_backed_row)
+
+    assert augmented["status"] == "pending"
+    assert augmented["raw_status"] == "pending"
+    assert augmented["claimed_by"] == ""
+    runtime_execution = augmented["metadata"]["runtime_execution"]
+    assert runtime_execution["effective_status"] == "pending"
+    assert runtime_execution["superseded_terminal_session_status"] == "failed"
+    assert runtime_execution["session_projection_authority"] == "row_reset_after_terminal_session"
 
 
 def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_rejects_reclaim(tmp_path: Path) -> None:

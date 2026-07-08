@@ -2627,6 +2627,42 @@ class TaskRuntimeService:
             return False
         return reset_at > terminal_at
 
+    def _row_mapping_authorizes_retry_over_terminal_session(
+        self,
+        row: Mapping[str, Any],
+        session: TaskExecutionSession,
+    ) -> bool:
+        """Return True when a non-terminal read-model row supersedes a terminal session.
+
+        ``_augment_task_row`` operates on the observable row projection. It must
+        not re-read the private ``TaskBoard`` row just to decide whether a retry
+        authorization exists, otherwise the board becomes a hidden second read
+        source for runtime state. This row-oriented variant intentionally mirrors
+        ``_row_authorizes_retry_over_terminal_session`` while accepting only the
+        fields already present in the supplied row.
+        """
+        raw_status = str(row.get("status") or "").strip().lower()
+        if not raw_status or is_terminal_task_row_status(raw_status):
+            return False
+        metadata = row.get("metadata")
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        raw_reset_at = metadata.get("terminal_reset_at")
+        if not isinstance(raw_reset_at, (int, float, str)) or isinstance(raw_reset_at, bool):
+            return False
+        try:
+            reset_at = float(raw_reset_at)
+        except ValueError:
+            return False
+        if reset_at <= 0.0:
+            return False
+        terminal_at = terminal_session_timestamp(session)
+        if terminal_at is None:
+            # Fail closed: without a trustworthy terminal timestamp the
+            # terminal session evidence stays authoritative.
+            return False
+        return reset_at > terminal_at
+
     def _rotate_terminal_session_for_retry(self, session: TaskExecutionSession) -> TaskExecutionSession:
         """Rotate a superseded terminal session via the explicit downgrade path.
 
@@ -3088,19 +3124,15 @@ class TaskRuntimeService:
         if task_id is None:
             return dict(row)
 
-        task = self._board.get(task_id)
-        if task is None:
-            return dict(row)
-
         session = self._read_session(task_id)
         terminal_session_superseded = False
         if session is not None:
             terminal_session_superseded = is_terminal_session_status(
                 session.status
-            ) and self._row_authorizes_retry_over_terminal_session(task, session)
+            ) and self._row_mapping_authorizes_retry_over_terminal_session(row, session)
         return project_task_row_runtime_state(
             row,
-            task_status_value=task.status.value,
+            task_status_value=row.get("status"),
             session=session,
             terminal_session_superseded=terminal_session_superseded,
         )
