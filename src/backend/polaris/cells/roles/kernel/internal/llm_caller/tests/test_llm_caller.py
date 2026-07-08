@@ -74,6 +74,19 @@ class TestLLMResponse:
         )
         assert response.has_tool_calls is True
 
+    def test_has_tool_calls_prefers_canonical_native_tool_calls(self) -> None:
+        """Native tool calls are the canonical response field when provided."""
+        response = LLMResponse(
+            content="test",
+            tool_calls=[{"tool": "legacy", "args": {}}],
+            native_tool_calls=[],
+        )
+
+        assert response.has_tool_calls is False
+
+        response.native_tool_calls = [{"tool": "native", "args": {}}]
+        assert response.has_tool_calls is True
+
     def test_has_tool_calls_without_calls(self, success_response: LLMResponse) -> None:
         """Test has_tool_calls returns False when no tool_calls."""
         assert success_response.has_tool_calls is False
@@ -87,6 +100,7 @@ class TestLLMResponse:
         assert response.tool_calls == []
         assert response.tool_call_provider == "auto"
         assert response.metadata == {}
+        assert response.native_tool_calls is None
 
     def test_empty_content(self) -> None:
         """Test LLMResponse with empty content."""

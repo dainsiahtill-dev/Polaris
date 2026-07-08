@@ -1035,6 +1035,7 @@ class LLMInvoker:
                 response_metadata,
                 prepared,
             ),
+            native_tool_calls=native_tool_calls,
         )
 
     async def _run_fallback_ladder(

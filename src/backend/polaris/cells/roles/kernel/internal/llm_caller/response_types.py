@@ -21,6 +21,8 @@ class LLMResponse:
         tool_calls: List of native tool calls extracted from response
         tool_call_provider: Provider hint for tool call format
         metadata: Additional metadata about the response
+        native_tool_calls: Canonical native tool calls. When None, callers may
+            fall back to legacy tool_calls for compatibility.
     """
 
     content: str
@@ -30,6 +32,7 @@ class LLMResponse:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_call_provider: str = "auto"
     metadata: dict[str, Any] = field(default_factory=dict)
+    native_tool_calls: list[dict[str, Any]] | None = None
 
     @property
     def is_success(self) -> bool:
@@ -39,6 +42,8 @@ class LLMResponse:
     @property
     def has_tool_calls(self) -> bool:
         """Check if response contains tool calls."""
+        if self.native_tool_calls is not None:
+            return len(self.native_tool_calls) > 0
         return len(self.tool_calls) > 0
 
 
