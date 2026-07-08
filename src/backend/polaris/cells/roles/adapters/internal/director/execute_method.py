@@ -3947,9 +3947,14 @@ def _phase_no_materialized_changes(
             task=task,
             baseline_files=baseline_files,
             current_files=current_files,
+            workspace=str(getattr(adapter, "workspace", "") or ""),
+            cache_root=_quality_repair_cache_root(task, context),
             workspace_name=workspace_name,
         )
         out_of_scope_files = list(out_of_scope_diff.get("affected_files") or [])
+        task_boundary_scope_filter = out_of_scope_diff.get("task_boundary_scope_filter")
+        if not isinstance(task_boundary_scope_filter, dict):
+            task_boundary_scope_filter = None
         primary_llm_claimed_success = bool(primary_llm_summary.get("success")) if primary_llm_summary else False
         direct_side_effect_success = primary_llm_claimed_success and not tool_results
         lifecycle_failure = _primary_llm_tool_dispatch_failure(primary_llm_summary)
@@ -4024,6 +4029,11 @@ def _phase_no_materialized_changes(
                 "existing_contract_evidence": existing_contract_evidence,
             }
         }
+        if task_boundary_scope_filter is not None:
+            completion_metadata["adapter_result"]["task_boundary_scope_filter"] = task_boundary_scope_filter
+            scope_authority = task_boundary_scope_filter.get("scope_authority")
+            if isinstance(scope_authority, dict):
+                completion_metadata["adapter_result"]["scope_authority"] = scope_authority
         if primary_llm_summary is not None:
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
@@ -4052,6 +4062,11 @@ def _phase_no_materialized_changes(
                 "out_of_scope_files": out_of_scope_files[:20],
                 "tools_executed": len(tool_results),
                 "write_tool_evidence": write_tool_evidence,
+                **(
+                    {"task_boundary_scope_filter": task_boundary_scope_filter}
+                    if task_boundary_scope_filter is not None
+                    else {}
+                ),
             },
         )
         failure_evidence_row = _materialization_failure_evidence_row(
@@ -4750,6 +4765,7 @@ from .quality_gate import (  # noqa: E402  (deferred for circular-import safety)
     _missing_declared_target_files as _missing_declared_target_files,
     _missing_materialization_quality_repair_target_files as _missing_materialization_quality_repair_target_files,
     _node_package_manifest_should_be_rescanned_for_test_files as _node_package_manifest_should_be_rescanned_for_test_files,
+    _quality_repair_cache_root as _quality_repair_cache_root,
     _run_materialization_quality_repair_retry as _run_materialization_quality_repair_retry,
     _safe_int as _safe_int,
     _select_materialization_quality_repair_target_batch as _select_materialization_quality_repair_target_batch,

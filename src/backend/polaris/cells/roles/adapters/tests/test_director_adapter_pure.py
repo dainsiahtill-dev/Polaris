@@ -9804,6 +9804,17 @@ class TestDeclaredPathCaseInsensitiveMatching:
         assert diff["affected_files"] == ["guess_number.py"]
         assert diff["new_files"] == ["guess_number.py"]
         assert diff["modified_files"] == []
+        scope_filter = diff.get("task_boundary_scope_filter") or diff
+        assert isinstance(scope_filter, dict)
+        assert scope_filter.get("deferred") is True
+
+        scope_authority = scope_filter.get("scope_authority")
+        assert isinstance(scope_authority, dict)
+        assert scope_authority["authority"] == "kernelone.quality.scope_authority"
+        assert scope_authority["deferred"] is True
+        assert scope_authority["out_of_scope_repair_target_files"] == ["guess_number.py"]
+        assert "src/python/guess_number.py" in scope_authority["task_declared_write_targets"]
+        assert isinstance(scope_authority["ownership_handoff_requests"], list)
 
     def test_out_of_scope_diff_ignores_declared_output(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

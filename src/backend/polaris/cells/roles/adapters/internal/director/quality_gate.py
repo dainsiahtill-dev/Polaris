@@ -1059,6 +1059,8 @@ def _collect_workspace_out_of_scope_diff(
     task: dict[str, Any],
     baseline_files: dict[str, str],
     current_files: dict[str, str],
+    workspace: str = "",
+    cache_root: str = "",
     workspace_name: str = "",
 ) -> dict[str, Any]:
     """Return real workspace changes that were filtered out by task path scope."""
@@ -1082,11 +1084,21 @@ def _collect_workspace_out_of_scope_diff(
     scoped_modified = set(scoped_modified_files)
     out_of_scope_new = [path for path in raw_new_files if path not in scoped_new]
     out_of_scope_modified = [path for path in raw_modified_files if path not in scoped_modified]
-    return {
+    affected_files = sorted(set(out_of_scope_new + out_of_scope_modified))
+    result: dict[str, Any] = {
         "new_files": out_of_scope_new,
         "modified_files": out_of_scope_modified,
-        "affected_files": sorted(set(out_of_scope_new + out_of_scope_modified)),
+        "affected_files": affected_files,
     }
+    if affected_files:
+        result["task_boundary_scope_filter"] = _task_boundary_scope_filter_evidence(
+            task,
+            target_files=affected_files,
+            reason="director_materialized_out_of_scope",
+            workspace=workspace or workspace_name,
+            cache_root=cache_root,
+        )
+    return result
 
 
 def _first_failing_verify_clause(verify: str, *, cwd: str) -> str:
