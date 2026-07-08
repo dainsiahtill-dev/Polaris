@@ -205,6 +205,56 @@ def _assert_execution_event_append_failure_with_session_write_receipt(
     )
 
 
+def _observe_session_write_lock_states(
+    service: TaskRuntimeService,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    task_id: int,
+) -> list[bool]:
+    class TrackingSessionLock:
+        def __init__(self) -> None:
+            self._lock = threading.RLock()
+            self.active = False
+
+        def __enter__(self) -> TrackingSessionLock:
+            self._lock.acquire()
+            self.active = True
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            self.active = False
+            self._lock.release()
+
+    observed_lock_states: list[bool] = []
+    tracking_lock = TrackingSessionLock()
+    session_logical_path = service._session_logical_path(task_id)
+    original_write_json_atomic = service._kernel_fs.write_json_atomic
+
+    def get_tracking_session_lock(candidate_task_id: int) -> TrackingSessionLock:
+        assert candidate_task_id == task_id
+        return tracking_lock
+
+    def wrapped_write_json_atomic(
+        logical_path: str,
+        payload: Any,
+        *,
+        indent: int = 2,
+        ensure_ascii: bool = False,
+    ) -> object:
+        if logical_path == session_logical_path:
+            observed_lock_states.append(tracking_lock.active)
+        return original_write_json_atomic(
+            logical_path,
+            payload,
+            indent=indent,
+            ensure_ascii=ensure_ascii,
+        )
+
+    monkeypatch.setattr(service, "_get_session_lock", get_tracking_session_lock)
+    monkeypatch.setattr(service._kernel_fs, "write_json_atomic", wrapped_write_json_atomic)
+    return observed_lock_states
+
+
 def _session_file_path(workspace: Path, task_id: object) -> Path:
     return Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task_id}.session.json"))
 
@@ -456,6 +506,50 @@ def test_claim_execution_records_session_write_receipt(tmp_path: Path) -> None:
     assert receipt["after_hash"] == _sha256_utf8_file(session_path)
 
 
+def test_write_session_normal_path_writes_while_holding_task_session_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="session write lock normal path")
+    task_id = int(created["id"])
+    session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="run-session-write-lock-normal",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="unit",
+        selection_source="task_id_lookup",
+    )
+    session_path = _session_file_path(workspace, task_id)
+    observed_lock_states = _observe_session_write_lock_states(
+        service,
+        monkeypatch,
+        task_id=task_id,
+    )
+
+    session_written = service._write_session(session)
+
+    assert session_written is True
+    assert observed_lock_states
+    assert all(observed_lock_states)
+    persisted_session = json.loads(session_path.read_text(encoding="utf-8"))
+    assert persisted_session["session_id"] == session.session_id
+    receipt = _assert_task_execution_session_write_receipt(
+        service.last_session_write_receipt(),
+        task_id=task_id,
+        session_id=session.session_id,
+        session_path=session_path,
+        preserved_terminal_session=False,
+    )
+    assert receipt["after_hash"] == _sha256_utf8_file(session_path)
+
+
 def test_claim_execution_event_details_include_session_write_receipt(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -599,6 +693,7 @@ def test_append_execution_event_omits_stale_session_write_receipt(tmp_path: Path
 
 def test_write_session_receipt_marks_terminal_session_preserved_when_write_returns_false(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -631,10 +726,17 @@ def test_write_session_receipt_marks_terminal_session_preserved_when_write_retur
             "resumable": True,
         }
     )
+    observed_lock_states = _observe_session_write_lock_states(
+        service,
+        monkeypatch,
+        task_id=task_id,
+    )
 
     session_written = service._write_session(incoming)
 
     assert session_written is False
+    assert observed_lock_states
+    assert all(observed_lock_states)
     assert incoming.status == "completed"
     persisted_session = json.loads(session_path.read_text(encoding="utf-8"))
     assert persisted_session["status"] == "completed"

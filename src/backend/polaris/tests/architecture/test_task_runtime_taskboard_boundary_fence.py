@@ -8167,6 +8167,8 @@ SESSION_WRITE_RECEIPT_CLASS = "TaskExecutionSessionWriteReceipt"
 SESSION_WRITE_RECEIPT_DETAIL_KEY = "session_write_receipt"
 SESSION_WRITE_RECEIPT_DETAILS_HELPER = "_session_write_receipt_details_for_session"
 SESSION_WRITE_RECEIPT_OWNER_METHOD = "_write_session"
+SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD = "_write_session_locked"
+SESSION_WRITE_LOCK_HELPER = "_get_session_lock"
 SESSION_WRITE_RECEIPT_RECORD_HELPER = "_record_session_write_receipt"
 SESSION_WRITE_RECEIPT_TRANSITION_METHODS = frozenset(
     {
@@ -8318,6 +8320,103 @@ def _write_session_atomic_write_calls(method_def: ast.FunctionDef) -> list[ast.C
     ]
 
 
+def _session_task_id_local_names(method_def: ast.FunctionDef) -> set[str]:
+    """Infer local names derived from ``session.task_id``.
+
+    The lock must be scoped to one task.  This narrow data-flow accepts direct
+    ``self._get_session_lock(session.task_id)`` calls and normalized locals
+    such as ``task_id = int(session.task_id)`` without relying on source-text
+    matching.
+    """
+
+    assignments = [
+        node for node in _walk_task_runtime_method_body(method_def) if isinstance(node, ast.Assign | ast.AnnAssign)
+    ]
+    task_id_names: set[str] = set()
+    changed = True
+
+    while changed:
+        changed = False
+        for assignment in assignments:
+            value = assignment.value
+            if value is None:
+                continue
+            if not (
+                _node_references_attribute_owner(value, owner_names={"session"}, attribute="task_id")
+                or _node_references_any_local_name(value, task_id_names)
+            ):
+                continue
+            targets = list(assignment.targets) if isinstance(assignment, ast.Assign) else [assignment.target]
+            before = len(task_id_names)
+            for target in targets:
+                task_id_names.update(_assignment_target_names(target))
+            changed = changed or len(task_id_names) != before
+
+    return task_id_names
+
+
+def _node_references_session_task_id(node: ast.AST, *, task_id_names: AbstractSet[str]) -> bool:
+    return _node_references_attribute_owner(
+        node,
+        owner_names={"session"},
+        attribute="task_id",
+    ) or _node_references_any_local_name(node, task_id_names)
+
+
+def _get_session_lock_call_uses_task_id(
+    call: ast.Call,
+    *,
+    task_id_names: AbstractSet[str],
+) -> bool:
+    lock_args = list(call.args) + [keyword.value for keyword in call.keywords]
+    return any(_node_references_session_task_id(arg, task_id_names=task_id_names) for arg in lock_args)
+
+
+def _write_session_per_task_lock_with_nodes(method_def: ast.FunctionDef) -> list[ast.With]:
+    task_id_names = _session_task_id_local_names(method_def)
+    lock_with_nodes: list[ast.With] = []
+
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.With):
+            continue
+        for item in node.items:
+            context_expr = item.context_expr
+            if not isinstance(context_expr, ast.Call):
+                continue
+            if _call_name(context_expr.func) != f"self.{SESSION_WRITE_LOCK_HELPER}":
+                continue
+            if _get_session_lock_call_uses_task_id(context_expr, task_id_names=task_id_names):
+                lock_with_nodes.append(node)
+
+    return lock_with_nodes
+
+
+def _session_write_receipt_record_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
+    return [
+        node
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == f"self.{SESSION_WRITE_RECEIPT_RECORD_HELPER}"
+    ]
+
+
+def _session_write_direct_receipt_commit_nodes(
+    method_def: ast.FunctionDef,
+) -> list[ast.Assign | ast.AnnAssign]:
+    commits: list[ast.Assign | ast.AnnAssign] = []
+    for node in _task_runtime_self_attribute_commit_assignments(method_def, SESSION_WRITE_RECEIPT_ANCHOR):
+        value = _assignment_value(node)
+        if isinstance(value, ast.Call) and _session_write_receipt_constructor_call(value):
+            commits.append(node)
+    return commits
+
+
+def _session_write_scope_method_names(method_defs: dict[str, ast.FunctionDef]) -> set[str]:
+    names = {SESSION_WRITE_RECEIPT_OWNER_METHOD}
+    if SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD in method_defs:
+        names.add(SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD)
+    return names
+
+
 def _session_write_receipt_preserved_flag(commit: ast.Assign | ast.AnnAssign | ast.Call) -> bool | None:
     if isinstance(commit, ast.Call):
         return _bool_keyword_value(commit, SESSION_WRITE_RECEIPT_PRESERVED_KEY)
@@ -8382,26 +8481,37 @@ def _check_task_runtime_service_initializes_session_write_receipt_anchor() -> li
 
 def _check_write_session_updates_session_write_receipts() -> list[str]:
     method_defs = _task_runtime_service_method_defs()
-    write_session = method_defs.get(SESSION_WRITE_RECEIPT_OWNER_METHOD)
-    if write_session is None:
-        return [f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() not found"]
+    missing_scope_methods = [
+        method_name
+        for method_name in sorted(_session_write_scope_method_names(method_defs))
+        if method_name not in method_defs
+    ]
+    if missing_scope_methods:
+        return [f"TaskRuntimeService missing session write scope methods: {missing_scope_methods}"]
 
     offenders: list[str] = []
-    write_calls = _write_session_atomic_write_calls(write_session)
-    if not write_calls:
+    write_call_entries: list[tuple[str, ast.FunctionDef, ast.Call]] = []
+    for method_name in sorted(_session_write_scope_method_names(method_defs)):
+        method_def = method_defs[method_name]
+        write_call_entries.extend(
+            (method_name, method_def, call) for call in _write_session_atomic_write_calls(method_def)
+        )
+
+    if not write_call_entries:
         offenders.append(
-            "TaskRuntimeService._write_session() must persist sessions through self._kernel_fs.write_json_atomic()"
+            "TaskRuntimeService._write_session() or its lock-scoped helper must persist "
+            "sessions through self._kernel_fs.write_json_atomic()"
         )
         return offenders
 
     preserved_receipt_count = 0
     normal_receipt_count = 0
 
-    for write_call in write_calls:
-        receipt_assignment = _session_write_receipt_commit_after_call(write_session, write_call)
+    for method_name, method_def, write_call in write_call_entries:
+        receipt_assignment = _session_write_receipt_commit_after_call(method_def, write_call)
         if receipt_assignment is None:
             offenders.append(
-                f"TaskRuntimeService._write_session():{write_call.lineno} must update "
+                f"TaskRuntimeService.{method_name}():{write_call.lineno} must update "
                 f"self.{SESSION_WRITE_RECEIPT_ANCHOR} directly or call "
                 f"self.{SESSION_WRITE_RECEIPT_RECORD_HELPER}(...) after "
                 "write_json_atomic() returns successfully"
@@ -8416,7 +8526,7 @@ def _check_write_session_updates_session_write_receipts() -> list[str]:
             normal_receipt_count += 1
             continue
         offenders.append(
-            f"TaskRuntimeService._write_session():{receipt_assignment.lineno} must set "
+            f"TaskRuntimeService.{method_name}():{receipt_assignment.lineno} must set "
             f"{SESSION_WRITE_RECEIPT_PRESERVED_KEY}=True for preserved terminal "
             "session write-backs or False for normal session writes"
         )
@@ -8491,16 +8601,20 @@ def _check_session_write_receipt_record_helper_contract() -> list[str]:
             f"{SESSION_WRITE_RECEIPT_CLASS}; receipt metadata must not be an untyped dict"
         )
 
+    allowed_record_helper_callers = {
+        SESSION_WRITE_RECEIPT_OWNER_METHOD,
+        SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD,
+    }
     for method_name, method_def in method_defs.items():
         call_lines = _task_runtime_service_self_method_call_lines(method_def, SESSION_WRITE_RECEIPT_RECORD_HELPER)
         if not call_lines:
             continue
-        if method_name == SESSION_WRITE_RECEIPT_OWNER_METHOD:
+        if method_name in allowed_record_helper_callers:
             continue
         offenders.extend(
             f"TaskRuntimeService.{method_name}():{line} calls "
             f"self.{SESSION_WRITE_RECEIPT_RECORD_HELPER}(); only _write_session() "
-            "may invoke the session receipt commit helper"
+            "or its lock-scoped private helper may invoke the session receipt commit helper"
             for line in call_lines
         )
     return offenders
@@ -8540,15 +8654,21 @@ def _check_last_session_write_receipt_accessor_is_safe() -> list[str]:
 def _check_session_write_receipt_owner_boundary() -> list[str]:
     method_defs = _task_runtime_service_method_defs()
     offenders: list[str] = _check_session_write_receipt_record_helper_contract()
-    allowed_assignment_methods = {"__init__", SESSION_WRITE_RECEIPT_OWNER_METHOD, SESSION_WRITE_RECEIPT_RECORD_HELPER}
+    allowed_assignment_methods = {
+        "__init__",
+        SESSION_WRITE_RECEIPT_OWNER_METHOD,
+        SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD,
+        SESSION_WRITE_RECEIPT_RECORD_HELPER,
+    }
 
     for method_name, method_def in method_defs.items():
         assignment_lines = _task_runtime_self_attribute_assignment_lines(method_def, SESSION_WRITE_RECEIPT_ANCHOR)
         if assignment_lines and method_name not in allowed_assignment_methods:
             offenders.extend(
                 f"TaskRuntimeService.{method_name}():{line} assigns "
-                f"self.{SESSION_WRITE_RECEIPT_ANCHOR}; only _write_session() may "
-                "commit session write receipts after durable writes"
+                f"self.{SESSION_WRITE_RECEIPT_ANCHOR}; only _write_session() or "
+                "its lock-scoped private helper may commit session write receipts "
+                "after durable writes"
                 for line in assignment_lines
             )
 
@@ -8570,6 +8690,114 @@ def _check_session_write_receipt_owner_boundary() -> list[str]:
                     f"{SESSION_WRITE_RECEIPT_PRESERVED_KEY}; only _write_session() owns "
                     "session receipt metadata"
                 )
+
+    return offenders
+
+
+def _write_session_lock_boundary_violations() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    write_session = method_defs.get(SESSION_WRITE_RECEIPT_OWNER_METHOD)
+    locked_owner = method_defs.get(SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD)
+    offenders: list[str] = []
+
+    if write_session is None:
+        offenders.append(f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() not found")
+    else:
+        parents = _parent_lookup(write_session)
+        lock_with_nodes = _write_session_per_task_lock_with_nodes(write_session)
+        if not lock_with_nodes:
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() must enter "
+                f"with self.{SESSION_WRITE_LOCK_HELPER}(<session task_id>): before "
+                "session read/write/receipt work"
+            )
+        elif len(lock_with_nodes) != 1:
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() must keep "
+                "session writes and receipt commits in one per-task session-lock "
+                f"critical section; found {len(lock_with_nodes)} per-task lock blocks"
+            )
+        else:
+            lock_node = lock_with_nodes[0]
+            direct_critical_nodes: list[ast.AST] = [
+                *_write_session_atomic_write_calls(write_session),
+                *_session_write_receipt_record_calls(write_session),
+                *_session_write_direct_receipt_commit_nodes(write_session),
+            ]
+            for node in direct_critical_nodes:
+                if not _node_is_descendant_of(node, lock_node, parents):
+                    lineno = getattr(node, "lineno", "?")
+                    offenders.append(
+                        f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}():{lineno} "
+                        "performs a session write/receipt operation outside "
+                        f"with self.{SESSION_WRITE_LOCK_HELPER}(<session task_id>)"
+                    )
+
+            locked_owner_calls = _direct_self_method_calls(write_session, SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD)
+            for call in locked_owner_calls:
+                if not _node_is_descendant_of(call, lock_node, parents):
+                    offenders.append(
+                        f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}():{call.lineno} "
+                        f"calls self.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() outside the "
+                        "per-task session-lock critical section"
+                    )
+            if (
+                locked_owner is not None
+                and (
+                    _write_session_atomic_write_calls(locked_owner)
+                    or _session_write_receipt_record_calls(locked_owner)
+                    or _session_write_direct_receipt_commit_nodes(locked_owner)
+                )
+                and not locked_owner_calls
+            ):
+                offenders.append(
+                    f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() contains durable "
+                    "session write/receipt work but TaskRuntimeService._write_session() does not call it "
+                    "inside the per-task session-lock critical section"
+                )
+
+    if locked_owner is None:
+        offenders.append(f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() not found")
+    else:
+        if not _write_session_atomic_write_calls(locked_owner):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() must own "
+                "the durable session write_json_atomic() calls"
+            )
+        if not _session_write_receipt_record_calls(locked_owner) and not _session_write_direct_receipt_commit_nodes(
+            locked_owner
+        ):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() must record "
+                "session write receipts after durable writes"
+            )
+
+    for method_name, method_def in sorted(method_defs.items()):
+        if method_name == SESSION_WRITE_RECEIPT_OWNER_METHOD:
+            continue
+        for call in _direct_self_method_calls(method_def, SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD):
+            offenders.append(
+                f"TaskRuntimeService.{method_name}():{call.lineno} calls "
+                f"self.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}(); durable session writes must enter "
+                "through TaskRuntimeService._write_session() so the per-task session lock is always held"
+            )
+
+    allowed_scope_methods = _session_write_scope_method_names(method_defs)
+    for method_name, method_def in sorted(method_defs.items()):
+        if method_name in allowed_scope_methods:
+            continue
+        for call in _write_session_atomic_write_calls(method_def):
+            offenders.append(
+                f"TaskRuntimeService.{method_name}():{call.lineno} calls "
+                "self._kernel_fs.write_json_atomic(); execution-session writes must stay behind "
+                "TaskRuntimeService._write_session() and its lock-scoped helper"
+            )
+        for call in _session_write_receipt_record_calls(method_def):
+            offenders.append(
+                f"TaskRuntimeService.{method_name}():{call.lineno} calls "
+                f"self.{SESSION_WRITE_RECEIPT_RECORD_HELPER}(); session receipt commits must stay behind "
+                "TaskRuntimeService._write_session() and its lock-scoped helper"
+            )
 
     return offenders
 
@@ -8658,12 +8886,13 @@ def test_write_session_updates_session_write_receipt_after_atomic_write() -> Non
     """WS2 execution-ledger fence: ``_write_session`` owns write receipts.
 
     Each successful ``self._kernel_fs.write_json_atomic(...)`` call must be
-    followed by a receipt commit in the same control-flow block. The commit may
-    assign ``self._last_session_write_receipt`` directly or route through the
-    private ``self._record_session_write_receipt(...)`` helper, but the helper
-    must remain callable only from ``_write_session()``. The normal path must
-    mark ``preserved_terminal_session=False`` and the preserved terminal
-    session write-back path must mark it ``True``.
+    followed by a receipt commit in the same protected write-scope block. The
+    commit may assign ``self._last_session_write_receipt`` directly or route
+    through the private ``self._record_session_write_receipt(...)`` helper, but
+    the helper must remain callable only from ``_write_session()`` or its
+    lock-scoped private body. The normal path must mark
+    ``preserved_terminal_session=False`` and the preserved terminal session
+    write-back path must mark it ``True``.
     """
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
@@ -8674,6 +8903,26 @@ def test_write_session_updates_session_write_receipt_after_atomic_write() -> Non
         f"{rel}:TaskRuntimeService._write_session() must be the single owner "
         "that records the latest session write receipt immediately after "
         "durable write_json_atomic() success. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_write_session_holds_per_task_session_lock_around_write_owner() -> None:
+    """WS2 execution-ledger fence: session write RMW work must be lock-guarded.
+
+    ``_write_session()`` is the synchronization boundary. It must acquire a
+    per-task in-process session lock derived from ``session.task_id`` and keep
+    durable session writes plus receipt commits in that same critical section,
+    either inline or through the private ``_write_session_locked()`` body.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _write_session_lock_boundary_violations()
+
+    assert not offenders, (
+        "WS2 execution ledger SSoT session write lock fence: "
+        f"{rel}:TaskRuntimeService._write_session() must acquire the per-task "
+        "session lock and keep all durable session writes plus receipt "
+        "commits in the same lock-scoped write body. Offenders:\n" + "\n".join(offenders)
     )
 
 

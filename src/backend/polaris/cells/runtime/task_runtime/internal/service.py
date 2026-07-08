@@ -149,7 +149,7 @@ class TaskRuntimeService:
         self._board = board or TaskBoard(workspace=workspace_token)
         self._kernel_fs = KernelFileSystem(workspace_token, get_default_adapter())
         # Per-task-id locks guard the read-modify-write cycle on session files.
-        self._session_locks: dict[int, threading.Lock] = {}
+        self._session_locks: dict[int, threading.RLock] = {}
         self._session_locks_meta = threading.Lock()
         self._last_session_write_receipt: TaskExecutionSessionWriteReceipt | None = None
         self._session_write_receipt_lock = threading.Lock()
@@ -2521,11 +2521,11 @@ class TaskRuntimeService:
                 return True
         return False
 
-    def _get_session_lock(self, task_id: int) -> threading.Lock:
+    def _get_session_lock(self, task_id: int) -> threading.RLock:
         """Return the per-task session lock, creating it on demand."""
         with self._session_locks_meta:
             if task_id not in self._session_locks:
-                self._session_locks[task_id] = threading.Lock()
+                self._session_locks[task_id] = threading.RLock()
             return self._session_locks[task_id]
 
     def _session_logical_path(self, task_id: int) -> str:
@@ -2603,6 +2603,19 @@ class TaskRuntimeService:
             return None
 
     def _write_session(
+        self,
+        session: TaskExecutionSession,
+        *,
+        allow_terminal_downgrade: bool = False,
+    ) -> bool:
+        task_id = int(session.task_id)
+        with self._get_session_lock(task_id):
+            return self._write_session_locked(
+                session,
+                allow_terminal_downgrade=allow_terminal_downgrade,
+            )
+
+    def _write_session_locked(
         self,
         session: TaskExecutionSession,
         *,
