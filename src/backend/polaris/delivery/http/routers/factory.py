@@ -68,9 +68,10 @@ from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.budget_policy import resolve_director_dispatch_timeout_seconds
 from polaris.kernelone.quality import (
     ScopeAuthorityOwnerHandoffIndex,
-    build_owner_handoff_index,
+    ScopeAuthorityOwnerHandoffRouting,
     owner_handoff_index_summary,
     ownership_handoff_requests_from_scope_payload,
+    resolve_owner_handoff_routing,
     task_identifier_token_aliases,
     task_record_routing_key,
 )
@@ -988,12 +989,19 @@ def _quality_gate_owner_handoff_index(
     repair: dict[str, Any],
     entries: list[Any],
 ) -> ScopeAuthorityOwnerHandoffIndex:
+    return _quality_gate_owner_handoff_routing(repair, entries).index
+
+
+def _quality_gate_owner_handoff_routing(
+    repair: dict[str, Any],
+    entries: list[Any],
+) -> ScopeAuthorityOwnerHandoffRouting:
     records: list[dict[str, Any]] = []
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if isinstance(record, dict):
             records.append(record)
-    return build_owner_handoff_index(repair, records)
+    return resolve_owner_handoff_routing(repair, records)
 
 
 def _resolve_task_identifier(*sources: Any) -> str:
@@ -1071,8 +1079,7 @@ def _record_factory_task_runtime_transition_failure(
             "success": False,
             "task_id": int(task_id),
             "action": str(action or "").strip(),
-            "reason": str(reason or "task_runtime_transition_failed").strip()
-            or "task_runtime_transition_failed",
+            "reason": str(reason or "task_runtime_transition_failed").strip() or "task_runtime_transition_failed",
             "transition_result": dict(transition_result or {}),
         }
     )
@@ -1182,9 +1189,7 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
         }
         if owner_handoff_request:
             task_summary["ownership_handoff_request"] = dict(owner_handoff_request)
-            task_summary["ownership_handoff_target_file"] = str(
-                owner_handoff_request.get("target_file") or ""
-            ).strip()
+            task_summary["ownership_handoff_target_file"] = str(owner_handoff_request.get("target_file") or "").strip()
         try:
             if exhausted:
                 transition_result = task_runtime.update_task_row(task_id, metadata=metadata_update)
@@ -1253,9 +1258,8 @@ def _apply_quality_gate_task_boundary_rework_requests(workspace: str) -> dict[st
 
     owner_handoff_summary = owner_handoff_index_summary(owner_handoff_index)
     summary.update(owner_handoff_summary)
-    summary["skipped_count"] += (
-        int(owner_handoff_summary["unmatched_owner_handoff_count"])
-        + int(owner_handoff_summary["unknown_owner_handoff_count"])
+    summary["skipped_count"] += int(owner_handoff_summary["unmatched_owner_handoff_count"]) + int(
+        owner_handoff_summary["unknown_owner_handoff_count"]
     )
 
     return summary
@@ -1329,8 +1333,8 @@ def _quality_gate_handoff_summary_from_payload(
 ) -> dict[str, Any]:
     repair_raw = payload.get("repair")
     repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
-    owner_handoff_index = _quality_gate_owner_handoff_index(repair, entries)
-    return owner_handoff_index_summary(owner_handoff_index)
+    owner_handoff_routing = _quality_gate_owner_handoff_routing(repair, entries)
+    return owner_handoff_routing.summary
 
 
 def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
@@ -1353,6 +1357,14 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
     requested_count = 0
     exhausted_count = 0
     ready_count = 0
+    payload, _artifact = _read_task_boundary_workspace_validation(workspace)
+    owner_handoff_routing: ScopeAuthorityOwnerHandoffRouting | None = None
+    owner_handoff_index: ScopeAuthorityOwnerHandoffIndex | None = None
+    if payload:
+        repair_raw = payload.get("repair")
+        repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
+        owner_handoff_routing = _quality_gate_owner_handoff_routing(repair, entries)
+        owner_handoff_index = owner_handoff_routing.index
     for entry in entries:
         record = entry.to_dict() if hasattr(entry, "to_dict") else entry
         if not isinstance(record, dict):
@@ -1370,17 +1382,22 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
             requested_count += 1
         if status in {"pending", "ready"}:
             ready_count += 1
-        tasks.append(
-            {
-                "task_id": str(record.get("id") or record.get("task_id") or "").strip(),
-                "external_task_id": _resolve_task_identifier(metadata, record),
-                "status": status,
-                "reason": str(metadata.get("qa_rework_reason") or "").strip(),
-                "retry_count": metadata.get("qa_rework_retry_count"),
-                "max_retries": metadata.get("qa_rework_max_retries"),
-                "exhausted": exhausted,
-            }
-        )
+        task_entry: dict[str, Any] = {
+            "task_id": str(record.get("id") or record.get("task_id") or "").strip(),
+            "external_task_id": _resolve_task_identifier(metadata, record),
+            "status": status,
+            "reason": str(metadata.get("qa_rework_reason") or "").strip(),
+            "retry_count": metadata.get("qa_rework_retry_count"),
+            "max_retries": metadata.get("qa_rework_max_retries"),
+            "exhausted": exhausted,
+        }
+        if owner_handoff_index is not None:
+            task_key = task_record_routing_key(record)
+            matched_request = owner_handoff_index.matched_owner_handoff_by_task_key.get(task_key, {})
+            if matched_request:
+                task_entry["ownership_handoff_request"] = dict(matched_request)
+                task_entry["ownership_handoff_target_file"] = str(matched_request.get("target_file") or "").strip()
+        tasks.append(task_entry)
 
     summary.update(
         {
@@ -1391,9 +1408,8 @@ def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
             "tasks": tasks,
         }
     )
-    payload, _artifact = _read_task_boundary_workspace_validation(workspace)
-    if payload:
-        summary.update(_quality_gate_handoff_summary_from_payload(payload, entries))
+    if owner_handoff_routing is not None:
+        summary.update(owner_handoff_routing.summary)
     return summary
 
 

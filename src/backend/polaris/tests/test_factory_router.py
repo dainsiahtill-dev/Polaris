@@ -1473,6 +1473,78 @@ def test_quality_gate_owner_handoff_index_centralizes_matching() -> None:
     assert index.unmatched_owner_handoff_requests == (unmatched_request,)
 
 
+def test_read_quality_gate_rework_summary_projects_per_task_owner_handoff(temp_workspace: Path) -> None:
+    task_board = TaskRuntimeService(str(temp_workspace))
+    owner_row = task_board.ensure_task_row(
+        external_task_id="PM-0001-1-S4",
+        subject="Owner creates src/index.js",
+        metadata={
+            "external_task_id": "PM-0001-1-S4",
+            "qa_rework_requested": True,
+            "qa_rework_reason": "task_boundary_owner_task_retry_required",
+            "qa_rework_retry_count": 1,
+            "qa_rework_max_retries": 3,
+        },
+        priority=1,
+    )
+    task_board.update_task_row(
+        owner_row["id"],
+        metadata={
+            "qa_rework_requested": True,
+            "qa_rework_exhausted": False,
+            "qa_rework_reason": "task_boundary_owner_task_retry_required",
+            "qa_rework_retry_count": 1,
+            "qa_rework_max_retries": 3,
+        },
+    )
+
+    target = Path(resolve_logical_path(str(temp_workspace), "workspace/qa/latest.workspace-validation.json"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "repair": {
+                    "success_reason": "repair_targets_outside_current_task_target_files",
+                    "task_boundary_scope_filter": {
+                        "schema_version": "director.task_boundary.repair_scope_filter.v1",
+                        "reason": "quality_repair_targets_outside_current_task_target_files",
+                        "ownership_handoff_requests": [
+                            {
+                                "schema_version": "file-ownership-handoff-request/1",
+                                "target_file": "src/index.js",
+                                "requesting_task_id": "PM-0001-2-step-3",
+                                "reason": "quality_repair_targets_outside_current_task_target_files",
+                                "owner_step_id": "PM-0001-1-S4",
+                                "owner_parent": "PM-0001-1",
+                                "owner_found": True,
+                                "recommended_route": "owner_task_retry",
+                                "status": "owner_found",
+                            }
+                        ],
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rework_summary = factory_router_module._read_quality_gate_rework_summary(str(temp_workspace))
+
+    assert rework_summary["requested_count"] == 1
+    assert rework_summary["ownership_handoff_count"] == 1
+    assert rework_summary["matched_owner_handoff_count"] == 1
+    assert rework_summary["unmatched_owner_handoff_count"] == 0
+
+    owner_task_entry = next(t for t in rework_summary["tasks"] if t["external_task_id"] == "PM-0001-1-S4")
+    assert owner_task_entry["ownership_handoff_request"]["owner_step_id"] == "PM-0001-1-S4"
+    assert owner_task_entry["ownership_handoff_request"]["recommended_route"] == "owner_task_retry"
+    assert owner_task_entry["ownership_handoff_target_file"] == "src/index.js"
+
+
 def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(temp_workspace: Path) -> None:
     task_board = TaskRuntimeService(str(temp_workspace))
     current_row = task_board.ensure_task_row(

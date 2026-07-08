@@ -18,6 +18,7 @@ from polaris.kernelone.quality.scope_authority import (
     ownership_handoff_requests_from_scope_payload,
     partition_paths_by_declared_scope,
     path_matches_any_declared_scope_candidate,
+    resolve_owner_handoff_routing,
     scope_authority_decision_summary,
     task_record_identifier_tokens,
     task_record_routing_key,
@@ -664,3 +665,161 @@ def test_scope_authority_index_summary_bounds_matched_route_list() -> None:
         isinstance(item, dict) and "task_key" in item and "request" in item
         for item in summary["matched_owner_handoff_routes"]
     )
+
+
+# ── resolve_owner_handoff_routing (WS5 canonical routing) ─────────────────
+
+
+def test_resolve_owner_handoff_routing_end_to_end(tmp_path: Path) -> None:
+    """Full pipeline: build decision, wrap as payload, resolve routing to owning task."""
+
+    workspace = str(tmp_path)
+    record_file_owners(
+        workspace,
+        workspace,
+        [{"step_id": "S4", "target_file": "src/index.js"}],
+        "PM-0001-1",
+    )
+
+    # Build a real scope-authority decision.
+    decision = build_scope_authority_decision(
+        workspace=workspace,
+        cache_root=workspace,
+        task_declared_write_targets=["tests/app.test.js"],
+        out_of_scope_repair_target_files=["src/index.js", "src/unknown.js"],
+        requesting_task_id="PM-0001-2-step-3",
+        reason="quality_repair_targets_outside_current_task_target_files",
+    )
+    payload: dict[str, Any] = {
+        "task_boundary_scope_filter": {
+            "scope_authority": decision.to_dict(),
+        }
+    }
+    # Task record for the owner (PM-0001-1 ≡ task key "4" via parent strip).
+    task_records: list[dict[str, Any]] = [
+        {"id": "4", "external_task_id": "PM-0001-1", "metadata": {}},
+        {"id": "7", "external_task_id": "PM-0001-2", "metadata": {}},
+    ]
+
+    routing = resolve_owner_handoff_routing(payload, task_records)
+
+    # The owner-handoff index found the owning task.
+    assert routing.index.matched_owner_handoff_by_task_key
+    assert "4" in routing.owner_routing_keys
+    assert routing.has_routable_handoffs is True
+    # Unknown owner for src/unknown.js → unresolved.
+    assert routing.has_unresolved_handoffs is True
+    assert routing.index.unknown_owner_handoff_requests
+    # Summary carries the counts.
+    assert routing.summary["ownership_handoff_count"] == 2
+    assert routing.summary["matched_owner_handoff_count"] >= 1
+    assert routing.summary["unknown_owner_handoff_count"] >= 1
+
+
+def test_resolve_owner_handoff_routing_empty_payload_returns_no_handoffs() -> None:
+    """A payload with no scope-authority evidence produces an empty routing result."""
+
+    routing = resolve_owner_handoff_routing({}, [])
+
+    assert routing.index.all_handoff_requests == ()
+    assert routing.index.owner_handoff_requests == ()
+    assert routing.index.unknown_owner_handoff_requests == ()
+    assert routing.index.matched_owner_handoff_by_task_key == {}
+    assert routing.index.unmatched_owner_handoff_requests == ()
+    assert routing.owner_routing_keys == ()
+    assert routing.has_routable_handoffs is False
+    assert routing.has_unresolved_handoffs is False
+    assert routing.summary["ownership_handoff_count"] == 0
+
+
+def test_resolve_owner_handoff_routing_unknown_owner_only() -> None:
+    """When all handoff requests have unknown owners, routing flags unresolved."""
+
+    payload: dict[str, Any] = {
+        "ownership_handoff_requests": [
+            {
+                "target_file": "src/orphan.js",
+                "owner_found": False,
+                "recommended_route": "scope_authority_resolution",
+            }
+        ]
+    }
+
+    routing = resolve_owner_handoff_routing(payload, [])
+
+    assert routing.index.owner_handoff_requests == ()
+    assert routing.index.unknown_owner_handoff_requests
+    assert routing.has_routable_handoffs is False
+    assert routing.has_unresolved_handoffs is True
+
+
+def test_resolve_owner_handoff_routing_matched_and_unmatched_partition() -> None:
+    """Matched request routes to owning task; unmatched remains in unmatched bucket."""
+
+    matched_request = {
+        "target_file": "src/app.ts",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_task_identifier_tokens": ["TASK-1"],
+    }
+    unmatched_request = {
+        "target_file": "src/lib.ts",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_task_identifier_tokens": ["TASK-99"],
+    }
+    payload: dict[str, Any] = {"ownership_handoff_requests": [matched_request, unmatched_request]}
+    task_records: list[dict[str, Any]] = [{"id": "TASK-1", "metadata": {}}]
+
+    routing = resolve_owner_handoff_routing(payload, task_records)
+
+    assert "TASK-1" in routing.owner_routing_keys
+    assert routing.index.matched_owner_handoff_by_task_key["TASK-1"] == matched_request
+    assert routing.index.unmatched_owner_handoff_requests == (unmatched_request,)
+    assert routing.has_routable_handoffs is True
+    assert routing.has_unresolved_handoffs is False
+
+
+def test_resolve_owner_handoff_routing_no_string_recovery_from_inert_metadata() -> None:
+    """String rows in handoff arrays are never parsed into handoff requests."""
+
+    payload: dict[str, Any] = {
+        "ownership_handoff_requests": [
+            "src/string-looks-like-path-but-is-not-evidence",
+            42,
+            None,
+        ]
+    }
+
+    routing = resolve_owner_handoff_routing(payload, [])
+
+    assert routing.index.all_handoff_requests == ()
+    assert routing.has_routable_handoffs is False
+    assert routing.has_unresolved_handoffs is False
+
+
+def test_resolve_owner_handoff_routing_uses_task_boundary_scope_filter_priority() -> None:
+    """Task-boundary scope-filter payload is searched before top-level keys."""
+
+    priority_request = {
+        "target_file": "src/priority.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_task_identifier_tokens": ["TASK-1"],
+    }
+    lower_request = {
+        "target_file": "src/lower.js",
+        "owner_found": True,
+        "recommended_route": "owner_task_retry",
+        "owner_task_identifier_tokens": ["TASK-2"],
+    }
+    payload: dict[str, Any] = {
+        "task_boundary_scope_filter": {"ownership_handoff_requests": [priority_request]},
+        "ownership_handoff_requests": [lower_request],
+    }
+
+    routing = resolve_owner_handoff_routing(payload, [])
+
+    # Only the scope-filter priority request is used; top-level is ignored.
+    assert len(routing.index.all_handoff_requests) == 1
+    assert routing.index.all_handoff_requests[0]["target_file"] == "src/priority.js"

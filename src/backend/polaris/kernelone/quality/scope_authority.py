@@ -450,6 +450,69 @@ def owner_handoff_index_summary(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class ScopeAuthorityOwnerHandoffRouting:
+    """Canonical owner-handoff routing result.
+
+    This is the single-entry-point projection that downstream orchestrators
+    consume to decide what to do with out-of-scope repair targets.  It
+    composes ``ScopeAuthorityOwnerHandoffIndex`` with the bounded summary
+    projection so consumers never need to rebuild routing logic with local
+    string heuristics.
+
+    Read-only: it does not authorize writes or mutate task state.
+    """
+
+    index: ScopeAuthorityOwnerHandoffIndex
+    summary: dict[str, Any]
+    owner_routing_keys: tuple[str, ...]
+    has_routable_handoffs: bool
+    has_unresolved_handoffs: bool
+
+
+def resolve_owner_handoff_routing(
+    payload: Mapping[str, Any],
+    task_records: Sequence[Mapping[str, Any]],
+    *,
+    summary_limit: int = 12,
+) -> ScopeAuthorityOwnerHandoffRouting:
+    """Resolve owner-handoff routing from a scope-authority payload.
+
+    This is the canonical single-entry-point for routing out-of-scope repair
+    targets to their owning tasks.  It chains payload extraction, task-record
+    matching, and bounded summary projection into one atomic call so downstream
+    orchestrators do not rebuild owner matching with local heuristics.
+
+    ``payload`` may be a full repair payload, a task-boundary scope-filter
+    payload, or a nested scope-authority projection (same shapes accepted by
+    ``ownership_handoff_requests_from_scope_payload``).
+
+    ``task_records`` are read-only task-board rows; they are never mutated.
+
+    Complexity:
+        O(r * t) time where ``r`` is handoff request count and ``t`` is task
+        record count; O(r + t) memory for normalized/deduplicated rows.
+
+    Returns:
+        A ``ScopeAuthorityOwnerHandoffRouting`` containing the index, bounded
+        summary, sorted routing keys, and convenience flags for consumers that
+        only need to branch on "has anything to route?".
+    """
+
+    index = build_owner_handoff_index(payload, task_records)
+    summary = owner_handoff_index_summary(index, limit=summary_limit)
+    routing_keys = tuple(sorted(index.matched_owner_handoff_by_task_key))
+    has_routable = bool(routing_keys) or bool(index.unmatched_owner_handoff_requests)
+    has_unresolved = bool(index.unknown_owner_handoff_requests)
+    return ScopeAuthorityOwnerHandoffRouting(
+        index=index,
+        summary=summary,
+        owner_routing_keys=routing_keys,
+        has_routable_handoffs=has_routable,
+        has_unresolved_handoffs=has_unresolved,
+    )
+
+
 def task_record_routing_key(record: Mapping[str, Any]) -> str:
     """Return the stable task-row routing key used by owner handoff indexes.
 
@@ -609,6 +672,7 @@ def build_scope_authority_decision(
 __all__ = [
     "ScopeAuthorityDecision",
     "ScopeAuthorityOwnerHandoffIndex",
+    "ScopeAuthorityOwnerHandoffRouting",
     "build_owner_handoff_index",
     "build_scope_authority_decision",
     "glob_declared_scope_path_matches",
@@ -620,6 +684,7 @@ __all__ = [
     "partition_paths_by_declared_scope",
     "path_matches_any_declared_scope_candidate",
     "path_matches_declared_scope_candidate",
+    "resolve_owner_handoff_routing",
     "scope_authority_decision_summary",
     "task_record_identifier_tokens",
     "task_record_routing_key",
