@@ -8177,12 +8177,21 @@ SESSION_READ_OWNER_METHOD = "_read_session"
 SESSION_READ_LOCKED_HELPER_METHOD = "_read_session_locked"
 SESSION_TERMINAL_SNAPSHOT_METHOD = "_find_terminal_session_snapshot"
 SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD = "_find_terminal_session_snapshot_locked"
+SESSION_BULK_SUSPEND_METHOD = "suspend_active_executions_for_run"
+SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD = "_suspend_active_session_for_run_locked"
+SESSION_WRITE_LOCKED_HELPER_CALLERS = frozenset(
+    {
+        SESSION_WRITE_RECEIPT_OWNER_METHOD,
+        SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD,
+    }
+)
 SESSION_READ_LOCKED_HELPER_METHODS = frozenset({SESSION_READ_LOCKED_HELPER_METHOD})
 SESSION_READ_LOCKED_HELPER_CALLERS = frozenset(
     {
         SESSION_READ_OWNER_METHOD,
         SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD,
         SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD,
+        SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD,
     }
 )
 SESSION_WRITE_RECEIPT_TRANSITION_METHODS = frozenset(
@@ -9081,13 +9090,14 @@ def _write_session_lock_boundary_violations() -> list[str]:
             )
 
     for method_name, method_def in sorted(method_defs.items()):
-        if method_name == SESSION_WRITE_RECEIPT_OWNER_METHOD:
+        if method_name in SESSION_WRITE_LOCKED_HELPER_CALLERS:
             continue
         for call in _direct_self_method_calls(method_def, SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD):
             offenders.append(
                 f"TaskRuntimeService.{method_name}():{call.lineno} calls "
                 f"self.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}(); durable session writes must enter "
-                "through TaskRuntimeService._write_session() so the per-task session lock is always held"
+                "through TaskRuntimeService._write_session() or a reviewed lock-scoped helper so the "
+                "per-task session lock is always held"
             )
 
     allowed_scope_methods = _session_write_scope_method_names(method_defs)
@@ -9220,6 +9230,58 @@ def _read_session_lock_boundary_violations() -> list[str]:
             f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() must route "
             f"terminal-session reconciliation through self.{SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD}() "
             "inside the write-locked path"
+        )
+
+    return offenders
+
+
+def _check_suspend_active_executions_for_run_uses_locked_session_rmw() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    bulk_suspend = method_defs.get(SESSION_BULK_SUSPEND_METHOD)
+    locked_helper = method_defs.get(SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD)
+    offenders: list[str] = []
+
+    if bulk_suspend is None:
+        return [f"TaskRuntimeService.{SESSION_BULK_SUSPEND_METHOD}() not found"]
+
+    for public_method in (SESSION_READ_OWNER_METHOD, SESSION_WRITE_RECEIPT_OWNER_METHOD):
+        for call in _direct_self_method_calls(bulk_suspend, public_method):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_BULK_SUSPEND_METHOD}():{call.lineno} calls "
+                f"self.{public_method}(); bulk suspend must keep session RMW in one explicit "
+                "lock domain and use locked helpers instead of re-entering public boundaries"
+            )
+
+    helper_calls = _direct_self_method_calls(
+        bulk_suspend,
+        SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD,
+    )
+    if not helper_calls:
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_BULK_SUSPEND_METHOD}() must call "
+            f"self.{SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD}() for bulk session RMW"
+        )
+
+    if locked_helper is None:
+        offenders.append(f"TaskRuntimeService.{SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD}() not found")
+        return offenders
+
+    for public_method in (SESSION_READ_OWNER_METHOD, SESSION_WRITE_RECEIPT_OWNER_METHOD):
+        for call in _direct_self_method_calls(locked_helper, public_method):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD}():{call.lineno} "
+                f"calls self.{public_method}(); the private locked helper must only use "
+                "locked session read/write helpers"
+            )
+    if not _direct_self_method_calls(locked_helper, SESSION_READ_LOCKED_HELPER_METHOD):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD}() must call "
+            f"self.{SESSION_READ_LOCKED_HELPER_METHOD}() while the caller holds session locks"
+        )
+    if not _direct_self_method_calls(locked_helper, SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD}() must call "
+            f"self.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() while the caller holds session locks"
         )
 
     return offenders
@@ -9403,6 +9465,23 @@ def test_read_session_holds_per_task_and_file_locks_around_locked_read_helper() 
         "session lock and cooperative session file lock, durable read_json() "
         "must stay inside _read_session_locked(), and write-locked terminal "
         "snapshot lookup must not re-enter public _read_session(). Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_suspend_active_executions_for_run_uses_locked_session_rmw() -> None:
+    """WS2 execution-ledger fence: bulk suspend must not re-enter public session RMW."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_suspend_active_executions_for_run_uses_locked_session_rmw()
+
+    assert not offenders, (
+        "WS2 execution ledger SSoT bulk suspend lock fence: "
+        f"{rel}:TaskRuntimeService.{SESSION_BULK_SUSPEND_METHOD}() must keep "
+        "session read-modify-write in one explicit per-task session lock plus "
+        "cooperative file-lock domain. It must not call public _read_session() "
+        "or _write_session(); use the private locked suspend helper or direct "
+        "_read_session_locked()/_write_session_locked() calls inside that same "
+        "lock domain. Offenders:\n" + "\n".join(offenders)
     )
 
 

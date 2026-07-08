@@ -7,6 +7,7 @@ import re
 import shutil
 import threading
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, NoReturn, Sequence
 
@@ -82,6 +83,14 @@ _REEXECUTION_METADATA_DROP_KEYS = frozenset(
 
 class TaskExecutionSessionWriteConflictError(RuntimeError):
     """Raised when an execution-session file changes before replacement."""
+
+
+@dataclass(frozen=True, slots=True)
+class _LockedSessionSuspendResult:
+    """Result of a locked per-session bulk suspend attempt."""
+
+    session: TaskExecutionSession | None
+    session_written: bool
 
 
 def _raise_retired_entity_api(method: str, replacement: str) -> NoReturn:
@@ -2185,21 +2194,27 @@ class TaskRuntimeService:
             task_id = self.normalize_task_id(task.id)
             if task_id is None:
                 continue
+            reconcile_terminal_session = False
             session_lock = self._get_session_lock(task_id)
-            with session_lock:
-                session = self._read_session(task_id)
+            with (
+                session_lock,
+                self._board._file_lock(self._session_file_lock_path(task_id)),
+            ):
+                suspend_result = self._suspend_active_session_for_run_locked(
+                    task_id,
+                    run_id=normalized_run_id,
+                    reason=reason,
+                )
+                session = suspend_result.session
                 if session is None:
                     continue
-                if str(session.run_id or "").strip() != normalized_run_id:
-                    continue
-                if session.status != "active":
-                    continue
 
-                session.mark_suspended(reason=reason, resumable=True)
-                session_written = self._write_session(session)
-                if not session_written:
-                    self._reconcile_terminal_task_row(task_id, session=session)
-                    continue
+                if not suspend_result.session_written:
+                    reconcile_terminal_session = True
+
+            if reconcile_terminal_session:
+                self._reconcile_terminal_task_row(task_id, session=session)
+                continue
 
             task_row = task.to_dict()
             existing_metadata = dict(task_row.get("metadata") or {})
@@ -2242,6 +2257,29 @@ class TaskRuntimeService:
             suspended_rows=suspended_rows,
             failed=failed,
             execution_events=execution_events,
+        )
+
+    def _suspend_active_session_for_run_locked(
+        self,
+        task_id: int,
+        *,
+        run_id: str,
+        reason: str,
+    ) -> _LockedSessionSuspendResult:
+        """Suspend one active run-owned session while caller holds session locks."""
+
+        session = self._read_session_locked(task_id)
+        if session is None:
+            return _LockedSessionSuspendResult(session=None, session_written=False)
+        if str(session.run_id or "").strip() != run_id:
+            return _LockedSessionSuspendResult(session=None, session_written=False)
+        if session.status != "active":
+            return _LockedSessionSuspendResult(session=None, session_written=False)
+
+        session.mark_suspended(reason=reason, resumable=True)
+        return _LockedSessionSuspendResult(
+            session=session,
+            session_written=self._write_session_locked(session),
         )
 
     def list_ready(self) -> list[Task]:

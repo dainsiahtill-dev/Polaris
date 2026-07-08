@@ -3390,10 +3390,29 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     session_path.write_text(json.dumps(stale_session, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     reloaded = TaskRuntimeService(str(workspace))
-    suspended = reloaded.suspend_active_executions_for_run(
-        "run-terminal-race",
-        reason="factory_stage_timeout",
-    )
+    suspended_results: list[dict[str, Any]] = []
+    suspend_errors: list[Exception] = []
+
+    def run_bulk_suspend() -> None:
+        try:
+            suspended_results.append(
+                reloaded.suspend_active_executions_for_run(
+                    "run-terminal-race",
+                    reason="factory_stage_timeout",
+                )
+            )
+        except (AssertionError, RuntimeError, TypeError, ValueError) as exc:
+            suspend_errors.append(exc)
+
+    suspend_thread = threading.Thread(target=run_bulk_suspend, daemon=True)
+    suspend_thread.start()
+    suspend_thread.join(timeout=3.0)
+    if suspend_thread.is_alive():
+        pytest.fail("bulk suspend terminal-preserved path deadlocked while reconciling under the session file lock")
+    if suspend_errors:
+        raise suspend_errors[0]
+    assert len(suspended_results) == 1
+    suspended = suspended_results[0]
 
     assert suspended["success"] is True
     assert suspended["suspended_count"] == 0
@@ -3401,6 +3420,13 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     assert persisted_session["status"] == "completed"
     persisted_task = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
     assert persisted_task["status"] == "completed"
+    _assert_task_execution_session_write_receipt(
+        reloaded.last_session_write_receipt(),
+        task_id=int(created_id),
+        session_id=str(claimed["session"]["session_id"]),
+        session_path=session_path,
+        preserved_terminal_session=True,
+    )
 
 
 def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp_path: Path) -> None:
@@ -4073,6 +4099,223 @@ def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_pat
     assert other_heartbeat["success"] is True
     assert other_heartbeat["execution_event"]["ok"] is True
     assert other_heartbeat["execution_event"]["event_type"] == "heartbeat_renewed"
+
+
+def test_suspend_active_executions_for_run_reads_and_writes_session_under_file_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    other_run_task = service.create_task_row(subject="bulk suspend other run")
+    other_run_task_id = int(other_run_task["id"])
+    inactive_task = service.create_task_row(subject="bulk suspend inactive same run")
+    inactive_task_id = int(inactive_task["id"])
+    cancelled_task = service.create_task_row(subject="bulk suspend lock contract")
+    cancelled_task_id = int(cancelled_task["id"])
+    cancelled_claim = service.claim_execution(
+        cancelled_task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-bulk-lock-contract",
+        selection_source="unit",
+    )
+    other_run_claim = service.claim_execution(
+        other_run_task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-bulk-lock-other",
+        selection_source="unit",
+    )
+    inactive_claim = service.claim_execution(
+        inactive_task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-bulk-lock-contract",
+        selection_source="unit",
+    )
+    assert cancelled_claim["success"] is True
+    assert other_run_claim["success"] is True
+    assert inactive_claim["success"] is True
+    inactive_suspend = service.suspend_execution(
+        inactive_task_id,
+        session_id=str(inactive_claim["session"]["session_id"]),
+        reason="already_suspended_before_bulk_cancel",
+    )
+    assert inactive_suspend["success"] is True
+    session_id = str(cancelled_claim["session"]["session_id"])
+
+    task_ids = (other_run_task_id, inactive_task_id, cancelled_task_id)
+    session_lock_paths_by_task_id = {task_id: service._session_file_lock_path(task_id) for task_id in task_ids}
+    task_id_by_session_lock_path = {lock_path: task_id for task_id, lock_path in session_lock_paths_by_task_id.items()}
+    entered_session_lock_entries_by_task_id: dict[int, list[int]] = {task_id: [] for task_id in task_ids}
+    read_lock_entries_by_task_id: dict[int, list[int]] = {task_id: [] for task_id in task_ids}
+    write_lock_entries_by_task_id: dict[int, list[int]] = {task_id: [] for task_id in task_ids}
+    active_session_lock_entries: list[tuple[int, Path, int]] = []
+    next_session_lock_entry = 0
+    events: list[str] = []
+    public_session_boundary_forbidden = True
+    other_run_session_path = _session_file_path(workspace, other_run_task_id)
+    inactive_session_path = _session_file_path(workspace, inactive_task_id)
+    other_run_session_hash = _sha256_utf8_file(other_run_session_path)
+    inactive_session_hash = _sha256_utf8_file(inactive_session_path)
+    original_file_lock = service._board._file_lock
+    original_write_session = service._write_session
+    original_read_session_locked = service._read_session_locked
+    original_write_session_locked = service._write_session_locked
+
+    def active_session_lock_entry_id(task_id: int) -> int | None:
+        expected_lock_path = session_lock_paths_by_task_id[task_id]
+        for active_task_id, lock_path, entry_id in reversed(active_session_lock_entries):
+            if active_task_id == task_id and lock_path == expected_lock_path:
+                return entry_id
+        return None
+
+    @contextmanager
+    def tracking_file_lock(lock_file_path: Path) -> Iterator[object]:
+        nonlocal next_session_lock_entry
+
+        lock_path = Path(lock_file_path)
+        locked_task_id = task_id_by_session_lock_path.get(lock_path)
+        entry_id: int | None = None
+        if locked_task_id is not None and public_session_boundary_forbidden:
+            next_session_lock_entry += 1
+            entry_id = next_session_lock_entry
+            entered_session_lock_entries_by_task_id[locked_task_id].append(entry_id)
+            events.append(f"enter:{locked_task_id}:{entry_id}")
+        with original_file_lock(lock_path) as lock_handle:
+            if locked_task_id is not None and entry_id is not None:
+                assert entry_id is not None
+                active_session_lock_entries.append((locked_task_id, lock_path, entry_id))
+            try:
+                yield lock_handle
+            finally:
+                if locked_task_id is not None and entry_id is not None:
+                    released_task_id, released_lock_path, released_entry_id = active_session_lock_entries.pop()
+                    assert released_task_id == locked_task_id
+                    assert released_lock_path == lock_path
+                    assert released_entry_id == entry_id
+                    events.append(f"exit:{locked_task_id}:{entry_id}")
+
+    def read_session_locked_spy(locked_task_id: int) -> TaskExecutionSession | None:
+        task_id = int(locked_task_id)
+        entry_id = active_session_lock_entry_id(task_id)
+        if entry_id is None and not public_session_boundary_forbidden:
+            return original_read_session_locked(locked_task_id)
+        assert entry_id is not None
+        read_lock_entries_by_task_id[task_id].append(entry_id)
+        events.append(f"read_session_locked:{task_id}:{entry_id}")
+        return original_read_session_locked(locked_task_id)
+
+    def write_session_locked_spy(
+        session: TaskExecutionSession,
+        *,
+        allow_terminal_downgrade: bool = False,
+    ) -> bool:
+        nonlocal public_session_boundary_forbidden
+
+        task_id = int(session.task_id)
+        entry_id = active_session_lock_entry_id(task_id)
+        assert entry_id is not None
+        write_lock_entries_by_task_id[task_id].append(entry_id)
+        events.append(f"write_session_locked:{task_id}:{entry_id}")
+        written = original_write_session_locked(
+            session,
+            allow_terminal_downgrade=allow_terminal_downgrade,
+        )
+        public_session_boundary_forbidden = False
+        return written
+
+    def read_session_public_boundary_spy(public_task_id: int) -> TaskExecutionSession | None:
+        if public_session_boundary_forbidden:
+            raise AssertionError("bulk suspend must use the locked session read boundary")
+        task_id = int(public_task_id)
+        with (
+            service._get_session_lock(task_id),
+            original_file_lock(service._session_file_lock_path(task_id)),
+        ):
+            return original_read_session_locked(task_id)
+
+    def write_session_public_boundary_spy(
+        session: TaskExecutionSession,
+        *,
+        allow_terminal_downgrade: bool = False,
+    ) -> bool:
+        if public_session_boundary_forbidden:
+            raise AssertionError("bulk suspend must use the locked session write boundary")
+        return original_write_session(
+            session,
+            allow_terminal_downgrade=allow_terminal_downgrade,
+        )
+
+    monkeypatch.setattr(service._board, "_file_lock", tracking_file_lock)
+    monkeypatch.setattr(service, "_read_session_locked", read_session_locked_spy)
+    monkeypatch.setattr(service, "_write_session_locked", write_session_locked_spy)
+    monkeypatch.setattr(service, "_read_session", read_session_public_boundary_spy)
+    monkeypatch.setattr(service, "_write_session", write_session_public_boundary_spy)
+
+    suspended = service.suspend_active_executions_for_run(
+        "run-bulk-lock-contract",
+        reason="factory_stage_timeout",
+        metadata={"cancelled_by": "unit-test"},
+    )
+
+    assert suspended["success"] is True
+    assert suspended["reason"] == "suspended"
+    assert suspended["suspended_count"] == 1
+    assert suspended["task_ids"] == [str(cancelled_task_id)]
+    assert suspended["failed"] == []
+    assert [event["event_type"] for event in suspended["execution_events"]] == ["suspended"]
+    assert suspended["execution_events"][0]["ok"] is True
+    cancelled_lock_entries = entered_session_lock_entries_by_task_id[cancelled_task_id]
+    assert len(cancelled_lock_entries) == 1
+    cancelled_write_entry = write_lock_entries_by_task_id[cancelled_task_id][0]
+    assert cancelled_write_entry == cancelled_lock_entries[0]
+    assert set(read_lock_entries_by_task_id[cancelled_task_id]) == {cancelled_write_entry}
+    assert len(write_lock_entries_by_task_id[cancelled_task_id]) == 1
+    assert len(entered_session_lock_entries_by_task_id[other_run_task_id]) == 1
+    assert read_lock_entries_by_task_id[other_run_task_id] == entered_session_lock_entries_by_task_id[other_run_task_id]
+    assert write_lock_entries_by_task_id[other_run_task_id] == []
+    assert len(entered_session_lock_entries_by_task_id[inactive_task_id]) == 1
+    assert read_lock_entries_by_task_id[inactive_task_id] == entered_session_lock_entries_by_task_id[inactive_task_id]
+    assert write_lock_entries_by_task_id[inactive_task_id] == []
+    assert events.index(f"enter:{cancelled_task_id}:{cancelled_write_entry}") < events.index(
+        f"read_session_locked:{cancelled_task_id}:{cancelled_write_entry}"
+    )
+    assert events.index(f"read_session_locked:{cancelled_task_id}:{cancelled_write_entry}") < events.index(
+        f"write_session_locked:{cancelled_task_id}:{cancelled_write_entry}"
+    )
+    assert events.index(f"write_session_locked:{cancelled_task_id}:{cancelled_write_entry}") < events.index(
+        f"exit:{cancelled_task_id}:{cancelled_write_entry}"
+    )
+    assert _sha256_utf8_file(other_run_session_path) == other_run_session_hash
+    assert _sha256_utf8_file(inactive_session_path) == inactive_session_hash
+
+    public_session_boundary_forbidden = False
+    session_path = _session_file_path(workspace, cancelled_task_id)
+    persisted_session = json.loads(session_path.read_text(encoding="utf-8"))
+    assert persisted_session["session_id"] == session_id
+    assert persisted_session["status"] == "suspended"
+    assert persisted_session["resumable"] is True
+    assert persisted_session["last_error"] == "factory_stage_timeout"
+
+    task_row = service.get_task(cancelled_task_id)
+    assert task_row is not None
+    assert task_row["status"] == "pending"
+    assert task_row["resume_state"] == "resumable"
+    assert task_row["metadata"]["cancellation_reason"] == "factory_stage_timeout"
+    payload = _execution_event_payload_for_result(
+        workspace,
+        suspended["execution_events"][0],
+        event_type="suspended",
+    )
+    assert payload["task_row_snapshot"]["id"] == cancelled_task_id
+    assert payload["task_row_snapshot"]["status"] == "pending"
+    assert payload["session_id"] == session_id
+    assert payload["run_id"] == "run-bulk-lock-contract"
+    assert payload["last_error"] == "factory_stage_timeout"
 
 
 def test_heartbeat_execution_fails_closed_on_event_append_failure(
