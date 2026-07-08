@@ -1217,7 +1217,10 @@ class TaskRuntimeService:
         ``list_observable_task_rows`` (which itself refreshes). Callers that
         need to mutate persisted tasks still iterate the
         ``TaskBoard.list_all()`` output; this helper only provides the status
-        anchor they should consult for dependency decisions.
+        anchor they should consult for dependency decisions. It intentionally
+        duplicates the observable overlay inputs instead of calling
+        ``list_observable_task_rows`` so dependency mutation code never depends
+        on the external read-projection API.
 
         Unknown or non-terminal fact statuses fall back to the file-backed
         status so that the dependency decision matches what a downstream
@@ -1435,22 +1438,45 @@ class TaskRuntimeService:
             transitions, or repair actions. Execution paths that need to select
             or mutate work must continue to call the explicit row/session APIs.
 
-        The implementation refreshes dependency unblocks directly (instead of
-        routing through ``list_task_rows``) so that the file-backed row
-        projection stays free of a recursive refresh.
+        The implementation intentionally avoids ``refresh_dependency_unblocks``
+        and ``list_task_rows`` so read-only observers cannot trigger dependency
+        state writes. ``list_task_rows`` remains the compatibility entry point
+        for callers that expect dependency unblocks to be refreshed before
+        reading rows.
 
         Complexity:
             O(r + f) time and memory over file-backed rows and latest fact rows.
         """
 
-        self.refresh_dependency_unblocks()
         rows = self._list_file_task_rows()
         fact_rows = self.list_task_rows_from_execution_facts()
-        if not rows:
-            return fact_rows
+        return self._project_observable_task_rows(rows, fact_rows)
+
+    def _project_observable_task_rows(
+        self,
+        file_rows: list[dict[str, Any]],
+        fact_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Merge file-backed rows with execution facts without I/O or writes.
+
+        ``file_rows`` is the transitional TaskBoard projection and
+        ``fact_rows`` is the append-only ``task_runtime.execution`` projection.
+        The fact rows overlay matching file rows, while facts for tasks no
+        longer present in files remain observable. Inputs are shallow-copied so
+        callers can safely reuse their loaded rows after projection.
+
+        Complexity:
+            O(r + f) time and memory over file-backed rows and latest fact rows.
+        """
+
+        if not file_rows:
+            return [dict(row) for row in fact_rows]
         if not fact_rows:
-            return rows
-        return self._overlay_execution_fact_rows(rows, fact_rows)
+            return [dict(row) for row in file_rows]
+        return self._overlay_execution_fact_rows(
+            [dict(row) for row in file_rows],
+            [dict(row) for row in fact_rows],
+        )
 
     @staticmethod
     def _observable_row_task_id(row: dict[str, Any]) -> str:
@@ -2209,6 +2235,15 @@ class TaskRuntimeService:
         return self._board.add_ready_listener(listener)
 
     def list_ready_task_rows(self) -> list[dict[str, Any]]:
+        """Return ready rows after the compatibility dependency refresh.
+
+        ``list_observable_task_rows`` is intentionally a read-only projection.
+        Legacy worker-pool ready checks still need the old compatibility
+        behaviour where dependency unblocks are refreshed before ready rows are
+        selected, so the mutation stays explicit at this execution boundary.
+        """
+
+        self.refresh_dependency_unblocks()
         rows = self.list_observable_task_rows()
         ready_rows: list[dict[str, Any]] = []
         for row in rows:

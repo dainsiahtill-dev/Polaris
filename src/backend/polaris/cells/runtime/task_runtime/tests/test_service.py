@@ -679,6 +679,173 @@ def test_task_runtime_service_observable_rows_overlay_execution_facts(tmp_path: 
     assert rows[0]["metadata"]["source"] == "task_runtime.execution_fact"
 
 
+def test_list_observable_task_rows_does_not_refresh_dependency_unblocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    file_rows: list[dict[str, Any]] = [
+        {
+            "id": 1,
+            "task_id": "1",
+            "subject": "read-only observable projection",
+            "status": "pending",
+            "metadata": {"source": "file_row"},
+        }
+    ]
+    refresh_calls: list[str] = []
+
+    def reject_refresh_dependency_unblocks() -> NoReturn:
+        refresh_calls.append("refresh_dependency_unblocks")
+        raise AssertionError("list_observable_task_rows must be a pure read projection")
+
+    def list_file_task_rows(*, include_terminal: bool = True) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        return [dict(row) for row in file_rows]
+
+    def list_fact_rows() -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", reject_refresh_dependency_unblocks)
+    monkeypatch.setattr(service, "_list_file_task_rows", list_file_task_rows)
+    monkeypatch.setattr(service, "list_task_rows_from_execution_facts", list_fact_rows)
+
+    rows = service.list_observable_task_rows()
+
+    assert rows == file_rows
+    assert refresh_calls == []
+
+
+def test_list_task_rows_continues_to_refresh_dependency_unblocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    file_rows: list[dict[str, Any]] = [
+        {
+            "id": 2,
+            "task_id": "2",
+            "subject": "mutable file-backed projection",
+            "status": "pending",
+            "metadata": {"source": "file_row"},
+        }
+    ]
+    refresh_calls: list[str] = []
+
+    def record_refresh_dependency_unblocks() -> dict[str, Any]:
+        refresh_calls.append("refresh_dependency_unblocks")
+        return {"unblocked_task_ids": [], "execution_events": []}
+
+    def list_file_task_rows(*, include_terminal: bool = True) -> list[dict[str, Any]]:
+        assert include_terminal is False
+        return [dict(row) for row in file_rows]
+
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", record_refresh_dependency_unblocks)
+    monkeypatch.setattr(service, "_list_file_task_rows", list_file_task_rows)
+
+    rows = service.list_task_rows(include_terminal=False)
+
+    assert rows == file_rows
+    assert refresh_calls == ["refresh_dependency_unblocks"]
+
+
+def test_list_ready_task_rows_refreshes_before_observable_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    events: list[str] = []
+
+    def record_refresh_dependency_unblocks() -> dict[str, Any]:
+        events.append("refresh_dependency_unblocks")
+        return {"unblocked_task_ids": [], "execution_events": []}
+
+    def list_observable_task_rows() -> list[dict[str, Any]]:
+        events.append("list_observable_task_rows")
+        return [
+            {
+                "id": 3,
+                "task_id": "3",
+                "subject": "ready row",
+                "status": "pending",
+                "blocked_by": [],
+            },
+            {
+                "id": 4,
+                "task_id": "4",
+                "subject": "blocked row",
+                "status": "pending",
+                "blocked_by": [3],
+            },
+        ]
+
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", record_refresh_dependency_unblocks)
+    monkeypatch.setattr(service, "list_observable_task_rows", list_observable_task_rows)
+
+    rows = service.list_ready_task_rows()
+
+    assert [row["id"] for row in rows] == [3]
+    assert events == ["refresh_dependency_unblocks", "list_observable_task_rows"]
+
+
+def test_list_observable_task_rows_consumes_fact_overlay_without_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(
+        subject="Observable fact overlay without refresh",
+        description="File row should stay stale while fact row is projected",
+        priority=2,
+    )
+    task_id = str(created["id"])
+    refresh_calls: list[str] = []
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id=task_id,
+            run_id="run-observable-no-refresh",
+            payload={
+                "task_id": task_id,
+                "run_id": "run-observable-no-refresh",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-observable-no-refresh",
+                "task_row_snapshot": created,
+            },
+        )
+    )
+
+    def reject_refresh_dependency_unblocks() -> NoReturn:
+        refresh_calls.append("refresh_dependency_unblocks")
+        raise AssertionError("observable fact overlay must not refresh dependencies")
+
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", reject_refresh_dependency_unblocks)
+
+    rows = service.list_observable_task_rows()
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == created["id"]
+    assert rows[0]["status"] == "in_progress"
+    assert rows[0]["running"] is True
+    assert rows[0]["metadata"]["previous_status"] == "pending"
+    assert rows[0]["metadata"]["source"] == "task_runtime.execution_fact"
+    assert refresh_calls == []
+
+
 def test_task_runtime_service_stats_use_observable_execution_fact_rows(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -4666,9 +4833,9 @@ def test_file_task_rows_project_to_observable_rows_across_refresh_suspend_and_re
 
     This pins the helper extraction boundary without depending on the helper
     name: existing file rows are still visible, observable reads still overlay
-    execution facts, dependency refresh still mutates stale blockers, suspend
-    still projects resumable execution state, and reexecution reset still walks
-    every persisted task row.
+    execution facts without mutating stale blockers, list_task_rows still owns
+    dependency refresh, suspend still projects resumable execution state, and
+    reexecution reset still walks every persisted task row.
     """
 
     workspace = tmp_path / "workspace"
@@ -4700,12 +4867,20 @@ def test_file_task_rows_project_to_observable_rows_across_refresh_suspend_and_re
     observable = {int(row["id"]): row for row in service.list_observable_task_rows()}
     assert observable[parent_id]["status"] == "completed"
     assert observable[parent_id]["metadata"]["source"] == "task_runtime.execution_fact"
-    assert observable[child_id]["status"] == "pending"
-    assert observable[child_id]["blocked_by"] == []
+    assert observable[child_id]["status"] == "blocked"
+    assert observable[child_id]["blocked_by"] == [parent_id]
 
     persisted_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
-    assert persisted_child["status"] == "pending"
-    assert persisted_child["blocked_by"] == []
+    assert persisted_child["status"] == "blocked"
+    assert persisted_child["blocked_by"] == [parent_id]
+
+    refreshed_rows = {int(row["id"]): row for row in service.list_task_rows()}
+    assert refreshed_rows[child_id]["status"] == "pending"
+    assert refreshed_rows[child_id]["blocked_by"] == []
+
+    refreshed_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
+    assert refreshed_child["status"] == "pending"
+    assert refreshed_child["blocked_by"] == []
 
     claimed = service.claim_execution(
         child_id,
@@ -5133,9 +5308,8 @@ def test_claim_execution_refreshes_dependency_unblocks_from_execution_fact(
     )
 
     # File row on disk still pending; observable model says the parent is
-    # completed. ``list_observable_task_rows`` already triggers the dependency
-    # refresh internally, so the child also projects as ``pending`` in the
-    # observable view — but the file row on disk is still ``blocked``.
+    # completed, but it remains a read-only projection. The child stays blocked
+    # until the claim path performs the sanctioned refresh.
     on_disk_parent = json.loads(_task_file_path(workspace, parent_id).read_text(encoding="utf-8"))
     assert on_disk_parent["status"] == "pending"
     on_disk_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
@@ -5145,7 +5319,8 @@ def test_claim_execution_refreshes_dependency_unblocks_from_execution_fact(
     )
     observable = {int(row["id"]): row for row in service.list_observable_task_rows()}
     assert observable[parent_id]["status"] == "completed"
-    assert observable[child_id]["status"] == "pending"
+    assert observable[child_id]["status"] == "blocked"
+    assert observable[child_id]["blocked_by"] == [parent_id]
 
     # Direct ``claim_execution(child_id)`` must refresh dependency unblocks
     # first, see the parent as completed via the fact overlay, unblock the

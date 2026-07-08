@@ -3300,6 +3300,17 @@ def test_key_task_runtime_methods_route_raw_entities_through_file_task_entities(
 
 PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER = "_find_projected_runtime_execution_session"
 PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE = "_list_file_task_rows"
+OBSERVABLE_TASK_ROWS_METHOD = "list_observable_task_rows"
+OBSERVABLE_TASK_ROWS_FILE_SOURCE = "_list_file_task_rows"
+OBSERVABLE_TASK_ROWS_FACT_SOURCE = "list_task_rows_from_execution_facts"
+OBSERVABLE_TASK_ROWS_FORBIDDEN_SELF_CALLS = frozenset(
+    {
+        "list_task_rows",
+        "refresh_dependency_unblocks",
+    }
+)
+TASK_ROWS_COMPATIBILITY_METHOD = "list_task_rows"
+READY_TASK_ROWS_COMPATIBILITY_METHOD = "list_ready_task_rows"
 
 
 def _projected_runtime_execution_session_function_def() -> ast.FunctionDef:
@@ -3401,6 +3412,138 @@ def test_projected_runtime_execution_session_does_not_read_raw_taskboard() -> No
         "self._list_file_task_entities() or self._board.*. Keep raw Task "
         "entity access limited to the four owner/path methods in "
         "TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def _observable_task_rows_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService.list_observable_task_rows`` AST node."""
+
+    return _task_runtime_service_method_def(OBSERVABLE_TASK_ROWS_METHOD)
+
+
+def _check_observable_task_rows_projection_sources() -> list[str]:
+    """Emit offenders if observable rows stop consuming required row sources."""
+
+    method_def = _observable_task_rows_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    required_sources = {
+        OBSERVABLE_TASK_ROWS_FILE_SOURCE,
+        OBSERVABLE_TASK_ROWS_FACT_SOURCE,
+    }
+    offenders: list[str] = []
+
+    for source_method in sorted(required_sources):
+        source_calls = _direct_self_method_calls(method_def, source_method)
+        if not source_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() "
+                f"does not call self.{source_method}(); observable rows must "
+                "merge file-backed task rows with task_runtime.execution facts."
+            )
+
+    return offenders
+
+
+def _check_observable_task_rows_read_only_projection_boundary() -> list[str]:
+    """Emit offenders if observable rows gain refresh or raw TaskBoard reads."""
+
+    method_def = _observable_task_rows_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        for forbidden_method in sorted(OBSERVABLE_TASK_ROWS_FORBIDDEN_SELF_CALLS):
+            if _call_is_self_method(node, forbidden_method):
+                offenders.append(
+                    f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}():"
+                    f"{node.lineno} calls self.{forbidden_method}(); observable "
+                    "task rows are a read-only projection and must not trigger "
+                    "dependency refresh writes."
+                )
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}():"
+                f"{node.lineno} calls {callee}(); observable task rows must "
+                "consume projected row helpers instead of raw TaskBoard methods."
+            )
+
+    return offenders
+
+
+def test_observable_task_rows_use_file_rows_and_execution_facts() -> None:
+    """WS2 observable task-row projection fence (positive invariant)."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_observable_task_rows_projection_sources()
+
+    assert not offenders, (
+        "WS2 observable task-row projection fence: "
+        f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() must build "
+        "the read model from self._list_file_task_rows() and "
+        "self.list_task_rows_from_execution_facts() so file-backed rows and "
+        "task_runtime.execution facts remain the observable SSoT. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_observable_task_rows_do_not_refresh_dependencies_or_read_raw_board() -> None:
+    """WS2 observable task-row projection fence (negative invariant)."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_observable_task_rows_read_only_projection_boundary()
+
+    assert not offenders, (
+        "WS2 observable task-row projection fence: "
+        f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() is a "
+        "read-only projection and must not call refresh_dependency_unblocks(), "
+        "list_task_rows(), or self._board.*. Keep dependency refresh behavior "
+        "behind list_task_rows() and owner maintenance flows. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_list_task_rows_retains_dependency_refresh_entrypoint() -> None:
+    """WS2 compatibility fence for the existing refreshing row read."""
+
+    method_def = _task_runtime_service_method_def(TASK_ROWS_COMPATIBILITY_METHOD)
+    refresh_calls = _direct_self_method_calls(method_def, "refresh_dependency_unblocks")
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+
+    assert refresh_calls, (
+        "WS2 task-row compatibility fence: "
+        f"{rel}:TaskRuntimeService.{TASK_ROWS_COMPATIBILITY_METHOD}() may keep "
+        "the existing dependency refresh behavior and must continue to call "
+        "self.refresh_dependency_unblocks() before returning compatibility "
+        "rows. Observable read-only projections are fenced separately."
+    )
+
+
+def test_list_ready_task_rows_refreshes_before_observable_projection() -> None:
+    """WS2 compatibility fence for legacy worker ready-row selection."""
+
+    method_def = _task_runtime_service_method_def(READY_TASK_ROWS_COMPATIBILITY_METHOD)
+    refresh_calls = _direct_self_method_calls(method_def, "refresh_dependency_unblocks")
+    observable_calls = _direct_self_method_calls(method_def, OBSERVABLE_TASK_ROWS_METHOD)
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+
+    assert refresh_calls, (
+        "WS2 ready-row compatibility fence: "
+        f"{rel}:TaskRuntimeService.{READY_TASK_ROWS_COMPATIBILITY_METHOD}() must "
+        "explicitly call self.refresh_dependency_unblocks() because "
+        "list_observable_task_rows() is a pure read projection."
+    )
+    assert observable_calls, (
+        "WS2 ready-row compatibility fence: "
+        f"{rel}:TaskRuntimeService.{READY_TASK_ROWS_COMPATIBILITY_METHOD}() must "
+        "consume self.list_observable_task_rows() after refreshing dependency "
+        "unblocks so task_runtime.execution facts still participate in ready "
+        "selection."
+    )
+    assert min(call.lineno for call in refresh_calls) < min(call.lineno for call in observable_calls), (
+        "WS2 ready-row compatibility fence: "
+        f"{rel}:TaskRuntimeService.{READY_TASK_ROWS_COMPATIBILITY_METHOD}() must "
+        "refresh dependency unblocks before reading observable task rows."
     )
 
 
