@@ -169,17 +169,23 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_apply_terminal_session_reconcile", "get"): 3,
     ("_augment_task_row", "get"): 1,
     ("_find_terminal_session_snapshot", "get"): 1,
-    ("_list_file_task_rows", "list_all"): 1,
+    ("_list_file_task_entities", "list_all"): 1,
     ("cancel_task_row_for_deduplication", "get"): 1,
     ("claim_execution", "get"): 1,
     ("complete_execution", "get"): 1,
     ("fail_execution", "get"): 1,
     ("fail_task_row_from_role_adapter", "get"): 1,
-    ("refresh_dependency_unblocks", "list_all"): 1,
-    ("reset_task_rows_for_reexecution", "list_all"): 1,
-    ("suspend_active_executions_for_run", "list_all"): 1,
     ("suspend_execution", "get"): 1,
 }
+TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER = "_list_file_task_entities"
+TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
+    {
+        "_list_file_task_rows",
+        "refresh_dependency_unblocks",
+        "reset_task_rows_for_reexecution",
+        "suspend_active_executions_for_run",
+    }
+)
 TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS = {
     "create",
     "notify_ready_tasks",
@@ -655,6 +661,45 @@ def _task_runtime_service_raw_board_calls(methods: set[str]) -> Counter[tuple[st
     return calls
 
 
+def _task_runtime_service_method_defs() -> dict[str, ast.FunctionDef]:
+    service_class = _class_def(TASK_RUNTIME_INTERNAL_SERVICE, "TaskRuntimeService")
+    return {node.name: node for node in service_class.body if isinstance(node, ast.FunctionDef)}
+
+
+def _walk_task_runtime_method_body(method_def: ast.FunctionDef) -> list[ast.AST]:
+    """Walk one TaskRuntimeService method without entering nested scopes."""
+
+    nodes: list[ast.AST] = []
+
+    def visit(node: ast.AST) -> None:
+        if node is not method_def and isinstance(
+            node,
+            ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef,
+        ):
+            return
+        nodes.append(node)
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(method_def)
+    return nodes
+
+
+def _direct_self_board_list_all_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
+    return [
+        node
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._board.list_all"
+    ]
+
+
+def _method_body_directly_calls_self_method(method_def: ast.FunctionDef, method_name: str) -> bool:
+    return any(
+        isinstance(node, ast.Call) and _call_is_self_method(node, method_name)
+        for node in _walk_task_runtime_method_body(method_def)
+    )
+
+
 def _function_def(path: Path, name: str) -> ast.FunctionDef:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -769,11 +814,7 @@ def _task_status_is_terminal_values() -> set[str]:
     if is_terminal is None:
         raise AssertionError("TaskStatus.is_terminal property not found")
 
-    returns = [
-        node.value
-        for node in ast.walk(is_terminal)
-        if isinstance(node, ast.Return) and node.value is not None
-    ]
+    returns = [node.value for node in ast.walk(is_terminal) if isinstance(node, ast.Return) and node.value is not None]
     if len(returns) != 1:
         raise AssertionError("TaskStatus.is_terminal must keep a single AST-readable return")
 
@@ -1483,9 +1524,7 @@ def _literal_execution_status_update_board_task_calls(
                 continue
             status = _string_literal(keyword.value)
             if status in statuses:
-                offenders.append(
-                    f"{rel}:{node.lineno} calls _update_board_task(status={status!r})"
-                )
+                offenders.append(f"{rel}:{node.lineno} calls _update_board_task(status={status!r})")
     return offenders
 
 
@@ -1542,11 +1581,7 @@ def test_production_adapters_do_not_write_execution_status_literals() -> None:
     for _adapter_name, path in sorted(ROLE_ADAPTER_PATHS.items()):
         if not path.is_file():
             continue
-        offenders.extend(
-            _literal_execution_status_update_board_task_calls(
-                path, _EXECUTION_LIKE_TASK_ROW_STATUSES
-            )
-        )
+        offenders.extend(_literal_execution_status_update_board_task_calls(path, _EXECUTION_LIKE_TASK_ROW_STATUSES))
 
     assert not offenders, (
         "WS2 execution-status row-write fence: "
@@ -1615,8 +1650,7 @@ def test_director_adapter_progress_does_not_finalize_task_rows() -> None:
     source = DIRECTOR_ADAPTER.read_text(encoding="utf-8")
 
     assert "super()._update_task_progress(" in source, (
-        "Director progress events must use BaseRoleAdapter's metadata-only "
-        "progress projection."
+        "Director progress events must use BaseRoleAdapter's metadata-only progress projection."
     )
     assert "return super()._update_board_task(task_id, status=status, metadata=metadata)" in source
     assert "self.task_runtime.update_task_row(" not in source
@@ -2013,6 +2047,64 @@ def test_task_runtime_service_raw_board_reads_are_reviewed() -> None:
         "TaskRuntimeService is the reviewed owner for raw TaskBoard reads. "
         "New raw Board read calls must be audited against the observable "
         "read-model boundary and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_service_raw_list_all_is_centralized_in_file_task_entities() -> None:
+    methods = _task_runtime_service_method_defs()
+    helper_name = TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER
+    helper = methods.get(helper_name)
+    assert helper is not None, f"TaskRuntimeService.{helper_name}() must exist"
+
+    direct_calls_by_method = {
+        method_name: _direct_self_board_list_all_calls(method_def) for method_name, method_def in methods.items()
+    }
+    offenders = [
+        f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}:{call.lineno} TaskRuntimeService.{method_name}()"
+        for method_name, calls in sorted(direct_calls_by_method.items())
+        if method_name != helper_name
+        for call in calls
+    ]
+    helper_call_count = len(direct_calls_by_method.get(helper_name, []))
+
+    assert not offenders, (
+        "TaskRuntimeService raw TaskBoard entity reads must be centralized in "
+        f"self.{helper_name}(). Direct self._board.list_all() callers:\n" + "\n".join(offenders)
+    )
+    assert helper_call_count == 1, (
+        f"TaskRuntimeService.{helper_name}() must be the single direct "
+        f"self._board.list_all() bridge; found {helper_call_count} direct calls."
+    )
+
+
+def test_key_task_runtime_methods_route_raw_entities_through_file_task_entities() -> None:
+    methods = _task_runtime_service_method_defs()
+    helper_name = TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)
+    missing = sorted(TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS.difference(methods))
+
+    assert not missing, f"Missing expected TaskRuntimeService methods: {missing}"
+
+    direct_call_offenders: list[str] = []
+    missing_helper_offenders: list[str] = []
+    for method_name in sorted(TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS):
+        method_def = methods[method_name]
+        direct_call_offenders.extend(
+            f"{rel}:{call.lineno} TaskRuntimeService.{method_name}()"
+            for call in _direct_self_board_list_all_calls(method_def)
+        )
+        if not _method_body_directly_calls_self_method(method_def, helper_name):
+            missing_helper_offenders.append(f"TaskRuntimeService.{method_name}()")
+
+    assert not direct_call_offenders, (
+        "Critical TaskRuntimeService methods must not call self._board.list_all() "
+        f"directly; route raw entity reads through self.{helper_name}(). "
+        "Offenders:\n" + "\n".join(direct_call_offenders)
+    )
+    assert not missing_helper_offenders, (
+        "Critical TaskRuntimeService methods that need raw file-backed Task "
+        f"entities must call self.{helper_name}() so the raw TaskBoard boundary "
+        "has one owner-cell bridge. Offenders:\n" + "\n".join(missing_helper_offenders)
     )
 
 
@@ -2628,7 +2720,9 @@ def _append_execution_fact_with_cas_uses_expected_seq_contract() -> tuple[bool, 
         for node in ast.walk(function_def)
     )
     if not calls_next_seq:
-        offenders.append("_append_execution_fact_with_cas must derive expected_seq via self._next_execution_fact_expected_seq()")
+        offenders.append(
+            "_append_execution_fact_with_cas must derive expected_seq via self._next_execution_fact_expected_seq()"
+        )
 
     append_command_calls = [
         node
@@ -3509,10 +3603,10 @@ def test_external_task_id_lookup_does_not_regress_to_raw_row_reads() -> None:
 # ``task_runtime.execution`` completion facts (and any in-flight execution
 # overlay) are silently dropped — the very symptom WS2 is meant to eliminate.
 #
-# The function may still call ``self._board.list_all()`` to walk the persisted
-# ``Task`` objects for the mutation path, but the dependency-status source
-# (``status_by_id`` / equivalent mapping) must come from a fact-aware helper
-# such as ``_fact_overlaid_dependency_status_rows``,
+# The function may still call ``self._list_file_task_entities()`` to walk the
+# persisted ``Task`` objects for the mutation path, but the dependency-status
+# source (``status_by_id`` / equivalent mapping) must come from a fact-aware
+# helper such as ``_fact_overlaid_dependency_status_rows``,
 # ``_list_dependency_status_rows``, or ``list_task_rows_from_execution_facts``.
 #
 # This fence is structural: it locates the mapping assignment by target name
@@ -3611,7 +3705,9 @@ def _expression_derives_mapping_from_raw_list_all(
     by binding the variable on the LHS of the ``list_all()`` assignment and
     detecting a dict-comprehension / generator expression that iterates over
     that variable. We only flag a mapping whose values come from the raw
-    ``Task`` row, not from a fact-aware helper.
+    ``Task`` row, not from a fact-aware helper. The separate raw list-all
+    centralization fence rejects new direct callers before this fallback
+    diagnostic becomes necessary.
     """
 
     if raw_list_all_target is None:
@@ -3727,8 +3823,8 @@ def test_refresh_dependency_unblocks_uses_fact_aware_dependency_status_projectio
     ``task_runtime.execution`` completion facts (and any in-flight execution
     overlay) unblock downstream rows even when file-backed rows are stale.
 
-    The function may still iterate ``self._board.list_all()`` to walk
-    persisted ``Task`` objects for the mutation path; the fence only forbids
+    The function may still iterate ``self._list_file_task_entities()`` to
+    walk persisted ``Task`` objects for the mutation path; the fence forbids
     using the raw ``list_all()`` snapshot as the *sole* source of dependency
     status. A targeted structural check walks the mapping assignment by
     target name (not by line number) and verifies the RHS invokes a
@@ -3744,10 +3840,11 @@ def test_refresh_dependency_unblocks_uses_fact_aware_dependency_status_projectio
         "its dependency-status mapping from a fact-aware helper such as "
         + ", ".join(sorted(REFRESH_DEPENDENCY_UNBLOCKS_FACT_AWARE_HELPERS))
         + " rather than deriving the mapping from raw self._board.list_all(). "
-        "Raw list_all() iteration is still allowed for the Task-object mutation "
-        "walk, but the status source for dependency resolution must be "
-        "fact-aware so latest task_runtime.execution completion facts remain "
-        "authoritative. Offenders:\n" + "\n".join(offenders)
+        "Task-object mutation walks must route raw entity reads through "
+        f"self.{TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER}(), and the status "
+        "source for dependency resolution must be fact-aware so latest "
+        "task_runtime.execution completion facts remain authoritative. "
+        "Offenders:\n" + "\n".join(offenders)
     )
 
 
@@ -3905,8 +4002,7 @@ def _with_dependency_execution_events_fail_closed_violations() -> list[str]:
         if _assignment_to_subscript_key(node, "reason") is not None
     ]
     if not any(
-        value is not None and _node_references_name_or_attribute(value, "failed_events")
-        for value in reason_assignments
+        value is not None and _node_references_name_or_attribute(value, "failed_events") for value in reason_assignments
     ):
         offenders.append(
             f"{rel}:TaskRuntimeService._with_dependency_execution_events() "
@@ -4496,8 +4592,7 @@ GET_TASK_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
     "self._board.list_all": "raw TaskBoard.list_all() bypasses the execution-fact overlay",
     "self.list_task_rows": "raw list_task_rows() regresses to file-backed status only",
     "self._get_task_by_external_task_id": (
-        "_get_task_by_external_task_id() is an external-id materialization lookup, "
-        "not the public task-id read path"
+        "_get_task_by_external_task_id() is an external-id materialization lookup, not the public task-id read path"
     ),
 }
 
@@ -4935,8 +5030,7 @@ STATS_OBSERVABLE_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
     "self.list_task_rows": ("raw list_task_rows() regresses to file-backed status only"),
     "self._board.get": ("raw TaskBoard.get() bypasses the execution-fact overlay"),
     "self._get_task_by_external_task_id": (
-        "_get_task_by_external_task_id() is an external-id materialization lookup, "
-        "not a stats projection path"
+        "_get_task_by_external_task_id() is an external-id materialization lookup, not a stats projection path"
     ),
 }
 
@@ -5178,31 +5272,9 @@ def test_task_row_stats_does_not_independently_read_rows() -> None:
 # ``TaskRuntimeService.get_task_row_stats()`` itself is NOT forbidden — it
 # remains the public compatibility API that delegates to the observable stats.
 
-DIRECTOR_STATE_TRACKER = (
-    POLARIS_ROOT
-    / "cells"
-    / "roles"
-    / "adapters"
-    / "internal"
-    / "director"
-    / "state_tracking.py"
-)
-PM_PLANNING_AGENT_STATS = (
-    POLARIS_ROOT
-    / "cells"
-    / "orchestration"
-    / "pm_planning"
-    / "internal"
-    / "pm_agent.py"
-)
-PM_DELIVERY_DISPATCH_STATS = (
-    POLARIS_ROOT
-    / "delivery"
-    / "cli"
-    / "pm"
-    / "engine"
-    / "_dispatch.py"
-)
+DIRECTOR_STATE_TRACKER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "director" / "state_tracking.py"
+PM_PLANNING_AGENT_STATS = POLARIS_ROOT / "cells" / "orchestration" / "pm_planning" / "internal" / "pm_agent.py"
+PM_DELIVERY_DISPATCH_STATS = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "_dispatch.py"
 
 
 def _check_role_projection_forbidden_stats_calls(
@@ -5432,11 +5504,7 @@ def test_pm_delivery_dispatch_uses_observable_task_row_stats() -> None:
 # raise ``AssertionError`` on purpose are excluded — they are regression
 # guards, not calls.
 
-ROLE_ADAPTERS_TASKBOARD_ALIGNMENT_TEST = (
-    POLARIS_ROOT
-    / "tests"
-    / "test_role_adapters_taskboard_alignment.py"
-)
+ROLE_ADAPTERS_TASKBOARD_ALIGNMENT_TEST = POLARIS_ROOT / "tests" / "test_role_adapters_taskboard_alignment.py"
 FACTORY_ROUTER_TEST = POLARIS_ROOT / "tests" / "test_factory_router.py"
 TEST_FILE_RAW_LIST_TASK_ROWS_TARGETS = (
     ROLE_ADAPTERS_TASKBOARD_ALIGNMENT_TEST,
@@ -5539,8 +5607,7 @@ def test_role_stats_fence_detects_getattr_pattern() -> None:
     """
 
     fragment = (
-        'getter = getattr(task_runtime, "get_task_row_stats", None)\n'
-        "stats = getter() if callable(getter) else {}\n"
+        'getter = getattr(task_runtime, "get_task_row_stats", None)\nstats = getter() if callable(getter) else {}\n'
     )
     tree = ast.parse(fragment)
     detected = False
