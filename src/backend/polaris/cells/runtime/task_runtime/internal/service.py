@@ -418,6 +418,32 @@ class TaskRuntimeService:
             return None, None
         return normalized, self._board.get(normalized)
 
+    def _task_entity_for_dependency_side_effect(self, task_id: Any) -> tuple[int | None, Task | None]:
+        """Resolve raw owner-cell entity for dependency fan-out side effects.
+
+        Boundary:
+            Dependency fan-out belongs to ``runtime.task_runtime`` because it
+            mutates sibling rows derived from ``blocked_by`` / ``blocks``. This
+            helper is the owner-cell raw ``TaskBoard`` entity boundary for the
+            pre-read before those row-local writes; observable readers must keep
+            using fact-overlaid task-row projections.
+
+        Complexity:
+            O(k) to normalize the task-id token plus O(1) over the in-memory
+            ``TaskBoard`` cache for one numeric row id. Missing rows return
+            ``(normalized_id, None)`` so callers preserve legacy skip semantics.
+
+        Extension point:
+            Future compare-and-swap or version checks should attach here before
+            fan-out writes, keeping version validation local to the owner cell
+            without changing downstream update/write semantics.
+        """
+
+        normalized = self.normalize_task_id(task_id)
+        if normalized is None:
+            return None, None
+        return normalized, self._board.get(normalized)
+
     @staticmethod
     def _task_row_payload_for_reexecution(payload: Mapping[str, Any]) -> dict[str, Any]:
         reset = dict(payload)
@@ -2804,7 +2830,7 @@ class TaskRuntimeService:
 
         events: list[dict[str, Any]] = []
         for blocker_id in blocker_ids:
-            blocker = self._board.get(blocker_id)
+            _normalized_blocker_id, blocker = self._task_entity_for_dependency_side_effect(blocker_id)
             if blocker is None:
                 continue
             before_row = self._augment_task_row(blocker.to_dict())
@@ -2854,7 +2880,7 @@ class TaskRuntimeService:
 
         events: list[dict[str, Any]] = []
         for dependent_id in dependent_ids:
-            dependent = self._board.get(dependent_id)
+            _normalized_dependent_id, dependent = self._task_entity_for_dependency_side_effect(dependent_id)
             if dependent is None:
                 continue
             before_row = self._augment_task_row(dependent.to_dict())

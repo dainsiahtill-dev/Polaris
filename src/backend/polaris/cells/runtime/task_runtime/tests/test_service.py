@@ -555,6 +555,236 @@ def test_task_entity_for_owner_terminal_transition_normalizes_and_reads_raw_boar
     assert get_calls == [created_id]
 
 
+def test_task_entity_for_dependency_side_effect_normalizes_and_reads_raw_board_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="dependency side-effect helper boundary")
+    created_id = int(created["id"])
+
+    original_get = service._board.get
+    get_calls: list[object] = []
+
+    def tracing_get(task_id: object) -> Any:
+        get_calls.append(task_id)
+        return original_get(task_id)
+
+    monkeypatch.setattr(service._board, "get", tracing_get)
+
+    normalized, task = service._task_entity_for_dependency_side_effect(f"task-{created_id}-extra")
+
+    assert normalized == created_id
+    assert task is not None
+    assert task.id == created_id
+    assert get_calls == [created_id]
+    assert service._task_entity_for_dependency_side_effect("bad-id") == (None, None)
+    assert get_calls == [created_id]
+
+
+def test_apply_reverse_dependency_links_uses_dependency_side_effect_helper_and_preserves_event_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    blocker = service.create_task_row(subject="reverse helper blocker")
+    dependent = service.create_task_row(subject="reverse helper dependent")
+    blocker_id = int(blocker["id"])
+    dependent_id = int(dependent["id"])
+    blocker_task = service._board.get(blocker_id)
+    assert blocker_task is not None
+
+    helper_calls: list[object] = []
+    direct_board_get_calls: list[object] = []
+
+    def task_entity_for_dependency_side_effect(task_id: object) -> tuple[int | None, Any | None]:
+        helper_calls.append(task_id)
+        return service.normalize_task_id(task_id), blocker_task
+
+    def reject_direct_board_get(task_id: object) -> Any:
+        direct_board_get_calls.append(task_id)
+        raise AssertionError(
+            "reverse dependency side effects must read task entities through _task_entity_for_dependency_side_effect"
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_dependency_side_effect",
+        task_entity_for_dependency_side_effect,
+        raising=False,
+    )
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+
+    events = service._apply_reverse_dependency_links(
+        created_task_id=dependent_id,
+        blocker_ids=[blocker_id],
+    )
+
+    assert helper_calls == [blocker_id]
+    assert direct_board_get_calls == []
+    assert len(events) == 1
+    assert events[0]["ok"] is True
+    assert events[0]["event_type"] == "reverse_dependency_linked"
+
+    blocker_after = service.get_task(blocker_id)
+    assert blocker_after is not None
+    assert blocker_after["blocks"] == [dependent_id]
+
+    fact_events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    linked_payloads = [event["payload"] for event in fact_events if event["event_type"] == "reverse_dependency_linked"]
+    assert len(linked_payloads) == 1
+    linked_payload = linked_payloads[0]
+    assert linked_payload["task_row_snapshot"]["id"] == blocker_id
+    assert linked_payload["task_row_snapshot"]["blocks"] == [dependent_id]
+    assert linked_payload["details"] == {
+        "dependent_task_id": dependent_id,
+        "previous_blocks": [],
+        "blocks": [dependent_id],
+    }
+
+
+def test_apply_reopen_downstream_reblocks_uses_dependency_side_effect_helper_and_preserves_event_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    reopened = service.create_task_row(subject="reopened prerequisite")
+    dependent = service.create_task_row(subject="dependent to reblock")
+    reopened_id = int(reopened["id"])
+    dependent_id = int(dependent["id"])
+    dependent_task = service._board.get(dependent_id)
+    assert dependent_task is not None
+
+    helper_calls: list[object] = []
+    direct_board_get_calls: list[object] = []
+
+    def task_entity_for_dependency_side_effect(task_id: object) -> tuple[int | None, Any | None]:
+        helper_calls.append(task_id)
+        return service.normalize_task_id(task_id), dependent_task
+
+    def reject_direct_board_get(task_id: object) -> Any:
+        direct_board_get_calls.append(task_id)
+        raise AssertionError(
+            "downstream dependency reblocks must read task entities through _task_entity_for_dependency_side_effect"
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_dependency_side_effect",
+        task_entity_for_dependency_side_effect,
+        raising=False,
+    )
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+
+    events = service._apply_reopen_downstream_reblocks(
+        reopened_task_id=reopened_id,
+        dependent_ids=[dependent_id],
+    )
+
+    assert helper_calls == [dependent_id]
+    assert direct_board_get_calls == []
+    assert len(events) == 1
+    assert events[0]["ok"] is True
+    assert events[0]["event_type"] == "downstream_dependency_reblocked"
+
+    dependent_after = service.get_task(dependent_id)
+    assert dependent_after is not None
+    assert dependent_after["status"] == "blocked"
+    assert dependent_after["blocked_by"] == [reopened_id]
+
+    fact_events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    reblocked_payloads = [
+        event["payload"] for event in fact_events if event["event_type"] == "downstream_dependency_reblocked"
+    ]
+    assert len(reblocked_payloads) == 1
+    reblocked_payload = reblocked_payloads[0]
+    assert reblocked_payload["task_row_snapshot"]["id"] == dependent_id
+    assert reblocked_payload["task_row_snapshot"]["status"] == "blocked"
+    assert reblocked_payload["task_row_snapshot"]["blocked_by"] == [reopened_id]
+    assert reblocked_payload["details"] == {
+        "reopened_task_id": reopened_id,
+        "previous_status": "pending",
+        "previous_blockers": [],
+        "active_blockers": [reopened_id],
+    }
+
+
+@pytest.mark.parametrize(
+    ("side_effect_name", "invoke_side_effect", "mutator_name"),
+    (
+        (
+            "_apply_reverse_dependency_links",
+            lambda service, task_id: service._apply_reverse_dependency_links(
+                created_task_id=7002,
+                blocker_ids=[task_id],
+            ),
+            "update_blocks",
+        ),
+        (
+            "_apply_reopen_downstream_reblocks",
+            lambda service, task_id: service._apply_reopen_downstream_reblocks(
+                reopened_task_id=7003,
+                dependent_ids=[task_id],
+            ),
+            "update",
+        ),
+    ),
+    ids=("reverse_dependency_links", "reopen_downstream_reblocks"),
+)
+def test_dependency_side_effects_skip_missing_helper_results_without_mutating_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    side_effect_name: str,
+    invoke_side_effect: Callable[[TaskRuntimeService, int], list[dict[str, Any]]],
+    mutator_name: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    task_id = 7001
+    helper_calls: list[object] = []
+    direct_board_get_calls: list[object] = []
+    mutator_calls: list[object] = []
+
+    def task_entity_for_dependency_side_effect(raw_task_id: object) -> tuple[int | None, Any | None]:
+        helper_calls.append(raw_task_id)
+        return service.normalize_task_id(raw_task_id), None
+
+    def reject_direct_board_get(raw_task_id: object) -> Any:
+        direct_board_get_calls.append(raw_task_id)
+        raise AssertionError(f"{side_effect_name} must short-circuit missing rows from the dependency helper")
+
+    def reject_mutator(*args: object, **_kwargs: object) -> Any:
+        mutator_calls.append(args)
+        raise AssertionError(f"{side_effect_name} must not mutate rows when the dependency helper returns no task")
+
+    def reject_append_execution_event(event_type: str, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError(f"{side_effect_name} must not append {event_type!r} events for missing helper results")
+
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_dependency_side_effect",
+        task_entity_for_dependency_side_effect,
+        raising=False,
+    )
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+    monkeypatch.setattr(service._board, mutator_name, reject_mutator)
+    monkeypatch.setattr(service, "_append_execution_event", reject_append_execution_event)
+
+    events = invoke_side_effect(service, task_id)
+
+    assert helper_calls == [task_id]
+    assert direct_board_get_calls == []
+    assert mutator_calls == []
+    assert events == []
+
+
 @pytest.mark.parametrize(
     ("transition_name", "expected_reason", "expected_task_status", "invoke_transition"),
     _EXECUTION_TRANSITION_HELPER_CASES,

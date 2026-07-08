@@ -164,8 +164,7 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES = {
     ("suspend_execution", "update"): 1,
 }
 REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
-    ("_apply_reopen_downstream_reblocks", "get"): 1,
-    ("_apply_reverse_dependency_links", "get"): 1,
+    ("_task_entity_for_dependency_side_effect", "get"): 1,
     ("_apply_terminal_session_reconcile", "get"): 3,
     ("_list_file_task_entities", "list_all"): 1,
     ("_task_entity_for_transition", "get"): 1,
@@ -186,6 +185,13 @@ TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS = frozenset(
     {
         "cancel_task_row_for_deduplication",
         "fail_task_row_from_role_adapter",
+    }
+)
+TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_HELPER = "_task_entity_for_dependency_side_effect"
+TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS = frozenset(
+    {
+        "_apply_reopen_downstream_reblocks",
+        "_apply_reverse_dependency_links",
     }
 )
 TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
@@ -716,6 +722,14 @@ def _method_body_directly_calls_self_method(method_def: ast.FunctionDef, method_
         isinstance(node, ast.Call) and _call_is_self_method(node, method_name)
         for node in _walk_task_runtime_method_body(method_def)
     )
+
+
+def _direct_self_method_calls(method_def: ast.FunctionDef, method_name: str) -> list[ast.Call]:
+    return [
+        node
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Call) and _call_is_self_method(node, method_name)
+    ]
 
 
 def _function_def(path: Path, name: str) -> ast.FunctionDef:
@@ -2180,6 +2194,74 @@ def test_owner_terminal_transition_methods_route_task_entity_reads_through_helpe
         "bridge only for dedup cancellation and role-adapter failure terminal "
         "row transitions. New consumers must be explicitly reviewed in "
         "TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS. Offenders:\n" + "\n".join(unauthorized_helper_consumers)
+    )
+
+
+def test_dependency_fanout_methods_route_task_entity_reads_through_helper() -> None:
+    """WS2 dependency fan-out raw entity-read fence.
+
+    ``_apply_reverse_dependency_links()`` and
+    ``_apply_reopen_downstream_reblocks()`` perform cross-row dependency
+    mutations after create/reopen paths. They may need raw ``Task`` entities
+    for the row being mutated, but the direct ``TaskBoard.get`` boundary must
+    stay centralized in ``_task_entity_for_dependency_side_effect()`` so dependency
+    fan-out keeps one audited raw-read bridge with one normalization and
+    missing-row policy.
+    """
+
+    methods = _task_runtime_service_method_defs()
+    helper_name = TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_HELPER
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)
+    required_methods = TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS | {helper_name}
+    missing = sorted(required_methods.difference(methods))
+
+    assert not missing, f"Missing expected TaskRuntimeService methods: {missing}"
+
+    helper_get_calls = _direct_self_board_get_calls(methods[helper_name])
+    direct_get_offenders: list[str] = []
+    missing_helper_offenders: list[str] = []
+    unauthorized_helper_consumers: list[str] = []
+
+    for method_name in sorted(TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS):
+        method_def = methods[method_name]
+        direct_get_offenders.extend(
+            f"{rel}:{call.lineno} TaskRuntimeService.{method_name}() calls self._board.get() directly"
+            for call in _direct_self_board_get_calls(method_def)
+        )
+        helper_calls = _direct_self_method_calls(method_def, helper_name)
+        if not helper_calls:
+            missing_helper_offenders.append(f"TaskRuntimeService.{method_name}()")
+
+    for method_name, method_def in sorted(methods.items()):
+        if method_name == helper_name or method_name in TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS:
+            continue
+        for call in _direct_self_method_calls(method_def, helper_name):
+            unauthorized_helper_consumers.append(
+                f"{rel}:{call.lineno} TaskRuntimeService.{method_name}() calls self.{helper_name}()"
+            )
+
+    assert len(helper_get_calls) == 1, (
+        f"TaskRuntimeService.{helper_name}() must be the single direct "
+        "self._board.get() bridge for dependency fan-out raw entity reads; "
+        f"found {len(helper_get_calls)} direct calls."
+    )
+    assert not direct_get_offenders, (
+        "Dependency fan-out methods must not call self._board.get() directly; "
+        f"route raw Task entity reads through self.{helper_name}() so "
+        "normalization, missing-row semantics, and future tracing stay "
+        "centralized. Offenders:\n" + "\n".join(direct_get_offenders)
+    )
+    assert not missing_helper_offenders, (
+        "Dependency fan-out methods that need raw Task entity reads must call "
+        f"self.{helper_name}() instead of owning raw TaskBoard.get() reads "
+        "themselves. Offenders:\n" + "\n".join(missing_helper_offenders)
+    )
+    assert not unauthorized_helper_consumers, (
+        f"TaskRuntimeService.{helper_name}() is the reviewed raw Task entity "
+        "bridge only for dependency fan-out helpers. New consumers must be "
+        "explicitly reviewed in "
+        "TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS. Offenders:\n"
+        + "\n".join(unauthorized_helper_consumers)
     )
 
 
