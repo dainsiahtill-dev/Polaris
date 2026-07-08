@@ -4,6 +4,8 @@ import hashlib
 import json
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, NoReturn
 
@@ -337,6 +339,96 @@ def test_task_runtime_service_records_taskboard_row_write_receipt(tmp_path: Path
     assert update_receipt["before_hash"] == create_after_hash
     assert update_receipt["after_hash"] == update_after_hash
     assert update_receipt["after_hash"] != update_receipt["before_hash"]
+
+
+def test_taskboard_save_task_row_write_is_guarded_by_per_row_file_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    first = service.create_task_row(
+        subject="row lock probe one",
+        description="baseline row for per-task lock ordering",
+        metadata={"phase": "row-lock-baseline", "probe": "one"},
+    )
+    second = service.create_task_row(
+        subject="row lock probe two",
+        description="baseline row for per-task lock path separation",
+        metadata={"phase": "row-lock-baseline", "probe": "two"},
+    )
+    first_id = int(first["id"])
+    second_id = int(second["id"])
+
+    events: list[str] = []
+    active_lock_paths: list[Path] = []
+    replace_lock_paths_by_task: dict[int, Path] = {}
+    original_replace_task_file = service._board._replace_task_file
+
+    @contextmanager
+    def fake_file_lock(lock_file_path: Path) -> Iterator[object]:
+        lock_path = Path(lock_file_path)
+        events.append(f"lock_enter:{lock_path}")
+        active_lock_paths.append(lock_path)
+        try:
+            yield object()
+        finally:
+            receipt = service._board._last_row_write_receipt
+            if receipt is not None:
+                events.append(f"receipt_seen_at_lock_exit:{receipt.task_id}:{lock_path}")
+            released_lock_path = active_lock_paths.pop()
+            assert released_lock_path == lock_path
+            events.append(f"lock_exit:{lock_path}")
+
+    def replace_task_file_with_trace(tmp_path_arg: Path, task_path_arg: Path) -> None:
+        assert active_lock_paths, "_replace_task_file must run inside a per-row _file_lock"
+        task_id = int(task_path_arg.stem.removeprefix("task_"))
+        lock_path = active_lock_paths[-1]
+        replace_lock_paths_by_task[task_id] = lock_path
+        events.append(f"replace:{task_id}:{task_path_arg}")
+        original_replace_task_file(tmp_path_arg, task_path_arg)
+
+    monkeypatch.setattr(service._board, "_file_lock", fake_file_lock)
+    monkeypatch.setattr(service._board, "_replace_task_file", replace_task_file_with_trace)
+
+    def index_event_starting_with(prefix: str) -> int:
+        return next(index for index, event in enumerate(events) if event.startswith(prefix))
+
+    for task_id, marker in ((first_id, "first-update"), (second_id, "second-update")):
+        updated = service.update_task_row(
+            f"task-{task_id}",
+            metadata={"phase": "row-lock-update", "probe": marker},
+        )
+        assert updated is not None
+
+        task_path = _task_file_path(workspace, task_id)
+        receipt = _assert_task_row_write_receipt(
+            service._board.last_row_write_receipt(),
+            task_id=task_id,
+            task_path=task_path,
+        )
+        assert receipt["after_hash"] == _sha256_utf8_file(task_path)
+        events.append(f"receipt_after_update:{task_id}")
+
+    assert set(replace_lock_paths_by_task) == {first_id, second_id}
+    first_lock_path = replace_lock_paths_by_task[first_id]
+    second_lock_path = replace_lock_paths_by_task[second_id]
+    assert first_lock_path != second_lock_path
+
+    for task_id, lock_path in replace_lock_paths_by_task.items():
+        assert f"task_{task_id}" in lock_path.name
+
+        enter_index = events.index(f"lock_enter:{lock_path}")
+        replace_index = index_event_starting_with(f"replace:{task_id}:")
+        exit_index = events.index(f"lock_exit:{lock_path}")
+        receipt_after_update_index = events.index(f"receipt_after_update:{task_id}")
+        assert enter_index < replace_index < exit_index < receipt_after_update_index
+
+        receipt_at_exit = f"receipt_seen_at_lock_exit:{task_id}:{lock_path}"
+        if receipt_at_exit in events:
+            assert replace_index < events.index(receipt_at_exit) < exit_index
 
 
 def test_taskboard_save_task_fails_closed_when_row_hash_changes_before_replace(

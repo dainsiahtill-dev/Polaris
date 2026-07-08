@@ -597,33 +597,42 @@ class TaskBoard:
             f"before_hash={before_label!r} current_hash={current_label!r}"
         )
 
+    def _task_row_lock_path(self, task_id: int | str) -> Path:
+        """Return the stable per-row lock path for one TaskBoard row."""
+
+        normalized_task_id = _normalize_task_id(task_id)
+        return self.tasks_dir / f".task_{normalized_task_id}.json.lock"
+
     def _save_task(self, task: Task) -> None:
-        """Atomically save a task to disk (write-to-temp + os.replace)."""
+        """Atomically save a task row under a cross-process row lock."""
+
         with self.transaction():
             task_path = self.tasks_dir / f"task_{task.id}.json"
             tmp_path = self.tasks_dir / f".task_{task.id}.{uuid.uuid4().hex}.tmp"
             tmp_logical = self._logical_path(tmp_path)
             task_logical = self._logical_path(task_path)
-            before_hash = self._read_current_task_file_hash(task_path)
-            payload = json.dumps(task.to_dict(), indent=2, ensure_ascii=False) + "\n"
-            after_hash = _sha256_text(payload)
+            lock_path = self._task_row_lock_path(task.id)
             try:
-                self._kernel_fs.write_text(tmp_logical, payload, encoding="utf-8")
-                self._assert_task_row_unchanged(
-                    task_id=task.id,
-                    task_path=task_path,
-                    task_logical=task_logical,
-                    before_hash=before_hash,
-                )
-                self._replace_task_file(tmp_path, task_path)
-                self._last_row_write_receipt = TaskBoardRowWriteReceipt(
-                    task_id=task.id,
-                    task_path=task_logical,
-                    before_hash=before_hash,
-                    after_hash=after_hash,
-                    operation="replace",
-                    written_at=datetime.now(timezone.utc).isoformat(),
-                )
+                with self._file_lock(lock_path):
+                    before_hash = self._read_current_task_file_hash(task_path)
+                    payload = json.dumps(task.to_dict(), indent=2, ensure_ascii=False) + "\n"
+                    after_hash = _sha256_text(payload)
+                    self._kernel_fs.write_text(tmp_logical, payload, encoding="utf-8")
+                    self._assert_task_row_unchanged(
+                        task_id=task.id,
+                        task_path=task_path,
+                        task_logical=task_logical,
+                        before_hash=before_hash,
+                    )
+                    self._replace_task_file(tmp_path, task_path)
+                    self._last_row_write_receipt = TaskBoardRowWriteReceipt(
+                        task_id=task.id,
+                        task_path=task_logical,
+                        before_hash=before_hash,
+                        after_hash=after_hash,
+                        operation="replace",
+                        written_at=datetime.now(timezone.utc).isoformat(),
+                    )
             finally:
                 with suppress(OSError):
                     tmp_path.unlink(missing_ok=True)

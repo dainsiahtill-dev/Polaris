@@ -417,6 +417,9 @@ TASKBOARD_DIRECT_ROW_REPLACE_METHODS = {
     "rename",
     "replace",
 }
+TASKBOARD_FILE_LOCK_METHOD = "self._file_lock"
+TASKBOARD_ROW_LOCK_PATH_HELPERS = {"self._task_row_lock_path"}
+TASKBOARD_TASK_ID_LOCK_NAMES = {"task_id"}
 
 
 def _looks_like_task_row_file_literal(value: str) -> bool:
@@ -2120,8 +2123,11 @@ def _taskboard_save_task_receipt_anchor_lines(function_def: ast.FunctionDef) -> 
 
 
 def _taskboard_save_task_receipt_commit_lines(function_def: ast.FunctionDef) -> list[int]:
-    commit_lines: list[int] = []
+    return [node.lineno for node in _taskboard_save_task_receipt_commit_assignments(function_def)]
 
+
+def _taskboard_save_task_receipt_commit_assignments(function_def: ast.FunctionDef) -> list[ast.Assign]:
+    commit_assignments: list[ast.Assign] = []
     for node in ast.walk(function_def):
         if not isinstance(node, ast.Assign):
             continue
@@ -2133,9 +2139,200 @@ def _taskboard_save_task_receipt_commit_lines(function_def: ast.FunctionDef) -> 
             continue
         if _call_name(node.value.func) != "TaskBoardRowWriteReceipt":
             continue
-        commit_lines.append(node.lineno)
+        commit_assignments.append(node)
 
-    return sorted(set(commit_lines))
+    return sorted(commit_assignments, key=lambda assignment: assignment.lineno)
+
+
+def _node_references_task_identity(node: ast.AST, row_lock_names: AbstractSet[str]) -> bool:
+    if _node_references_any_local_name(node, row_lock_names):
+        return True
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id in TASKBOARD_TASK_ID_LOCK_NAMES:
+            return True
+        if (
+            isinstance(child, ast.Attribute)
+            and child.attr == "id"
+            and isinstance(child.value, ast.Name)
+            and child.value.id == "task"
+        ):
+            return True
+    return False
+
+
+def _taskboard_row_lock_helper_references_task_identity(node: ast.AST, row_lock_names: AbstractSet[str]) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    if _call_name(node.func) not in TASKBOARD_ROW_LOCK_PATH_HELPERS:
+        return False
+    lock_path_parts = list(node.args) + [keyword.value for keyword in node.keywords]
+    return any(_node_references_task_identity(part, row_lock_names) for part in lock_path_parts)
+
+
+def _taskboard_per_task_row_lock_expression(node: ast.AST, row_lock_names: AbstractSet[str]) -> bool:
+    """Return true when ``node`` structurally derives a lock path from one task row."""
+
+    if _node_references_any_local_name(node, row_lock_names):
+        return True
+    if any(_taskboard_row_lock_helper_references_task_identity(child, row_lock_names) for child in ast.walk(node)):
+        return True
+    return _node_references_task_identity(node, row_lock_names)
+
+
+def _taskboard_lock_path_target_names(targets: Iterable[ast.AST]) -> set[str]:
+    """Return assignment target names that explicitly model a lock path."""
+
+    names: set[str] = set()
+    for target in targets:
+        for name in _assignment_target_names(target):
+            if "lock" in name and ("path" in name or name.endswith("_lock")):
+                names.add(name)
+    return names
+
+
+def _taskboard_save_task_row_lock_path_local_names(function_def: ast.FunctionDef) -> set[str]:
+    """Infer local names that carry per-task row lock paths inside ``_save_task``."""
+
+    assignments = [
+        node
+        for node in ast.walk(function_def)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and not isinstance(node, ast.AugAssign)
+    ]
+    row_lock_names: set[str] = set()
+    changed = True
+
+    while changed:
+        changed = False
+        for assignment in assignments:
+            value = assignment.value
+            if value is None:
+                continue
+            if not _taskboard_per_task_row_lock_expression(value, row_lock_names):
+                continue
+
+            targets = list(assignment.targets) if isinstance(assignment, ast.Assign) else [assignment.target]
+            target_names = _taskboard_lock_path_target_names(targets)
+            if not target_names:
+                continue
+            before = len(row_lock_names)
+            row_lock_names.update(target_names)
+            changed = changed or len(row_lock_names) != before
+
+    return row_lock_names
+
+
+def _taskboard_file_lock_call_uses_per_task_row_path(
+    call: ast.Call,
+    row_lock_names: AbstractSet[str],
+) -> bool:
+    lock_path_parts = list(call.args) + [keyword.value for keyword in call.keywords]
+    return any(_taskboard_per_task_row_lock_expression(part, row_lock_names) for part in lock_path_parts)
+
+
+def _taskboard_file_lock_with_nodes(function_def: ast.FunctionDef) -> list[ast.With]:
+    lock_with_nodes: list[ast.With] = []
+    for node in ast.walk(function_def):
+        if not isinstance(node, ast.With):
+            continue
+        if any(
+            isinstance(item.context_expr, ast.Call) and _call_name(item.context_expr.func) == TASKBOARD_FILE_LOCK_METHOD
+            for item in node.items
+        ):
+            lock_with_nodes.append(node)
+    return lock_with_nodes
+
+
+def _taskboard_file_lock_with_uses_per_task_row_path(
+    node: ast.With,
+    row_lock_names: AbstractSet[str],
+) -> bool:
+    for item in node.items:
+        context_expr = item.context_expr
+        if not isinstance(context_expr, ast.Call):
+            continue
+        if _call_name(context_expr.func) != TASKBOARD_FILE_LOCK_METHOD:
+            continue
+        if _taskboard_file_lock_call_uses_per_task_row_path(context_expr, row_lock_names):
+            return True
+    return False
+
+
+def _node_is_descendant_of(node: ast.AST, ancestor: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
+    current = node
+    while current in parents:
+        current = parents[current]
+        if current is ancestor:
+            return True
+    return False
+
+
+def _taskboard_save_task_replace_call_nodes(function_def: ast.FunctionDef) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(function_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._replace_task_file"
+    ]
+
+
+def _taskboard_save_task_row_file_lock_violations() -> list[str]:
+    """Validate that ``_save_task`` commits each row under a per-row file lock."""
+
+    save_task = _taskboard_method("_save_task")
+    parents = _parent_lookup(save_task)
+    row_lock_names = _taskboard_save_task_row_lock_path_local_names(save_task)
+    lock_with_nodes = _taskboard_file_lock_with_nodes(save_task)
+    per_task_lock_with_nodes = [
+        node for node in lock_with_nodes if _taskboard_file_lock_with_uses_per_task_row_path(node, row_lock_names)
+    ]
+    replace_calls = _taskboard_save_task_replace_call_nodes(save_task)
+    receipt_commits = _taskboard_save_task_receipt_commit_assignments(save_task)
+    offenders: list[str] = []
+
+    if not lock_with_nodes:
+        offenders.append("TaskBoard._save_task() must use with self._file_lock(...): around row commit")
+    if lock_with_nodes and not per_task_lock_with_nodes:
+        offenders.append(
+            "TaskBoard._save_task() file lock path must be per task row: pass a path derived from "
+            "task.id/task_id or self._task_row_lock_path(task.id), not a global board lock"
+        )
+    if not replace_calls:
+        offenders.append("TaskBoard._save_task() must call self._replace_task_file() inside the row file lock")
+    if not receipt_commits:
+        offenders.append(
+            "TaskBoard._save_task() must assign self._last_row_write_receipt = "
+            "TaskBoardRowWriteReceipt(...) inside the row file lock"
+        )
+    if offenders:
+        return offenders
+
+    for replace_call in replace_calls:
+        if not any(_node_is_descendant_of(replace_call, lock_node, parents) for lock_node in per_task_lock_with_nodes):
+            offenders.append(
+                f"TaskBoard._save_task():{replace_call.lineno} calls self._replace_task_file() outside "
+                "the per-task row self._file_lock(...) body"
+            )
+
+    for receipt_commit in receipt_commits:
+        if not any(
+            _node_is_descendant_of(receipt_commit, lock_node, parents) for lock_node in per_task_lock_with_nodes
+        ):
+            offenders.append(
+                f"TaskBoard._save_task():{receipt_commit.lineno} updates self._last_row_write_receipt outside "
+                "the per-task row self._file_lock(...) body"
+            )
+
+    if not any(
+        all(_node_is_descendant_of(replace_call, lock_node, parents) for replace_call in replace_calls)
+        and all(_node_is_descendant_of(receipt_commit, lock_node, parents) for receipt_commit in receipt_commits)
+        for lock_node in per_task_lock_with_nodes
+    ):
+        offenders.append(
+            "TaskBoard._save_task() must keep self._replace_task_file() and "
+            "self._last_row_write_receipt = TaskBoardRowWriteReceipt(...) in the same per-task row "
+            "self._file_lock(...) body"
+        )
+
+    return offenders
 
 
 def _taskboard_save_task_row_write_receipt_violations() -> list[str]:
@@ -2395,6 +2592,29 @@ def test_taskboard_save_task_updates_row_write_receipt_after_commit() -> None:
         "construct or update a row-write receipt anchor after committing the "
         "row JSON write. Expected anchor names include "
         f"{sorted(TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS)}. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_taskboard_save_task_wraps_row_replace_in_file_lock() -> None:
+    """WS2 row-write file-lock fence for ``TaskBoard._save_task``.
+
+    ``_save_task`` is the only TaskBoard method allowed to commit row JSON.
+    Its durable replace and receipt publication must be guarded by a
+    cross-process file lock scoped to the one task row being written. A
+    process-local transaction lock is not enough, and a global board file lock
+    would serialize unrelated rows while still obscuring which row owns the
+    write receipt.
+    """
+
+    offenders = _taskboard_save_task_row_file_lock_violations()
+
+    assert not offenders, (
+        "WS2 TaskBoard row-write file-lock fence: TaskBoard._save_task() "
+        "must wrap self._replace_task_file() and the row-write receipt update "
+        "in the same with self._file_lock(<per-task-row-lock-path>) body. "
+        "The lock path must derive from task.id/task_id or "
+        "self._task_row_lock_path(task.id), not a global board lock. "
+        "Offenders:\n" + "\n".join(offenders)
     )
 
 
