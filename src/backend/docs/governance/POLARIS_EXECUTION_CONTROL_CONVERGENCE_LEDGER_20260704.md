@@ -501,15 +501,17 @@ Open bucket count: 4.
 
 ## Next Closure Order
 
-1. ECC-WS1: continue ToolCallEnvelope convergence from remaining stream/batch
-   edge cases toward one canonical envelope and one shared stream/non-stream
-   dispatch path. Prefer codegraph-confirmed seams and mechanical fences over
-   new lifecycle counters or local evidence key sets.
-2. ECC-WS2: continue append-only Execution Ledger SSoT and CAS/read-model
+WS1 ToolCallEnvelope convergence is sealed for the current ledger scope as of
+ECC-WS1-103. The remaining convergence work continues in this order:
+
+1. ECC-WS2: continue append-only Execution Ledger SSoT and CAS/read-model
    migration from the existing task-runtime owner boundary.
-3. ECC-WS5: introduce ScopeAuthority and ownership handoff so out-of-scope
+2. ECC-WS5: introduce ScopeAuthority and ownership handoff so out-of-scope
    diagnostics are routed to the owning task instead of deferred as inert
    metadata.
-4. ECC-WS6: continue replacing local runtime/context failure-evidence and
+3. ECC-WS6: continue replacing local runtime/context failure-evidence and
    coverage projections with Run Ledger public helpers without losing UI-facing
    summaries.
+4. ECC-WS4: continue typed QualityIssue cleanup only for newly confirmed
+   display-string classifier seams; do not reopen WS1 receipt/tool-call
+   lifecycle work unless a new bench trace proves a fresh WS1 regression.
