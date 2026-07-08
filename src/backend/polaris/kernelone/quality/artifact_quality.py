@@ -621,6 +621,8 @@ def _artifact_quality_issue_code_from_typed_metadata(
         return "artifact_quality_scan_failed"
     if diagnostic_kind == "workspace_path_missing" and source_token == "artifact_quality_scanner":
         return "workspace_path_missing"
+    if diagnostic_kind == "javascript_module_error" and source_token == "runtime_smoke":
+        return "javascript_module_error"
     if diagnostic_kind == "syntax_error" and source_token == "source_syntax_checker":
         return "syntax_error"
     if diagnostic_kind == "undefined_identifier" and language == "go":
@@ -1032,7 +1034,7 @@ def _npm_manifest_script_issue(detail: str) -> str:
 
 
 def _javascript_module_error_metadata(text: str, message: str) -> dict[str, Any]:
-    metadata: dict[str, Any] = {"raw": text}
+    metadata: dict[str, Any] = {"raw": text, "diagnostic_kind": "javascript_module_error"}
     normalized = f"{text}\n{message}".lower()
     start_invoked = "npm run start" in normalized or "npm start" in normalized
     source_loader = "ts-node" in normalized or "node --loader" in normalized or ".ts" in normalized

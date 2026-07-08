@@ -373,9 +373,49 @@ def test_artifact_quality_issue_projection_classifies_javascript_module_runtime_
             "path": None,
             "severity": "error",
             "source": "runtime_smoke",
-            "metadata": {"raw": error},
+            "metadata": {
+                "raw": error,
+                "diagnostic_kind": "javascript_module_error",
+            },
         },
     )
+
+
+def test_artifact_quality_issue_projection_maps_javascript_module_diagnostic_kind() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "runtime_smoke",
+                "message": "opaque runtime smoke issue without module error text",
+                "metadata": {
+                    "diagnostic_kind": "javascript_module_error",
+                    "raw": "runtime smoke captured a JavaScript module error",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "javascript_module_error"
+    assert issues[0]["source"] == "runtime_smoke"
+
+
+def test_artifact_quality_issue_projection_rejects_wrong_source_javascript_module_kind() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "file_artifact_scanner",
+                "message": "opaque runtime smoke issue without module error text",
+                "metadata": {
+                    "diagnostic_kind": "javascript_module_error",
+                    "raw": "runtime smoke captured a JavaScript module error",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] != "javascript_module_error"
 
 
 def test_artifact_quality_issue_projection_preserves_typed_issue_payload() -> None:
@@ -719,6 +759,7 @@ def test_artifact_quality_issue_projection_extracts_typescript_start_loader_meta
     assert issues[0]["code"] == "javascript_module_error"
     assert issues[0]["metadata"] == {
         "raw": error,
+        "diagnostic_kind": "javascript_module_error",
         "script_name": "start",
         "script_issue": "typescript_source_loader_require_cycle",
     }
