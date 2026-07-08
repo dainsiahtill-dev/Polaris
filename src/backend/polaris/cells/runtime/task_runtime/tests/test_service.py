@@ -36,6 +36,28 @@ def _sha256_utf8_file(path: Path) -> str:
 _ROW_WRITE_RECEIPT_FIELDS = frozenset({"task_id", "task_path", "before_hash", "after_hash", "operation", "written_at"})
 
 
+def _execution_event_payload_for_result(
+    workspace: Path,
+    execution_event: dict[str, Any],
+    *,
+    event_type: str,
+) -> dict[str, Any]:
+    event_id = str(execution_event.get("fact_event_id") or "").strip()
+    assert event_id
+    events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type=event_type,
+        )
+    ).events
+    matches = [event for event in events if str(event.get("event_id") or "").strip() == event_id]
+    assert len(matches) == 1
+    payload = matches[0].get("payload")
+    assert isinstance(payload, dict)
+    return payload
+
+
 def _assert_task_row_write_receipt(
     receipt: object,
     *,
@@ -56,6 +78,21 @@ def _assert_task_row_write_receipt(
     assert isinstance(values["written_at"], str)
     assert values["written_at"].strip()
     return values
+
+
+def _assert_execution_event_row_write_receipt(
+    payload: dict[str, Any],
+    *,
+    task_id: int,
+    task_path: Path,
+) -> dict[str, Any]:
+    details = payload.get("details")
+    assert isinstance(details, dict)
+    return _assert_task_row_write_receipt(
+        details.get("row_write_receipt"),
+        task_id=task_id,
+        task_path=task_path,
+    )
 
 
 def _session_file_path(workspace: Path, task_id: object) -> Path:
@@ -272,6 +309,83 @@ def test_task_runtime_service_records_taskboard_row_write_receipt(tmp_path: Path
     assert update_receipt["before_hash"] == create_after_hash
     assert update_receipt["after_hash"] == update_after_hash
     assert update_receipt["after_hash"] != update_receipt["before_hash"]
+
+
+def test_create_task_row_execution_event_details_include_row_write_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(
+        subject="execution event receipt anchored task",
+        description="created fact payload must carry the row-write receipt",
+        metadata={"phase": "row-write-receipt-execution-event"},
+    )
+    task_id = int(created["id"])
+    task_path = _task_file_path(workspace, task_id)
+    after_hash = _sha256_utf8_file(task_path)
+
+    execution_event = created["execution_event"]
+    assert execution_event["ok"] is True
+    assert execution_event["event_type"] == "created"
+    payload = _execution_event_payload_for_result(
+        workspace,
+        execution_event,
+        event_type="created",
+    )
+
+    assert payload["task_id"] == str(task_id)
+    assert payload["task_row_snapshot"]["id"] == task_id
+    assert payload["details"]["source"] == "runtime.task_runtime.create"
+    receipt = _assert_execution_event_row_write_receipt(
+        payload,
+        task_id=task_id,
+        task_path=task_path,
+    )
+    assert receipt["before_hash"] in {
+        "",
+        "file_absent",
+        hashlib.sha256(b"").hexdigest(),
+    }
+    assert receipt["after_hash"] == after_hash
+    assert receipt["operation"] == "replace"
+
+
+def test_append_execution_event_omits_stale_row_write_receipt_for_different_task(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    current = service.create_task_row(subject="current task for stale receipt guard")
+    current_id = int(current["id"])
+    stale = service.create_task_row(subject="different task with latest receipt")
+    stale_id = int(stale["id"])
+    assert stale_id != current_id
+    stale_receipt = _assert_task_row_write_receipt(
+        service._board.last_row_write_receipt(),
+        task_id=stale_id,
+        task_path=_task_file_path(workspace, stale_id),
+    )
+    assert stale_receipt["task_id"] != current_id
+
+    current_row = service.get_task(current_id)
+    assert isinstance(current_row, dict)
+    execution_event = service._append_execution_event(
+        "unit_stale_receipt_probe",
+        task_row=current_row,
+        session=None,
+        details={"source": "unit.stale_receipt_probe"},
+    )
+
+    assert execution_event["ok"] is True
+    payload = _execution_event_payload_for_result(
+        workspace,
+        execution_event,
+        event_type="unit_stale_receipt_probe",
+    )
+    details = payload["details"]
+    assert details["source"] == "unit.stale_receipt_probe"
+    assert "row_write_receipt" not in details
 
 
 def test_task_runtime_service_projects_rows_from_execution_facts(tmp_path: Path) -> None:
@@ -947,11 +1061,19 @@ def test_apply_reverse_dependency_links_uses_dependency_side_effect_helper_and_p
     linked_payload = linked_payloads[0]
     assert linked_payload["task_row_snapshot"]["id"] == blocker_id
     assert linked_payload["task_row_snapshot"]["blocks"] == [dependent_id]
-    assert linked_payload["details"] == {
-        "dependent_task_id": dependent_id,
-        "previous_blocks": [],
-        "blocks": [dependent_id],
-    }
+    assert (
+        linked_payload["details"].items()
+        >= {
+            "dependent_task_id": dependent_id,
+            "previous_blocks": [],
+            "blocks": [dependent_id],
+        }.items()
+    )
+    _assert_execution_event_row_write_receipt(
+        linked_payload,
+        task_id=blocker_id,
+        task_path=_task_file_path(workspace, blocker_id),
+    )
 
 
 def test_apply_reopen_downstream_reblocks_uses_dependency_side_effect_helper_and_preserves_event_shape(
@@ -1014,12 +1136,20 @@ def test_apply_reopen_downstream_reblocks_uses_dependency_side_effect_helper_and
     assert reblocked_payload["task_row_snapshot"]["id"] == dependent_id
     assert reblocked_payload["task_row_snapshot"]["status"] == "blocked"
     assert reblocked_payload["task_row_snapshot"]["blocked_by"] == [reopened_id]
-    assert reblocked_payload["details"] == {
-        "reopened_task_id": reopened_id,
-        "previous_status": "pending",
-        "previous_blockers": [],
-        "active_blockers": [reopened_id],
-    }
+    assert (
+        reblocked_payload["details"].items()
+        >= {
+            "reopened_task_id": reopened_id,
+            "previous_status": "pending",
+            "previous_blockers": [],
+            "active_blockers": [reopened_id],
+        }.items()
+    )
+    _assert_execution_event_row_write_receipt(
+        reblocked_payload,
+        task_id=dependent_id,
+        task_path=_task_file_path(workspace, dependent_id),
+    )
 
 
 @pytest.mark.parametrize(
@@ -3137,6 +3267,7 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
         description="verify task_runtime.execution stream",
     )
     created_id = created["id"]
+    created_after_hash = _sha256_utf8_file(_task_file_path(workspace, created_id))
     claimed = service.claim_execution(
         created_id,
         worker_id="director",
@@ -3165,7 +3296,14 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert event_types[:3] == ["created", "claimed", "completed"]
     created_event = next(event for event in events if event.get("event_type") == "created")
     assert created_event["payload"]["execution_state"] == "pending"
-    assert created_event["payload"]["details"] == {"source": "runtime.task_runtime.create"}
+    created_details = created_event["payload"]["details"]
+    assert created_details["source"] == "runtime.task_runtime.create"
+    created_receipt = _assert_execution_event_row_write_receipt(
+        created_event["payload"],
+        task_id=created_id,
+        task_path=_task_file_path(workspace, created_id),
+    )
+    assert created_receipt["after_hash"] == created_after_hash
 
     completed_event = next(event for event in events if event.get("event_type") == "completed")
     payload = completed_event["payload"]
@@ -3371,11 +3509,19 @@ def test_task_runtime_rework_exhaustion_failure_is_owner_transition(tmp_path: Pa
     failed_event = events[-1]
     assert failed_event["event_type"] == "failed"
     assert failed_event["payload"]["execution_state"] == "failed"
-    assert failed_event["payload"]["details"] == {
-        "reason": "qa_rework_retry_exhausted",
-        "source": "qa_verdict",
-        "rework_exhausted": True,
-    }
+    assert (
+        failed_event["payload"]["details"].items()
+        >= {
+            "reason": "qa_rework_retry_exhausted",
+            "source": "qa_verdict",
+            "rework_exhausted": True,
+        }.items()
+    )
+    _assert_execution_event_row_write_receipt(
+        failed_event["payload"],
+        task_id=created_id,
+        task_path=_task_file_path(workspace, created_id),
+    )
 
 
 def test_task_runtime_dedup_cancel_is_owner_transition(
@@ -3441,11 +3587,19 @@ def test_task_runtime_dedup_cancel_is_owner_transition(
     cancelled_event = events[-1]
     assert cancelled_event["event_type"] == "cancelled"
     assert cancelled_event["payload"]["execution_state"] == "cancelled"
-    assert cancelled_event["payload"]["details"] == {
-        "reason": "pm_duplicate_subject",
-        "source": "pm_adapter",
-        "dedup_merged_into": str(primary["id"]),
-    }
+    assert (
+        cancelled_event["payload"]["details"].items()
+        >= {
+            "reason": "pm_duplicate_subject",
+            "source": "pm_adapter",
+            "dedup_merged_into": str(primary["id"]),
+        }.items()
+    )
+    _assert_execution_event_row_write_receipt(
+        cancelled_event["payload"],
+        task_id=duplicate_id,
+        task_path=_task_file_path(workspace, duplicate_id),
+    )
 
 
 def test_task_runtime_role_adapter_failure_is_owner_transition(
@@ -3511,12 +3665,20 @@ def test_task_runtime_role_adapter_failure_is_owner_transition(
     failed_event = events[-1]
     assert failed_event["event_type"] == "failed"
     assert failed_event["payload"]["execution_state"] == "failed"
-    assert failed_event["payload"]["details"] == {
-        "reason": "pm_runtime_exception",
-        "source": "pm_adapter",
-        "role": "pm",
-        "failure_class": "pm_runtime_exception",
-    }
+    assert (
+        failed_event["payload"]["details"].items()
+        >= {
+            "reason": "pm_runtime_exception",
+            "source": "pm_adapter",
+            "role": "pm",
+            "failure_class": "pm_runtime_exception",
+        }.items()
+    )
+    _assert_execution_event_row_write_receipt(
+        failed_event["payload"],
+        task_id=created_id,
+        task_path=_task_file_path(workspace, created_id),
+    )
 
 
 def test_reopen_task_row_reports_event_append_failure_without_persisting_evidence(

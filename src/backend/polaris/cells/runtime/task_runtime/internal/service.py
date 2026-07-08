@@ -3078,12 +3078,14 @@ class TaskRuntimeService:
         session: TaskExecutionSession | None,
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        event_details = self._row_write_receipt_details_for_task(task_row)
+        event_details.update(dict(details or {}))
         payload = build_task_runtime_execution_event_payload(
             event_type=event_type,
             workspace=self.workspace,
             task_row=task_row,
             session=session,
-            details=details,
+            details=event_details,
         )
         event_type_str = str(payload.get("event_type") or "unknown")
         try:
@@ -3141,6 +3143,19 @@ class TaskRuntimeService:
             fact_event_seq=appended.appended_seq,
             published=published,
         )
+
+    def _row_write_receipt_details_for_task(self, task_row: Mapping[str, Any]) -> dict[str, Any]:
+        """Return row-write receipt details when the latest receipt belongs to this row."""
+
+        task_id = self.normalize_task_id(task_row.get("id"))
+        if task_id is None:
+            return {}
+        receipt = self._board.last_row_write_receipt()
+        if receipt is None:
+            return {}
+        if self.normalize_task_id(receipt.task_id) != task_id:
+            return {}
+        return {"row_write_receipt": receipt.to_dict()}
 
     def _next_execution_fact_expected_seq(self) -> int:
         """Return the next expected sequence for the execution fact stream.

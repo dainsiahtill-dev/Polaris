@@ -11,7 +11,7 @@ from __future__ import annotations
 import ast
 import json
 from collections import Counter
-from collections.abc import Set as AbstractSet
+from collections.abc import Iterable, Set as AbstractSet
 from pathlib import Path
 from typing import Any
 
@@ -405,6 +405,7 @@ TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS = {
     "_last_row_write_receipt",
     "TaskBoardRowWriteReceipt",
 }
+TASK_RUNTIME_ROW_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME = "_row_write_receipt_details_for_task"
 TASKBOARD_KERNEL_WRITE_TEXT_NON_ROW_ALLOWLIST = {"_save_max_id"}
 TASKBOARD_DIRECT_ROW_WRITE_METHODS = {
     "open",
@@ -3560,6 +3561,157 @@ def _append_execution_event_calls_pass_fact_event_seq() -> tuple[bool, list[str]
     return success_call_count > 0 and not missing, missing
 
 
+def _task_runtime_service_row_write_receipt_projection_helpers() -> dict[str, ast.FunctionDef]:
+    """Return TaskRuntimeService methods that project board row-write receipt details.
+
+    The bottom helper must read the board receipt through
+    ``self._board.last_row_write_receipt()``. Higher-level helpers may wrap it
+    to merge caller-supplied details, so this returns the transitive self-call
+    closure rooted at direct receipt readers.
+    """
+
+    method_defs = _task_runtime_service_method_defs()
+    helper_names = {
+        name
+        for name, method_def in method_defs.items()
+        if name != "_append_execution_event"
+        and any(
+            isinstance(node, ast.Call) and _call_name(node.func) == "self._board.last_row_write_receipt"
+            for node in _walk_task_runtime_method_body(method_def)
+        )
+    }
+
+    changed = True
+    while changed:
+        changed = False
+        for name, method_def in method_defs.items():
+            if name == "_append_execution_event" or name in helper_names:
+                continue
+            if any(
+                isinstance(node, ast.Call) and _self_method_call_name(node) in helper_names
+                for node in _walk_task_runtime_method_body(method_def)
+            ):
+                helper_names.add(name)
+                changed = True
+
+    return {name: method_defs[name] for name in helper_names}
+
+
+def _self_method_call_name(node: ast.Call) -> str:
+    func = node.func
+    if not isinstance(func, ast.Attribute):
+        return ""
+    receiver = func.value
+    if not isinstance(receiver, ast.Name) or receiver.id != "self":
+        return ""
+    return func.attr
+
+
+def _target_names(targets: Iterable[ast.AST]) -> set[str]:
+    names: set[str] = set()
+    for target in targets:
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+    return names
+
+
+def _assigned_row_write_receipt_detail_names_before_payload(
+    function_def: ast.FunctionDef,
+    *,
+    helper_names: AbstractSet[str],
+    payload_lineno: int,
+) -> set[str]:
+    """Return local names assigned from a receipt projection helper before payload construction."""
+
+    assigned_names: set[str] = set()
+    for node in _walk_task_runtime_method_body(function_def):
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        if node.lineno >= payload_lineno:
+            continue
+        value = node.value
+        if value is None:
+            continue
+        helper_call_names = {
+            _self_method_call_name(child)
+            for child in ast.walk(value)
+            if isinstance(child, ast.Call) and _self_method_call_name(child) in helper_names
+        }
+        if not helper_call_names:
+            continue
+        targets = list(node.targets) if isinstance(node, ast.Assign) else [node.target]
+        assigned_names.update(_target_names(targets))
+    return assigned_names
+
+
+def _append_execution_event_row_write_receipt_projection_violations() -> list[str]:
+    """Validate row-write receipt evidence is projected before execution-event payload construction."""
+
+    function_def = _append_execution_event_function_def()
+    helper_defs = _task_runtime_service_row_write_receipt_projection_helpers()
+    helper_names = frozenset(helper_defs)
+    offenders: list[str] = []
+
+    for node in _walk_task_runtime_method_body(function_def):
+        if isinstance(node, ast.Attribute) and node.attr == "_last_row_write_receipt":
+            offenders.append(
+                f"line {node.lineno} reads TaskBoard._last_row_write_receipt directly; "
+                "use a receipt projection helper backed by self._board.last_row_write_receipt()"
+            )
+
+    if not helper_names:
+        offenders.append(
+            "TaskRuntimeService must define a row-write receipt projection helper "
+            f"(preferred name: {TASK_RUNTIME_ROW_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME}) "
+            "that calls self._board.last_row_write_receipt()"
+        )
+
+    payload_calls = [
+        node
+        for node in _walk_task_runtime_method_body(function_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "build_task_runtime_execution_event_payload"
+    ]
+    if len(payload_calls) != 1:
+        offenders.append(
+            "TaskRuntimeService._append_execution_event must construct exactly one "
+            f"build_task_runtime_execution_event_payload() call; found {len(payload_calls)}"
+        )
+        return offenders
+
+    payload_call = payload_calls[0]
+    helper_call_lines = [
+        node.lineno
+        for node in _walk_task_runtime_method_body(function_def)
+        if isinstance(node, ast.Call)
+        and _self_method_call_name(node) in helper_names
+        and node.lineno < payload_call.lineno
+    ]
+    if not helper_call_lines:
+        helper_label = ", ".join(sorted(helper_names)) or TASK_RUNTIME_ROW_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME
+        offenders.append(
+            "TaskRuntimeService._append_execution_event must call a row-write receipt "
+            f"projection helper ({helper_label}) before constructing "
+            "build_task_runtime_execution_event_payload()"
+        )
+
+    assigned_detail_names = _assigned_row_write_receipt_detail_names_before_payload(
+        function_def,
+        helper_names=helper_names,
+        payload_lineno=payload_call.lineno,
+    )
+    details_keyword = next((keyword for keyword in payload_call.keywords if keyword.arg == "details"), None)
+    if details_keyword is None:
+        offenders.append("build_task_runtime_execution_event_payload() must pass details=<receipt-projected details>")
+    elif not isinstance(details_keyword.value, ast.Name) or details_keyword.value.id not in assigned_detail_names:
+        expected = ", ".join(sorted(assigned_detail_names)) or "<local assigned from receipt projection helper>"
+        offenders.append(
+            "build_task_runtime_execution_event_payload(details=...) must receive the local details object "
+            f"returned by the row-write receipt projection helper before payload construction; expected {expected}"
+        )
+
+    return offenders
+
+
 def _append_execution_fact_with_cas_uses_expected_seq_contract() -> tuple[bool, list[str]]:
     """Detect whether TaskRuntime execution facts opt into FactStream CAS."""
 
@@ -3662,6 +3814,32 @@ def test_task_runtime_append_event_uses_fact_stream_expected_seq_cas() -> None:
         "through the non-CAS path and the execution ledger remains a best-effort "
         f"projection instead of an append-only control-plane fact source. {service_rel} offenders:\n"
         + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_append_event_projects_row_write_receipt_evidence() -> None:
+    """WS2 row-write receipt -> execution-event evidence fence.
+
+    ``TaskRuntimeService._append_execution_event`` is the bridge between a
+    durable TaskBoard row mutation and the append-only ``task_runtime.execution``
+    fact. The method must project the latest row-write receipt into the event
+    details before constructing the payload, and that projection must go
+    through ``TaskBoard.last_row_write_receipt()`` rather than reaching into
+    ``TaskBoard._last_row_write_receipt`` directly.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _append_execution_event_row_write_receipt_projection_violations()
+
+    assert not offenders, (
+        "WS2 row-write receipt evidence fence: "
+        f"{rel}:TaskRuntimeService._append_execution_event must call a "
+        "row-write receipt projection helper before constructing the "
+        "execution-event payload, pass the projected details into "
+        "build_task_runtime_execution_event_payload(details=...), and the "
+        "helper must call self._board.last_row_write_receipt(). "
+        "The append path must not read _last_row_write_receipt directly. "
+        "Offenders:\n" + "\n".join(offenders)
     )
 
 

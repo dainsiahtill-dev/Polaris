@@ -401,6 +401,18 @@ class TaskBoardRowWriteReceipt:
     operation: str
     written_at: str
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe projection suitable for fact event details."""
+
+        return {
+            "task_id": self.task_id,
+            "task_path": str(self.task_path),
+            "before_hash": str(self.before_hash),
+            "after_hash": str(self.after_hash),
+            "operation": str(self.operation),
+            "written_at": str(self.written_at),
+        }
+
 
 # ---------------------------------------------------------------------------
 # TaskBoard
