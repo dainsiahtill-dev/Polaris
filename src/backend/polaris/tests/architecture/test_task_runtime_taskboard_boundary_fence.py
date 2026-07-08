@@ -3644,6 +3644,63 @@ def _assigned_row_write_receipt_detail_names_before_payload(
     return assigned_names
 
 
+def _append_execution_event_append_result_calls(function_def: ast.FunctionDef) -> list[ast.Call]:
+    """Return append-result builder calls from ``_append_execution_event``."""
+
+    return [
+        node
+        for node in _walk_task_runtime_method_body(function_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "build_task_runtime_execution_event_append_result"
+    ]
+
+
+def _append_result_receipt_detail_projection_violations(
+    *,
+    append_result_calls: Iterable[ast.Call],
+    expected_detail_name: str,
+    helper_names: AbstractSet[str],
+) -> list[str]:
+    """Validate append-result calls reuse the already receipt-projected details local."""
+
+    offenders: list[str] = []
+    for node in append_result_calls:
+        details_value = _call_keyword_value(node, "details")
+        if details_value is None:
+            offenders.append(
+                f"line {node.lineno} build_task_runtime_execution_event_append_result() "
+                f"must pass details={expected_detail_name}"
+            )
+            continue
+        if isinstance(details_value, ast.Name) and details_value.id == expected_detail_name:
+            continue
+        if isinstance(details_value, ast.Name) and details_value.id == "details":
+            offenders.append(
+                f"line {node.lineno} build_task_runtime_execution_event_append_result(details=...) "
+                f"forwards the raw details parameter; use the already receipt-projected "
+                f"{expected_detail_name} local"
+            )
+            continue
+        recomputes_receipt_projection = any(
+            isinstance(child, ast.Call)
+            and (
+                _self_method_call_name(child) in helper_names
+                or _call_name(child.func) == "self._board.last_row_write_receipt"
+            )
+            for child in ast.walk(details_value)
+        )
+        if recomputes_receipt_projection:
+            offenders.append(
+                f"line {node.lineno} build_task_runtime_execution_event_append_result(details=...) "
+                f"recomputes row-write receipt details; reuse the existing {expected_detail_name} local"
+            )
+            continue
+        offenders.append(
+            f"line {node.lineno} build_task_runtime_execution_event_append_result(details=...) "
+            f"must use the same receipt-projected {expected_detail_name} local passed to the payload builder"
+        )
+    return offenders
+
+
 def _append_execution_event_row_write_receipt_projection_violations() -> list[str]:
     """Validate row-write receipt evidence is projected before execution-event payload construction."""
 
@@ -3700,6 +3757,7 @@ def _append_execution_event_row_write_receipt_projection_violations() -> list[st
         payload_lineno=payload_call.lineno,
     )
     details_keyword = next((keyword for keyword in payload_call.keywords if keyword.arg == "details"), None)
+    expected_detail_name: str | None = None
     if details_keyword is None:
         offenders.append("build_task_runtime_execution_event_payload() must pass details=<receipt-projected details>")
     elif not isinstance(details_keyword.value, ast.Name) or details_keyword.value.id not in assigned_detail_names:
@@ -3707,6 +3765,23 @@ def _append_execution_event_row_write_receipt_projection_violations() -> list[st
         offenders.append(
             "build_task_runtime_execution_event_payload(details=...) must receive the local details object "
             f"returned by the row-write receipt projection helper before payload construction; expected {expected}"
+        )
+    else:
+        expected_detail_name = details_keyword.value.id
+
+    append_result_calls = _append_execution_event_append_result_calls(function_def)
+    if not append_result_calls:
+        offenders.append(
+            "TaskRuntimeService._append_execution_event must construct at least one "
+            "build_task_runtime_execution_event_append_result() call"
+        )
+    elif expected_detail_name is not None:
+        offenders.extend(
+            _append_result_receipt_detail_projection_violations(
+                append_result_calls=append_result_calls,
+                expected_detail_name=expected_detail_name,
+                helper_names=helper_names,
+            )
         )
 
     return offenders

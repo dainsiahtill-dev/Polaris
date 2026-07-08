@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -407,6 +408,7 @@ def build_task_runtime_execution_event_append_result(
     fact_event_seq: Any = None,
     fact_seq: Any = None,
     published: bool = False,
+    details: Mapping[str, Any] | None = None,
     append_error: Any = "",
     publish_error: Any = "",
 ) -> dict[str, Any]:
@@ -422,6 +424,10 @@ def build_task_runtime_execution_event_append_result(
     directly). The seq number is only projected when it is a real positive
     integer (``>= 1``); missing or invalid input never produces a fabricated
     ``fact_event_seq`` field.
+
+    ``details`` is a read-only projection of the event payload details already
+    built by the service. It is copied as a plain dict when provided as a
+    non-empty mapping; invalid or empty values are omitted.
     """
 
     clean_event_type = str(event_type or "unknown").strip() or "unknown"
@@ -430,6 +436,7 @@ def build_task_runtime_execution_event_append_result(
     clean_storage_path = str(fact_storage_path or "").strip()
     clean_append_error = str(append_error or "").strip()
     clean_publish_error = str(publish_error or "").strip()
+    clean_details = dict(details) if isinstance(details, Mapping) else {}
 
     clean_fact_event_seq = _coerce_fact_event_seq(fact_event_seq)
     if clean_fact_event_seq is None:
@@ -448,6 +455,8 @@ def build_task_runtime_execution_event_append_result(
         result["fact_storage_path"] = clean_storage_path
     if clean_fact_event_seq is not None:
         result["fact_event_seq"] = clean_fact_event_seq
+    if clean_details:
+        result["details"] = clean_details
     if clean_append_error:
         result["error"] = sanitize_summary(clean_append_error, max_chars=300)
     if clean_publish_error:

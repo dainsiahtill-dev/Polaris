@@ -3076,7 +3076,7 @@ class TaskRuntimeService:
         *,
         task_row: dict[str, Any],
         session: TaskExecutionSession | None,
-        details: dict[str, Any] | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         event_details = self._row_write_receipt_details_for_task(task_row)
         event_details.update(dict(details or {}))
@@ -3101,6 +3101,7 @@ class TaskRuntimeService:
             )
             return build_task_runtime_execution_event_append_result(
                 event_type=event_type_str,
+                details=event_details,
                 append_error=str(exc),
             )
         payload["fact_event_id"] = appended.event_id
@@ -3122,6 +3123,7 @@ class TaskRuntimeService:
                 fact_stream=appended.stream,
                 fact_storage_path=appended.storage_path,
                 fact_event_seq=appended.appended_seq,
+                details=event_details,
                 publish_error=str(exc),
             )
         if not published:
@@ -3133,6 +3135,7 @@ class TaskRuntimeService:
                     fact_stream=appended.stream,
                     fact_storage_path=appended.storage_path,
                     fact_event_seq=appended.appended_seq,
+                    details=event_details,
                     publish_error="factory_execution_event_publish_returned_false",
                 )
         return build_task_runtime_execution_event_append_result(
@@ -3141,6 +3144,7 @@ class TaskRuntimeService:
             fact_stream=appended.stream,
             fact_storage_path=appended.storage_path,
             fact_event_seq=appended.appended_seq,
+            details=event_details,
             published=published,
         )
 

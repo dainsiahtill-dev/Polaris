@@ -5,7 +5,7 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NoReturn
 
 import pytest
 from polaris.cells.events.fact_stream.public.service import (
@@ -90,6 +90,34 @@ def _assert_execution_event_row_write_receipt(
     assert isinstance(details, dict)
     return _assert_task_row_write_receipt(
         details.get("row_write_receipt"),
+        task_id=task_id,
+        task_path=task_path,
+    )
+
+
+def _raise_fact_stream_unavailable(
+    *,
+    event_type_str: str,
+    payload: dict[str, Any],
+) -> NoReturn:
+    assert event_type_str
+    assert payload
+    raise RuntimeError("fact stream unavailable")
+
+
+def _assert_execution_event_append_failure_with_row_write_receipt(
+    execution_event: dict[str, Any],
+    *,
+    event_type: str,
+    task_id: int,
+    task_path: Path,
+) -> dict[str, Any]:
+    assert execution_event["ok"] is False
+    assert execution_event["event_type"] == event_type
+    assert execution_event["published"] is False
+    assert execution_event["error"] == "fact stream unavailable"
+    return _assert_execution_event_row_write_receipt(
+        execution_event,
         task_id=task_id,
         task_path=task_path,
     )
@@ -328,6 +356,11 @@ def test_create_task_row_execution_event_details_include_row_write_receipt(tmp_p
     execution_event = created["execution_event"]
     assert execution_event["ok"] is True
     assert execution_event["event_type"] == "created"
+    _assert_execution_event_row_write_receipt(
+        execution_event,
+        task_id=task_id,
+        task_path=task_path,
+    )
     payload = _execution_event_payload_for_result(
         workspace,
         execution_event,
@@ -598,7 +631,7 @@ def test_task_runtime_service_create_links_reverse_dependency_with_execution_eve
     assert linked_payload["task_row_snapshot"]["id"] == parent_id
 
 
-def test_create_task_row_reports_event_append_failure_without_persisting_evidence(
+def test_create_task_row_reports_event_append_failure_with_row_receipt_without_persisting_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -606,10 +639,7 @@ def test_create_task_row_reports_event_append_failure_without_persisting_evidenc
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    def fail_append_event(_command: object) -> object:
-        raise RuntimeError("fact stream unavailable")
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     row = service.create_task_row(
         subject="create with append evidence",
@@ -617,20 +647,21 @@ def test_create_task_row_reports_event_append_failure_without_persisting_evidenc
         metadata={"phase": "projection"},
     )
 
+    task_id = int(row["id"])
     assert row["status"] == "pending"
-    assert row["execution_event"] == {
-        "ok": False,
-        "event_type": "created",
-        "published": False,
-        "error": "fact stream unavailable",
-    }
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        row["execution_event"],
+        event_type="created",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
     persisted = service.get_task(row["id"])
     assert persisted is not None
     assert "execution_event" not in persisted
     assert "execution_event" not in persisted["metadata"]
 
 
-def test_update_task_row_reports_event_append_failure_without_persisting_evidence(
+def test_update_task_row_reports_event_append_failure_with_row_receipt_without_persisting_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -638,11 +669,9 @@ def test_update_task_row_reports_event_append_failure_without_persisting_evidenc
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
     created = service.create_task_row(subject="update with append evidence")
+    task_id = int(created["id"])
 
-    def fail_append_event(_command: object) -> object:
-        raise RuntimeError("fact stream unavailable")
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     row = service.update_task_row(
         created["id"],
@@ -652,12 +681,12 @@ def test_update_task_row_reports_event_append_failure_without_persisting_evidenc
 
     assert row is not None
     assert row["status"] == "ready"
-    assert row["execution_event"] == {
-        "ok": False,
-        "event_type": "updated",
-        "published": False,
-        "error": "fact stream unavailable",
-    }
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        row["execution_event"],
+        event_type="updated",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
     persisted = service.get_task(row["id"])
     assert persisted is not None
     assert "execution_event" not in persisted
@@ -690,11 +719,9 @@ def test_claim_execution_fails_closed_on_execution_event_append_failure(
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
     created = service.create_task_row(subject="claim with append evidence")
+    task_id = int(created["id"])
 
-    def fail_append_event(_command: object) -> object:
-        raise RuntimeError("fact stream unavailable")
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     claimed = service.claim_execution(
         created["id"],
@@ -709,12 +736,12 @@ def test_claim_execution_fails_closed_on_execution_event_append_failure(
     assert claimed["requested_reason"] == "claimed"
     assert claimed["failure_class"] == "ledger_append_failed"
     assert claimed["state_mutation_applied"] is True
-    assert claimed["execution_event"] == {
-        "ok": False,
-        "event_type": "claimed",
-        "published": False,
-        "error": "fact stream unavailable",
-    }
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        claimed["execution_event"],
+        event_type="claimed",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
     assert claimed["task"]["status"] == "in_progress"
 
 
@@ -1402,6 +1429,7 @@ def test_complete_execution_fails_closed_on_execution_event_append_failure(
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
     created = service.create_task_row(subject="complete with append evidence")
+    task_id = int(created["id"])
     claimed = service.claim_execution(
         created["id"],
         worker_id="director",
@@ -1411,10 +1439,7 @@ def test_complete_execution_fails_closed_on_execution_event_append_failure(
     )
     assert claimed["success"] is True
 
-    def fail_append_event(_command: object) -> object:
-        raise RuntimeError("fact stream unavailable")
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     completed = service.complete_execution(
         created["id"],
@@ -1427,12 +1452,12 @@ def test_complete_execution_fails_closed_on_execution_event_append_failure(
     assert completed["requested_reason"] == "completed"
     assert completed["failure_class"] == "ledger_append_failed"
     assert completed["state_mutation_applied"] is True
-    assert completed["execution_event"] == {
-        "ok": False,
-        "event_type": "completed",
-        "published": False,
-        "error": "fact stream unavailable",
-    }
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        completed["execution_event"],
+        event_type="completed",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
     assert completed["task"]["status"] == "completed"
 
 
@@ -1444,6 +1469,7 @@ def test_fail_execution_fails_closed_on_execution_event_append_failure(
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
     created = service.create_task_row(subject="fail with append evidence")
+    task_id = int(created["id"])
     claimed = service.claim_execution(
         created["id"],
         worker_id="director",
@@ -1453,10 +1479,7 @@ def test_fail_execution_fails_closed_on_execution_event_append_failure(
     )
     assert claimed["success"] is True
 
-    def fail_append_event(_command: object) -> object:
-        raise RuntimeError("fact stream unavailable")
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     failed = service.fail_execution(
         created["id"],
@@ -1469,12 +1492,12 @@ def test_fail_execution_fails_closed_on_execution_event_append_failure(
     assert failed["requested_reason"] == "failed"
     assert failed["failure_class"] == "ledger_append_failed"
     assert failed["state_mutation_applied"] is True
-    assert failed["execution_event"] == {
-        "ok": False,
-        "event_type": "failed",
-        "published": False,
-        "error": "fact stream unavailable",
-    }
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        failed["execution_event"],
+        event_type="failed",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
     assert failed["task"]["status"] == "failed"
 
 
@@ -1486,6 +1509,7 @@ def test_suspend_execution_fails_closed_on_execution_event_append_failure(
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
     created = service.create_task_row(subject="suspend with append evidence")
+    task_id = int(created["id"])
     claimed = service.claim_execution(
         created["id"],
         worker_id="director",
@@ -1495,10 +1519,7 @@ def test_suspend_execution_fails_closed_on_execution_event_append_failure(
     )
     assert claimed["success"] is True
 
-    def fail_append_event(_command: object) -> object:
-        raise RuntimeError("fact stream unavailable")
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     suspended = service.suspend_execution(
         created["id"],
@@ -1511,12 +1532,12 @@ def test_suspend_execution_fails_closed_on_execution_event_append_failure(
     assert suspended["requested_reason"] == "suspended"
     assert suspended["failure_class"] == "ledger_append_failed"
     assert suspended["state_mutation_applied"] is True
-    assert suspended["execution_event"] == {
-        "ok": False,
-        "event_type": "suspended",
-        "published": False,
-        "error": "fact stream unavailable",
-    }
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        suspended["execution_event"],
+        event_type="suspended",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
     assert suspended["task"]["status"] == "pending"
 
 
@@ -2860,17 +2881,20 @@ def test_ensure_task_row_reports_materialized_event_append_failure(
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
     append_count = 0
-    original_append_event = service_module.append_fact_event
+    original_append_execution_fact = service._append_execution_fact_with_cas
 
-    def fail_materialized_append(command: AppendFactEventCommandV1) -> object:
+    def fail_materialized_append(
+        *,
+        event_type_str: str,
+        payload: dict[str, Any],
+    ) -> object:
         nonlocal append_count
         append_count += 1
-        event_type = str(getattr(command, "event_type", "") or "")
-        if event_type == "materialized":
+        if event_type_str == "materialized":
             raise RuntimeError("fact stream unavailable")
-        return original_append_event(command)
+        return original_append_execution_fact(event_type_str=event_type_str, payload=payload)
 
-    monkeypatch.setattr(service_module, "append_fact_event", fail_materialized_append)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", fail_materialized_append)
 
     row = service.ensure_task_row(
         external_task_id="task-0-director",
@@ -2880,13 +2904,14 @@ def test_ensure_task_row_reports_materialized_event_append_failure(
     )
 
     assert append_count >= 2
+    task_id = int(row["id"])
     assert row["status"] == "pending"
-    assert row["execution_event"] == {
-        "ok": False,
-        "event_type": "materialized",
-        "published": False,
-        "error": "fact stream unavailable",
-    }
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        row["execution_event"],
+        event_type="materialized",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
     assert len(row["execution_events"]) == 2
     assert row["execution_events"][0]["ok"] is True
     assert row["execution_events"][0]["event_type"] == "created"
@@ -3055,6 +3080,7 @@ def test_heartbeat_execution_fails_closed_on_event_append_failure(
     service = TaskRuntimeService(str(workspace))
     created = service.create_task_row(subject="heartbeat append evidence")
     created_id = created["id"]
+    task_id = int(created_id)
     claimed = service.claim_execution(
         created_id,
         worker_id="director",
@@ -3064,10 +3090,7 @@ def test_heartbeat_execution_fails_closed_on_event_append_failure(
     )
     assert claimed["success"] is True
 
-    def fail_append_event(_command: object) -> object:
-        raise RuntimeError("fact stream unavailable")
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     heartbeat = service.heartbeat_execution(
         created_id,
@@ -3080,12 +3103,12 @@ def test_heartbeat_execution_fails_closed_on_event_append_failure(
     assert heartbeat["requested_reason"] == "heartbeat_renewed"
     assert heartbeat["failure_class"] == "ledger_append_failed"
     assert heartbeat["state_mutation_applied"] is True
-    assert heartbeat["execution_event"] == {
-        "ok": False,
-        "event_type": "heartbeat_renewed",
-        "published": False,
-        "error": "fact stream unavailable",
-    }
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        heartbeat["execution_event"],
+        event_type="heartbeat_renewed",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
 
 
 def test_suspend_active_executions_for_run_fails_closed_on_event_append_failure(
@@ -3097,6 +3120,7 @@ def test_suspend_active_executions_for_run_fails_closed_on_event_append_failure(
     service = TaskRuntimeService(str(workspace))
     created = service.create_task_row(subject="cancel with append evidence")
     created_id = created["id"]
+    task_id = int(created_id)
     claimed = service.claim_execution(
         created_id,
         worker_id="director",
@@ -3106,10 +3130,7 @@ def test_suspend_active_executions_for_run_fails_closed_on_event_append_failure(
     )
     assert claimed["success"] is True
 
-    def fail_append_event(_command: object) -> object:
-        raise RuntimeError("fact stream unavailable")
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     suspended = service.suspend_active_executions_for_run(
         "run-cancel-append-failure",
@@ -3128,14 +3149,14 @@ def test_suspend_active_executions_for_run_fails_closed_on_event_append_failure(
             "error": "fact stream unavailable",
         }
     ]
-    assert suspended["execution_events"] == [
-        {
-            "ok": False,
-            "event_type": "suspended",
-            "published": False,
-            "error": "fact stream unavailable",
-        }
-    ]
+    execution_events = suspended["execution_events"]
+    assert len(execution_events) == 1
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        execution_events[0],
+        event_type="suspended",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
 
 
 def test_task_runtime_service_persists_sessions_under_canonical_task_namespace(tmp_path: Path) -> None:
@@ -3690,6 +3711,7 @@ def test_reopen_task_row_reports_event_append_failure_without_persisting_evidenc
     service = TaskRuntimeService(str(workspace))
     created = service.create_task_row(subject="reopen with append evidence")
     created_id = created["id"]
+    task_id = int(created_id)
     updated = service.update_task_row(created_id, metadata={"qa": "failed"})
     assert updated is not None
     claimed = service.claim_execution(
@@ -3705,26 +3727,19 @@ def test_reopen_task_row_reports_event_append_failure_without_persisting_evidenc
         result_summary="done",
     )
     assert completed["success"] is True
-    original_append_event = service_module.append_fact_event
 
-    def fail_reopened_append(command: AppendFactEventCommandV1) -> object:
-        event_type = str(getattr(command, "event_type", "") or "")
-        if event_type == "reopened":
-            raise RuntimeError("fact stream unavailable")
-        return original_append_event(command)
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_reopened_append)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     row = service.reopen_task_row(created_id, reason="qa_rework")
 
     assert row is not None
     assert row["status"] == "pending"
-    assert row["execution_event"] == {
-        "ok": False,
-        "event_type": "reopened",
-        "published": False,
-        "error": "fact stream unavailable",
-    }
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        row["execution_event"],
+        event_type="reopened",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
     persisted = service.get_task(row["id"])
     assert persisted is not None
     assert "execution_event" not in persisted
@@ -3791,6 +3806,7 @@ def test_task_runtime_execution_event_without_factory_run_is_not_published(tmp_p
     service = TaskRuntimeService(str(workspace))
 
     created = service.create_task_row(subject="non factory execution event")
+    task_id = int(created["id"])
 
     execution_event = created["execution_event"]
     assert execution_event["ok"] is True
@@ -3799,6 +3815,11 @@ def test_task_runtime_execution_event_without_factory_run_is_not_published(tmp_p
     assert execution_event["fact_stream"] == "task_runtime.execution"
     assert execution_event["published"] is False
     assert "publish_error" not in execution_event
+    _assert_execution_event_row_write_receipt(
+        execution_event,
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
 
 
 def test_task_runtime_factory_event_publish_false_is_projected(
@@ -3825,6 +3846,7 @@ def test_task_runtime_factory_event_publish_false_is_projected(
         subject="factory publisher returned false",
         metadata={"factory_run_id": "factory_123456789abc"},
     )
+    task_id = int(created["id"])
 
     execution_event = created["execution_event"]
     assert execution_event["ok"] is True
@@ -3833,6 +3855,11 @@ def test_task_runtime_factory_event_publish_false_is_projected(
     assert execution_event["fact_stream"] == "task_runtime.execution"
     assert execution_event["published"] is False
     assert execution_event["publish_error"] == "factory_execution_event_publish_returned_false"
+    _assert_execution_event_row_write_receipt(
+        execution_event,
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
 
 
 def test_task_runtime_factory_event_preserves_payload_director_run_id(
@@ -3955,24 +3982,29 @@ def test_execution_event_does_not_fabricate_fact_event_seq_on_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed ``append_fact_event`` must omit ``fact_event_seq`` from the public
-    ``execution_event`` projection so consumers cannot latch onto a phantom seq.
+    """A failed execution fact append must omit ``fact_event_seq`` from the
+    public ``execution_event`` projection so consumers cannot latch onto a
+    phantom seq.
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    def fail_append_event(_command: object) -> object:
-        raise RuntimeError("fact stream unavailable")
-
-    monkeypatch.setattr(service_module, "append_fact_event", fail_append_event)
+    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
 
     row = service.create_task_row(subject="fail append seq projection")
+    task_id = int(row["id"])
     execution_event = row["execution_event"]
     assert isinstance(execution_event, dict)
     assert execution_event["ok"] is False
     assert execution_event["event_type"] == "created"
     assert "fact_event_seq" not in execution_event
+    _assert_execution_event_append_failure_with_row_write_receipt(
+        execution_event,
+        event_type="created",
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
 
 
 def test_execution_event_does_not_fabricate_fact_event_seq_on_publish_failure(
@@ -3995,6 +4027,7 @@ def test_execution_event_does_not_fabricate_fact_event_seq_on_publish_failure(
     monkeypatch.setattr(service, "_publish_factory_execution_event", fail_publish)
 
     row = service.create_task_row(subject="publish-failure seq")
+    task_id = int(row["id"])
     execution_event = row["execution_event"]
     assert isinstance(execution_event, dict)
     assert execution_event["published"] is False
@@ -4003,6 +4036,11 @@ def test_execution_event_does_not_fabricate_fact_event_seq_on_publish_failure(
     # is projected. The publish_error/published fields carry the honest verdict.
     assert isinstance(execution_event.get("fact_event_seq"), int)
     assert execution_event["fact_event_seq"] >= 1
+    _assert_execution_event_row_write_receipt(
+        execution_event,
+        task_id=task_id,
+        task_path=_task_file_path(workspace, task_id),
+    )
 
 
 def test_execution_event_omits_fact_event_seq_when_appended_seq_is_none(

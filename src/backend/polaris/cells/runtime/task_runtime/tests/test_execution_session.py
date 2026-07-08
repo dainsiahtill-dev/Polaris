@@ -309,6 +309,102 @@ def test_build_task_runtime_execution_event_append_result_projects_failure_evide
     }
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "expected_core_fields"),
+    [
+        (
+            {
+                "fact_event_id": "evt-success",
+                "fact_stream": "task_runtime.execution",
+                "fact_storage_path": "runtime/events/task_runtime.execution.jsonl",
+                "fact_event_seq": 7,
+                "published": True,
+            },
+            {
+                "ok": True,
+                "event_type": "claimed",
+                "published": True,
+                "fact_event_id": "evt-success",
+                "fact_stream": "task_runtime.execution",
+                "fact_storage_path": "runtime/events/task_runtime.execution.jsonl",
+                "fact_event_seq": 7,
+            },
+        ),
+        (
+            {
+                "fact_event_seq": 8,
+                "append_error": "fact stream unavailable",
+            },
+            {
+                "ok": False,
+                "event_type": "claimed",
+                "published": False,
+                "fact_event_seq": 8,
+                "error": "fact stream unavailable",
+            },
+        ),
+        (
+            {
+                "fact_event_id": "evt-publish-failed",
+                "fact_event_seq": 9,
+                "publish_error": "publish down",
+            },
+            {
+                "ok": True,
+                "event_type": "claimed",
+                "published": False,
+                "fact_event_id": "evt-publish-failed",
+                "fact_event_seq": 9,
+                "publish_error": "publish down",
+            },
+        ),
+    ],
+)
+def test_build_task_runtime_execution_event_append_result_projects_non_empty_details_without_core_drift(
+    kwargs: dict[str, object],
+    expected_core_fields: dict[str, object],
+) -> None:
+    details = {
+        "source": "unit",
+        "row_write_receipt": {
+            "task_id": 7,
+            "task_path": "runtime/tasks/task_7.json",
+        },
+    }
+
+    result = build_task_runtime_execution_event_append_result(
+        event_type="claimed",
+        details=details,
+        **kwargs,
+    )
+
+    assert result["details"] == details
+    assert result["details"] is not details
+    for field_name, expected_value in expected_core_fields.items():
+        assert result[field_name] == expected_value
+
+
+@pytest.mark.parametrize("details", [None, {}, [], "not-a-mapping", 0])
+def test_build_task_runtime_execution_event_append_result_omits_empty_or_invalid_details(
+    details: object,
+) -> None:
+    result = build_task_runtime_execution_event_append_result(
+        event_type="claimed",
+        fact_event_id="evt-1234",
+        fact_event_seq=7,
+        published=True,
+        details=details,
+    )
+
+    assert result == {
+        "ok": True,
+        "event_type": "claimed",
+        "published": True,
+        "fact_event_id": "evt-1234",
+        "fact_event_seq": 7,
+    }
+
+
 def test_build_task_runtime_execution_event_append_result_projects_fact_event_seq_when_positive() -> None:
     result = build_task_runtime_execution_event_append_result(
         event_type="claimed",
