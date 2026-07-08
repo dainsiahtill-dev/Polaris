@@ -8173,6 +8173,18 @@ SESSION_WRITE_FILE_LOCK_HELPER = "_file_lock"
 SESSION_WRITE_FILE_LOCK_PATH_HELPER = "_session_file_lock_path"
 SESSION_WRITE_CAS_HELPER = "_assert_session_payload_unchanged"
 SESSION_WRITE_RECEIPT_RECORD_HELPER = "_record_session_write_receipt"
+SESSION_READ_OWNER_METHOD = "_read_session"
+SESSION_READ_LOCKED_HELPER_METHOD = "_read_session_locked"
+SESSION_TERMINAL_SNAPSHOT_METHOD = "_find_terminal_session_snapshot"
+SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD = "_find_terminal_session_snapshot_locked"
+SESSION_READ_LOCKED_HELPER_METHODS = frozenset({SESSION_READ_LOCKED_HELPER_METHOD})
+SESSION_READ_LOCKED_HELPER_CALLERS = frozenset(
+    {
+        SESSION_READ_OWNER_METHOD,
+        SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD,
+        SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD,
+    }
+)
 SESSION_WRITE_RECEIPT_TRANSITION_METHODS = frozenset(
     {
         "claim_execution",
@@ -8357,15 +8369,23 @@ def _session_task_id_local_names(method_def: ast.FunctionDef) -> set[str]:
     """Infer local names derived from ``session.task_id``.
 
     The lock must be scoped to one task.  This narrow data-flow accepts direct
-    ``self._get_session_lock(session.task_id)`` calls and normalized locals
-    such as ``task_id = int(session.task_id)`` without relying on source-text
-    matching.
+    ``self._get_session_lock(session.task_id)`` calls, public read-boundary
+    ``task_id`` parameters, and normalized locals such as
+    ``task_id = int(session.task_id)`` without relying on source-text matching.
     """
 
     assignments = [
         node for node in _walk_task_runtime_method_body(method_def) if isinstance(node, ast.Assign | ast.AnnAssign)
     ]
-    task_id_names: set[str] = set()
+    task_id_names: set[str] = {
+        arg.arg
+        for arg in (
+            *method_def.args.posonlyargs,
+            *method_def.args.args,
+            *method_def.args.kwonlyargs,
+        )
+        if arg.arg == "task_id"
+    }
     changed = True
 
     while changed:
@@ -8559,6 +8579,77 @@ def _session_payload_assert_before_atomic_write(
         if cas_call is not None:
             return cas_call
     return None
+
+
+def _session_read_json_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
+    return [
+        node
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._kernel_fs.read_json"
+    ]
+
+
+def _session_lock_boundary_nodes(
+    method_def: ast.FunctionDef,
+    *,
+    method_name: str,
+    operation_label: str,
+) -> tuple[list[str], ast.With | None, ast.With | None, dict[ast.AST, ast.AST]]:
+    parents = _parent_lookup(method_def)
+    lock_with_nodes = _write_session_per_task_lock_with_nodes(method_def)
+    file_lock_with_nodes = _write_session_file_lock_with_nodes(method_def)
+    offenders: list[str] = []
+    lock_node: ast.With | None = None
+    file_lock_node: ast.With | None = None
+
+    if not lock_with_nodes:
+        offenders.append(
+            f"TaskRuntimeService.{method_name}() must enter "
+            f"with self.{SESSION_WRITE_LOCK_HELPER}(<task id>): before {operation_label}"
+        )
+        return offenders, lock_node, file_lock_node, parents
+    if len(lock_with_nodes) != 1:
+        offenders.append(
+            f"TaskRuntimeService.{method_name}() must keep {operation_label} in one "
+            f"per-task session-lock critical section; found {len(lock_with_nodes)} "
+            "per-task lock blocks"
+        )
+        return offenders, lock_node, file_lock_node, parents
+
+    lock_node = lock_with_nodes[0]
+    if not file_lock_with_nodes:
+        offenders.append(
+            f"TaskRuntimeService.{method_name}() must enter "
+            "with self._board._file_lock(self._session_file_lock_path(...)) inside "
+            "the per-task session-lock critical section"
+        )
+        return offenders, lock_node, file_lock_node, parents
+    if len(file_lock_with_nodes) != 1:
+        offenders.append(
+            f"TaskRuntimeService.{method_name}() must keep {operation_label} in one "
+            "cooperative session-file-lock critical section; found "
+            f"{len(file_lock_with_nodes)} session file-lock blocks"
+        )
+        return offenders, lock_node, file_lock_node, parents
+
+    candidate_file_lock_node = file_lock_with_nodes[0]
+    if candidate_file_lock_node is lock_node:
+        if not _write_session_combined_with_orders_file_lock_after_session_lock(method_def, lock_node):
+            offenders.append(
+                f"TaskRuntimeService.{method_name}() must acquire the cooperative "
+                "session file lock after the per-task RLock in the same combined "
+                "with statement"
+            )
+        file_lock_node = candidate_file_lock_node
+        return offenders, lock_node, file_lock_node, parents
+
+    if not _node_is_descendant_of(candidate_file_lock_node, lock_node, parents):
+        offenders.append(
+            f"TaskRuntimeService.{method_name}() must nest the cooperative session "
+            "file lock inside the per-task RLock section"
+        )
+    file_lock_node = candidate_file_lock_node
+    return offenders, lock_node, file_lock_node, parents
 
 
 def _session_write_receipt_record_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
@@ -9019,6 +9110,121 @@ def _write_session_lock_boundary_violations() -> list[str]:
     return offenders
 
 
+def _read_session_lock_boundary_violations() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    read_session = method_defs.get(SESSION_READ_OWNER_METHOD)
+    locked_reader = method_defs.get(SESSION_READ_LOCKED_HELPER_METHOD)
+    terminal_snapshot = method_defs.get(SESSION_TERMINAL_SNAPSHOT_METHOD)
+    locked_terminal_snapshot = method_defs.get(SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD)
+    write_locked_owner = method_defs.get(SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD)
+    offenders: list[str] = []
+
+    if read_session is None:
+        offenders.append(f"TaskRuntimeService.{SESSION_READ_OWNER_METHOD}() not found")
+    else:
+        scope_offenders, lock_node, file_lock_node, parents = _session_lock_boundary_nodes(
+            read_session,
+            method_name=SESSION_READ_OWNER_METHOD,
+            operation_label="durable session reads",
+        )
+        offenders.extend(scope_offenders)
+
+        locked_reader_calls = _direct_self_method_calls(read_session, SESSION_READ_LOCKED_HELPER_METHOD)
+        if not locked_reader_calls:
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_READ_OWNER_METHOD}() must delegate durable "
+                f"session JSON reads to self.{SESSION_READ_LOCKED_HELPER_METHOD}() after "
+                "acquiring both session locks"
+            )
+        for call in locked_reader_calls:
+            if lock_node is not None and not _node_is_descendant_of(call, lock_node, parents):
+                offenders.append(
+                    f"TaskRuntimeService.{SESSION_READ_OWNER_METHOD}():{call.lineno} calls "
+                    f"self.{SESSION_READ_LOCKED_HELPER_METHOD}() outside the per-task "
+                    "session-lock critical section"
+                )
+            if file_lock_node is not None and not _node_is_descendant_of(call, file_lock_node, parents):
+                offenders.append(
+                    f"TaskRuntimeService.{SESSION_READ_OWNER_METHOD}():{call.lineno} calls "
+                    f"self.{SESSION_READ_LOCKED_HELPER_METHOD}() outside the cooperative "
+                    "session-file-lock critical section"
+                )
+
+    if locked_reader is None:
+        offenders.append(f"TaskRuntimeService.{SESSION_READ_LOCKED_HELPER_METHOD}() not found")
+    else:
+        if not _session_read_json_calls(locked_reader):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_READ_LOCKED_HELPER_METHOD}() must own the "
+                "durable session self._kernel_fs.read_json() call"
+            )
+        if _write_session_per_task_lock_with_nodes(locked_reader) or _write_session_file_lock_with_nodes(locked_reader):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_READ_LOCKED_HELPER_METHOD}() must not acquire "
+                "session locks itself; TaskRuntimeService._read_session() is the public "
+                "synchronization boundary"
+            )
+
+    allowed_read_json_methods = set(SESSION_READ_LOCKED_HELPER_METHODS)
+    for method_name, method_def in sorted(method_defs.items()):
+        if method_name in allowed_read_json_methods:
+            continue
+        for call in _session_read_json_calls(method_def):
+            offenders.append(
+                f"TaskRuntimeService.{method_name}():{call.lineno} calls "
+                "self._kernel_fs.read_json(); durable session JSON reads must stay "
+                f"inside allowed locked helpers {sorted(allowed_read_json_methods)}"
+            )
+
+    for method_name, method_def in sorted(method_defs.items()):
+        if method_name in SESSION_READ_LOCKED_HELPER_CALLERS or method_name in SESSION_READ_LOCKED_HELPER_METHODS:
+            continue
+        for call in _direct_self_method_calls(method_def, SESSION_READ_LOCKED_HELPER_METHOD):
+            offenders.append(
+                f"TaskRuntimeService.{method_name}():{call.lineno} calls "
+                f"self.{SESSION_READ_LOCKED_HELPER_METHOD}(); locked session reads may "
+                "only be entered by reviewed lock-scoped session read/write paths"
+            )
+
+    if terminal_snapshot is None:
+        offenders.append(f"TaskRuntimeService.{SESSION_TERMINAL_SNAPSHOT_METHOD}() not found")
+    else:
+        if not _direct_self_method_calls(terminal_snapshot, SESSION_READ_OWNER_METHOD):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_TERMINAL_SNAPSHOT_METHOD}() must use "
+                f"the public self.{SESSION_READ_OWNER_METHOD}() boundary for unlocked "
+                "terminal snapshot reads"
+            )
+
+    if locked_terminal_snapshot is None:
+        offenders.append(f"TaskRuntimeService.{SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD}() not found")
+    else:
+        for call in _direct_self_method_calls(locked_terminal_snapshot, SESSION_READ_OWNER_METHOD):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD}():{call.lineno} "
+                f"calls self.{SESSION_READ_OWNER_METHOD}(); write-locked terminal snapshot "
+                "lookup must not re-enter the public read boundary"
+            )
+        if not _direct_self_method_calls(locked_terminal_snapshot, SESSION_READ_LOCKED_HELPER_METHOD):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD}() must read the "
+                f"durable disk snapshot through self.{SESSION_READ_LOCKED_HELPER_METHOD}()"
+            )
+
+    if (
+        write_locked_owner is not None
+        and locked_terminal_snapshot is not None
+        and not _direct_self_method_calls(write_locked_owner, SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD)
+    ):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() must route "
+            f"terminal-session reconciliation through self.{SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD}() "
+            "inside the write-locked path"
+        )
+
+    return offenders
+
+
 def _check_write_session_locked_asserts_payload_unchanged_before_writes() -> list[str]:
     method_defs = _task_runtime_service_method_defs()
     locked_owner = method_defs.get(SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD)
@@ -9175,6 +9381,28 @@ def test_write_session_holds_per_task_and_file_locks_around_write_owner() -> Non
         "session lock and cooperative session file lock, then keep all durable "
         "session writes plus receipt commits in the same double-lock-scoped "
         "write body. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_read_session_holds_per_task_and_file_locks_around_locked_read_helper() -> None:
+    """WS2 execution-ledger fence: session reads must stay lock-guarded.
+
+    ``_read_session()`` is the public synchronization boundary. It must acquire
+    the per-task in-process session lock and cooperative session file lock,
+    then delegate durable JSON reads to a reviewed locked helper. Write-locked
+    terminal snapshot lookup must call that helper directly instead of
+    re-entering public ``_read_session()``.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _read_session_lock_boundary_violations()
+
+    assert not offenders, (
+        "WS2 execution ledger SSoT session read lock fence: "
+        f"{rel}:TaskRuntimeService._read_session() must acquire the per-task "
+        "session lock and cooperative session file lock, durable read_json() "
+        "must stay inside _read_session_locked(), and write-locked terminal "
+        "snapshot lookup must not re-enter public _read_session(). Offenders:\n" + "\n".join(offenders)
     )
 
 

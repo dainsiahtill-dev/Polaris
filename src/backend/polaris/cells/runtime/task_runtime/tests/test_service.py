@@ -205,24 +205,30 @@ def _assert_execution_event_append_failure_with_session_write_receipt(
     )
 
 
-class _SessionWriteFileLockProbe(NamedTuple):
+class _SessionFileLockProbe(NamedTuple):
     entered_lock_paths: list[Path]
+    read_observed_under_file_lock: list[bool]
     write_observed_under_file_lock: list[bool]
 
 
-def _observe_session_write_file_lock(
+def _observe_session_file_lock(
     service: TaskRuntimeService,
     monkeypatch: pytest.MonkeyPatch,
     *,
     task_id: int,
-) -> _SessionWriteFileLockProbe:
+) -> _SessionFileLockProbe:
     entered_lock_paths: list[Path] = []
     active_lock_paths: list[Path] = []
+    read_observed_under_file_lock: list[bool] = []
     write_observed_under_file_lock: list[bool] = []
     session_logical_path = service._session_logical_path(task_id)
     expected_lock_path = service._session_file_lock_path(task_id)
     original_file_lock = service._board._file_lock
+    original_read_json = service._kernel_fs.read_json
     original_write_json_atomic = service._kernel_fs.write_json_atomic
+
+    def session_lock_is_active() -> bool:
+        return bool(active_lock_paths and active_lock_paths[-1] == expected_lock_path)
 
     @contextmanager
     def tracking_file_lock(lock_file_path: Path) -> Iterator[object]:
@@ -236,6 +242,11 @@ def _observe_session_write_file_lock(
                 released_lock_path = active_lock_paths.pop()
                 assert released_lock_path == lock_path
 
+    def wrapped_read_json(logical_path: str) -> Any:
+        if logical_path == session_logical_path:
+            read_observed_under_file_lock.append(session_lock_is_active())
+        return original_read_json(logical_path)
+
     def wrapped_write_json_atomic(
         logical_path: str,
         payload: Any,
@@ -244,10 +255,7 @@ def _observe_session_write_file_lock(
         ensure_ascii: bool = False,
     ) -> object:
         if logical_path == session_logical_path:
-            active_expected_lock = bool(
-                active_lock_paths and active_lock_paths[-1] == expected_lock_path
-            )
-            write_observed_under_file_lock.append(active_expected_lock)
+            write_observed_under_file_lock.append(session_lock_is_active())
         return original_write_json_atomic(
             logical_path,
             payload,
@@ -256,10 +264,25 @@ def _observe_session_write_file_lock(
         )
 
     monkeypatch.setattr(service._board, "_file_lock", tracking_file_lock)
+    monkeypatch.setattr(service._kernel_fs, "read_json", wrapped_read_json)
     monkeypatch.setattr(service._kernel_fs, "write_json_atomic", wrapped_write_json_atomic)
-    return _SessionWriteFileLockProbe(
+    return _SessionFileLockProbe(
         entered_lock_paths=entered_lock_paths,
+        read_observed_under_file_lock=read_observed_under_file_lock,
         write_observed_under_file_lock=write_observed_under_file_lock,
+    )
+
+
+def _observe_session_write_file_lock(
+    service: TaskRuntimeService,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    task_id: int,
+) -> _SessionFileLockProbe:
+    return _observe_session_file_lock(
+        service,
+        monkeypatch,
+        task_id=task_id,
     )
 
 
@@ -514,6 +537,52 @@ def test_claim_execution_records_session_write_receipt(tmp_path: Path) -> None:
     assert receipt["after_hash"] == _sha256_utf8_file(session_path)
 
 
+def test_read_session_normal_path_reads_while_holding_session_file_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="session read lock normal path")
+    task_id = int(created["id"])
+    session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="run-session-read-lock-normal",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="unit",
+        selection_source="task_id_lookup",
+    )
+    session_path = _session_file_path(workspace, task_id)
+    session_path.write_text(
+        json.dumps(session.to_dict(), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    before_hash = _sha256_utf8_file(session_path)
+    file_lock_probe = _observe_session_file_lock(
+        service,
+        monkeypatch,
+        task_id=task_id,
+    )
+    expected_lock_path = service._session_file_lock_path(task_id)
+
+    persisted_session = service._read_session(task_id)
+
+    assert persisted_session is not None
+    assert persisted_session.session_id == session.session_id
+    assert persisted_session.task_id == task_id
+    assert persisted_session.status == session.status
+    assert file_lock_probe.entered_lock_paths == [expected_lock_path]
+    assert file_lock_probe.read_observed_under_file_lock == [True]
+    assert file_lock_probe.write_observed_under_file_lock == []
+    assert expected_lock_path.is_file()
+    assert _sha256_utf8_file(session_path) == before_hash
+
+
 def test_write_session_normal_path_writes_while_holding_session_file_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -749,6 +818,7 @@ def test_write_session_terminal_preserved_path_writes_while_holding_session_file
 
     assert session_written is False
     assert file_lock_probe.entered_lock_paths == [expected_lock_path]
+    assert file_lock_probe.read_observed_under_file_lock == [True]
     assert file_lock_probe.write_observed_under_file_lock
     assert all(file_lock_probe.write_observed_under_file_lock)
     assert expected_lock_path.is_file()

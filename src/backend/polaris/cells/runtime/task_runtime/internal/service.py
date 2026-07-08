@@ -1199,14 +1199,21 @@ class TaskRuntimeService:
         self.refresh_dependency_unblocks()
         return self._list_file_task_rows(include_terminal=include_terminal)
 
-    def _list_file_task_rows(self, *, include_terminal: bool = True) -> list[dict[str, Any]]:
+    def _list_file_task_rows(
+        self,
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = True,
+    ) -> list[dict[str, Any]]:
         """Return file-backed task rows without triggering ``refresh_dependency_unblocks``.
 
         This helper is the recursion-free source of truth for file-backed row
         projection: it preserves the existing ``include_terminal`` filtering and
         sort behaviour that ``list_task_rows`` relied on, while letting
         ``list_observable_task_rows`` and ``refresh_dependency_unblocks`` skip
-        the recursive refresh side effect.
+        the recursive refresh side effect. Callers that already hold the
+        execution-session file lock may disable runtime-state augmentation to
+        avoid re-entering ``_read_session()`` from the same lock scope.
 
         Complexity:
             O(t log t) time where t is the number of file-backed rows.
@@ -1214,7 +1221,9 @@ class TaskRuntimeService:
 
         rows: list[dict[str, Any]] = []
         for task in self._list_file_task_entities():
-            row = self._augment_task_row(task.to_dict())
+            row = task.to_dict()
+            if augment_runtime_state:
+                row = self._augment_task_row(row)
             status = str(row.get("status") or "").strip().lower()
             if (not include_terminal) and is_terminal_task_row_status(status):
                 continue
@@ -2616,6 +2625,18 @@ class TaskRuntimeService:
             self._last_session_write_receipt = receipt
 
     def _read_session(self, task_id: int) -> TaskExecutionSession | None:
+        """Read a session under the per-task local and cooperative file locks."""
+
+        task_id = int(task_id)
+        with (
+            self._get_session_lock(task_id),
+            self._board._file_lock(self._session_file_lock_path(task_id)),
+        ):
+            return self._read_session_locked(task_id)
+
+    def _read_session_locked(self, task_id: int) -> TaskExecutionSession | None:
+        """Read a session while the caller holds both per-task session locks."""
+
         logical_path = self._session_logical_path(task_id)
         if not self._kernel_fs.exists(logical_path):
             return None
@@ -2656,7 +2677,7 @@ class TaskRuntimeService:
     ) -> bool:
         session_path = self._session_logical_path(session.task_id)
         if not allow_terminal_downgrade and not is_terminal_session_status(session.status):
-            terminal_session = self._find_terminal_session_snapshot(session)
+            terminal_session = self._find_terminal_session_snapshot_locked(session)
             if terminal_session is not None:
                 self._copy_session_state(session, terminal_session)
                 terminal_payload = terminal_session.to_dict()
@@ -2698,10 +2719,27 @@ class TaskRuntimeService:
         )
         return True
 
+    def _find_terminal_session_snapshot_locked(
+        self,
+        incoming: TaskExecutionSession,
+    ) -> TaskExecutionSession | None:
+        """Find a terminal snapshot while the caller holds session locks."""
+
+        disk_session = self._read_session_locked(incoming.task_id)
+        if self._same_terminal_session(disk_session, incoming):
+            return disk_session
+
+        metadata_session = self._find_projected_runtime_execution_session_locked(incoming.task_id)
+        if self._same_terminal_session(metadata_session, incoming):
+            return metadata_session
+        return None
+
     def _find_terminal_session_snapshot(
         self,
         incoming: TaskExecutionSession,
     ) -> TaskExecutionSession | None:
+        """Find a terminal snapshot from session JSON or row projections."""
+
         disk_session = self._read_session(incoming.task_id)
         if self._same_terminal_session(disk_session, incoming):
             return disk_session
@@ -2730,6 +2768,33 @@ class TaskRuntimeService:
             return None
 
         for row in self._list_file_task_rows(include_terminal=True):
+            if self._observable_row_task_id(row) != target_task_id:
+                continue
+            return self._runtime_execution_session_from_projected_row(row)
+        return None
+
+    def _find_projected_runtime_execution_session_locked(
+        self,
+        task_id: int,
+    ) -> TaskExecutionSession | None:
+        """Return projected runtime metadata without session row augmentation."""
+
+        fact_row = self._find_latest_execution_fact_row_for_task(task_id)
+        fact_session = self._runtime_execution_session_from_projected_row(fact_row)
+        if fact_session is not None:
+            return fact_session
+
+        normalized_id = self.normalize_task_id(task_id)
+        if normalized_id is None:
+            return None
+        target_task_id = str(normalized_id).strip()
+        if not target_task_id:
+            return None
+
+        for row in self._list_file_task_rows(
+            include_terminal=True,
+            augment_runtime_state=False,
+        ):
             if self._observable_row_task_id(row) != target_task_id:
                 continue
             return self._runtime_execution_session_from_projected_row(row)
