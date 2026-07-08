@@ -35,17 +35,32 @@ class QualityProjection(Protocol):
     suggestions: list[str]
 
 
+def _result_items_from_batch_receipt(batch_receipt: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return per-tool result rows from a batch receipt.
+
+    ``results`` is authoritative. ``raw_results`` has the same per-tool row
+    shape and is used only when ``results`` is absent or empty. ``effect_receipts``
+    is deliberately excluded because those rows describe file effects, not tool
+    invocations, and do not carry stable ``tool_name`` / ``arguments`` /
+    ``call_id`` fields.
+
+    Complexity:
+        O(n) time and memory where ``n`` is the first non-empty result row list.
+    """
+    for key in ("results", "raw_results"):
+        rows = batch_receipt.get(key)
+        if not isinstance(rows, list) or not rows:
+            continue
+        return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
 def tool_calls_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Project RoleTurnResult.tool_calls from a TransactionKernel batch receipt."""
     if not isinstance(batch_receipt, dict):
         return []
-    raw_results = batch_receipt.get("results")
-    if not isinstance(raw_results, list):
-        return []
     tool_calls: list[dict[str, Any]] = []
-    for result in raw_results:
-        if not isinstance(result, dict):
-            continue
+    for result in _result_items_from_batch_receipt(batch_receipt):
         tool_calls.append(
             {
                 "tool": result.get("tool_name", ""),
@@ -60,13 +75,8 @@ def tool_results_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> lis
     """Project RoleTurnResult.tool_results from a TransactionKernel batch receipt."""
     if not isinstance(batch_receipt, dict):
         return []
-    raw_results = batch_receipt.get("results")
-    if not isinstance(raw_results, list):
-        return []
     tool_results: list[dict[str, Any]] = []
-    for result in raw_results:
-        if not isinstance(result, dict):
-            continue
+    for result in _result_items_from_batch_receipt(batch_receipt):
         tool_results.append(
             {
                 "tool": result.get("tool_name", ""),

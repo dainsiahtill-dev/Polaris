@@ -53,6 +53,101 @@ def test_batch_receipt_projects_tool_calls_and_results() -> None:
     assert tool_results[1]["status"] == "error"
 
 
+def test_batch_receipt_raw_results_fallback_projects_tool_calls_and_results() -> None:
+    receipt = {
+        "raw_results": [
+            {
+                "tool_name": "read_file",
+                "arguments": {"file": "src/main.py"},
+                "call_id": "raw-1",
+                "status": "success",
+                "result": {"content": "hello"},
+                "effect_receipt": {"file": "src/main.py", "operation": "read"},
+            }
+        ]
+    }
+
+    assert tool_calls_from_batch_receipt(receipt) == [
+        {"tool": "read_file", "args": {"file": "src/main.py"}, "call_id": "raw-1"}
+    ]
+
+    tool_results = tool_results_from_batch_receipt(receipt)
+
+    assert tool_results == [
+        {
+            "tool": "read_file",
+            "tool_name": "read_file",
+            "result": {"content": "hello"},
+            "success": True,
+            "status": "success",
+            "call_id": "raw-1",
+            "arguments": {"file": "src/main.py"},
+            "effect_receipt": {"file": "src/main.py", "operation": "read"},
+            "raw_result": receipt["raw_results"][0],
+        }
+    ]
+
+
+def test_batch_receipt_results_take_precedence_over_raw_results() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "src/index.js"},
+                "call_id": "result-1",
+                "status": "success",
+            }
+        ],
+        "raw_results": [
+            {
+                "tool_name": "read_file",
+                "arguments": {"file": "src/stale.js"},
+                "call_id": "raw-stale",
+                "status": "success",
+            }
+        ],
+    }
+
+    assert tool_calls_from_batch_receipt(receipt) == [
+        {"tool": "write_file", "args": {"file": "src/index.js"}, "call_id": "result-1"}
+    ]
+    assert tool_results_from_batch_receipt(receipt)[0]["call_id"] == "result-1"
+
+
+def test_batch_receipt_empty_results_falls_back_to_raw_results() -> None:
+    receipt = {
+        "results": [],
+        "raw_results": [
+            {
+                "tool_name": "execute_command",
+                "arguments": {"cmd": "python -m pytest"},
+                "call_id": "raw-command",
+                "status": "success",
+            }
+        ],
+    }
+
+    assert tool_calls_from_batch_receipt(receipt) == [
+        {"tool": "execute_command", "args": {"cmd": "python -m pytest"}, "call_id": "raw-command"}
+    ]
+
+
+def test_batch_receipt_effect_receipts_are_not_projected_as_tool_calls() -> None:
+    receipt = {
+        "effect_receipts": [
+            {
+                "file": "src/index.js",
+                "operation": "write",
+                "before_hash": "before",
+                "after_hash": "after",
+            }
+        ]
+    }
+
+    assert tool_calls_from_batch_receipt(receipt) == []
+    assert tool_results_from_batch_receipt(receipt) == []
+
+
 def test_batch_receipt_projection_ignores_invalid_shapes() -> None:
     assert tool_calls_from_batch_receipt(None) == []
     assert tool_calls_from_batch_receipt({"results": "not-a-list"}) == []
