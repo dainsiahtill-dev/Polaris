@@ -32,6 +32,7 @@ def _session_file_path(workspace: Path, task_id: object) -> Path:
 
 
 ExecutionTransitionInvoker = Callable[[TaskRuntimeService, object, str], dict[str, Any]]
+OwnerTerminalTransitionInvoker = Callable[[TaskRuntimeService, object], dict[str, Any] | None]
 
 
 def _complete_execution_transition(
@@ -74,6 +75,39 @@ _EXECUTION_TRANSITION_HELPER_CASES: tuple[tuple[str, str, str, ExecutionTransiti
     ("complete_execution", "completed", "completed", _complete_execution_transition),
     ("fail_execution", "failed", "failed", _fail_execution_transition),
     ("suspend_execution", "suspended", "pending", _suspend_execution_transition),
+)
+
+
+def _cancel_owner_terminal_transition(
+    service: TaskRuntimeService,
+    task_id: object,
+) -> dict[str, Any] | None:
+    return service.cancel_task_row_for_deduplication(
+        task_id,
+        primary_task_id=101,
+        reason="unit_owner_cancel",
+        metadata={"owner_transition": "cancel"},
+        source="unit_owner_transition",
+    )
+
+
+def _fail_owner_terminal_transition(
+    service: TaskRuntimeService,
+    task_id: object,
+) -> dict[str, Any] | None:
+    return service.fail_task_row_from_role_adapter(
+        task_id,
+        reason="unit_owner_failure",
+        metadata={"owner_transition": "fail"},
+        role_id="pm",
+        source="unit_owner_transition",
+        failure_class="unit_failure",
+    )
+
+
+_OWNER_TERMINAL_TRANSITION_CASES: tuple[tuple[str, OwnerTerminalTransitionInvoker], ...] = (
+    ("cancel_task_row_for_deduplication", _cancel_owner_terminal_transition),
+    ("fail_task_row_from_role_adapter", _fail_owner_terminal_transition),
 )
 
 
@@ -492,6 +526,35 @@ def test_task_entity_for_transition_normalizes_and_reads_raw_board_once(
     assert get_calls == [created_id]
 
 
+def test_task_entity_for_owner_terminal_transition_normalizes_and_reads_raw_board_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="owner terminal transition helper boundary")
+    created_id = int(created["id"])
+
+    original_get = service._board.get
+    get_calls: list[object] = []
+
+    def tracing_get(task_id: object) -> Any:
+        get_calls.append(task_id)
+        return original_get(task_id)
+
+    monkeypatch.setattr(service._board, "get", tracing_get)
+
+    normalized, task = service._task_entity_for_owner_terminal_transition(f"task-{created_id}-extra")
+
+    assert normalized == created_id
+    assert task is not None
+    assert task.id == created_id
+    assert get_calls == [created_id]
+    assert service._task_entity_for_owner_terminal_transition("bad-id") == (None, None)
+    assert get_calls == [created_id]
+
+
 @pytest.mark.parametrize(
     ("transition_name", "expected_reason", "expected_task_status", "invoke_transition"),
     _EXECUTION_TRANSITION_HELPER_CASES,
@@ -605,6 +668,63 @@ def test_execution_transitions_short_circuit_from_task_entity_helper_boundary(
     assert helper_calls == [task_id]
     assert session_lock_calls == []
     assert result == {"success": False, "reason": expected_reason}
+
+
+@pytest.mark.parametrize(
+    ("boundary_name", "task_id", "helper_result"),
+    (
+        ("invalid_task_id", "not-a-task", (None, None)),
+        ("task_not_found", "task-7001", (7001, None)),
+    ),
+    ids=("invalid_task_id", "task_not_found"),
+)
+@pytest.mark.parametrize(
+    ("transition_name", "invoke_transition"),
+    _OWNER_TERMINAL_TRANSITION_CASES,
+    ids=[case[0] for case in _OWNER_TERMINAL_TRANSITION_CASES],
+)
+def test_owner_terminal_transitions_short_circuit_before_session_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary_name: str,
+    task_id: object,
+    helper_result: tuple[int | None, Any | None],
+    transition_name: str,
+    invoke_transition: OwnerTerminalTransitionInvoker,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    helper_calls: list[object] = []
+    session_read_calls: list[object] = []
+    update_calls: list[object] = []
+
+    def task_entity_for_owner_terminal_transition(raw_task_id: object) -> tuple[int | None, Any | None]:
+        helper_calls.append(raw_task_id)
+        return helper_result
+
+    def reject_session_read(normalized_task_id: object) -> Any:
+        session_read_calls.append(normalized_task_id)
+        raise AssertionError(f"{transition_name} must short-circuit before session reads for {boundary_name}")
+
+    def reject_board_update(task_id_to_update: object, **_kwargs: Any) -> Any:
+        update_calls.append(task_id_to_update)
+        raise AssertionError(f"{transition_name} must not mutate rows for {boundary_name}")
+
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_owner_terminal_transition",
+        task_entity_for_owner_terminal_transition,
+    )
+    monkeypatch.setattr(service, "_read_session", reject_session_read)
+    monkeypatch.setattr(service._board, "update", reject_board_update)
+
+    result = invoke_transition(service, task_id)
+
+    assert helper_calls == [task_id]
+    assert session_read_calls == []
+    assert update_calls == []
+    assert result is None
 
 
 def test_complete_execution_fails_closed_on_execution_event_append_failure(
@@ -2445,28 +2565,64 @@ def test_task_runtime_rework_exhaustion_failure_is_owner_transition(tmp_path: Pa
     }
 
 
-def test_task_runtime_dedup_cancel_is_owner_transition(tmp_path: Path) -> None:
+def test_task_runtime_dedup_cancel_is_owner_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
     primary = service.create_task_row(subject="primary task")
     duplicate = service.create_task_row(subject="duplicate task")
+    duplicate_id = int(duplicate["id"])
+    duplicate_task = service._board.get(duplicate_id)
+    assert duplicate_task is not None
+    helper_calls: list[object] = []
+    direct_board_get_calls: list[object] = []
+
+    def task_entity_for_owner_terminal_transition(task_id: object) -> tuple[int | None, Any | None]:
+        helper_calls.append(task_id)
+        return service.normalize_task_id(task_id), duplicate_task
+
+    def reject_direct_board_get(task_id: object) -> Any:
+        direct_board_get_calls.append(task_id)
+        raise AssertionError(
+            "cancel_task_row_for_deduplication must read task entities through "
+            "_task_entity_for_owner_terminal_transition"
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_owner_terminal_transition",
+        task_entity_for_owner_terminal_transition,
+    )
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
 
     cancelled = service.cancel_task_row_for_deduplication(
-        duplicate["id"],
+        f"task-{duplicate_id}",
         primary_task_id=primary["id"],
         reason="pm_duplicate_subject",
         metadata={"dedup_source": "pm_adapter"},
         source="pm_adapter",
     )
 
+    assert helper_calls == [f"task-{duplicate_id}"]
+    assert direct_board_get_calls == []
     assert cancelled is not None
+    assert "success" not in cancelled
     assert cancelled["status"] == "cancelled"
     assert cancelled["metadata"]["dedup_merged_into"] == primary["id"]
     assert cancelled["metadata"]["dedup_reason"] == "pm_duplicate_subject"
     assert cancelled["metadata"]["dedup_source"] == "pm_adapter"
-    assert cancelled["execution_event"]["event_type"] == "cancelled"
+    execution_event = cancelled["execution_event"]
+    assert execution_event["ok"] is True
+    assert execution_event["event_type"] == "cancelled"
+    assert execution_event["fact_stream"] == "task_runtime.execution"
+    assert isinstance(execution_event["published"], bool)
+    assert isinstance(execution_event["fact_event_seq"], int)
+    assert str(execution_event["fact_event_id"]).strip()
+    assert cancelled["execution_events"] == [execution_event]
 
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
     cancelled_event = events[-1]
@@ -2479,14 +2635,40 @@ def test_task_runtime_dedup_cancel_is_owner_transition(tmp_path: Path) -> None:
     }
 
 
-def test_task_runtime_role_adapter_failure_is_owner_transition(tmp_path: Path) -> None:
+def test_task_runtime_role_adapter_failure_is_owner_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
     created = service.create_task_row(subject="pm planning task")
+    created_id = int(created["id"])
+    created_task = service._board.get(created_id)
+    assert created_task is not None
+    helper_calls: list[object] = []
+    direct_board_get_calls: list[object] = []
+
+    def task_entity_for_owner_terminal_transition(task_id: object) -> tuple[int | None, Any | None]:
+        helper_calls.append(task_id)
+        return service.normalize_task_id(task_id), created_task
+
+    def reject_direct_board_get(task_id: object) -> Any:
+        direct_board_get_calls.append(task_id)
+        raise AssertionError(
+            "fail_task_row_from_role_adapter must read task entities through _task_entity_for_owner_terminal_transition"
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_owner_terminal_transition",
+        task_entity_for_owner_terminal_transition,
+    )
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+
     failed = service.fail_task_row_from_role_adapter(
-        created["id"],
+        f"task-{created_id}",
         reason="pm_runtime_exception",
         metadata={"pm_error": "llm kernel offline"},
         role_id="pm",
@@ -2494,13 +2676,23 @@ def test_task_runtime_role_adapter_failure_is_owner_transition(tmp_path: Path) -
         failure_class="pm_runtime_exception",
     )
 
+    assert helper_calls == [f"task-{created_id}"]
+    assert direct_board_get_calls == []
     assert failed is not None
+    assert "success" not in failed
     assert failed["status"] == "failed"
     assert failed["metadata"]["pm_error"] == "llm kernel offline"
     assert failed["metadata"]["role_adapter_failure_reason"] == "pm_runtime_exception"
     assert failed["metadata"]["role_adapter_failure_role"] == "pm"
     assert failed["metadata"]["role_adapter_failure_class"] == "pm_runtime_exception"
-    assert failed["execution_event"]["event_type"] == "failed"
+    execution_event = failed["execution_event"]
+    assert execution_event["ok"] is True
+    assert execution_event["event_type"] == "failed"
+    assert execution_event["fact_stream"] == "task_runtime.execution"
+    assert isinstance(execution_event["published"], bool)
+    assert isinstance(execution_event["fact_event_seq"], int)
+    assert str(execution_event["fact_event_id"]).strip()
+    assert failed["execution_events"] == [execution_event]
 
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
     failed_event = events[-1]

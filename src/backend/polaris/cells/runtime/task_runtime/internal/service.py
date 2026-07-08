@@ -403,6 +403,21 @@ class TaskRuntimeService:
             return None, None
         return normalized, self._board.get(normalized)
 
+    def _task_entity_for_owner_terminal_transition(self, task_id: Any) -> tuple[int | None, Task | None]:
+        """Resolve raw owner-cell task entity for row-only terminal transitions.
+
+        Boundary:
+            Owner-cell terminal row transitions without an execution lease need
+            an O(1) raw ``TaskBoard.get`` pre-read to preserve missing-row
+            ``None`` semantics.  Centralizing that boundary keeps future
+            compare-and-swap/version checks local to the owner cell.
+        """
+
+        normalized = self.normalize_task_id(task_id)
+        if normalized is None:
+            return None, None
+        return normalized, self._board.get(normalized)
+
     @staticmethod
     def _task_row_payload_for_reexecution(payload: Mapping[str, Any]) -> dict[str, Any]:
         reset = dict(payload)
@@ -931,11 +946,8 @@ class TaskRuntimeService:
             O(1) task-row/session work for the target duplicate row.
         """
 
-        normalized = self.normalize_task_id(task_id)
-        if normalized is None:
-            return None
-        task = self._board.get(normalized)
-        if task is None:
+        normalized, task = self._task_entity_for_owner_terminal_transition(task_id)
+        if normalized is None or task is None:
             return None
 
         session = self._read_session(normalized)
@@ -1006,11 +1018,8 @@ class TaskRuntimeService:
             O(1) task-row/session work for the target row.
         """
 
-        normalized = self.normalize_task_id(task_id)
-        if normalized is None:
-            return None
-        task = self._board.get(normalized)
-        if task is None:
+        normalized, task = self._task_entity_for_owner_terminal_transition(task_id)
+        if normalized is None or task is None:
             return None
 
         failure_reason = sanitize_summary(reason or "role_adapter_failed")

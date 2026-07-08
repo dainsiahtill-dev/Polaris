@@ -169,9 +169,8 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_apply_terminal_session_reconcile", "get"): 3,
     ("_list_file_task_entities", "list_all"): 1,
     ("_task_entity_for_transition", "get"): 1,
-    ("cancel_task_row_for_deduplication", "get"): 1,
+    ("_task_entity_for_owner_terminal_transition", "get"): 1,
     ("claim_execution", "get"): 1,
-    ("fail_task_row_from_role_adapter", "get"): 1,
 }
 TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER = "_list_file_task_entities"
 TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_HELPER = "_task_entity_for_transition"
@@ -180,6 +179,13 @@ TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_CONSUMERS = frozenset(
         "complete_execution",
         "fail_execution",
         "suspend_execution",
+    }
+)
+TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_HELPER = "_task_entity_for_owner_terminal_transition"
+TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS = frozenset(
+    {
+        "cancel_task_row_for_deduplication",
+        "fail_task_row_from_role_adapter",
     }
 )
 TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
@@ -2110,6 +2116,70 @@ def test_execution_transition_methods_route_task_entity_reads_through_helper() -
         "Execution transition methods that need raw Task entity fallback "
         f"must call self.{helper_name}() instead of owning raw TaskBoard.get() "
         "reads themselves. Offenders:\n" + "\n".join(missing_helper_offenders)
+    )
+
+
+def test_owner_terminal_transition_methods_route_task_entity_reads_through_helper() -> None:
+    """WS2 owner-terminal row transition entity-read fence.
+
+    ``cancel_task_row_for_deduplication()`` and
+    ``fail_task_row_from_role_adapter()`` are owner-cell terminal row
+    transitions that can run without a Director execution lease. They need one
+    raw ``Task`` pre-read to preserve missing-row ``None`` semantics, but that
+    direct ``TaskBoard.get`` boundary must stay centralized in
+    ``_task_entity_for_owner_terminal_transition()`` so future CAS/version
+    checks, normalization, and traceable missing-row handling have one owner.
+    """
+
+    methods = _task_runtime_service_method_defs()
+    helper_name = TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_HELPER
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)
+    required_methods = TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS | {helper_name}
+    missing = sorted(required_methods.difference(methods))
+
+    assert not missing, f"Missing expected TaskRuntimeService methods: {missing}"
+
+    helper_get_calls = _direct_self_board_get_calls(methods[helper_name])
+    direct_get_offenders: list[str] = []
+    missing_helper_offenders: list[str] = []
+    unauthorized_helper_consumers: list[str] = []
+
+    for method_name in sorted(TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS):
+        method_def = methods[method_name]
+        direct_get_offenders.extend(
+            f"{rel}:{call.lineno} TaskRuntimeService.{method_name}() calls self._board.get() directly"
+            for call in _direct_self_board_get_calls(method_def)
+        )
+        if not _method_body_directly_calls_self_method(method_def, helper_name):
+            missing_helper_offenders.append(f"TaskRuntimeService.{method_name}()")
+
+    for method_name, method_def in sorted(methods.items()):
+        if method_name == helper_name or method_name in TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS:
+            continue
+        if _method_body_directly_calls_self_method(method_def, helper_name):
+            unauthorized_helper_consumers.append(f"TaskRuntimeService.{method_name}()")
+
+    assert len(helper_get_calls) == 1, (
+        f"TaskRuntimeService.{helper_name}() must be the single direct "
+        "self._board.get() bridge for owner-cell terminal row transitions; "
+        f"found {len(helper_get_calls)} direct calls."
+    )
+    assert not direct_get_offenders, (
+        "Owner-cell terminal row transitions must not call self._board.get() "
+        f"directly; route raw Task entity reads through self.{helper_name}() "
+        "so normalization, missing-row semantics, and future CAS/version checks "
+        "remain centralized. Offenders:\n" + "\n".join(direct_get_offenders)
+    )
+    assert not missing_helper_offenders, (
+        "Owner-cell terminal row transitions that need raw Task entity pre-read "
+        f"must call self.{helper_name}() instead of owning raw TaskBoard.get() "
+        "reads themselves. Offenders:\n" + "\n".join(missing_helper_offenders)
+    )
+    assert not unauthorized_helper_consumers, (
+        f"TaskRuntimeService.{helper_name}() is the reviewed raw Task entity "
+        "bridge only for dedup cancellation and role-adapter failure terminal "
+        "row transitions. New consumers must be explicitly reviewed in "
+        "TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS. Offenders:\n" + "\n".join(unauthorized_helper_consumers)
     )
 
 
