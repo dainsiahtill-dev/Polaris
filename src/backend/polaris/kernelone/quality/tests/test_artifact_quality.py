@@ -264,6 +264,17 @@ def test_artifact_quality_evidence_uses_direct_typed_issue_for_missing_workspace
     assert metadata.get("raw") == evidence.errors[0]
 
 
+def test_artifact_quality_evidence_uses_direct_typed_issue_for_unresolved_workspace() -> None:
+    evidence = scan_workspace_artifact_quality_evidence("\0")
+
+    assert evidence.errors == ("Artifact quality scan failed: workspace path cannot be resolved",)
+    assert [issue.code for issue in evidence.issues] == ["workspace_path_unresolved"]
+    assert evidence.issues[0].source == "artifact_quality_scanner"
+    metadata = evidence.issues[0].metadata or {}
+    assert metadata.get("diagnostic_kind") == "workspace_path_unresolved"
+    assert metadata.get("raw") == evidence.errors[0]
+
+
 def test_artifact_quality_evidence_uses_direct_source_syntax_issue(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text('{"broken": true,,}\n', encoding="utf-8")
 
@@ -325,6 +336,44 @@ def test_artifact_quality_issue_projection_maps_workspace_path_missing_diagnosti
     assert issues[0]["source"] == "artifact_quality_scanner"
     assert issues[0]["metadata"]["diagnostic_kind"] == "workspace_path_missing"
     assert issues[0]["metadata"]["raw"] == "Artifact quality scan failed: workspace path does not exist"
+
+
+def test_artifact_quality_issue_projection_maps_workspace_path_unresolved_diagnostic_kind() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "artifact_quality_scanner",
+                "message": "scanner reported an unresolved workspace path",
+                "metadata": {
+                    "diagnostic_kind": "workspace_path_unresolved",
+                    "raw": "Artifact quality scan failed: workspace path cannot be resolved",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "workspace_path_unresolved"
+    assert issues[0]["source"] == "artifact_quality_scanner"
+    assert issues[0]["metadata"]["diagnostic_kind"] == "workspace_path_unresolved"
+
+
+def test_artifact_quality_issue_projection_rejects_wrong_source_workspace_unresolved_kind() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "file_artifact_scanner",
+                "message": "scanner reported an unresolved workspace path",
+                "metadata": {
+                    "diagnostic_kind": "workspace_path_unresolved",
+                    "raw": "Artifact quality scan failed: workspace path cannot be resolved",
+                },
+            },
+        )
+    )
+
+    assert len(issues) == 1
+    assert issues[0]["code"] != "workspace_path_unresolved"
 
 
 def test_artifact_quality_evidence_uses_direct_declared_interface_issue(

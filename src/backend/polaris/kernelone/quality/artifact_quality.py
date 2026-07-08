@@ -621,6 +621,8 @@ def _artifact_quality_issue_code_from_typed_metadata(
         return "artifact_quality_scan_failed"
     if diagnostic_kind == "workspace_path_missing" and source_token == "artifact_quality_scanner":
         return "workspace_path_missing"
+    if diagnostic_kind == "workspace_path_unresolved" and source_token == "artifact_quality_scanner":
+        return "workspace_path_unresolved"
     if diagnostic_kind == "javascript_module_error" and source_token == "runtime_smoke":
         return "javascript_module_error"
     if diagnostic_kind == "syntax_error" and source_token == "source_syntax_checker":
@@ -1390,6 +1392,10 @@ def scan_workspace_artifact_quality_evidence(
                     code="workspace_path_unresolved",
                     message=message,
                     source="artifact_quality_scanner",
+                    metadata={
+                        "raw": message,
+                        "diagnostic_kind": "workspace_path_unresolved",
+                    },
                 ),
             ),
         )
