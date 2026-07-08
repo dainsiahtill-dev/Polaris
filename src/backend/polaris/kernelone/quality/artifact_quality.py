@@ -112,6 +112,27 @@ _TOOL_RECEIPT_CONTAMINATION_TOKENS = (
     "director_write_policy_denied",
     "handler_error_type",
 )
+_DIAGNOSTIC_KIND_SOURCE_RULES: Mapping[str, frozenset[str]] = {
+    "npm_script_missing_local_config": frozenset(("npm_script_config_scanner",)),
+    "npm_script_missing_local_entrypoint": frozenset(("npm_script_entrypoint_scanner",)),
+    "artifact_quality_scan_failed": frozenset(("artifact_quality_scanner",)),
+    "workspace_path_missing": frozenset(("artifact_quality_scanner",)),
+    "workspace_path_unresolved": frozenset(("artifact_quality_scanner",)),
+    "javascript_module_error": frozenset(("runtime_smoke",)),
+    "syntax_error": frozenset(("source_syntax_checker",)),
+    "package_module_type_commonjs_mismatch": frozenset(("package_module_type_scanner",)),
+    "html_module_script_typescript_source": frozenset(("html_module_script_scanner",)),
+    "unresolved_relative_import": frozenset(("typescript_import_scanner",)),
+    "undeclared_runtime_import": frozenset(("typescript_import_scanner",)),
+    "typescript_node_types_missing": frozenset(("typescript_import_scanner",)),
+    "typescript_escaped_newline_line_comment": frozenset(("typescript_syntax_red_flag_scanner",)),
+    "typescript_return_object_semicolon_property": frozenset(("typescript_syntax_red_flag_scanner",)),
+    "typescript_isolated_modules_type_reexport": frozenset(("typescript_syntax_red_flag_scanner",)),
+    "typescript_zod_type_class_collision": frozenset(("typescript_syntax_red_flag_scanner",)),
+    "typescript_import_unresolved_symbol": frozenset(("typescript_symbol_coherence_scanner",)),
+    "typescript_project_typecheck_failed": frozenset(("typescript_project_typecheck",)),
+    "npm_script_node_test_directory_target": frozenset(("npm_script_test_target_scanner",)),
+}
 _FILE_ARTIFACT_SCANNER_DIAGNOSTIC_KINDS: frozenset[str] = frozenset(
     (
         "tool_receipt_contamination",
@@ -624,76 +645,11 @@ def _artifact_quality_issue_code_from_typed_metadata(
 
     diagnostic_kind = str(metadata.get("diagnostic_kind") or "").strip()
     language = str(metadata.get("language") or "").strip().lower()
-    if diagnostic_kind == "npm_script_missing_local_config" and source_token == "npm_script_config_scanner":
-        return "npm_script_missing_local_config"
-    if (
-        diagnostic_kind == "npm_script_missing_local_entrypoint"
-        and source_token == "npm_script_entrypoint_scanner"
-    ):
-        return "npm_script_missing_local_entrypoint"
-    if diagnostic_kind == "artifact_quality_scan_failed" and source_token == "artifact_quality_scanner":
-        return "artifact_quality_scan_failed"
-    if diagnostic_kind == "workspace_path_missing" and source_token == "artifact_quality_scanner":
-        return "workspace_path_missing"
-    if diagnostic_kind == "workspace_path_unresolved" and source_token == "artifact_quality_scanner":
-        return "workspace_path_unresolved"
-    if diagnostic_kind == "javascript_module_error" and source_token == "runtime_smoke":
-        return "javascript_module_error"
-    if diagnostic_kind == "syntax_error" and source_token == "source_syntax_checker":
-        return "syntax_error"
+    allowed_sources = _DIAGNOSTIC_KIND_SOURCE_RULES.get(diagnostic_kind)
+    if allowed_sources is not None and source_token in allowed_sources:
+        return diagnostic_kind
     if diagnostic_kind == "undefined_identifier" and language == "go":
         return "go_compile_error"
-    if diagnostic_kind == "package_module_type_commonjs_mismatch":
-        return "package_module_type_commonjs_mismatch"
-    if diagnostic_kind == "html_module_script_typescript_source":
-        return "html_module_script_typescript_source"
-    if diagnostic_kind == "unresolved_relative_import" and source_token == "typescript_import_scanner":
-        return "unresolved_relative_import"
-    if (
-        diagnostic_kind == "undeclared_runtime_import"
-        and source_token == "typescript_import_scanner"
-    ):
-        return "undeclared_runtime_import"
-    if (
-        diagnostic_kind == "typescript_node_types_missing"
-        and source_token == "typescript_import_scanner"
-    ):
-        return "typescript_node_types_missing"
-    if (
-        diagnostic_kind == "typescript_escaped_newline_line_comment"
-        and source_token == "typescript_syntax_red_flag_scanner"
-    ):
-        return "typescript_escaped_newline_line_comment"
-    if (
-        diagnostic_kind == "typescript_return_object_semicolon_property"
-        and source_token == "typescript_syntax_red_flag_scanner"
-    ):
-        return "typescript_return_object_semicolon_property"
-    if (
-        diagnostic_kind == "typescript_isolated_modules_type_reexport"
-        and source_token == "typescript_syntax_red_flag_scanner"
-    ):
-        return "typescript_isolated_modules_type_reexport"
-    if (
-        diagnostic_kind == "typescript_zod_type_class_collision"
-        and source_token == "typescript_syntax_red_flag_scanner"
-    ):
-        return "typescript_zod_type_class_collision"
-    if (
-        diagnostic_kind == "typescript_import_unresolved_symbol"
-        and source_token == "typescript_symbol_coherence_scanner"
-    ):
-        return "typescript_import_unresolved_symbol"
-    if (
-        diagnostic_kind == "typescript_project_typecheck_failed"
-        and source_token == "typescript_project_typecheck"
-    ):
-        return "typescript_project_typecheck_failed"
-    if (
-        diagnostic_kind == "npm_script_node_test_directory_target"
-        and source_token == "npm_script_test_target_scanner"
-    ):
-        return "npm_script_node_test_directory_target"
     if (
         source_token == "file_artifact_scanner"
         and diagnostic_kind in _FILE_ARTIFACT_SCANNER_DIAGNOSTIC_KINDS

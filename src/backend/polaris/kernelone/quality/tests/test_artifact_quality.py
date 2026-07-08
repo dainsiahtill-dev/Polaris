@@ -1756,3 +1756,55 @@ def test_artifact_quality_issue_projection_rejects_wrong_source_npm_script_missi
 
     assert issues[0]["code"] != "npm_script_missing_local_entrypoint"
     assert issues[1]["code"] != "npm_script_missing_local_config"
+
+
+def test_artifact_quality_issue_projection_maps_exact_diagnostic_kind_source_rules() -> None:
+    cases = (
+        ("package_module_type_commonjs_mismatch", "package_module_type_scanner"),
+        ("html_module_script_typescript_source", "html_module_script_scanner"),
+        ("typescript_project_typecheck_failed", "typescript_project_typecheck"),
+        ("npm_script_node_test_directory_target", "npm_script_test_target_scanner"),
+        ("unresolved_relative_import", "typescript_import_scanner"),
+        ("typescript_return_object_semicolon_property", "typescript_syntax_red_flag_scanner"),
+        ("typescript_import_unresolved_symbol", "typescript_symbol_coherence_scanner"),
+        ("artifact_quality_scan_failed", "artifact_quality_scanner"),
+    )
+
+    for diagnostic_kind, source in cases:
+        issues = artifact_quality_issues_from_errors(
+            (
+                {
+                    "source": source,
+                    "message": f"metadata-only {diagnostic_kind}",
+                    "metadata": {"diagnostic_kind": diagnostic_kind},
+                },
+            )
+        )
+
+        assert len(issues) == 1
+        assert issues[0]["code"] == diagnostic_kind
+
+
+def test_artifact_quality_issue_projection_rejects_wrong_source_for_exact_diagnostic_kind_rules() -> None:
+    cases = (
+        ("package_module_type_commonjs_mismatch", "file_artifact_scanner"),
+        ("package_module_type_commonjs_mismatch", "artifact_quality_scanner"),
+        ("html_module_script_typescript_source", "file_artifact_scanner"),
+        ("html_module_script_typescript_source", "artifact_quality_scanner"),
+        ("typescript_project_typecheck_failed", "typescript_import_scanner"),
+        ("npm_script_node_test_directory_target", "package_manifest_scanner"),
+    )
+
+    for diagnostic_kind, wrong_source in cases:
+        issues = artifact_quality_issues_from_errors(
+            (
+                {
+                    "source": wrong_source,
+                    "message": f"wrong-source {diagnostic_kind}",
+                    "metadata": {"diagnostic_kind": diagnostic_kind},
+                },
+            )
+        )
+
+        assert len(issues) == 1
+        assert issues[0]["code"] != diagnostic_kind
