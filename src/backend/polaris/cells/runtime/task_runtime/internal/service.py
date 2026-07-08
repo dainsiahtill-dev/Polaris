@@ -165,6 +165,7 @@ class TaskRuntimeService:
         self._session_locks: dict[int, threading.RLock] = {}
         self._session_locks_meta = threading.Lock()
         self._last_session_write_receipt: TaskExecutionSessionWriteReceipt | None = None
+        self._session_write_receipts_by_identity: dict[tuple[int, str], TaskExecutionSessionWriteReceipt] = {}
         self._session_write_receipt_lock = threading.Lock()
 
     @property
@@ -2661,6 +2662,10 @@ class TaskRuntimeService:
         )
         with self._session_write_receipt_lock:
             self._last_session_write_receipt = receipt
+            task_id = self.normalize_task_id(session.task_id)
+            session_id = str(session.session_id or "").strip()
+            if task_id is not None and session_id:
+                self._session_write_receipts_by_identity[(task_id, session_id)] = receipt
 
     def _read_session(self, task_id: int) -> TaskExecutionSession | None:
         """Read a session under the per-task local and cooperative file locks."""
@@ -3441,38 +3446,41 @@ class TaskRuntimeService:
         )
 
     def _row_write_receipt_details_for_task(self, task_row: Mapping[str, Any]) -> dict[str, Any]:
-        """Return row-write receipt details when the latest receipt belongs to this row."""
+        """Return row-write receipt details for this task row identity."""
 
         task_id = self.normalize_task_id(task_row.get("id"))
         if task_id is None:
             return {}
-        receipt = self._board.last_row_write_receipt()
+        receipt = self._board.row_write_receipt_for_task(task_id)
         if receipt is None:
             return {}
-        if self.normalize_task_id(receipt.task_id) != task_id:
-            return {}
         return {"row_write_receipt": receipt.to_dict()}
+
+    def _session_write_receipt_for_session(
+        self,
+        session: TaskExecutionSession | None,
+    ) -> TaskExecutionSessionWriteReceipt | None:
+        """Return the latest successful session-write receipt for one session identity."""
+
+        if session is None:
+            return None
+        task_id = self.normalize_task_id(session.task_id)
+        if task_id is None:
+            return None
+        session_id = str(session.session_id or "").strip()
+        if not session_id:
+            return None
+        with self._session_write_receipt_lock:
+            return self._session_write_receipts_by_identity.get((task_id, session_id))
 
     def _session_write_receipt_details_for_session(
         self,
         session: TaskExecutionSession | None,
     ) -> dict[str, Any]:
-        """Return session-write receipt details when the latest receipt matches the session."""
+        """Return session-write receipt details for this session identity."""
 
-        if session is None:
-            return {}
-        task_id = self.normalize_task_id(session.task_id)
-        if task_id is None:
-            return {}
-        session_id = str(session.session_id or "").strip()
-        if not session_id:
-            return {}
-        receipt = self.last_session_write_receipt()
+        receipt = self._session_write_receipt_for_session(session)
         if receipt is None:
-            return {}
-        if self.normalize_task_id(receipt.task_id) != task_id:
-            return {}
-        if str(receipt.session_id or "").strip() != session_id:
             return {}
         return {"session_write_receipt": receipt.to_dict()}
 

@@ -502,6 +502,53 @@ def test_task_runtime_service_records_taskboard_row_write_receipt(tmp_path: Path
     assert update_receipt["after_hash"] != update_receipt["before_hash"]
 
 
+def test_row_write_receipt_details_use_task_identity_after_latest_anchor_moves(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    task_a = service.create_task_row(
+        subject="keyed row receipt task a",
+        description="row receipt must remain addressable by task identity",
+        metadata={"phase": "row-receipt-keyed", "case": "a"},
+    )
+    task_a_id = int(task_a["id"])
+    task_a_path = _task_file_path(workspace, task_a_id)
+    task_a_after_hash = _sha256_utf8_file(task_a_path)
+    task_a_receipt = _assert_task_row_write_receipt(
+        service._board.last_row_write_receipt(),
+        task_id=task_a_id,
+        task_path=task_a_path,
+    )
+    assert task_a_receipt["after_hash"] == task_a_after_hash
+
+    task_b = service.create_task_row(
+        subject="keyed row receipt task b",
+        description="second row write moves the global latest anchor",
+        metadata={"phase": "row-receipt-keyed", "case": "b"},
+    )
+    task_b_id = int(task_b["id"])
+    assert task_b_id != task_a_id
+    task_b_receipt = _assert_task_row_write_receipt(
+        service._board.last_row_write_receipt(),
+        task_id=task_b_id,
+        task_path=_task_file_path(workspace, task_b_id),
+    )
+    assert task_b_receipt["after_hash"] != task_a_receipt["after_hash"]
+
+    task_a_details = service._row_write_receipt_details_for_task(task_a)
+    projected_task_a_receipt = _assert_task_row_write_receipt(
+        task_a_details.get("row_write_receipt"),
+        task_id=task_a_id,
+        task_path=task_a_path,
+    )
+    assert projected_task_a_receipt == task_a_receipt
+    assert projected_task_a_receipt["after_hash"] == task_a_after_hash
+
+    unknown_task_details = service._row_write_receipt_details_for_task({"id": task_b_id + 1000})
+    assert "row_write_receipt" not in unknown_task_details
+
+
 def test_claim_execution_records_session_write_receipt(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -535,6 +582,76 @@ def test_claim_execution_records_session_write_receipt(tmp_path: Path) -> None:
         preserved_terminal_session=False,
     )
     assert receipt["after_hash"] == _sha256_utf8_file(session_path)
+
+
+def test_session_write_receipt_details_use_session_identity_after_latest_anchor_moves(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    task_a = service.create_task_row(subject="keyed session receipt task a")
+    task_b = service.create_task_row(subject="keyed session receipt task b")
+    task_a_id = int(task_a["id"])
+    task_b_id = int(task_b["id"])
+    assert task_b_id != task_a_id
+
+    claim_a = service.claim_execution(
+        task_a_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-keyed-session-receipt-a",
+        selection_source="unit",
+    )
+    assert claim_a["success"] is True
+    session_a = TaskExecutionSession.from_dict(claim_a["session"])
+    session_a_path = _session_file_path(workspace, task_a_id)
+    session_a_after_hash = _sha256_utf8_file(session_a_path)
+    session_a_receipt = _assert_task_execution_session_write_receipt(
+        service.last_session_write_receipt(),
+        task_id=task_a_id,
+        session_id=session_a.session_id,
+        session_path=session_a_path,
+        preserved_terminal_session=False,
+    )
+    assert session_a_receipt["after_hash"] == session_a_after_hash
+
+    claim_b = service.claim_execution(
+        task_b_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-keyed-session-receipt-b",
+        selection_source="unit",
+    )
+    assert claim_b["success"] is True
+    session_b_id = str(claim_b["session"]["session_id"])
+    session_b_receipt = _assert_task_execution_session_write_receipt(
+        service.last_session_write_receipt(),
+        task_id=task_b_id,
+        session_id=session_b_id,
+        session_path=_session_file_path(workspace, task_b_id),
+        preserved_terminal_session=False,
+    )
+    assert session_b_receipt["session_id"] != session_a_receipt["session_id"]
+
+    session_a_details = service._session_write_receipt_details_for_session(session_a)
+    projected_session_a_receipt = _assert_task_execution_session_write_receipt(
+        session_a_details.get("session_write_receipt"),
+        task_id=task_a_id,
+        session_id=session_a.session_id,
+        session_path=session_a_path,
+        preserved_terminal_session=False,
+    )
+    assert projected_session_a_receipt == session_a_receipt
+    assert projected_session_a_receipt["after_hash"] == session_a_after_hash
+
+    wrong_session = TaskExecutionSession.from_dict(
+        {
+            **claim_a["session"],
+            "session_id": f"{session_a.session_id}-wrong",
+        }
+    )
+    wrong_session_details = service._session_write_receipt_details_for_session(wrong_session)
+    assert "session_write_receipt" not in wrong_session_details
 
 
 def test_read_session_normal_path_reads_while_holding_session_file_lock(
@@ -728,7 +845,7 @@ def test_heartbeat_execution_event_details_include_session_write_receipt(tmp_pat
     assert projected_payload == expected_receipt
 
 
-def test_append_execution_event_omits_stale_session_write_receipt(tmp_path: Path) -> None:
+def test_append_execution_event_omits_session_write_receipt_for_wrong_session_identity(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
@@ -752,11 +869,16 @@ def test_append_execution_event_omits_stale_session_write_receipt(tmp_path: Path
     assert second_claim["success"] is True
     assert service.last_session_write_receipt().session_id == second_claim["session"]["session_id"]
 
-    first_session = TaskExecutionSession.from_dict(first_claim["session"])
+    wrong_session = TaskExecutionSession.from_dict(
+        {
+            **first_claim["session"],
+            "session_id": f"{first_claim['session']['session_id']}-wrong",
+        }
+    )
     event = service._append_execution_event(
         "heartbeat",
         task_row=first_claim["task"],
-        session=first_session,
+        session=wrong_session,
         details={"source": "stale-session-receipt-test"},
     )
 
@@ -1173,7 +1295,7 @@ def test_create_task_row_execution_event_details_include_row_write_receipt(tmp_p
     assert receipt["operation"] == "replace"
 
 
-def test_append_execution_event_omits_stale_row_write_receipt_for_different_task(tmp_path: Path) -> None:
+def test_append_execution_event_omits_row_write_receipt_for_wrong_task_identity(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
@@ -1192,9 +1314,14 @@ def test_append_execution_event_omits_stale_row_write_receipt_for_different_task
 
     current_row = service.get_task(current_id)
     assert isinstance(current_row, dict)
+    unknown_task_id = stale_id + 1000
+    wrong_task_row = {
+        **current_row,
+        "id": unknown_task_id,
+    }
     execution_event = service._append_execution_event(
         "unit_stale_receipt_probe",
-        task_row=current_row,
+        task_row=wrong_task_row,
         session=None,
         details={"source": "unit.stale_receipt_probe"},
     )

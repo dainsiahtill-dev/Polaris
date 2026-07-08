@@ -449,6 +449,7 @@ class TaskBoard:
         self._ready_listeners: list[Callable[[], None]] = []
         self._cache: dict[int, Task] = {}
         self._last_row_write_receipt: TaskBoardRowWriteReceipt | None = None
+        self._row_write_receipts_by_task_id: dict[int, TaskBoardRowWriteReceipt] = {}
         self._load_all()
 
     def _logical_path(self, path: Path) -> str:
@@ -556,6 +557,16 @@ class TaskBoard:
         with self.transaction():
             return self._last_row_write_receipt
 
+    def row_write_receipt_for_task(self, task_id: object) -> TaskBoardRowWriteReceipt | None:
+        """Return the latest successful row-write receipt for one normalized task id."""
+
+        try:
+            normalized_task_id = _normalize_task_id(task_id)
+        except (TypeError, ValueError):
+            return None
+        with self.transaction():
+            return self._row_write_receipts_by_task_id.get(normalized_task_id)
+
     def _read_current_task_file_hash(self, task_path: Path) -> str:
         """Return the current UTF-8 content hash, or empty string when absent."""
 
@@ -625,7 +636,7 @@ class TaskBoard:
                         before_hash=before_hash,
                     )
                     self._replace_task_file(tmp_path, task_path)
-                    self._last_row_write_receipt = TaskBoardRowWriteReceipt(
+                    receipt = TaskBoardRowWriteReceipt(
                         task_id=task.id,
                         task_path=task_logical,
                         before_hash=before_hash,
@@ -633,6 +644,8 @@ class TaskBoard:
                         operation="replace",
                         written_at=datetime.now(timezone.utc).isoformat(),
                     )
+                    self._last_row_write_receipt = receipt
+                    self._row_write_receipts_by_task_id[int(task.id)] = receipt
             finally:
                 with suppress(OSError):
                     tmp_path.unlink(missing_ok=True)
