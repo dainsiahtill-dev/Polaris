@@ -225,6 +225,108 @@ def test_completion_owner_fails_closed_when_required_write_has_no_dispatch_recei
     context_gateway.record_projection_outcome.assert_called_once_with(success=False, tokens_used=11)
 
 
+@pytest.mark.parametrize("evidence_key", ["results", "raw_results", "effect_receipts"])
+def test_completion_owner_does_not_report_missing_dispatch_when_batch_has_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    evidence_key: str,
+) -> None:
+    monkeypatch.setattr(
+        completion,
+        "get_output_parser",
+        lambda _kernel: SimpleNamespace(
+            parse_thinking=lambda content: SimpleNamespace(clean_content=content, thinking=None),
+            extract_json=lambda _content: None,
+        ),
+    )
+    monkeypatch.setattr(completion, "_commit_turn_to_snapshot", lambda **_: None)
+    task_boundary_calls: list[dict[str, Any]] = []
+    lifecycle_events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        completion,
+        "append_role_turn_task_boundary_verdict",
+        lambda **kwargs: task_boundary_calls.append(dict(kwargs))
+        or {
+            "schema_version": "polaris.task_boundary_verdict.v1",
+            "status": "ok",
+            "ok": True,
+        },
+    )
+    monkeypatch.setattr(
+        completion,
+        "append_tool_call_lifecycle_control_plane_event",
+        lambda **kwargs: lifecycle_events.append(dict(kwargs)),
+    )
+
+    dispatch_result = {
+        "tool_name": "write_file",
+        "arguments": {"path": "src/index.py", "content": "print('ok')\n"},
+        "call_id": "call-write-1",
+        "status": "success",
+        "result": {"ok": True},
+    }
+    effect_receipt = {
+        "schema_version": "effect_receipt.v1",
+        "tool_name": "write_file",
+        "operation": "write_file",
+        "path": "src/index.py",
+        "status": "success",
+    }
+    evidence_row = effect_receipt if evidence_key == "effect_receipts" else dispatch_result
+
+    context_gateway = MagicMock(record_projection_outcome=MagicMock(return_value={"route_weight": 0.19}))
+    result = completion.build_transaction_turn_completion_result(
+        kernel=RoleExecutionKernel.create_default(workspace="."),
+        role="director",
+        profile=cast(RoleProfile, _Profile()),
+        request=cast(RoleTurnRequest, _Request()),
+        fingerprint=SimpleNamespace(full_hash="abc"),
+        turn_id="turn-1",
+        tk_result={
+            "kind": "final_answer",
+            "visible_content": "write complete",
+            "batch_receipt": {evidence_key: [evidence_row]},
+            "metrics": {"duration_ms": 7, "llm_calls": 1, "tool_calls": 1},
+            "ledger": SimpleNamespace(
+                decisions=[
+                    {
+                        "metadata": {
+                            "native_tool_calls_count": 1,
+                            "tool_count": 1,
+                        }
+                    }
+                ]
+            ),
+            "llm_response_metadata": {
+                "context_snapshot_ref": "ctx/ref",
+                "native_tool_calls_count": 1,
+                "required_tools": ["write_file"],
+                "final_request_context_audit": {
+                    "final_request_evidence_coverage": {
+                        "required_tools": ["write_file"],
+                    },
+                },
+            },
+        },
+        response_schema=None,
+        runtime_tool_policy_audit={"tool_policy_mode": "native"},
+        tool_filter_audit={"status": "kept"},
+        context_gateway=context_gateway,
+        context_result=SimpleNamespace(token_estimate=11),
+    )
+
+    assert result.is_complete is True
+    assert result.error is None
+    assert "tool_call_lifecycle" not in result.metadata
+    assert "tool_call_lifecycle_receipt" not in result.metadata
+    assert lifecycle_events == []
+    assert task_boundary_calls[0]["tool_dispatch"] is None
+    if evidence_key == "effect_receipts":
+        assert result.tool_results == []
+    else:
+        assert result.tool_results[0]["tool_name"] == "write_file"
+    context_gateway.record_projection_outcome.assert_called_once_with(success=True, tokens_used=11)
+
+
 def test_missing_dispatch_lifecycle_prefers_native_tool_call_envelopes() -> None:
     envelopes = [
         {"envelope_id": "native-1", "tool_name": "write_file"},

@@ -954,6 +954,7 @@ def test_build_missing_dispatch_lifecycle_receipt_projects_required_write_tool()
     assert receipt is not None
     assert receipt["dispatch_status"] == "dropped"
     assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert receipt["ok"] is False
     assert receipt["native_tool_calls_count"] == 1
     assert receipt["decoded_tool_calls_count"] == 1
     assert receipt["dispatched_tool_calls_count"] == 0
@@ -977,6 +978,9 @@ def test_build_missing_dispatch_lifecycle_receipt_prefers_native_envelope_metada
     )
 
     assert receipt is not None
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    assert receipt["ok"] is False
     assert receipt["native_tool_calls_count"] == 1
     assert receipt["native_tool_call_envelope_refs"] == [envelope]
     assert receipt["dropped_tool_calls"] == [
@@ -1005,6 +1009,25 @@ def test_build_missing_dispatch_lifecycle_receipt_skips_existing_dispatch_eviden
         )
         is None
     )
+
+
+def test_build_missing_dispatch_lifecycle_receipt_reuses_public_batch_evidence_keys() -> None:
+    batch_receipts = [
+        {"results": [{"tool_name": "write_file", "status": "success"}]},
+        {"raw_results": [{"tool_name": "write_file", "status": "success"}]},
+        {"effect_receipts": [{"operation": "write_file", "file": "src/main.py"}]},
+    ]
+
+    for batch_receipt in batch_receipts:
+        assert batch_receipt_has_dispatch_evidence(batch_receipt) is True
+        assert (
+            build_missing_dispatch_lifecycle_receipt(
+                required_write_tools=["write_file"],
+                tool_results=[],
+                batch_receipt=batch_receipt,
+            )
+            is None
+        )
 
 
 def test_batch_receipt_has_dispatch_evidence_owns_receipt_key_set() -> None:
