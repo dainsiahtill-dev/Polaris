@@ -1242,17 +1242,33 @@ class TaskRuntimeService:
         rows.sort(key=self._row_sort_key)
         return rows
 
+    def _dependency_status_read_model_rows(self) -> list[dict[str, Any]]:
+        """Load transitional dependency-status read-model rows.
+
+        This helper is the only dependency-status row loader for the
+        transitional read model: it reads file-backed task rows, reads
+        ``task_runtime.execution`` fact rows, and returns their observable
+        projection. It is not a mutation API and does not authorize task claims,
+        writes, or dependency transitions.
+
+        Complexity:
+            O(r + f) time and memory over file-backed rows and latest fact rows.
+        """
+
+        file_rows = self._list_file_task_rows()
+        fact_rows = self.list_task_rows_from_execution_facts()
+        return self._project_observable_task_rows(file_rows, fact_rows)
+
     def _fact_overlaid_dependency_status_rows(self) -> dict[int, TaskStatus]:
         """Return ``task_id -> TaskStatus`` using the fact-overlay-aware read model.
 
-        This projection loads the same file-backed rows and latest
-        ``task_runtime.execution`` facts as the observable read API, then
-        reuses ``_project_observable_task_rows`` as the pure in-memory
-        projection helper. It does not call ``list_task_rows`` (which triggers
-        ``refresh_dependency_unblocks``) or ``list_observable_task_rows`` (which
-        is the external read-only projection API). Callers that need to mutate
-        persisted tasks still iterate the ``TaskBoard.list_all()`` output; this
-        helper only provides the status anchor they should consult for
+        This projection consumes ``_dependency_status_read_model_rows`` so the
+        transitional row loading is isolated behind one helper. It does not call
+        ``list_task_rows`` (which triggers ``refresh_dependency_unblocks``) or
+        ``list_observable_task_rows`` (which is the external read-only
+        projection API). Callers that need to mutate persisted tasks still
+        iterate the ``TaskBoard.list_all()`` output; this helper only provides
+        the status anchor they should consult for
         dependency decisions.
 
         Unknown or non-terminal fact statuses fall back to the file-backed
@@ -1260,9 +1276,7 @@ class TaskRuntimeService:
         caller would observe.
         """
 
-        file_rows = self._list_file_task_rows()
-        fact_rows = self.list_task_rows_from_execution_facts()
-        overlay_source = self._project_observable_task_rows(file_rows, fact_rows)
+        overlay_source = self._dependency_status_read_model_rows()
 
         status_by_id: dict[int, TaskStatus] = {}
         for row in overlay_source:

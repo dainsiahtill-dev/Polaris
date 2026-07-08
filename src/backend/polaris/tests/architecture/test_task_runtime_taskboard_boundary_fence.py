@@ -7579,17 +7579,27 @@ def test_task_exists_does_not_regress_to_raw_row_only_reads() -> None:
 # ---------------------------------------------------------------------------
 
 FACT_OVERLAID_DEPENDENCY_STATUS_METHOD = "_fact_overlaid_dependency_status_rows"
+DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD = "_dependency_status_read_model_rows"
 FACT_OVERLAID_DEPENDENCY_REQUIRED_SELF_CALLS: frozenset[str] = frozenset(
     {
-        "_list_file_task_rows",
-        "list_task_rows_from_execution_facts",
-        "_project_observable_task_rows",
+        DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD,
     }
 )
 FACT_OVERLAID_DEPENDENCY_FORBIDDEN_SELF_CALLS: frozenset[str] = frozenset(
     {
+        "_list_file_task_entities",
+        "_list_file_task_rows",
         "_overlay_execution_fact_rows",
+        "_project_observable_task_rows",
+        "list_task_rows_from_execution_facts",
         "list_observable_task_rows",
+    }
+)
+DEPENDENCY_STATUS_READ_MODEL_REQUIRED_SELF_CALLS: frozenset[str] = frozenset(
+    {
+        "_list_file_task_rows",
+        "_project_observable_task_rows",
+        "list_task_rows_from_execution_facts",
     }
 )
 DEPENDENCY_HELPER_REQUIRED_STATUS_CALL = "self._fact_overlaid_dependency_status_rows"
@@ -7608,13 +7618,17 @@ def _fact_overlaid_dependency_status_rows_function_def() -> ast.FunctionDef:
     return _task_runtime_service_method_def(FACT_OVERLAID_DEPENDENCY_STATUS_METHOD)
 
 
-def _check_fact_overlaid_dependency_status_rows_delegates_to_observable_projection() -> list[str]:
-    """Emit offenders when the dependency status helper forks observable projection logic.
+def _dependency_status_read_model_rows_function_def() -> ast.FunctionDef:
+    return _task_runtime_service_method_def(DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD)
 
-    ``_fact_overlaid_dependency_status_rows()`` owns dependency-status
-    materialization for mutation decisions. It must load file rows and
-    execution facts itself, then delegate row synthesis to the private
-    observable projection helper so the overlay algorithm has one owner.
+
+def _check_fact_overlaid_dependency_status_rows_delegates_to_observable_projection() -> list[str]:
+    """Emit offenders when the dependency status materializer bypasses its row helper.
+
+    ``_fact_overlaid_dependency_status_rows()`` owns dependency-status map
+    materialization for mutation decisions. It must consume the dedicated
+    transitional read-model helper, not rebuild file rows, execution fact
+    rows, observable rows, or TaskBoard entity reads inline.
     """
 
     method_def = _fact_overlaid_dependency_status_rows_function_def()
@@ -7635,11 +7649,21 @@ def _check_fact_overlaid_dependency_status_rows_delegates_to_observable_projecti
                 f"{call.lineno} must not call self.{forbidden_call}()"
             )
 
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{FACT_OVERLAID_DEPENDENCY_STATUS_METHOD}():"
+                f"{node.lineno} must not call {callee}()"
+            )
+
     return offenders
 
 
 def test_fact_overlaid_dependency_status_rows_delegates_to_observable_projection_helper() -> None:
-    """The dependency status helper must reuse the private observable projection helper."""
+    """The dependency status map must delegate transitional row loading."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     offenders = _check_fact_overlaid_dependency_status_rows_delegates_to_observable_projection()
@@ -7647,13 +7671,45 @@ def test_fact_overlaid_dependency_status_rows_delegates_to_observable_projection
     assert not offenders, (
         "WS2 fact-overlaid dependency status fence: "
         f"{rel}:TaskRuntimeService.{FACT_OVERLAID_DEPENDENCY_STATUS_METHOD}() "
-        "must load raw file rows through self._list_file_task_rows(), load "
-        "execution facts through self.list_task_rows_from_execution_facts(), "
-        "and synthesize rows through self._project_observable_task_rows(). "
-        "It must not call the public self.list_observable_task_rows() API or "
-        "the lower-level self._overlay_execution_fact_rows() implementation, "
-        "because dependency mutation code needs private observable projection "
-        "reuse without reintroducing a second overlay branch. Offenders:\n" + "\n".join(offenders)
+        f"must call self.{DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD}() and must "
+        "not directly load file rows, execution fact rows, observable projection "
+        "rows, TaskBoard entities, or self._board.* rows. Dependency status map "
+        "materialization must consume one explicit transitional read-model "
+        "helper without reintroducing a second overlay branch. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def _check_dependency_status_read_model_rows_loads_transitional_rows() -> list[str]:
+    """Emit offenders when the read-model helper stops owning row projection inputs."""
+
+    method_def = _dependency_status_read_model_rows_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for required_call in sorted(DEPENDENCY_STATUS_READ_MODEL_REQUIRED_SELF_CALLS):
+        if _direct_self_method_calls(method_def, required_call):
+            continue
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD}() must call self.{required_call}()"
+        )
+
+    return offenders
+
+
+def test_dependency_status_read_model_rows_loads_transitional_projection_inputs() -> None:
+    """The dependency status read-model helper must own transitional row loading."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_dependency_status_read_model_rows_loads_transitional_rows()
+
+    assert not offenders, (
+        "WS2 dependency-status read-model fence: "
+        f"{rel}:TaskRuntimeService.{DEPENDENCY_STATUS_READ_MODEL_ROWS_METHOD}() "
+        "must load file-backed rows through self._list_file_task_rows(), load "
+        "execution fact rows through self.list_task_rows_from_execution_facts(), "
+        "and project them through self._project_observable_task_rows(...). "
+        "This helper is the single boundary for transitional dependency-status "
+        "read-model rows. Offenders:\n" + "\n".join(offenders)
     )
 
 

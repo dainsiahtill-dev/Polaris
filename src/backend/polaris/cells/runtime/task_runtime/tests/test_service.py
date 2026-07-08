@@ -7127,6 +7127,44 @@ def test_fact_overlaid_dependency_status_rows_reuses_observable_projection_helpe
     assert public_read_calls == []
 
 
+def test_fact_overlaid_dependency_status_rows_delegates_to_dependency_status_read_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    read_model_calls: list[str] = []
+
+    def dependency_status_read_model_rows() -> list[dict[str, Any]]:
+        read_model_calls.append("_dependency_status_read_model_rows")
+        return [
+            {"id": 51, "status": "completed"},
+            {"id": "52", "status": "pending"},
+            {"id": 53, "status": "unknown-status"},
+            {"status": "completed"},
+            {"id": "not-an-int", "status": "completed"},
+        ]
+
+    def reject_file_rows(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("_fact_overlaid_dependency_status_rows must delegate row loading to read-model helper")
+
+    def reject_fact_rows(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("_fact_overlaid_dependency_status_rows must not load execution facts directly")
+
+    monkeypatch.setattr(service, "_dependency_status_read_model_rows", dependency_status_read_model_rows)
+    monkeypatch.setattr(service, "_list_file_task_rows", reject_file_rows)
+    monkeypatch.setattr(service, "list_task_rows_from_execution_facts", reject_fact_rows)
+
+    status_by_id = service._fact_overlaid_dependency_status_rows()
+
+    assert read_model_calls == ["_dependency_status_read_model_rows"]
+    assert status_by_id == {
+        51: service_module.TaskStatus.COMPLETED,
+        52: service_module.TaskStatus.PENDING,
+    }
+
+
 # ---------------------------------------------------------------------------
 # _task_has_unresolved_dependencies observable fact-overlay regression
 # ---------------------------------------------------------------------------
