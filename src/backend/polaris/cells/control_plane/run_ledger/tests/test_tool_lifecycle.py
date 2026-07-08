@@ -5,6 +5,7 @@ from typing import Any, cast
 from polaris.cells.control_plane.run_ledger.public import tool_lifecycle
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    batch_receipt_has_dispatch_evidence,
     build_missing_dispatch_lifecycle_receipt,
     build_native_tool_call_envelope_payloads,
     build_native_tool_call_envelopes,
@@ -1004,6 +1005,15 @@ def test_build_missing_dispatch_lifecycle_receipt_skips_existing_dispatch_eviden
         )
         is None
     )
+
+
+def test_batch_receipt_has_dispatch_evidence_owns_receipt_key_set() -> None:
+    assert batch_receipt_has_dispatch_evidence({"results": [{"tool": "write_file"}]}) is True
+    assert batch_receipt_has_dispatch_evidence({"raw_results": [{"tool": "write_file"}]}) is True
+    assert batch_receipt_has_dispatch_evidence({"effect_receipts": [{"file": "src/main.py"}]}) is True
+    assert batch_receipt_has_dispatch_evidence({"results": []}) is False
+    assert batch_receipt_has_dispatch_evidence({"unrelated": [{"tool": "write_file"}]}) is False
+    assert batch_receipt_has_dispatch_evidence(None) is False
 
 
 def test_build_tool_call_lifecycle_run_ledger_event_normalizes_receipt_and_job_token() -> None:

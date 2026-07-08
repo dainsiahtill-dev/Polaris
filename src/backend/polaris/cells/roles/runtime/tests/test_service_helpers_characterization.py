@@ -664,6 +664,119 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
     assert in_progress.status == "in_progress"
 
 
+# ── ECC-WS1-71: ToolCallEnvelope convergence characterization ────────────────
+
+
+def test_lifecycle_receipt_takes_priority_over_local_dispatch_heuristic() -> None:
+    """When metadata already carries a lifecycle receipt, the local
+    _has_tool_dispatch_evidence heuristic must not trigger a second
+    dropped-lifecycle build.  The upstream receipt is authoritative."""
+    dispatched_lifecycle = {
+        "schema_version": "tool_call_lifecycle_receipt.v1",
+        "dispatch_status": "dispatched",
+        "failure_class": "",
+        "native_tool_calls_count": 1,
+        "decoded_tool_calls_count": 1,
+        "dispatched_tool_calls_count": 1,
+        "tool_result_count": 1,
+        "ok": True,
+    }
+    # tool_calls present without tool_results — local heuristic would see
+    # "tool calls without dispatch evidence" and produce a dropped error.
+    # But the lifecycle receipt says dispatched, so it must win.
+    result = RoleTurnResult(
+        content="write completed",
+        tool_calls=[{"name": "write_file"}],
+        metadata={"tool_call_lifecycle_receipt": dispatched_lifecycle},
+    )
+    contract = runtime_service._to_contract_result(
+        role="director", workspace=".", task_id="t", session_id="s", run_id="r", result=result
+    )
+    # Upstream receipt is authoritative — no dropped error.
+    assert contract.ok is True
+    assert contract.error_code is None
+    assert contract.metadata["tool_call_lifecycle_receipt"]["dispatch_status"] == "dispatched"
+
+
+def test_no_dispatch_evidence_generates_dropped_lifecycle() -> None:
+    """When native tool-call envelopes are present but no dispatch evidence
+    exists (no tool_results, no batch_receipt results), the local heuristic
+    must generate a dropped lifecycle receipt in metadata."""
+    result = RoleTurnResult(
+        content="I will call write_file.",
+        tool_calls=[{"name": "write_file"}],
+    )
+    contract = runtime_service._to_contract_result(
+        role="director", workspace=".", task_id="t", session_id="s", run_id="r", result=result
+    )
+    assert contract.ok is False
+    assert contract.error_code == "tool_dispatch_dropped"
+    lifecycle = contract.metadata.get("tool_call_lifecycle_receipt")
+    assert isinstance(lifecycle, dict)
+    assert lifecycle["dispatch_status"] == "dropped"
+    assert lifecycle["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert contract.metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+
+
+def test_dispatch_evidence_present_does_not_false_positive() -> None:
+    """When tool_results and batch_receipt evidence are present, the local
+    dispatch heuristic must NOT report a dropped lifecycle even if tool_calls
+    are also present."""
+    result = RoleTurnResult(
+        content="write completed",
+        tool_calls=[{"name": "write_file"}],
+        tool_results=[{"tool_name": "write_file", "status": "success"}],
+        batch_receipt={"results": [{"tool_name": "write_file", "status": "success"}]},
+    )
+    contract = runtime_service._to_contract_result(
+        role="director", workspace=".", task_id="t", session_id="s", run_id="r", result=result
+    )
+    assert contract.ok is True
+    assert contract.error_code is None
+    assert contract.error_message is None
+
+
+def test_batch_receipt_effect_receipts_counts_as_dispatch_evidence() -> None:
+    """The batch_receipt_has_dispatch_evidence convergence path: effect_receipts in
+    batch_receipt must count as dispatch evidence."""
+    result = RoleTurnResult(
+        content="done",
+        tool_calls=[{"name": "write_file"}],
+        batch_receipt={"effect_receipts": [{"file": "a.py", "operation": "write"}]},
+    )
+    contract = runtime_service._to_contract_result(
+        role="director", workspace=".", task_id="t", session_id="s", run_id="r", result=result
+    )
+    # effect_receipts present → dispatch evidence → no dropped error
+    assert contract.ok is True
+    assert contract.error_code is None
+
+
+def test_contract_result_metadata_convergence_delegates_batch_check() -> None:
+    """Verify that _contract_result_metadata's dropped-lifecycle path
+    respects the Run Ledger batch_receipt_has_dispatch_evidence delegate."""
+    # Case A: no dispatch evidence → dropped lifecycle projected
+    result_no_evidence = RoleTurnResult(
+        content="I will call write_file.",
+        tool_calls=[{"name": "write_file"}],
+    )
+    meta_no = runtime_service._contract_result_metadata(result_no_evidence)
+    lifecycle_no = meta_no.get("tool_call_lifecycle_receipt")
+    assert isinstance(lifecycle_no, dict)
+    assert lifecycle_no["dispatch_status"] == "dropped"
+
+    # Case B: batch_receipt with raw_results → dispatch evidence → no dropped lifecycle
+    result_with_evidence = RoleTurnResult(
+        content="done",
+        tool_calls=[{"name": "write_file"}],
+        batch_receipt={"raw_results": [{"tool_name": "write_file"}]},
+    )
+    meta_yes = runtime_service._contract_result_metadata(result_with_evidence)
+    lifecycle_yes = meta_yes.get("tool_call_lifecycle_receipt")
+    # No dropped lifecycle should be built when evidence exists
+    assert lifecycle_yes is None or lifecycle_yes.get("dispatch_status") != "dropped"
+
+
 # ── cognitive_strategy cluster ───────────────────────────────────────────────
 
 

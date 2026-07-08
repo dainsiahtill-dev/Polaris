@@ -49,6 +49,7 @@ from .task_boundary import (
 from .tool_lifecycle import (
     NativeToolCallEnvelopeV1,
     ToolCallLifecycleReceiptV1,
+    batch_receipt_has_dispatch_evidence,
     build_missing_dispatch_lifecycle_receipt,
     build_native_tool_call_envelope_payloads,
     build_native_tool_call_envelopes,
@@ -116,6 +117,7 @@ __all__ = [
     "append_failure_evidence_to_metadata",
     "append_run_ledger_event",
     "append_tool_call_lifecycle_event",
+    "batch_receipt_has_dispatch_evidence",
     "build_completed_task_boundary_verdict",
     "build_deferred_followup_task_boundary_verdict",
     "build_missing_dispatch_lifecycle_receipt",

@@ -543,7 +543,19 @@ def build_tool_batch_lifecycle_receipt_from_sources(
     )
 
 
-def _batch_has_dispatch_evidence(batch_receipt: Any) -> bool:
+def batch_receipt_has_dispatch_evidence(batch_receipt: Any) -> bool:
+    """Return whether a batch receipt contains dispatch evidence.
+
+    Boundary:
+        Run Ledger owns the dispatch-evidence key set for batch receipts.
+        Runtime cells should consume this helper instead of locally
+        checking ``"results"``, ``"raw_results"``, or ``"effect_receipts"``
+        keys.
+
+    Complexity:
+        O(k) where ``k`` is the number of evidence keys checked.
+    """
+
     if not isinstance(batch_receipt, Mapping):
         return False
     for key in ("results", "raw_results", "effect_receipts"):
@@ -574,7 +586,7 @@ def build_missing_dispatch_lifecycle_receipt(
         envelopes, and batch receipt rows.
     """
 
-    if tool_results or _batch_has_dispatch_evidence(batch_receipt):
+    if tool_results or batch_receipt_has_dispatch_evidence(batch_receipt):
         return None
 
     tools: list[str] = []
@@ -2124,6 +2136,7 @@ def project_tool_lifecycle_receipt_to_metadata(
 __all__ = [
     "NativeToolCallEnvelopeV1",
     "ToolCallLifecycleReceiptV1",
+    "batch_receipt_has_dispatch_evidence",
     "build_missing_dispatch_lifecycle_receipt",
     "build_native_tool_call_envelope_payloads",
     "build_native_tool_call_envelopes",

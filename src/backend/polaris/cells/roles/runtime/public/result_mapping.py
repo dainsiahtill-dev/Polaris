@@ -13,6 +13,7 @@ from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
+    batch_receipt_has_dispatch_evidence,
     build_tool_dispatch_dropped_lifecycle_from_observed_calls,
     failure_evidence_from_lifecycle_receipt,
     is_failure_class,
@@ -20,6 +21,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     normalize_failure_class,
     observed_tool_call_names_from_sources,
     project_tool_lifecycle_receipt_to_metadata,
+    task_boundary_tool_dispatch_from_lifecycle_metadata,
     tool_call_lifecycle_receipts_from_metadata,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
@@ -54,33 +56,30 @@ def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
 def _has_tool_dispatch_evidence(result: RoleTurnResult) -> bool:
     if result.tool_results:
         return True
-    receipt = result.batch_receipt
-    if not isinstance(receipt, Mapping):
-        return False
-    for key in ("results", "raw_results", "effect_receipts"):
-        value = receipt.get(key)
-        if isinstance(value, list) and value:
-            return True
-    return False
+    return batch_receipt_has_dispatch_evidence(result.batch_receipt)
 
 
 def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    lifecycle_failure = _lifecycle_failure_evidence_from_metadata(metadata)
-    if lifecycle_failure is not None and is_failure_class(
-        lifecycle_failure.get("failure_class"),
-        FailureClassV1.TOOL_DISPATCH_DROPPED,
-    ):
+    dispatch = task_boundary_tool_dispatch_from_lifecycle_metadata(metadata)
+    if dispatch is not None:
         return "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
     tool_calls = _extract_tool_calls(result)
     native_envelopes = _native_tool_call_envelopes(result)
-    if (not tool_calls and not native_envelopes) or _has_tool_dispatch_evidence(result):
+    if not tool_calls and not native_envelopes:
+        return ""
+    if _has_tool_dispatch_evidence(result):
+        return ""
+    if _lifecycle_receipt_from_metadata(metadata) is not None:
         return ""
     return "tool_dispatch_dropped: native tool calls observed but no tool dispatch/effect receipt was committed"
 
 
 def _tool_lifecycle_failure_error(result: RoleTurnResult) -> tuple[str, str]:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+    dispatch = task_boundary_tool_dispatch_from_lifecycle_metadata(metadata)
+    if dispatch is not None:
+        return "", ""
     lifecycle_failure = _lifecycle_failure_evidence_from_metadata(metadata)
     if lifecycle_failure is None:
         return "", ""
@@ -177,18 +176,19 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
         project_tool_lifecycle_receipt_to_metadata(metadata, lifecycle)
     dropped_error = _tool_dispatch_dropped_error(result)
     if dropped_error:
-        dropped_tool_calls = _extract_tool_calls(result)
-        native_envelopes = _native_tool_call_envelopes(result)
-        dropped_lifecycle = build_tool_dispatch_dropped_lifecycle_from_observed_calls(
-            tool_names=dropped_tool_calls,
-            native_tool_call_envelopes=native_envelopes,
-            run_id="",
-            task_id="",
-            turn_id="",
-            role="",
-            reason=dropped_error,
-        )
-        if lifecycle is None:
+        already_dropped = task_boundary_tool_dispatch_from_lifecycle_metadata(metadata) is not None
+        if not already_dropped:
+            dropped_tool_calls = _extract_tool_calls(result)
+            native_envelopes = _native_tool_call_envelopes(result)
+            dropped_lifecycle = build_tool_dispatch_dropped_lifecycle_from_observed_calls(
+                tool_names=dropped_tool_calls,
+                native_tool_call_envelopes=native_envelopes,
+                run_id="",
+                task_id="",
+                turn_id="",
+                role="",
+                reason=dropped_error,
+            )
             project_tool_lifecycle_receipt_to_metadata(metadata, dropped_lifecycle)
     return metadata
 
