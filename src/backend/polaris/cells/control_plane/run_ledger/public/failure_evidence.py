@@ -246,15 +246,12 @@ def task_boundary_failure_evidence_from_verdict(
     failure_class = _failure_class_evidence_value(payload.get("failure_class")) or "TASK_BOUNDARY_FAILED"
     reason = _clean_text(payload.get("reason")) or "Task boundary failed"
     failure_stage = _clean_text(payload.get("failure_stage")) or "task_boundary"
-    metadata: dict[str, Any] = {
-        str(key): _json_safe_failure_evidence_value(value)
-        for key, value in payload.items()
-    }
+    metadata: dict[str, Any] = {str(key): _json_safe_failure_evidence_value(value) for key, value in payload.items()}
     metadata.update(
         {
-        "source": _TASK_BOUNDARY_VERDICT_SOURCE,
-        "task_boundary_status": status,
-        "failure_stage": failure_stage,
+            "source": _TASK_BOUNDARY_VERDICT_SOURCE,
+            "task_boundary_status": status,
+            "failure_stage": failure_stage,
         }
     )
 

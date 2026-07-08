@@ -429,6 +429,7 @@ def test_append_failure_evidence_to_metadata_refreshes_rows_and_summary() -> Non
         "latest_failure_class": "TOOL_DISPATCH_DROPPED",
     }
 
+
 def test_task_boundary_failure_evidence_from_verdict_projects_public_row() -> None:
     task_boundary_failure = task_boundary_failure_evidence_from_verdict(
         {

@@ -131,11 +131,7 @@ def _assigned_from_call(function: ast.FunctionDef, *, target_name: str, call_nam
 def test_task_boundary_failure_projection_uses_run_ledger_failure_evidence_helper() -> None:
     module = _parse_python_file(_ROLE_RESULT_PROJECTION_PY)
     function = _find_function(module, _TARGET_FUNCTION)
-    call_names = {
-        _call_name(node)
-        for node in ast.walk(function)
-        if isinstance(node, ast.Call)
-    }
+    call_names = {_call_name(node) for node in ast.walk(function) if isinstance(node, ast.Call)}
 
     assert _RUN_LEDGER_APPEND_HELPER in _imported_names_from_public(module), (
         f"{_TARGET_FUNCTION} must use {_RUN_LEDGER_APPEND_HELPER} from "
