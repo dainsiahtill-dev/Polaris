@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.roles.kernel.internal import tool_call_envelope
 from polaris.cells.roles.kernel.internal.llm_caller import tool_helpers
 from polaris.cells.roles.kernel.internal.turn_engine.utils import normalize_stream_tool_call_payload
+
+_ALIAS_ATTRS = frozenset({"native_tool_calls", "tool_calls"})
 
 
 @dataclass
@@ -92,3 +96,67 @@ def test_turn_engine_stream_wrapper_uses_facade_contract() -> None:
             "arguments": {"file": "a.py"},
         },
     }
+
+
+_KERNEL_INTERNAL = Path(__file__).resolve().parents[1] / "internal"
+_FACADE_MODULE = "tool_call_envelope.py"
+_TESTING_DIR = "testing"
+
+
+class _GetattrAliasVisitor(ast.NodeVisitor):
+    """Collect response-level native tool-call alias parsing outside the facade."""
+
+    def __init__(self, filename: str) -> None:
+        self._filename = filename
+        self.violations: list[str] = []
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and node.args[1].value in _ALIAS_ATTRS
+        ):
+            self.violations.append(
+                f"{self._filename}:{node.lineno}: "
+                f"getattr(..., {node.args[1].value!r}) re-implements facade alias parsing"
+            )
+        self.generic_visit(node)
+
+
+def _production_internal_python_files(root: Path) -> list[Path]:
+    result: list[Path] = []
+    for py_file in root.rglob("*.py"):
+        parts = py_file.relative_to(root).parts
+        if _TESTING_DIR in parts or py_file.name == _FACADE_MODULE:
+            continue
+        result.append(py_file)
+    return sorted(result)
+
+
+def test_response_alias_parsing_stays_in_tool_call_envelope_facade() -> None:
+    """Prevent local response-object alias tables from escaping the facade.
+
+    ``tool_call_envelope.native_tool_calls_from_response()`` is the role
+    kernel owner for the response-object ``native_tool_calls`` -> ``tool_calls``
+    fallback. Raw API payload parsing in ``tool_helpers.extract_native_tool_calls``
+    is a different boundary because it works on nested mapping payloads rather
+    than response-like objects.
+    """
+
+    assert _KERNEL_INTERNAL.is_dir(), f"missing kernel internal directory: {_KERNEL_INTERNAL}"
+
+    violations: list[str] = []
+    for py_file in _production_internal_python_files(_KERNEL_INTERNAL):
+        source = py_file.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(py_file))
+        visitor = _GetattrAliasVisitor(filename=str(py_file.relative_to(_KERNEL_INTERNAL)))
+        visitor.visit(tree)
+        violations.extend(visitor.violations)
+
+    assert violations == [], (
+        "Response alias parsing found outside the tool_call_envelope facade. "
+        "Use native_tool_calls_from_response() instead:\n" + "\n".join(f"  - {item}" for item in violations)
+    )
