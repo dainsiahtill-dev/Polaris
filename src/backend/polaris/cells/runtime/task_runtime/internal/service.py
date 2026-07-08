@@ -2458,17 +2458,53 @@ class TaskRuntimeService:
         if self._same_terminal_session(disk_session, incoming):
             return disk_session
 
-        task = self._board.get(incoming.task_id)
-        metadata = task.metadata if task is not None and isinstance(task.metadata, dict) else {}
-        runtime_execution_raw = metadata.get("runtime_execution") if isinstance(metadata, dict) else None
-        if isinstance(runtime_execution_raw, dict):
-            try:
-                metadata_session = TaskExecutionSession.from_dict(runtime_execution_raw)
-            except (TypeError, ValueError):
-                metadata_session = None
-            if self._same_terminal_session(metadata_session, incoming):
-                return metadata_session
+        metadata_session = self._find_projected_runtime_execution_session(incoming.task_id)
+        if self._same_terminal_session(metadata_session, incoming):
+            return metadata_session
         return None
+
+    def _find_projected_runtime_execution_session(
+        self,
+        task_id: int,
+    ) -> TaskExecutionSession | None:
+        """Return ``metadata.runtime_execution`` from read-model projections only."""
+
+        fact_row = self._find_latest_execution_fact_row_for_task(task_id)
+        fact_session = self._runtime_execution_session_from_projected_row(fact_row)
+        if fact_session is not None:
+            return fact_session
+
+        normalized_id = self.normalize_task_id(task_id)
+        if normalized_id is None:
+            return None
+        target_task_id = str(normalized_id).strip()
+        if not target_task_id:
+            return None
+
+        for task in self._list_file_task_entities():
+            row = task.to_dict()
+            if self._observable_row_task_id(row) != target_task_id:
+                continue
+            return self._runtime_execution_session_from_projected_row(row)
+        return None
+
+    @staticmethod
+    def _runtime_execution_session_from_projected_row(
+        row: Mapping[str, Any] | None,
+    ) -> TaskExecutionSession | None:
+        if not isinstance(row, Mapping):
+            return None
+        metadata_raw = row.get("metadata")
+        if not isinstance(metadata_raw, Mapping):
+            return None
+        runtime_execution_raw = metadata_raw.get("runtime_execution")
+        if not isinstance(runtime_execution_raw, dict):
+            return None
+        try:
+            return TaskExecutionSession.from_dict(runtime_execution_raw)
+        except (TypeError, ValueError) as exc:
+            logger.debug("invalid projected runtime_execution session metadata: %s", exc)
+            return None
 
     @staticmethod
     def _same_terminal_session(

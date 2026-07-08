@@ -167,7 +167,6 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_apply_reopen_downstream_reblocks", "get"): 1,
     ("_apply_reverse_dependency_links", "get"): 1,
     ("_apply_terminal_session_reconcile", "get"): 3,
-    ("_find_terminal_session_snapshot", "get"): 1,
     ("_list_file_task_entities", "list_all"): 1,
     ("cancel_task_row_for_deduplication", "get"): 1,
     ("claim_execution", "get"): 1,
@@ -2067,6 +2066,37 @@ def test_augment_task_row_does_not_read_raw_taskboard() -> None:
         "TaskRuntimeService._augment_task_row() must enrich rows from the "
         "task_runtime execution read model it is given, not by re-reading raw "
         "TaskBoard state through self._board.*(). Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_find_terminal_session_snapshot_does_not_read_raw_taskboard() -> None:
+    """WS2 terminal-session snapshot fence.
+
+    ``_find_terminal_session_snapshot()`` reconciles an incoming terminal
+    execution session against the persisted execution-session projection.
+    It must not fall back to raw ``TaskBoard`` metadata reads because that
+    bypasses the task_runtime execution read model and reintroduces a second
+    source of truth for terminal session state.
+    """
+
+    methods = _task_runtime_service_method_defs()
+    method_name = "_find_terminal_session_snapshot"
+    method_def = methods.get(method_name)
+    assert method_def is not None, f"TaskRuntimeService.{method_name}() must exist"
+
+    raw_read_calls = {f"self._board.{board_method}" for board_method in TASK_RUNTIME_SERVICE_RAW_BOARD_READ_METHODS}
+    offenders = [
+        f"{TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)}:{node.lineno} "
+        f"TaskRuntimeService.{method_name}() calls {_call_name(node.func)}()"
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) in raw_read_calls
+    ]
+
+    assert not offenders, (
+        "TaskRuntimeService._find_terminal_session_snapshot() must resolve "
+        "terminal session snapshots from the execution-session projection, "
+        "not by re-reading raw TaskBoard metadata through self._board.*(). "
+        "Offenders:\n" + "\n".join(offenders)
     )
 
 

@@ -874,6 +874,75 @@ def test_augment_task_row_authorizes_terminal_session_superseded_from_passed_row
     assert runtime_execution["session_projection_authority"] == "row_reset_after_terminal_session"
 
 
+def test_find_terminal_session_snapshot_reads_row_metadata_without_raw_board_get(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terminal metadata fallback must use row projection, not raw TaskBoard.get.
+
+    The session file deliberately contains a non-terminal session with the same
+    id, so the only matching terminal snapshot lives in the task-row
+    ``metadata.runtime_execution`` projection. If the fallback reaches for
+    ``self._board.get`` directly, the sentinel below raises and catches the
+    retired dependency.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="terminal metadata fallback")
+    task_id = int(created["id"])
+    terminal_session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="run-terminal-row-metadata",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="unit",
+        selection_source="task_id_lookup",
+    )
+    terminal_session.status = "failed"
+    terminal_session.last_error = "terminal snapshot preserved in task row metadata"
+    terminal_session.released_at = terminal_session.last_heartbeat_at
+
+    incoming = TaskExecutionSession.from_dict(
+        {
+            **terminal_session.to_dict(),
+            "status": "active",
+            "last_error": "",
+            "released_at": "",
+        }
+    )
+    updated = service._board.update(
+        task_id,
+        metadata={"runtime_execution": terminal_session.to_dict()},
+        allow_dependency_status=True,
+    )
+    assert updated is not None
+    assert isinstance(updated.metadata, dict)
+    assert updated.metadata["runtime_execution"]["session_id"] == terminal_session.session_id
+    _session_file_path(workspace, task_id).write_text(
+        json.dumps(incoming.to_dict(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    assert _session_file_path(workspace, task_id).exists()
+
+    def reject_raw_board_get(_task_id: object) -> object:
+        raise AssertionError("_find_terminal_session_snapshot must not call raw TaskBoard.get")
+
+    monkeypatch.setattr(service._board, "get", reject_raw_board_get)
+
+    snapshot = service._find_terminal_session_snapshot(incoming)
+
+    assert snapshot is not None
+    assert snapshot.session_id == terminal_session.session_id
+    assert snapshot.status == "failed"
+    assert snapshot.last_error == terminal_session.last_error
+
+
 def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_rejects_reclaim(tmp_path: Path) -> None:
     """A stale row carrying an OLD reset marker must not beat a NEWER terminal session."""
     workspace = tmp_path / "workspace"
