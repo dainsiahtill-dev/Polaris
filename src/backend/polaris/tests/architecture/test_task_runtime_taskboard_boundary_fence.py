@@ -3594,6 +3594,271 @@ def test_refresh_dependency_unblocks_uses_fact_aware_dependency_status_projectio
 
 
 # ---------------------------------------------------------------------------
+# WS2 complete_execution() dependency event failures are fail-closed
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService.complete_execution()`` owns the parent completion write
+# and the downstream dependency-row side effects. Each downstream side effect
+# emits its own ``task_runtime.execution`` event. If one of those append
+# projections fails, the parent row mutation has already happened, so the
+# public result must be fail-closed: preserve the requested terminal reason,
+# mark success false, and surface ``ledger_append_failed`` evidence for the
+# worker/factory caller.
+
+DEPENDENCY_EVENT_FAIL_CLOSED_KEYS: frozenset[str] = frozenset(
+    {
+        "failure_class",
+        "reason",
+        "requested_reason",
+        "state_mutation_applied",
+        "success",
+    }
+)
+
+
+def _assignment_targets_name(node: ast.Assign, name: str) -> bool:
+    """True if an assignment writes to a plain local name."""
+
+    return any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+
+
+def _assignment_to_subscript_key(node: ast.AST, key: str) -> ast.AST | None:
+    """Return the assigned value when ``node`` writes ``[...]`` with ``key``."""
+
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Subscript) and _subscript_key(target) == key:
+                return node.value
+    if isinstance(node, ast.AnnAssign):
+        target = node.target
+        if isinstance(target, ast.Subscript) and _subscript_key(target) == key:
+            return node.value
+    return None
+
+
+def _block_assigns_subscript_key(
+    nodes: list[ast.stmt],
+    key: str,
+    *,
+    constant_value: object = ...,
+) -> bool:
+    """True if any statement in ``nodes`` writes the projected dict key."""
+
+    for node in nodes:
+        assigned_value = _assignment_to_subscript_key(node, key)
+        if assigned_value is None:
+            continue
+        if constant_value is ...:
+            return True
+        if isinstance(assigned_value, ast.Constant) and assigned_value.value == constant_value:
+            return True
+    return False
+
+
+def _with_dependency_execution_events_fail_closed_violations() -> list[str]:
+    """Validate dependency-event append failures are projected fail-closed."""
+
+    method_def = _task_runtime_service_method_def("_with_dependency_execution_events")
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    dependency_projection = [
+        node
+        for node in ast.walk(method_def)
+        if (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and (assigned := _assignment_to_subscript_key(node, "dependency_execution_events")) is not None
+            and _node_references_name_or_attribute(assigned, "dependency_events")
+        )
+    ]
+    if not dependency_projection:
+        offenders.append(
+            f"{rel}:TaskRuntimeService._with_dependency_execution_events() must "
+            "project dependency_execution_events from dependency_events so "
+            "downstream append evidence remains inspectable."
+        )
+
+    failed_event_assignments = [
+        node
+        for node in ast.walk(method_def)
+        if (
+            isinstance(node, ast.Assign)
+            and _assignment_targets_name(node, "failed_events")
+            and _node_references_name_or_attribute(node.value, "dependency_events")
+            and _contains_string_literal(node.value, "ok")
+        )
+    ]
+    if not failed_event_assignments:
+        offenders.append(
+            f"{rel}:TaskRuntimeService._with_dependency_execution_events() must "
+            "derive failed_events from dependency_events where ok is false."
+        )
+
+    fail_closed_blocks = [
+        node
+        for node in ast.walk(method_def)
+        if (
+            isinstance(node, ast.If)
+            and _node_references_name_or_attribute(node.test, "failed_events")
+            and _contains_string_literal(node.test, "success")
+        )
+    ]
+    if not fail_closed_blocks:
+        offenders.append(
+            f"{rel}:TaskRuntimeService._with_dependency_execution_events() must "
+            "gate fail-closed projection on failed dependency events and an "
+            "otherwise-successful parent result."
+        )
+        return offenders
+
+    fail_closed_block = fail_closed_blocks[0]
+    missing_keys = sorted(
+        key
+        for key in DEPENDENCY_EVENT_FAIL_CLOSED_KEYS
+        if not _block_assigns_subscript_key(fail_closed_block.body, key)
+    )
+    if missing_keys:
+        offenders.append(
+            f"{rel}:TaskRuntimeService._with_dependency_execution_events() "
+            "fail-closed block must assign "
+            + ", ".join(missing_keys)
+            + " so ledger append failure evidence is visible to callers."
+        )
+    if not _block_assigns_subscript_key(fail_closed_block.body, "success", constant_value=False):
+        offenders.append(
+            f"{rel}:TaskRuntimeService._with_dependency_execution_events() "
+            "must set success=False when any dependency execution event append "
+            "failed after the parent state mutation."
+        )
+    if not _block_assigns_subscript_key(
+        fail_closed_block.body,
+        "state_mutation_applied",
+        constant_value=True,
+    ):
+        offenders.append(
+            f"{rel}:TaskRuntimeService._with_dependency_execution_events() "
+            "must set state_mutation_applied=True when reporting a post-mutation "
+            "dependency event append failure."
+        )
+
+    reason_assignments = [
+        _assignment_to_subscript_key(node, "reason")
+        for node in fail_closed_block.body
+        if _assignment_to_subscript_key(node, "reason") is not None
+    ]
+    if not any(
+        value is not None and _node_references_name_or_attribute(value, "failed_events")
+        for value in reason_assignments
+    ):
+        offenders.append(
+            f"{rel}:TaskRuntimeService._with_dependency_execution_events() "
+            "must source the fail-closed reason from the failed dependency "
+            "event instead of fabricating an unrelated terminal reason."
+        )
+
+    return offenders
+
+
+def _complete_execution_dependency_projection_violations() -> list[str]:
+    """Validate ``complete_execution`` returns through the dependency projection."""
+
+    method_def = _task_runtime_service_method_def("complete_execution")
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    dependency_calls = [
+        node
+        for node in ast.walk(method_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._apply_dependency_completion_side_effects"
+    ]
+    append_completed_calls = [
+        node
+        for node in ast.walk(method_def)
+        if (
+            isinstance(node, ast.Call)
+            and _call_name(node.func) == "self._append_execution_event"
+            and node.args
+            and _string_literal(node.args[0]) == "completed"
+        )
+    ]
+    projection_return_calls = [
+        node.value
+        for node in ast.walk(method_def)
+        if (
+            isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Call)
+            and _call_name(node.value.func) == "self._with_dependency_execution_events"
+        )
+    ]
+
+    if not dependency_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.complete_execution() must apply "
+            "dependency completion side effects; otherwise this WS2 fence is "
+            "vacuous and should be retired with the dependency fan-out path."
+        )
+        return offenders
+    if not append_completed_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.complete_execution() must append the "
+            "parent completed execution event before projecting dependency "
+            "event failures."
+        )
+        return offenders
+    if not projection_return_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.complete_execution() must return "
+            "self._with_dependency_execution_events(result, dependency_events) "
+            "so dependency append failures cannot be hidden behind a successful "
+            "parent completion result."
+        )
+        return offenders
+
+    projection_call = projection_return_calls[0]
+    call_arg_names = [arg.id for arg in projection_call.args if isinstance(arg, ast.Name)]
+    if "result" not in call_arg_names or "dependency_events" not in call_arg_names:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.complete_execution() must pass both "
+            "result and dependency_events into _with_dependency_execution_events()."
+        )
+    if projection_call.lineno <= max(dependency_calls[0].lineno, append_completed_calls[0].lineno):
+        offenders.append(
+            f"{rel}:TaskRuntimeService.complete_execution() must call "
+            "_with_dependency_execution_events() after dependency side effects "
+            "and the parent completed event append have both been attempted."
+        )
+
+    return offenders
+
+
+def test_complete_execution_dependency_event_failures_are_fail_closed() -> None:
+    """WS2 dependency-event failure projection fence.
+
+    ``complete_execution()`` can update the completed parent row and then emit
+    dependency-row events for rows it unblocked. A downstream dependency event
+    append failure must not leave the public finalization result as
+    ``success=True``. The result must keep the dependency event evidence,
+    preserve the requested terminal reason, set ``success=False``, and mark
+    ``state_mutation_applied=True`` / ``failure_class=ledger_append_failed`` so
+    worker/factory callers can surface the Execution Ledger SSoT failure.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = [
+        *_complete_execution_dependency_projection_violations(),
+        *_with_dependency_execution_events_fail_closed_violations(),
+    ]
+
+    assert not offenders, (
+        "WS2 dependency-event failure projection fence: "
+        f"{rel}:TaskRuntimeService.complete_execution() must route dependency "
+        "completion side-effect events through _with_dependency_execution_events(), "
+        "and that helper must fail-close otherwise-successful results when any "
+        "dependency execution event append reports ok=False. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
 # WS2 claim_execution() — dependency refresh + fact-aware terminal veto
 # ---------------------------------------------------------------------------
 #

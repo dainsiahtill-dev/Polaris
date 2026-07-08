@@ -850,6 +850,96 @@ def test_quality_gate_task_boundary_rework_uses_task_row_projection(
     assert summary["tasks"] == []
 
 
+def test_quality_gate_task_boundary_rework_routes_reopen_through_task_runtime_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instances: list[Any] = []
+
+    class _TaskRowService:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+            self.reopen_calls: list[dict[str, Any]] = []
+            instances.append(self)
+
+        def list_observable_task_rows(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": 8,
+                    "status": "failed",
+                    "metadata": {
+                        "external_task_id": "TASK-8",
+                        "adapter_result": {
+                            "success_reason": factory_router_module._TASK_BOUNDARY_REWORK_REASON,
+                        },
+                    },
+                }
+            ]
+
+        def list_task_rows(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            raise AssertionError("quality-gate task-boundary rework must read observable task rows")
+
+        def update_task_row(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("non-exhausted rework must not update task rows directly")
+
+        def update(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("non-exhausted rework must not call legacy update")
+
+        def reopen(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("non-exhausted rework must not call legacy reopen")
+
+        def reopen_task_row(
+            self,
+            task_id: Any,
+            *,
+            reason: str,
+            metadata: dict[str, Any],
+        ) -> dict[str, Any]:
+            self.reopen_calls.append({"task_id": task_id, "reason": reason, "metadata": dict(metadata)})
+            return {"id": task_id, "status": "pending", "metadata": dict(metadata), "execution_event": {"ok": True}}
+
+    monkeypatch.setattr(factory_router_module, "TaskRuntimeService", _TaskRowService)
+    monkeypatch.setattr(factory_router_module, "_resolve_quality_rework_max_cycles", lambda: 3)
+    monkeypatch.setattr(
+        factory_router_module,
+        "_read_task_boundary_workspace_validation",
+        lambda _workspace: (
+            {
+                "passed": False,
+                "repair": {"success_reason": factory_router_module._TASK_BOUNDARY_REWORK_REASON},
+            },
+            "workspace/qa/latest.workspace-validation.json",
+        ),
+    )
+
+    summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests("/tmp/workspace")
+
+    assert summary["requested"] is True
+    assert summary["evaluated_count"] == 1
+    assert summary["reopened_count"] == 1
+    assert summary["skipped_count"] == 0
+    assert summary["tasks"][0]["external_task_id"] == "TASK-8"
+    assert len(instances) == 1
+    reopen_call = instances[0].reopen_calls[0]
+    assert reopen_call["task_id"] == 8
+    assert reopen_call["reason"] == factory_router_module._TASK_BOUNDARY_REWORK_REASON
+    metadata = reopen_call["metadata"]
+    assert "status" not in metadata
+    assert metadata["task_boundary_rework_requested"] is True
+    assert metadata["qa_rework_requested"] is True
+    assert metadata["qa_rework_exhausted"] is False
+    assert metadata["qa_rework_retry_count"] == 1
+    assert metadata["qa_rework_max_retries"] == 3
+    assert metadata["qa_last_verdict"] == "FAIL"
+    assert str(metadata["qa_last_reviewed_at"]).strip()
+    evidence = metadata["task_boundary_rework_evidence"]
+    assert evidence["artifact"] == "workspace/qa/latest.workspace-validation.json"
+    assert evidence["reason"] == factory_router_module._TASK_BOUNDARY_REWORK_REASON
+    assert evidence["success_reason"] == factory_router_module._TASK_BOUNDARY_REWORK_REASON
+    adapter_result = metadata["adapter_result"]
+    assert adapter_result["task_boundary_rework_requested"] is True
+    assert adapter_result["qa_rework_reason"] == factory_router_module._TASK_BOUNDARY_REWORK_REASON
+
+
 def test_quality_gate_task_boundary_rework_blocks_reopen_without_execution_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

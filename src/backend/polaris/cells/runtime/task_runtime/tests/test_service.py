@@ -1315,7 +1315,7 @@ def test_ensure_task_row_reports_materialized_event_append_failure(
     append_count = 0
     original_append_event = service_module.append_fact_event
 
-    def fail_materialized_append(command: object) -> object:
+    def fail_materialized_append(command: AppendFactEventCommandV1) -> object:
         nonlocal append_count
         append_count += 1
         event_type = str(getattr(command, "event_type", "") or "")
@@ -2056,7 +2056,7 @@ def test_reopen_task_row_reports_event_append_failure_without_persisting_evidenc
     assert completed["success"] is True
     original_append_event = service_module.append_fact_event
 
-    def fail_reopened_append(command: object) -> object:
+    def fail_reopened_append(command: AppendFactEventCommandV1) -> object:
         event_type = str(getattr(command, "event_type", "") or "")
         if event_type == "reopened":
             raise RuntimeError("fact stream unavailable")
@@ -2132,6 +2132,56 @@ def test_task_runtime_factory_event_projects_fact_stream_receipt(
     assert payload["fact_event_id"]
     assert payload["fact_stream"] == "task_runtime.execution"
     assert payload["fact_storage_path"] == "runtime/events/task_runtime.execution.jsonl"
+
+
+def test_task_runtime_execution_event_without_factory_run_is_not_published(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="non factory execution event")
+
+    execution_event = created["execution_event"]
+    assert execution_event["ok"] is True
+    assert execution_event["event_type"] == "created"
+    assert execution_event["fact_event_id"]
+    assert execution_event["fact_stream"] == "task_runtime.execution"
+    assert execution_event["published"] is False
+    assert "publish_error" not in execution_event
+
+
+def test_task_runtime_factory_event_publish_false_is_projected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    class Publisher:
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            return False
+
+    import polaris.infrastructure.log_pipeline.jetstream_publisher as publisher_module
+
+    monkeypatch.setattr(
+        publisher_module,
+        "get_log_jetstream_publisher",
+        lambda: Publisher(),
+    )
+
+    created = service.create_task_row(
+        subject="factory publisher returned false",
+        metadata={"factory_run_id": "factory_123456789abc"},
+    )
+
+    execution_event = created["execution_event"]
+    assert execution_event["ok"] is True
+    assert execution_event["event_type"] == "created"
+    assert execution_event["fact_event_id"]
+    assert execution_event["fact_stream"] == "task_runtime.execution"
+    assert execution_event["published"] is False
+    assert execution_event["publish_error"] == "factory_execution_event_publish_returned_false"
 
 
 def test_task_runtime_factory_event_preserves_payload_director_run_id(

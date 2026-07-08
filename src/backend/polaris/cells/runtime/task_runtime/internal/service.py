@@ -2915,7 +2915,7 @@ class TaskRuntimeService:
         if appended.appended_seq is not None:
             payload["fact_event_seq"] = int(appended.appended_seq)
         try:
-            self._publish_factory_execution_event(payload)
+            published = self._publish_factory_execution_event(payload)
         except (RuntimeError, ValueError) as exc:
             logger.warning(
                 "Failed to publish task runtime execution event %s: %s",
@@ -2930,13 +2930,24 @@ class TaskRuntimeService:
                 fact_event_seq=appended.appended_seq,
                 publish_error=str(exc),
             )
+        if not published:
+            factory_run_id = str(payload.get("factory_run_id") or "").strip()
+            if factory_run_id:
+                return build_task_runtime_execution_event_append_result(
+                    event_type=event_type_str,
+                    fact_event_id=appended.event_id,
+                    fact_stream=appended.stream,
+                    fact_storage_path=appended.storage_path,
+                    fact_event_seq=appended.appended_seq,
+                    publish_error="factory_execution_event_publish_returned_false",
+                )
         return build_task_runtime_execution_event_append_result(
             event_type=event_type_str,
             fact_event_id=appended.event_id,
             fact_stream=appended.stream,
             fact_storage_path=appended.storage_path,
             fact_event_seq=appended.appended_seq,
-            published=True,
+            published=published,
         )
 
     def _next_execution_fact_expected_seq(self) -> int:

@@ -265,6 +265,20 @@ class _RecordingClaimNextRuntime:
         return {"success": True}
 
 
+class _FailingClaimNextRuntime(_RecordingClaimNextRuntime):
+    """Runtime whose atomic claim reports no work while legacy readers exist."""
+
+    def claim_next_execution(self, **kwargs: Any) -> dict[str, Any]:
+        self.call_log.append("claim_next_execution")
+        return {
+            "success": False,
+            "task": None,
+            "session": None,
+            "attempts": [],
+            "reason": "no_claimable_tasks",
+        }
+
+
 def test_sync_worker_atomic_path_never_probes_ready_rows(tmp_path: Path) -> None:
     """When claim_next_execution succeeds, Worker must never call
     list_ready_task_rows or claim_execution."""
@@ -316,6 +330,23 @@ def test_claim_ready_runtime_task_falls_back_to_legacy_when_atomic_absent() -> N
     assert task.task_id == 71
     assert runtime.ready_row_reads == 1
     assert runtime.claim_calls[0]["task_id"] == 71
+
+
+def test_claim_ready_runtime_task_does_not_probe_legacy_when_atomic_reports_no_work() -> None:
+    """Atomic claim availability is authoritative even when it returns no work."""
+    runtime = _FailingClaimNextRuntime(task_id=72)
+    task = _claim_ready_runtime_task(
+        runtime,
+        worker_id="unit",
+        role_id="worker_pool",
+        selection_source="test",
+        work_dir=Path("/tmp"),
+    )
+
+    assert task is None
+    assert runtime.call_log == ["claim_next_execution"]
+    assert "list_ready_task_rows" not in runtime.call_log
+    assert "claim_execution" not in runtime.call_log
 
 
 def test_claim_next_runtime_task_skips_legacy_when_atomic_available() -> None:
