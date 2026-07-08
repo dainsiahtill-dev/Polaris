@@ -2794,6 +2794,101 @@ def test_list_observable_task_rows_preserves_fact_event_seq_overlay(tmp_path: Pa
     assert row["metadata"]["source"] == "task_runtime.execution_fact"
 
 
+def test_dependent_rows_blocked_by_reads_fact_overlaid_observable_rows(tmp_path: Path) -> None:
+    """Dependency fan-out evidence must read fact-overlaid observable rows.
+
+    The raw dependent rows intentionally stay stale with no persisted
+    ``blocked_by`` relation. Only the latest ``task_runtime.execution`` fact
+    snapshot declares the dependency, so a file-only implementation of
+    ``_dependent_rows_blocked_by`` cannot see it.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    parent = service.create_task_row(subject="observable dependency parent")
+    parent_id = int(parent["id"])
+    dependent = service.create_task_row(
+        subject="stale dependent file row",
+        description="raw row has no blocked_by; fact snapshot owns dependency",
+    )
+    dependent_id = int(dependent["id"])
+    malformed = service.create_task_row(subject="malformed blocker snapshot")
+    malformed_id = int(malformed["id"])
+
+    raw_dependent = json.loads(_task_file_path(workspace, dependent_id).read_text(encoding="utf-8"))
+    raw_malformed = json.loads(_task_file_path(workspace, malformed_id).read_text(encoding="utf-8"))
+    assert raw_dependent["status"] == "pending"
+    assert raw_dependent["blocked_by"] == []
+    assert raw_malformed["blocked_by"] == []
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="dependency_blocked",
+            source="runtime.task_runtime",
+            task_id=str(dependent_id),
+            run_id="run-fact-overlaid-dependent",
+            payload={
+                "task_id": str(dependent_id),
+                "run_id": "run-fact-overlaid-dependent",
+                "event_type": "dependency_blocked",
+                "status": "blocked",
+                "execution_state": "blocked",
+                "task_row_snapshot": {
+                    "id": dependent_id,
+                    "task_id": str(dependent_id),
+                    "subject": "fact-overlaid dependent row",
+                    "description": "observable snapshot owns blocked_by",
+                    "blocked_by": [parent_id],
+                    "metadata": {"source": "task_runtime.row_snapshot", "projection": "execution_fact"},
+                },
+            },
+        )
+    )
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="dependency_blocked",
+            source="runtime.task_runtime",
+            task_id=str(malformed_id),
+            run_id="run-fact-overlaid-malformed-blocker",
+            payload={
+                "task_id": str(malformed_id),
+                "run_id": "run-fact-overlaid-malformed-blocker",
+                "event_type": "dependency_blocked",
+                "status": "blocked",
+                "execution_state": "blocked",
+                "task_row_snapshot": {
+                    "id": malformed_id,
+                    "task_id": str(malformed_id),
+                    "subject": "malformed blocker row",
+                    "blocked_by": {"not-a-task": parent_id},
+                    "metadata": {"source": "task_runtime.row_snapshot"},
+                },
+            },
+        )
+    )
+
+    dependent_rows = service._dependent_rows_blocked_by(parent_id)
+
+    assert [int(row["id"]) for row in dependent_rows] == [dependent_id]
+    row = dependent_rows[0]
+    assert row["status"] == "blocked"
+    assert row["blocked_by"] == [parent_id]
+    assert row["subject"] == "fact-overlaid dependent row"
+    assert row["metadata"]["source"] == "task_runtime.execution_fact"
+    assert row["metadata"]["previous_status"] == "pending"
+    assert row["metadata"]["projection"] == "execution_fact"
+
+    persisted_dependent = json.loads(_task_file_path(workspace, dependent_id).read_text(encoding="utf-8"))
+    assert persisted_dependent["status"] == "pending"
+    assert persisted_dependent["blocked_by"] == []
+
+
 # ---------------------------------------------------------------------------
 # WS2 Execution Ledger SSoT convergence — selection must respect terminal facts
 # ---------------------------------------------------------------------------

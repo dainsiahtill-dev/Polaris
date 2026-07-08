@@ -2643,13 +2643,13 @@ class TaskRuntimeService:
         """
 
         rows: list[dict[str, Any]] = []
-        for task in self._board.list_all():
+        for row in self.list_observable_task_rows():
             try:
-                blockers = [int(blocker) for blocker in task.blocked_by or []]
+                blockers = [int(blocker) for blocker in row.get("blocked_by") or []]
             except (TypeError, ValueError):
                 blockers = []
             if task_id in blockers:
-                rows.append(self._augment_task_row(task.to_dict()))
+                rows.append(dict(row))
         return rows
 
     @staticmethod

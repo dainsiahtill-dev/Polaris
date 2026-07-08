@@ -168,7 +168,6 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_apply_reverse_dependency_links", "get"): 1,
     ("_apply_terminal_session_reconcile", "get"): 3,
     ("_augment_task_row", "get"): 1,
-    ("_dependent_rows_blocked_by", "list_all"): 1,
     ("_find_terminal_session_snapshot", "get"): 1,
     ("_list_file_task_rows", "list_all"): 1,
     ("cancel_task_row_for_deduplication", "get"): 1,
@@ -663,6 +662,15 @@ def _function_def(path: Path, name: str) -> ast.FunctionDef:
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return node
     raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name}() not found")
+
+
+def _function_call_counts(path: Path, function_name: str) -> Counter[str]:
+    function_def = _function_def(path, function_name)
+    calls: Counter[str] = Counter()
+    for node in ast.walk(function_def):
+        if isinstance(node, ast.Call):
+            calls[_call_name(node.func)] += 1
+    return calls
 
 
 def _assigned_constant_tuple(path: Path, name: str) -> tuple[str, ...]:
@@ -2005,6 +2013,37 @@ def test_task_runtime_service_raw_board_reads_are_reviewed() -> None:
         "TaskRuntimeService is the reviewed owner for raw TaskBoard reads. "
         "New raw Board read calls must be audited against the observable "
         "read-model boundary and recorded in REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS:\n" + "\n".join(offenders)
+    )
+
+
+def test_dependent_rows_blocked_by_uses_observable_read_model() -> None:
+    calls = _function_call_counts(TASK_RUNTIME_INTERNAL_SERVICE, "_dependent_rows_blocked_by")
+    expected_call = "self.list_observable_task_rows"
+    forbidden_calls = {
+        "self._board.get",
+        "self._board.list_all",
+        "self._list_file_task_rows",
+        "self.list_task_rows",
+    }
+    offenders = [
+        f"_dependent_rows_blocked_by() calls {call}() {count} time(s)"
+        for call, count in sorted(calls.items())
+        if call in forbidden_calls
+    ]
+
+    assert calls[expected_call] == 1, (
+        "TaskRuntimeService._dependent_rows_blocked_by() must read dependency "
+        "evidence through list_observable_task_rows() exactly once so "
+        "task_runtime.execution facts remain the read-side SSoT before "
+        f"dependency fan-out mutation. Found {calls[expected_call]} calls."
+    )
+    assert not offenders, (
+        "TaskRuntimeService._dependent_rows_blocked_by() is a read-side "
+        "dependency evidence helper and must not bypass the observable "
+        "execution-ledger projection through raw TaskBoard reads, "
+        "list_task_rows(), or _list_file_task_rows(). refresh_dependency_unblocks() "
+        "is intentionally outside this fence because it still mutates raw Task "
+        "objects. Offenders:\n" + "\n".join(offenders)
     )
 
 
