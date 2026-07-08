@@ -1214,8 +1214,9 @@ class TaskRuntimeService:
         This projection overlays the latest ``task_runtime.execution`` facts
         onto the file-backed rows without calling ``list_task_rows`` (which
         triggers ``refresh_dependency_unblocks``) or
-        ``list_observable_task_rows`` (which itself refreshes). Callers that
-        need to mutate persisted tasks still iterate the
+        ``list_observable_task_rows`` (which is the external read-only
+        projection API). Callers that need to mutate persisted tasks still
+        iterate the
         ``TaskBoard.list_all()`` output; this helper only provides the status
         anchor they should consult for dependency decisions. It intentionally
         duplicates the observable overlay inputs instead of calling
