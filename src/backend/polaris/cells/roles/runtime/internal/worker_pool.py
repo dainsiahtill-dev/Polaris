@@ -71,19 +71,7 @@ def _resolve_worker_runtime_path(workspace: Path, rel_path: str) -> Path:
         return workspace / ".polaris" / "runtime" / suffix
 
 
-class TaskRuntimePort(Protocol):
-    def list_ready_task_rows(self) -> list[dict[str, Any]]: ...
-    def claim_execution(
-        self,
-        task_id: Any,
-        *,
-        worker_id: str,
-        role_id: str,
-        run_id: str = "",
-        lease_ttl_seconds: int = 120,
-        selection_source: str = "",
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
+class _TaskRuntimeFinalizationPort(Protocol):
     def complete_execution(
         self,
         task_id: Any,
@@ -100,6 +88,35 @@ class TaskRuntimePort(Protocol):
         error: str,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
+
+class TaskRuntimePort(_TaskRuntimeFinalizationPort, Protocol):
+    def claim_next_execution(
+        self,
+        *,
+        worker_id: str,
+        role_id: str,
+        run_id: str = "",
+        lease_ttl_seconds: int = 120,
+        selection_source: str = "",
+        prefer_resumable: bool = True,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+class _LegacyTaskRuntimePort(_TaskRuntimeFinalizationPort, Protocol):
+    def list_ready_task_rows(self) -> list[dict[str, Any]]: ...
+    def claim_execution(
+        self,
+        task_id: Any,
+        *,
+        worker_id: str,
+        role_id: str,
+        run_id: str = "",
+        lease_ttl_seconds: int = 120,
+        selection_source: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+TaskRuntimeLike = TaskRuntimePort | _LegacyTaskRuntimePort
 
 
 class WorkerState(str, Enum):
@@ -234,6 +251,128 @@ def _worker_task_from_runtime_row(
         session_id=session_id,
     )
 
+def _claim_result_to_worker_task(
+    claim_result: dict[str, Any],
+    *,
+    work_dir: Path,
+    fallback_row: dict[str, Any] | None = None,
+) -> WorkerTask | None:
+    claim_row = claim_result.get("task")
+    runtime_row = claim_row if isinstance(claim_row, dict) else fallback_row
+    if runtime_row is None:
+        return None
+    return _worker_task_from_runtime_row(
+        runtime_row,
+        session_id=_session_id_from_claim(claim_result),
+        work_dir=work_dir,
+    )
+
+def _has_legacy_ready_task(task_runtime: TaskRuntimeLike | None) -> bool:
+    if task_runtime is None:
+        return False
+    list_ready_task_rows = getattr(task_runtime, "list_ready_task_rows", None)
+    if not callable(list_ready_task_rows):
+        return False
+    return bool(list_ready_task_rows())
+
+def _claim_next_runtime_task(
+    task_runtime: TaskRuntimeLike,
+    *,
+    worker_id: str,
+    role_id: str,
+    selection_source: str,
+    work_dir: Path,
+) -> tuple[bool, WorkerTask | None]:
+    claim_next_execution = getattr(task_runtime, "claim_next_execution", None)
+    if not callable(claim_next_execution):
+        return False, None
+
+    claim_result = claim_next_execution(
+        worker_id=worker_id,
+        role_id=role_id,
+        lease_ttl_seconds=120,
+        selection_source=selection_source,
+        prefer_resumable=True,
+    )
+    if not isinstance(claim_result, dict):
+        logger.warning(
+            "TaskRuntime claim_next_execution returned non-dict result for worker_id=%s role_id=%s",
+            worker_id,
+            role_id,
+        )
+        return True, None
+
+    if not bool(claim_result.get("success")):
+        return True, None
+
+    task = _claim_result_to_worker_task(claim_result, work_dir=work_dir)
+    if task is None:
+        logger.warning(
+            "TaskRuntime claim_next_execution returned success without a usable task row for worker_id=%s role_id=%s",
+            worker_id,
+            role_id,
+        )
+    return True, task
+
+def _claim_legacy_ready_task(
+    task_runtime: TaskRuntimeLike,
+    *,
+    worker_id: str,
+    role_id: str,
+    selection_source: str,
+    work_dir: Path,
+) -> WorkerTask | None:
+    list_ready_task_rows = getattr(task_runtime, "list_ready_task_rows", None)
+    claim_execution = getattr(task_runtime, "claim_execution", None)
+    if not callable(list_ready_task_rows) or not callable(claim_execution):
+        return None
+
+    for row in list_ready_task_rows():
+        task_id = _row_task_id(row)
+        if task_id is None:
+            continue
+        claim_result = claim_execution(
+            task_id,
+            worker_id=worker_id,
+            role_id=role_id,
+            selection_source=selection_source,
+        )
+        if not bool(claim_result.get("success")):
+            continue
+        task = _claim_result_to_worker_task(claim_result, work_dir=work_dir, fallback_row=row)
+        if task is not None:
+            return task
+    return None
+
+def _claim_ready_runtime_task(
+    task_runtime: TaskRuntimeLike | None,
+    *,
+    worker_id: str,
+    role_id: str,
+    selection_source: str,
+    work_dir: Path,
+) -> WorkerTask | None:
+    if task_runtime is None:
+        return None
+
+    atomic_attempted, task = _claim_next_runtime_task(
+        task_runtime,
+        worker_id=worker_id,
+        role_id=role_id,
+        selection_source=selection_source,
+        work_dir=work_dir,
+    )
+    if atomic_attempted:
+        return task
+
+    return _claim_legacy_ready_task(
+        task_runtime,
+        worker_id=worker_id,
+        role_id=role_id,
+        selection_source=selection_source,
+        work_dir=work_dir,
+    )
+
 
 # =============================================================================
 # Sync Worker (Backward Compatible)
@@ -254,7 +393,7 @@ class Worker:
     def __init__(
         self,
         config: WorkerConfig,
-        task_runtime: TaskRuntimePort | None = None,
+        task_runtime: TaskRuntimeLike | None = None,
         message_callback: Callable | None = None,
     ) -> None:
         self.config = config
@@ -342,33 +481,16 @@ class Worker:
         return add_listener(self._wake)
 
     def _has_ready_task(self) -> bool:
-        return bool(self.task_runtime and self.task_runtime.list_ready_task_rows())
+        return _has_legacy_ready_task(self.task_runtime)
 
     def _claim_ready_task(self) -> WorkerTask | None:
-        if not self.task_runtime:
-            return None
-        for row in self.task_runtime.list_ready_task_rows():
-            task_id = _row_task_id(row)
-            if task_id is None:
-                continue
-            claim_result = self.task_runtime.claim_execution(
-                task_id,
-                worker_id=self.config.worker_id,
-                role_id="worker_pool",
-                selection_source="roles.runtime.worker_pool",
-            )
-            if not bool(claim_result.get("success")):
-                continue
-            claim_row = claim_result.get("task")
-            runtime_row = claim_row if isinstance(claim_row, dict) else row
-            task = _worker_task_from_runtime_row(
-                runtime_row,
-                session_id=_session_id_from_claim(claim_result),
-                work_dir=self.config.work_dir,
-            )
-            if task is not None:
-                return task
-        return None
+        return _claim_ready_runtime_task(
+            self.task_runtime,
+            worker_id=self.config.worker_id,
+            role_id="worker_pool",
+            selection_source="roles.runtime.worker_pool",
+            work_dir=self.config.work_dir,
+        )
 
     def _next_task(self) -> WorkerTask | None:
         while True:
@@ -519,7 +641,7 @@ class AsyncWorker:
     def __init__(
         self,
         config: AsyncWorkerConfig,
-        task_runtime: TaskRuntimePort | None = None,
+        task_runtime: TaskRuntimeLike | None = None,
         message_callback: Callable[[WorkerResult], Any] | None = None,
     ) -> None:
         self.config = config
@@ -628,33 +750,16 @@ class AsyncWorker:
         return add_listener(self._wake_threadsafe)
 
     def _has_ready_task(self) -> bool:
-        return bool(self.task_runtime and self.task_runtime.list_ready_task_rows())
+        return _has_legacy_ready_task(self.task_runtime)
 
     def _claim_ready_task(self) -> WorkerTask | None:
-        if not self.task_runtime:
-            return None
-        for row in self.task_runtime.list_ready_task_rows():
-            task_id = _row_task_id(row)
-            if task_id is None:
-                continue
-            claim_result = self.task_runtime.claim_execution(
-                task_id,
-                worker_id=self.config.worker_id,
-                role_id="async_worker_pool",
-                selection_source="roles.runtime.async_worker_pool",
-            )
-            if not bool(claim_result.get("success")):
-                continue
-            claim_row = claim_result.get("task")
-            runtime_row = claim_row if isinstance(claim_row, dict) else row
-            task = _worker_task_from_runtime_row(
-                runtime_row,
-                session_id=_session_id_from_claim(claim_result),
-                work_dir=self.config.work_dir,
-            )
-            if task is not None:
-                return task
-        return None
+        return _claim_ready_runtime_task(
+            self.task_runtime,
+            worker_id=self.config.worker_id,
+            role_id="async_worker_pool",
+            selection_source="roles.runtime.async_worker_pool",
+            work_dir=self.config.work_dir,
+        )
 
     async def _next_task(self) -> WorkerTask | None:
         while True:
@@ -868,7 +973,7 @@ class WorkerPool:
     def __init__(
         self,
         work_base_dir: Path,
-        task_runtime: TaskRuntimePort | None = None,
+        task_runtime: TaskRuntimeLike | None = None,
         max_workers: int = 4,
     ) -> None:
         self.work_base_dir = work_base_dir
@@ -995,7 +1100,7 @@ class AsyncWorkerPool:
     def __init__(
         self,
         work_base_dir: Path,
-        task_runtime: TaskRuntimePort | None = None,
+        task_runtime: TaskRuntimeLike | None = None,
         max_workers: int = 4,
     ) -> None:
         self.work_base_dir = work_base_dir
@@ -1149,7 +1254,7 @@ class AsyncWorkerPool:
 
 def create_worker_pool(
     work_base_dir: Path,
-    task_runtime: TaskRuntimePort | None = None,
+    task_runtime: TaskRuntimeLike | None = None,
     max_workers: int = 4,
 ) -> WorkerPool:
     """Create sync Worker pool."""
@@ -1158,7 +1263,7 @@ def create_worker_pool(
 
 async def create_async_worker_pool(
     work_base_dir: Path,
-    task_runtime: TaskRuntimePort | None = None,
+    task_runtime: TaskRuntimeLike | None = None,
     max_workers: int = 4,
 ) -> AsyncWorkerPool:
     """Create async Worker pool using execution_broker"""

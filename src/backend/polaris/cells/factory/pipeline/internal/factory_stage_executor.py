@@ -179,7 +179,6 @@ _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS = (
     "KERNELONE_FACTORY_CE_LLM_TIMEOUT_SECONDS",
     "KERNELONE_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS",
 )
-
 _CE_BLUEPRINT_OUTPUT_CONTRACT = """
 
 Chief Engineer output contract:
@@ -190,6 +189,35 @@ Chief Engineer output contract:
 - risk_flags must be an array, even when empty.
 - Do not emit tool calls, code patches, <SESSION_PATCH>, or file edit instructions.
 """
+
+
+_TASKBOARD_STATS_BASELINE_KEYS: tuple[str, ...] = (
+    "total",
+    "pending",
+    "ready",
+    "in_progress",
+    "in_design",
+    "in_execution",
+    "in_qa",
+    "running",
+    "processing",
+    "executing",
+    "waiting_human",
+    "completed",
+    "failed",
+    "blocked",
+)
+
+
+def _empty_taskboard_stats() -> dict[str, int]:
+    return dict.fromkeys(_TASKBOARD_STATS_BASELINE_KEYS, 0)
+
+
+def _safe_taskboard_stat(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _dedupe_workspace_repair_paths(paths: list[str]) -> list[str]:
@@ -1827,31 +1855,17 @@ class OrchestrationStageExecutor:
         return constraints
 
     def _read_taskboard_stats(self) -> dict[str, int]:
-        baseline = {
-            "total": 0,
-            "pending": 0,
-            "ready": 0,
-            "in_progress": 0,
-            "in_design": 0,
-            "in_execution": 0,
-            "in_qa": 0,
-            "waiting_human": 0,
-            "completed": 0,
-            "failed": 0,
-            "blocked": 0,
-        }
         try:
-            payload = TaskRuntimeService(str(self.workspace)).get_task_row_stats()
+            payload = TaskRuntimeService(str(self.workspace)).get_observable_task_row_stats()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            return baseline
+            logger.debug("Failed to read observable task stats for factory taskboard projection", exc_info=True)
+            return _empty_taskboard_stats()
         if not isinstance(payload, dict):
-            return baseline
-        for key in tuple(baseline.keys()):
-            try:
-                baseline[key] = int(payload.get(key) or 0)
-            except (TypeError, ValueError):
-                baseline[key] = 0
-        return baseline
+            return _empty_taskboard_stats()
+        stats = _empty_taskboard_stats()
+        for key, value in payload.items():
+            stats[str(key)] = _safe_taskboard_stat(value)
+        return stats
 
     def _read_observable_task_rows(self) -> list[dict[str, Any]]:
         """Return the task-runtime-owned read projection for factory decisions.
@@ -1866,6 +1880,7 @@ class OrchestrationStageExecutor:
         try:
             rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            logger.debug("Failed to read observable task rows for factory taskboard projection", exc_info=True)
             return []
         return [dict(row) for row in rows if isinstance(row, dict)]
 

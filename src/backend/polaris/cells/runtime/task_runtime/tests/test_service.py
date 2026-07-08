@@ -2611,6 +2611,43 @@ def test_list_ready_task_rows_skips_file_pending_row_with_terminal_fact(tmp_path
     assert matching[0]["status"] == "completed"
 
 
+def test_observable_task_row_stats_count_terminal_fact_overlay(tmp_path: Path) -> None:
+    """Observable stats must count terminal facts over stale file rows."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="observable stats terminal fact")
+    created_id = str(created["id"])
+
+    raw_before = service.list_task_rows()
+    assert raw_before[0]["status"] == "pending"
+
+    _append_terminal_fact_event(
+        workspace,
+        task_id=created_id,
+        event_type="completed",
+        status="completed",
+        run_id="run-fact-stats-completed",
+    )
+
+    on_disk = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert on_disk["status"] == "pending"
+
+    observable_stats = service.get_observable_task_row_stats()
+    compatibility_stats = service.get_task_row_stats()
+
+    assert observable_stats == compatibility_stats
+    assert observable_stats["total"] == 1
+    assert observable_stats["pending"] == 0
+    assert observable_stats["ready"] == 0
+    assert observable_stats["completed"] == 1
+
+    raw_after = service.list_task_rows()
+    assert raw_after[0]["status"] == "pending"
+
+
 def test_select_next_task_with_requested_id_rejects_stale_pending_file_row(tmp_path: Path) -> None:
     """``select_next_task(requested_task_id=...)`` must not return a stale
     pending file row when the latest observable fact for that task is

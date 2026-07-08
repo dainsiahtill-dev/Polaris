@@ -75,6 +75,38 @@ def test_read_claimable_director_task_ids_uses_observable_rows(
     assert claimable == ["TASK-1", "TASK-2"]
 
 
+def test_taskboard_stats_read_observable_owner_projection_when_stats_diverge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = {"observable_stats": 0, "raw_stats": 0}
+
+    class _DivergedTaskRuntime:
+        def __init__(self, workspace: str) -> None:
+            assert workspace == str(tmp_path)
+
+        def get_observable_task_row_stats(self) -> dict[str, int]:
+            calls["observable_stats"] += 1
+            return {"total": 2, "pending": 0, "ready": 0, "completed": 1, "failed": 1}
+
+        def get_task_row_stats(self) -> dict[str, int]:
+            calls["raw_stats"] += 1
+            return {"total": 2, "pending": 2, "ready": 2, "completed": 0, "failed": 0}
+
+    monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _DivergedTaskRuntime)
+
+    stats = _executor(tmp_path)._read_taskboard_stats()
+
+    assert calls["observable_stats"] == 1
+    assert calls["raw_stats"] == 0
+    assert stats["total"] == 2
+    assert stats["pending"] == 0
+    assert stats["ready"] == 0
+    assert stats["completed"] == 1
+    assert stats["failed"] == 1
+    assert OrchestrationStageExecutor._is_taskboard_converged(stats) is True
+
+
 def test_failed_quality_handoff_reads_observable_task_rows(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

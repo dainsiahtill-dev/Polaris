@@ -2122,8 +2122,23 @@ class TaskRuntimeService:
     def get_ready_tasks(self) -> list[Task]:
         raise RuntimeError("TaskRuntimeService.get_ready_tasks is retired; use list_ready_task_rows()")
 
-    def get_task_row_stats(self) -> dict[str, Any]:
+    def get_observable_task_row_stats(self) -> dict[str, Any]:
+        """Return status counts from the task-runtime-owned observable rows.
+
+        Boundary:
+            This is a read-only projection over ``list_observable_task_rows()``.
+            It intentionally counts the latest ``task_runtime.execution`` fact
+            overlay instead of treating file-backed rows as the only truth.
+            Selection and mutation paths must continue to use their explicit
+            row/session APIs.
+        """
+
         return task_row_status_counts(self.list_observable_task_rows())
+
+    def get_task_row_stats(self) -> dict[str, Any]:
+        """Compatibility entrypoint for observable task-row status counts."""
+
+        return self.get_observable_task_row_stats()
 
     def get_stats(self) -> dict[str, Any]:
         raise RuntimeError("TaskRuntimeService.get_stats is retired; use get_task_row_stats()")
