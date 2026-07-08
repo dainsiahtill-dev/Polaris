@@ -37,8 +37,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, cast
 
-from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
-from polaris.cells.events.fact_stream.public.service import append_fact_event
+from polaris.cells.events.fact_stream.public.contracts import (
+    AppendFactEventCommandV1,
+    FactStreamError,
+    QueryFactEventsV1,
+)
+from polaris.cells.events.fact_stream.public.service import append_fact_event, query_fact_events
 from polaris.domain.entities.task import (
     TaskPriority as PolarisTaskPriority,
     TaskStatus as PolarisTaskStatus,
@@ -48,6 +52,9 @@ from polaris.kernelone.fs.registry import get_default_adapter
 from polaris.kernelone.storage import resolve_runtime_path
 
 logger = logging.getLogger(__name__)
+
+_TASKBOARD_TERMINAL_EVENTS_STREAM = "taskboard.terminal.events"
+_TASKBOARD_TERMINAL_EVENT_CAS_RETRIES = 3
 
 # ---------------------------------------------------------------------------
 # Enums (canonical source: domain/entities/task.py)
@@ -786,24 +793,95 @@ class TaskBoard:
 
         return result_task
 
-    def _write_terminal_event(self, event_data: dict[str, Any]) -> None:
-        """Write a compatibility terminal event outside the board transaction."""
-        try:
-            append_fact_event(
-                AppendFactEventCommandV1(
-                    workspace=str(self.workspace),
-                    stream="taskboard.terminal.events",
-                    event_type=str(event_data.get("status") or "terminal").strip().lower() or "terminal",
-                    payload=dict(event_data),
-                    source="runtime.task_runtime.task_board",
-                    task_id=str(event_data.get("task_id") or "").strip() or None,
+    def _next_terminal_event_expected_seq(self) -> int:
+        """Return the next expected sequence for the terminal compatibility stream.
+
+        ``taskboard.terminal.events`` is an append-only compatibility
+        projection for legacy observers, not task-state authority. This helper
+        still uses the public FactStream query contract so the subsequent
+        append can participate in the same CAS boundary as authoritative
+        runtime fact streams without reading storage internals directly.
+        """
+
+        result = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(self.workspace),
+                stream=_TASKBOARD_TERMINAL_EVENTS_STREAM,
+                limit=1,
+                offset=0,
+            )
+        )
+        return int(result.total) + 1
+
+    def _append_terminal_event_with_cas(self, event_data: dict[str, Any]) -> None:
+        """Append one terminal compatibility event with bounded CAS retry."""
+
+        event_type = str(event_data.get("status") or "terminal").strip().lower() or "terminal"
+        task_id = str(event_data.get("task_id") or "").strip() or None
+        last_drift: FactStreamError | None = None
+
+        for attempt in range(1, _TASKBOARD_TERMINAL_EVENT_CAS_RETRIES + 1):
+            expected_seq = self._next_terminal_event_expected_seq()
+            command = AppendFactEventCommandV1(
+                workspace=str(self.workspace),
+                stream=_TASKBOARD_TERMINAL_EVENTS_STREAM,
+                event_type=event_type,
+                payload=dict(event_data),
+                source="runtime.task_runtime.task_board",
+                task_id=task_id,
+                expected_seq=expected_seq,
+            )
+            try:
+                append_fact_event(command)
+                return
+            except FactStreamError as exc:
+                if exc.code != "expected_seq_drift":
+                    raise
+                last_drift = exc
+                if attempt >= _TASKBOARD_TERMINAL_EVENT_CAS_RETRIES:
+                    break
+                logger.debug(
+                    "Retrying TaskBoard terminal compatibility event append after "
+                    "expected_seq drift task_id=%s attempt=%s expected_seq=%s",
+                    task_id,
+                    attempt,
+                    expected_seq,
                 )
+
+        if last_drift is not None:
+            raise last_drift
+
+    def _write_terminal_event(self, event_data: dict[str, Any]) -> None:
+        """Write a compatibility terminal event outside the board transaction.
+
+        This stream remains a compatibility projection. Task row state and
+        ``task_runtime.execution`` facts continue to be the authoritative
+        runtime evidence; terminal projection append failures are logged and
+        must not roll back the already-validated TaskBoard row mutation.
+        """
+
+        try:
+            self._append_terminal_event_with_cas(event_data)
+        except FactStreamError as exc:
+            logger.warning(
+                "Failed to append TaskBoard terminal compatibility event "
+                "task_id=%s stream=%s code=%s details=%s: %s",
+                event_data.get("task_id"),
+                _TASKBOARD_TERMINAL_EVENTS_STREAM,
+                exc.code,
+                exc.details,
+                exc,
+                exc_info=True,
             )
         except (OSError, TypeError, ValueError) as exc:
             logger.warning(
-                "Failed to write terminal event for task %s: %s",
+                "Failed to append TaskBoard terminal compatibility event "
+                "task_id=%s stream=%s error_type=%s: %s",
                 event_data.get("task_id"),
+                _TASKBOARD_TERMINAL_EVENTS_STREAM,
+                type(exc).__name__,
                 exc,
+                exc_info=True,
             )
 
     def update(

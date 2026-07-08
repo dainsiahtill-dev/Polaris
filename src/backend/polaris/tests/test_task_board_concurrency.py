@@ -1,8 +1,16 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
+from os import PathLike
 from pathlib import Path
+from typing import Any
 
 import pytest
+from polaris.cells.events.fact_stream.public.contracts import (
+    AppendFactEventCommandV1,
+    FactStreamError,
+    QueryFactEventsV1,
+)
+from polaris.cells.events.fact_stream.public.service import query_fact_events
 from polaris.cells.runtime.task_runtime.internal import task_board as task_board_module
 from polaris.cells.runtime.task_runtime.internal.task_board import (
     InvalidTaskStateTransitionError,
@@ -10,6 +18,17 @@ from polaris.cells.runtime.task_runtime.internal.task_board import (
     TaskStatus,
 )
 from polaris.kernelone.storage import resolve_runtime_path
+
+_TERMINAL_STREAM = "taskboard.terminal.events"
+
+
+def _query_terminal_events(workspace: Path) -> tuple[dict[str, Any], ...]:
+    return query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream=_TERMINAL_STREAM,
+        )
+    ).events
 
 
 def test_task_board_concurrent_create_ids_are_unique(tmp_path) -> None:
@@ -32,7 +51,10 @@ def test_task_board_save_retries_windows_permission_error_and_cleans_temp(tmp_pa
     calls = 0
     original_replace = task_board_module.os.replace
 
-    def flaky_replace(src: object, dst: object) -> None:
+    def flaky_replace(
+        src: str | bytes | PathLike[str] | PathLike[bytes],
+        dst: str | bytes | PathLike[str] | PathLike[bytes],
+    ) -> None:
         nonlocal calls
         sources.append(Path(str(src)))
         calls += 1
@@ -299,6 +321,93 @@ def test_task_board_reopen_keeps_downstream_rows_local(tmp_path) -> None:
     assert child_after.blocked_by == []
 
 
+def test_task_board_terminal_event_append_uses_fact_stream_expected_seq(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    board = TaskBoard(str(tmp_path))
+    task = board.create(subject="expected-seq-terminal")
+    expected_seq_values: list[int | None] = []
+    real_append_fact_event = task_board_module.append_fact_event
+
+    def recording_append(command: AppendFactEventCommandV1) -> object:
+        expected_seq_values.append(command.expected_seq)
+        return real_append_fact_event(command)
+
+    monkeypatch.setattr(task_board_module, "append_fact_event", recording_append)
+
+    completed = board.update_status(
+        task.id,
+        TaskStatus.COMPLETED,
+        result_summary="done",
+        allow_terminal_status=True,
+    )
+
+    assert completed is not None
+    assert completed.status == TaskStatus.COMPLETED
+    assert expected_seq_values == [1]
+    events = _query_terminal_events(tmp_path)
+    assert [int(event["seq"]) for event in events] == [1]
+    assert [str(event.get("event_type") or "") for event in events] == ["completed"]
+
+
+def test_task_board_terminal_event_append_retries_expected_seq_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    board = TaskBoard(str(tmp_path))
+    task = board.create(subject="expected-seq-terminal-drift")
+    real_append_fact_event = task_board_module.append_fact_event
+    expected_seq_values: list[int | None] = []
+    injected_race = False
+
+    def racing_append(command: AppendFactEventCommandV1) -> object:
+        nonlocal injected_race
+        expected_seq_values.append(command.expected_seq)
+        if not injected_race:
+            injected_race = True
+            real_append_fact_event(
+                AppendFactEventCommandV1(
+                    workspace=str(tmp_path),
+                    stream=_TERMINAL_STREAM,
+                    event_type="external_concurrent",
+                    payload={
+                        "event_type": "external_concurrent",
+                        "task_id": "external",
+                        "status": "completed",
+                    },
+                    source="test.concurrent_writer",
+                    task_id="external",
+                    expected_seq=command.expected_seq,
+                )
+            )
+            raise FactStreamError(
+                "simulated expected_seq drift",
+                code="expected_seq_drift",
+                details={"expected_seq": command.expected_seq},
+            )
+        return real_append_fact_event(command)
+
+    monkeypatch.setattr(task_board_module, "append_fact_event", racing_append)
+
+    completed = board.update_status(
+        task.id,
+        TaskStatus.COMPLETED,
+        result_summary="done after retry",
+        allow_terminal_status=True,
+    )
+
+    assert completed is not None
+    assert completed.status == TaskStatus.COMPLETED
+    assert expected_seq_values == [1, 2]
+    events = _query_terminal_events(tmp_path)
+    assert [str(event.get("event_type") or "") for event in events] == [
+        "external_concurrent",
+        "completed",
+    ]
+    assert [int(event["seq"]) for event in events] == [1, 2]
+
+
 def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
     """Re-applying the same terminal status must be a no-op.
 
@@ -319,10 +428,21 @@ def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
     first_completed_at = first.completed_at
     assert first_completed_at is not None
 
-    event_path = Path(resolve_runtime_path(str(tmp_path), "runtime/events/taskboard.terminal.events.jsonl"))
+    event_path = Path(
+        resolve_runtime_path(
+            str(tmp_path),
+            "runtime/events/taskboard.terminal.events.jsonl",
+        )
+    )
     assert event_path.exists()
-    events_after_first = [line for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    events_after_first = [
+        line
+        for line in event_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     assert len(events_after_first) == 1
+    fact_events_after_first = _query_terminal_events(tmp_path)
+    assert [int(event["seq"]) for event in fact_events_after_first] == [1]
 
     second = board.update_status(
         task.id,
@@ -335,6 +455,12 @@ def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
     # completed_at must be unchanged on the no-op re-entry.
     assert second.completed_at == first_completed_at
 
-    events_after_second = [line for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    events_after_second = [
+        line
+        for line in event_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     # No duplicate terminal event emitted.
     assert len(events_after_second) == 1
+    fact_events_after_second = _query_terminal_events(tmp_path)
+    assert [int(event["seq"]) for event in fact_events_after_second] == [1]

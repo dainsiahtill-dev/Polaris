@@ -262,6 +262,13 @@ TASK_RUNTIME_EXECUTION_DIRECT_READ_METHODS = {
     "read_bytes",
     "read_text",
 }
+TASKBOARD_TERMINAL_EVENT_STREAM = "taskboard.terminal.events"
+TASKBOARD_TERMINAL_EVENT_DIRECT_WRITE_METHODS = {
+    "open",
+    "write",
+    "write_bytes",
+    "write_text",
+}
 
 
 def _is_allowed_owner_path(path: Path) -> bool:
@@ -1648,10 +1655,141 @@ def test_raw_taskboard_has_no_workflow_state_bridge_hook() -> None:
     )
 
 
+def _call_leaf_name(node: ast.AST) -> str:
+    return _call_name(node).rsplit(".", maxsplit=1)[-1]
+
+
+def _taskboard_methods_reachable_from(method_name: str) -> list[ast.FunctionDef]:
+    taskboard = _taskboard_class()
+    methods_by_name = {node.name: node for node in taskboard.body if isinstance(node, ast.FunctionDef)}
+    root = methods_by_name.get(method_name)
+    if root is None:
+        raise AssertionError(f"TaskBoard.{method_name}() not found")
+
+    reachable: list[ast.FunctionDef] = []
+    pending = [root]
+    seen: set[str] = set()
+    while pending:
+        function_def = pending.pop()
+        if function_def.name in seen:
+            continue
+        seen.add(function_def.name)
+        reachable.append(function_def)
+
+        for node in ast.walk(function_def):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            if not isinstance(func.value, ast.Name) or func.value.id != "self":
+                continue
+            helper = methods_by_name.get(func.attr)
+            if helper is not None and helper.name not in seen:
+                pending.append(helper)
+
+    return reachable
+
+
+def _node_references_name_or_attribute(node: ast.AST, expected_name: str) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id == expected_name:
+            return True
+        if isinstance(child, ast.Attribute) and child.attr == expected_name:
+            return True
+    return False
+
+
+def _write_terminal_event_fact_stream_cas_violations() -> list[str]:
+    """Validate TaskBoard terminal compatibility projection FactStream writes.
+
+    ``taskboard.terminal.events`` is a compatibility projection, not the
+    authority for execution control. The append still needs FactStream CAS so
+    concurrent terminal projections converge instead of racing through the
+    non-CAS append path. The fence follows direct ``self`` helpers reachable
+    from ``_write_terminal_event()`` so a refactor may move the mechanics into
+    a private helper without weakening the invariant.
+    """
+
+    function_defs = _taskboard_methods_reachable_from("_write_terminal_event")
+    offenders: list[str] = []
+    append_command_count = 0
+
+    for function_def in function_defs:
+        label = f"TaskBoard.{function_def.name}()"
+        for node in ast.walk(function_def):
+            if not isinstance(node, ast.Call):
+                continue
+
+            callee = _call_leaf_name(node.func)
+            if callee == "AppendFactEventCommandV1":
+                append_command_count += 1
+                expected_seq = next(
+                    (keyword for keyword in node.keywords if keyword.arg == "expected_seq"),
+                    None,
+                )
+                if expected_seq is None:
+                    offenders.append(
+                        f"{label}:line {node.lineno} constructs AppendFactEventCommandV1 without expected_seq="
+                    )
+                elif isinstance(expected_seq.value, ast.Constant) and expected_seq.value.value is None:
+                    offenders.append(
+                        f"{label}:line {node.lineno} passes expected_seq=None; "
+                        "terminal compatibility appends must opt into CAS"
+                    )
+                continue
+
+            if callee in TASKBOARD_TERMINAL_EVENT_DIRECT_WRITE_METHODS:
+                offenders.append(
+                    f"{label}:line {node.lineno} calls {callee}(); "
+                    f"{TASKBOARD_TERMINAL_EVENT_STREAM} must write through "
+                    "FactStream CAS, not direct JSONL/file append"
+                )
+
+    if append_command_count == 0:
+        offenders.append(
+            "TaskBoard._write_terminal_event() must construct "
+            "AppendFactEventCommandV1 directly or through a reachable "
+            "TaskBoard helper"
+        )
+
+    handles_fact_stream_error = any(
+        _node_references_name_or_attribute(function_def, "FactStreamError") for function_def in function_defs
+    )
+    if not handles_fact_stream_error:
+        offenders.append(
+            "TaskBoard._write_terminal_event() or a reachable helper must "
+            "reference/catch FactStreamError so CAS conflicts and stream "
+            "append failures are handled explicitly"
+        )
+
+    return offenders
+
+
+def test_taskboard_terminal_event_append_uses_fact_stream_cas_and_error_handling() -> None:
+    """WS2 CAS fence for ``taskboard.terminal.events`` compatibility writes.
+
+    ``taskboard.terminal.events`` remains an internal TaskRuntime compatibility
+    projection rather than an authority. Even so, terminal compatibility events
+    must append through FactStream ``expected_seq`` CAS and explicitly handle
+    ``FactStreamError`` so concurrent writers converge and failures are
+    traceable. Direct JSONL/file append would bypass that convergence contract.
+    """
+
+    offenders = _write_terminal_event_fact_stream_cas_violations()
+
+    assert not offenders, (
+        "WS2 taskboard terminal compatibility stream CAS fence: "
+        "TaskBoard._write_terminal_event() must append "
+        f"{TASKBOARD_TERMINAL_EVENT_STREAM} via AppendFactEventCommandV1("
+        "expected_seq=...), handle FactStreamError directly or through a "
+        "reachable helper, and avoid direct JSONL/file append. Offenders:\n" + "\n".join(offenders)
+    )
+
+
 def test_taskboard_terminal_event_stream_is_owner_only_compatibility_projection() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
-    terminal_stream = "taskboard.terminal.events"
     for path in POLARIS_ROOT.rglob("*.py"):
         if path.resolve() == this_file or "__pycache__" in path.parts:
             continue
@@ -1659,7 +1797,7 @@ def test_taskboard_terminal_event_stream_is_owner_only_compatibility_projection(
             continue
         if _is_allowed_owner_path(path):
             continue
-        if terminal_stream in path.read_text(encoding="utf-8"):
+        if TASKBOARD_TERMINAL_EVENT_STREAM in path.read_text(encoding="utf-8"):
             offenders.append(str(path.relative_to(BACKEND_ROOT)))
 
     assert not offenders, (
