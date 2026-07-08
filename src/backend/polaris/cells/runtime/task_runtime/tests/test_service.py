@@ -19,6 +19,7 @@ from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
     terminal_session_timestamp,
 )
+from polaris.cells.runtime.task_runtime.internal.task_board import InvalidTaskStateTransitionError
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -127,6 +128,39 @@ def _claimed_execution_for_transition(
     )
     assert claimed["success"] is True
     return created, claimed
+
+
+def _session_for_terminal_reconcile(task_id: int, *, status: str) -> TaskExecutionSession:
+    session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id=f"run-terminal-reconcile-{status}",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="unit",
+        selection_source="task_id_lookup",
+    )
+    if status == "completed":
+        session.mark_completed(result_summary="terminal reconcile completed")
+    elif status == "failed":
+        session.mark_failed(error="terminal reconcile failed")
+    elif status != "active":
+        raise AssertionError(f"unsupported reconcile session status: {status}")
+    return session
+
+
+def _assert_terminal_reconcile_result_shape(
+    result: tuple[dict[str, Any] | None, str, dict[str, Any] | None],
+) -> tuple[dict[str, Any] | None, str, dict[str, Any] | None]:
+    assert isinstance(result, tuple)
+    assert len(result) == 3
+    row, error, event = result
+    assert row is None or isinstance(row, dict)
+    assert isinstance(error, str)
+    assert event is None or isinstance(event, dict)
+    return row, error, event
 
 
 def test_task_runtime_service_normalizes_task_ids() -> None:
@@ -1420,6 +1454,216 @@ def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_pat
     assert reclaimed["task"]["status"] == "completed"
     persisted = json.loads(task_path.read_text(encoding="utf-8"))
     assert persisted["status"] == "completed"
+
+
+def test_apply_terminal_session_reconcile_non_terminal_session_uses_helper_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="non-terminal reconcile helper fallback")
+    task_id = int(created["id"])
+    task = service._board.get(task_id)
+    assert task is not None
+    session = _session_for_terminal_reconcile(task_id, status="active")
+    helper_calls: list[int] = []
+    direct_board_get_calls: list[object] = []
+
+    def task_entity_for_terminal_session_reconcile(raw_task_id: int) -> Any:
+        helper_calls.append(raw_task_id)
+        return task
+
+    def reject_direct_board_get(raw_task_id: object) -> Any:
+        direct_board_get_calls.append(raw_task_id)
+        raise AssertionError("_apply_terminal_session_reconcile must read fallback rows through its helper")
+
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_terminal_session_reconcile",
+        task_entity_for_terminal_session_reconcile,
+    )
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+
+    row, error, event = _assert_terminal_reconcile_result_shape(
+        service._apply_terminal_session_reconcile(task_id, session=session)
+    )
+
+    assert helper_calls == [task_id]
+    assert direct_board_get_calls == []
+    assert row is not None
+    assert row["id"] == task_id
+    assert row["status"] == "pending"
+    assert row["raw_status"] == "pending"
+    assert error == ""
+    assert event is None
+
+
+def test_apply_terminal_session_reconcile_missing_helper_result_after_invalid_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    task_id = 7001
+    session = _session_for_terminal_reconcile(task_id, status="failed")
+    helper_calls: list[int] = []
+    direct_board_get_calls: list[object] = []
+    reconcile_calls: list[object] = []
+
+    def raise_invalid_transition(*_args: object, **_kwargs: Any) -> Any:
+        raise InvalidTaskStateTransitionError("unit invalid transition")
+
+    def task_entity_for_terminal_session_reconcile(raw_task_id: int) -> None:
+        helper_calls.append(raw_task_id)
+        return None
+
+    def reject_direct_board_get(raw_task_id: object) -> Any:
+        direct_board_get_calls.append(raw_task_id)
+        raise AssertionError("_apply_terminal_session_reconcile must not bypass the missing-row helper result")
+
+    def reject_reconcile_terminal_status(*args: object, **_kwargs: Any) -> Any:
+        reconcile_calls.append(args)
+        raise AssertionError("_apply_terminal_session_reconcile must short-circuit when the helper returns None")
+
+    monkeypatch.setattr(service._board, "update", raise_invalid_transition)
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_terminal_session_reconcile",
+        task_entity_for_terminal_session_reconcile,
+    )
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+    monkeypatch.setattr(service._board, "reconcile_terminal_status", reject_reconcile_terminal_status)
+
+    row, error, event = _assert_terminal_reconcile_result_shape(
+        service._apply_terminal_session_reconcile(task_id, session=session)
+    )
+
+    assert helper_calls == [task_id]
+    assert direct_board_get_calls == []
+    assert reconcile_calls == []
+    assert row is None
+    assert error == "task_not_found"
+    assert event is None
+
+
+def test_apply_terminal_session_reconcile_terminal_task_conflict_uses_helper_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="terminal reconcile conflict helper row")
+    task_id = int(created["id"])
+    terminal_task = service._board.reconcile_terminal_status(
+        task_id,
+        "completed",
+        result_summary="already completed",
+    )
+    assert terminal_task is not None
+    assert terminal_task.status.value == "completed"
+    session = _session_for_terminal_reconcile(task_id, status="failed")
+    helper_calls: list[int] = []
+    direct_board_get_calls: list[object] = []
+    reconcile_calls: list[object] = []
+
+    def raise_invalid_transition(*_args: object, **_kwargs: Any) -> Any:
+        raise InvalidTaskStateTransitionError("unit invalid transition")
+
+    def task_entity_for_terminal_session_reconcile(raw_task_id: int) -> Any:
+        helper_calls.append(raw_task_id)
+        return terminal_task
+
+    def reject_direct_board_get(raw_task_id: object) -> Any:
+        direct_board_get_calls.append(raw_task_id)
+        raise AssertionError("_apply_terminal_session_reconcile must use helper row for terminal conflicts")
+
+    def reject_reconcile_terminal_status(*args: object, **_kwargs: Any) -> Any:
+        reconcile_calls.append(args)
+        raise AssertionError("_apply_terminal_session_reconcile must not rewrite a terminal row conflict")
+
+    monkeypatch.setattr(service._board, "update", raise_invalid_transition)
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_terminal_session_reconcile",
+        task_entity_for_terminal_session_reconcile,
+    )
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+    monkeypatch.setattr(service._board, "reconcile_terminal_status", reject_reconcile_terminal_status)
+
+    row, error, event = _assert_terminal_reconcile_result_shape(
+        service._apply_terminal_session_reconcile(task_id, session=session)
+    )
+
+    assert helper_calls == [task_id]
+    assert direct_board_get_calls == []
+    assert reconcile_calls == []
+    assert row is not None
+    assert row["id"] == task_id
+    assert row["status"] == "completed"
+    assert row["raw_status"] == "completed"
+    assert error == "terminal_row_conflict"
+    assert event is None
+    persisted = json.loads(_task_file_path(workspace, task_id).read_text(encoding="utf-8"))
+    assert persisted["status"] == "completed"
+
+
+def test_apply_terminal_session_reconcile_update_none_uses_helper_row_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="terminal reconcile update none helper fallback")
+    task_id = int(created["id"])
+    task = service._board.get(task_id)
+    assert task is not None
+    session = _session_for_terminal_reconcile(task_id, status="completed")
+    helper_calls: list[int] = []
+    direct_board_get_calls: list[object] = []
+    event_calls: list[str] = []
+
+    def update_return_none(*_args: object, **_kwargs: Any) -> None:
+        return None
+
+    def task_entity_for_terminal_session_reconcile(raw_task_id: int) -> Any:
+        helper_calls.append(raw_task_id)
+        return task
+
+    def reject_direct_board_get(raw_task_id: object) -> Any:
+        direct_board_get_calls.append(raw_task_id)
+        raise AssertionError("_apply_terminal_session_reconcile must use helper row when update returns None")
+
+    def reject_append_execution_event(event_type: str, **_kwargs: Any) -> dict[str, Any]:
+        event_calls.append(event_type)
+        raise AssertionError("_apply_terminal_session_reconcile must not append events for update None fallback")
+
+    monkeypatch.setattr(service._board, "update", update_return_none)
+    monkeypatch.setattr(
+        service,
+        "_task_entity_for_terminal_session_reconcile",
+        task_entity_for_terminal_session_reconcile,
+    )
+    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
+    monkeypatch.setattr(service, "_append_execution_event", reject_append_execution_event)
+
+    row, error, event = _assert_terminal_reconcile_result_shape(
+        service._apply_terminal_session_reconcile(task_id, session=session)
+    )
+
+    assert helper_calls == [task_id]
+    assert direct_board_get_calls == []
+    assert event_calls == []
+    assert row is not None
+    assert row["id"] == task_id
+    assert row["status"] == "pending"
+    assert row["raw_status"] == "pending"
+    assert error == ""
+    assert event is None
 
 
 def test_task_runtime_ready_reset_row_with_older_terminal_session_is_claimable(tmp_path: Path) -> None:

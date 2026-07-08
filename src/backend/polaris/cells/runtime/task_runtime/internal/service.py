@@ -2630,6 +2630,32 @@ class TaskRuntimeService:
         )
         return row
 
+    def _task_entity_for_terminal_session_reconcile(self, task_id: int) -> Task | None:
+        """Resolve raw owner-cell task entity for terminal-session reconcile.
+
+        Boundary:
+            Terminal-session reconcile is the owner-cell path that projects a
+            terminal execution session back onto the persisted task row. This is
+            the only raw ``TaskBoard.get`` read boundary for that reconcile
+            flow; observable readers must continue using fact-overlaid row
+            projections, and claim/dependency/transition helpers keep their own
+            narrower raw-entity boundaries.
+
+        Complexity:
+            O(1) over the in-memory ``TaskBoard`` cache for the already
+            normalized numeric ``task_id`` used by this reconcile path. Missing
+            rows return ``None`` so existing ``task_not_found`` and empty-row
+            fallback semantics remain unchanged.
+
+        Extension point:
+            Future terminal-session compare-and-swap, row-version validation, or
+            audit receipt binding should attach here before reconcile writes,
+            keeping those checks local to this owner-cell boundary without
+            changing event payloads or rejection error codes.
+        """
+
+        return self._board.get(task_id)
+
     def _apply_terminal_session_reconcile(
         self,
         task_id: int,
@@ -2648,7 +2674,7 @@ class TaskRuntimeService:
         """
         terminal_status = _terminal_task_status_for_session(session.status)
         if terminal_status is None:
-            task = self._board.get(task_id)
+            task = self._task_entity_for_terminal_session_reconcile(task_id)
             return (self._augment_task_row(task.to_dict()) if task is not None else None), "", None
         runtime_metadata = self._build_runtime_metadata(
             session=session,
@@ -2664,7 +2690,7 @@ class TaskRuntimeService:
                 allow_terminal_status=True,
             )
         except InvalidTaskStateTransitionError:
-            task = self._board.get(task_id)
+            task = self._task_entity_for_terminal_session_reconcile(task_id)
             if task is None:
                 return None, "task_not_found", None
             if task.is_terminal:
@@ -2696,7 +2722,7 @@ class TaskRuntimeService:
                 return None, "task_not_found", None
             updated = self._board.update(task_id, metadata=runtime_metadata) or forced
         if updated is None:
-            task = self._board.get(task_id)
+            task = self._task_entity_for_terminal_session_reconcile(task_id)
             return (self._augment_task_row(task.to_dict()) if task is not None else None), "", None
         row = self._augment_task_row(updated.to_dict())
         execution_event = self._append_execution_event(

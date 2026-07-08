@@ -165,11 +165,11 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES = {
 }
 REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_task_entity_for_dependency_side_effect", "get"): 1,
-    ("_apply_terminal_session_reconcile", "get"): 3,
     ("_list_file_task_entities", "list_all"): 1,
     ("_task_entity_for_transition", "get"): 1,
     ("_task_entity_for_owner_terminal_transition", "get"): 1,
     ("_task_entity_for_claim_execution", "get"): 1,
+    ("_task_entity_for_terminal_session_reconcile", "get"): 1,
 }
 TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER = "_list_file_task_entities"
 TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_HELPER = "_task_entity_for_claim_execution"
@@ -196,6 +196,8 @@ TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS = frozenset(
         "_apply_reverse_dependency_links",
     }
 )
+TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_HELPER = "_task_entity_for_terminal_session_reconcile"
+TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_CONSUMERS = frozenset({"_apply_terminal_session_reconcile"})
 TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
     {
         "_list_file_task_rows",
@@ -2328,6 +2330,77 @@ def test_dependency_fanout_methods_route_task_entity_reads_through_helper() -> N
         "bridge only for dependency fan-out helpers. New consumers must be "
         "explicitly reviewed in "
         "TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS. Offenders:\n"
+        + "\n".join(unauthorized_helper_consumers)
+    )
+
+
+def test_terminal_session_reconcile_routes_task_entity_reads_through_helper() -> None:
+    """WS2 terminal-session reconcile raw entity-read fence.
+
+    ``_apply_terminal_session_reconcile()`` may need the raw ``Task`` entity
+    when the session is non-terminal, when the normal update path rejects a
+    terminal transition, or when ``TaskBoard.update`` returns ``None``. Those
+    reads must stay centralized in
+    ``_task_entity_for_terminal_session_reconcile()`` so terminal-session
+    reconcile keeps one reviewed raw-read bridge without weakening the
+    claim, dependency fan-out, or execution-transition helper fences.
+    """
+
+    methods = _task_runtime_service_method_defs()
+    helper_name = TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_HELPER
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT)
+    required_methods = TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_CONSUMERS | {helper_name}
+    missing = sorted(required_methods.difference(methods))
+
+    assert not missing, f"Missing expected TaskRuntimeService methods: {missing}"
+
+    helper_get_calls = _direct_self_board_get_calls(methods[helper_name])
+    direct_get_offenders: list[str] = []
+    missing_helper_offenders: list[str] = []
+    unauthorized_helper_consumers: list[str] = []
+
+    for method_name in sorted(TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_CONSUMERS):
+        method_def = methods[method_name]
+        direct_get_offenders.extend(
+            f"{rel}:{call.lineno} TaskRuntimeService.{method_name}() calls self._board.get() directly"
+            for call in _direct_self_board_get_calls(method_def)
+        )
+        helper_calls = _direct_self_method_calls(method_def, helper_name)
+        if not helper_calls:
+            missing_helper_offenders.append(f"TaskRuntimeService.{method_name}()")
+
+    for method_name, method_def in sorted(methods.items()):
+        if (
+            method_name == helper_name
+            or method_name in TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_CONSUMERS
+        ):
+            continue
+        for call in _direct_self_method_calls(method_def, helper_name):
+            unauthorized_helper_consumers.append(
+                f"{rel}:{call.lineno} TaskRuntimeService.{method_name}() calls self.{helper_name}()"
+            )
+
+    assert len(helper_get_calls) == 1, (
+        f"TaskRuntimeService.{helper_name}() must be the single direct "
+        "self._board.get() bridge for terminal-session reconcile raw entity reads; "
+        f"found {len(helper_get_calls)} direct calls."
+    )
+    assert not direct_get_offenders, (
+        "TaskRuntimeService._apply_terminal_session_reconcile() must not call "
+        f"self._board.get() directly; route raw Task entity reads through "
+        f"self.{helper_name}() so terminal-session reconcile keeps one audited "
+        "owner-cell raw-read boundary. Offenders:\n" + "\n".join(direct_get_offenders)
+    )
+    assert not missing_helper_offenders, (
+        "TaskRuntimeService._apply_terminal_session_reconcile() must call "
+        f"self.{helper_name}() instead of owning raw TaskBoard.get() reads "
+        "itself. Offenders:\n" + "\n".join(missing_helper_offenders)
+    )
+    assert not unauthorized_helper_consumers, (
+        f"TaskRuntimeService.{helper_name}() is the reviewed raw Task entity "
+        "bridge only for terminal-session reconcile. New consumers must be "
+        "explicitly reviewed in "
+        "TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_CONSUMERS. Offenders:\n"
         + "\n".join(unauthorized_helper_consumers)
     )
 
