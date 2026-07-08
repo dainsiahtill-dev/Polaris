@@ -201,6 +201,144 @@ async def test_aggregate_plan_preserves_failure_evidence_list_from_context(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_aggregate_runtime_consumes_list_shaped_failure_evidence_context_rows(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runtime = RoleRuntimeService()
+    row = {
+        "schema_version": "polaris.failure_evidence.v1",
+        "failure_class": "MISSING_EFFECT_RECEIPT",
+        "responsible_layer": "platform",
+        "evidence_refs": ["tool_lifecycle:turn-1"],
+    }
+    captured: list[Any] = []
+    memory_calls: list[dict[str, Any]] = []
+
+    plan = await runtime.build_aggregate_role_plan(
+        BuildAggregateRolePlanQueryV1(
+            workspace=str(tmp_path),
+            objective="Recover after aggregate failure-evidence projection.",
+            failure_signals=("compile_failure",),
+            context={"failure_evidence": [row]},
+        )
+    )
+
+    failure_evidence = plan.metadata["failure_evidence"]
+    assert failure_evidence["items"] == [row]
+    assert failure_evidence["failure_classes"] == ("MISSING_EFFECT_RECEIPT",)
+    assert failure_evidence["evidence_refs"] == ("tool_lifecycle:turn-1",)
+
+    class FakeMemoryProjection:
+        def to_dict(self) -> dict[str, Any]:
+            return {
+                "memory": {
+                    "memory_id": "mem-failure-evidence-1",
+                    "content": "Previous missing effect receipt was fixed by preserving row evidence.",
+                },
+                "injection_allowed": True,
+                "injection_reason": "failure evidence reference match",
+            }
+
+    class FakeMemoryManager:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+
+        def process(
+            self,
+            query: str,
+            current_facts: list[str],
+            limit: int = 5,
+            min_relevance: float = 0.3,
+        ):
+            memory_calls.append(
+                {
+                    "workspace": self.workspace,
+                    "query": query,
+                    "current_facts": current_facts,
+                    "limit": limit,
+                    "min_relevance": min_relevance,
+                }
+            )
+            return [FakeMemoryProjection()]
+
+    import polaris.kernelone.context.context_os.memory as context_memory
+
+    monkeypatch.setattr(context_memory, "MemoryManager", FakeMemoryManager)
+
+    async def fake_stream_chat_turn(command):
+        captured.append(command)
+        yield {
+            "type": "fingerprint",
+            "profile_id": f"code.{command.role}",
+            "profile_hash": f"hash-{len(captured)}",
+            "bundle_id": "bundle-code",
+            "bundle_version": "v1",
+            "run_id": f"strategy-run-{len(captured)}",
+            "turn_index": len(captured),
+            "cognitive_strategy_override_applied": False,
+        }
+        yield {"type": "content_chunk", "content": f"{command.role} consumed row-shaped evidence"}
+
+    monkeypatch.setattr(runtime, "stream_chat_turn", fake_stream_chat_turn)
+
+    result = await runtime.chat_completions(
+        AggregateChatCompletionsCommandV1(
+            workspace=str(tmp_path),
+            messages=(
+                AggregateChatMessageV1(
+                    role="user",
+                    content="Run aggregate lobes with list-shaped failure evidence.",
+                ),
+            ),
+            domain="code",
+            execution_mode="lobe_chain",
+            failure_signals=("compile_failure",),
+            context={"failure_evidence": [row]},
+            metadata={"max_lobe_turns": 2},
+        )
+    )
+
+    assert result.aggregate_plan is not None
+    assert result.aggregate_plan.metadata["failure_evidence"]["items"] == [row]
+    assert result.aggregate_plan.metadata["failure_evidence"]["failure_classes"] == ("MISSING_EFFECT_RECEIPT",)
+    assert result.aggregate_plan.metadata["failure_evidence"]["evidence_refs"] == ("tool_lifecycle:turn-1",)
+    assert len(captured) == 2
+
+    first_context = captured[0].context["aggregate_runtime_context"]
+    assert first_context["failure_evidence"]["items"] == [row]
+    assert first_context["failure_evidence"]["failure_classes"] == ("MISSING_EFFECT_RECEIPT",)
+    assert first_context["failure_evidence"]["evidence_refs"] == ("tool_lifecycle:turn-1",)
+    first_envelope = json.loads(captured[0].user_message)
+    assert first_envelope["failure"]["evidence"]["items"] == [row]
+    assert first_envelope["failure"]["evidence"]["failure_classes"] == ["MISSING_EFFECT_RECEIPT"]
+    assert first_envelope["failure"]["evidence"]["evidence_refs"] == ["tool_lifecycle:turn-1"]
+
+    assert memory_calls
+    assert memory_calls[0]["workspace"] == str(tmp_path)
+    assert "MISSING_EFFECT_RECEIPT" in memory_calls[0]["query"]
+    assert "tool_lifecycle:turn-1" in memory_calls[0]["query"]
+    assert any(
+        fact.startswith("failure_evidence.items=") and "MISSING_EFFECT_RECEIPT" in fact
+        for fact in memory_calls[0]["current_facts"]
+    )
+    assert any(
+        fact == "failure_evidence.failure_classes=('MISSING_EFFECT_RECEIPT',)"
+        for fact in memory_calls[0]["current_facts"]
+    )
+    assert any(
+        fact == "failure_evidence.evidence_refs=('tool_lifecycle:turn-1',)" for fact in memory_calls[0]["current_facts"]
+    )
+
+    second_context = captured[1].context["aggregate_runtime_context"]
+    assert second_context["akashic_recall_pack"]["status"] == "ok"
+    assert second_context["akashic_recall_pack"]["current_facts"] == memory_calls[0]["current_facts"]
+    second_envelope = json.loads(captured[1].user_message)
+    assert second_envelope["failure"]["evidence"]["items"] == [row]
+    assert second_envelope["memory_recall"]["projection_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_aggregate_chat_completions_returns_model_shaped_plan(tmp_path) -> None:
     runtime = RoleRuntimeService()
 

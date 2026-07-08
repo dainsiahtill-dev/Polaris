@@ -942,6 +942,12 @@ def _extract_failure_evidence(query: BuildAggregateRolePlanQueryV1) -> dict[str,
     return evidence
 
 
+def _aggregate_plan_failure_evidence_payload(plan: AggregateRolePlanResultV1) -> dict[str, Any]:
+    """Return the canonical aggregate failure-evidence projection for a plan."""
+
+    return merge_failure_evidence_payload({}, plan.metadata.get("failure_evidence"))
+
+
 def _build_takeover_evidence_status(
     *,
     takeover_directive: AggregateTakeoverDirectiveV1 | None,
@@ -1075,8 +1081,8 @@ def _aggregate_memory_recall_query(
     plan: AggregateRolePlanResultV1,
     selected_lobe: AggregateRoleLobeV1,
 ) -> str:
-    evidence = plan.metadata.get("failure_evidence")
-    evidence_text = " ".join(str(value) for value in dict(evidence).values()) if isinstance(evidence, Mapping) else ""
+    evidence = _aggregate_plan_failure_evidence_payload(plan)
+    evidence_text = " ".join(str(value) for value in evidence.values())
     return " ".join(
         item
         for item in (
@@ -1102,8 +1108,8 @@ def _aggregate_memory_current_facts(
     ]
     for signal in plan.metadata.get("failure_signals") or ():
         facts.append(f"failure_signal={signal}")
-    evidence = plan.metadata.get("failure_evidence")
-    if isinstance(evidence, Mapping):
+    evidence = _aggregate_plan_failure_evidence_payload(plan)
+    if evidence:
         facts.extend(f"failure_evidence.{key}={value}" for key, value in evidence.items())
     for handoff in prior_handoffs:
         facts.append(
@@ -1223,7 +1229,7 @@ def _build_aggregate_attention_candidates(
             created_at="",
         )
     ]
-    failure_evidence = dict(plan.metadata.get("failure_evidence") or {})
+    failure_evidence = _aggregate_plan_failure_evidence_payload(plan)
     if failure_evidence:
         candidates.append(
             SimpleNamespace(
@@ -1271,7 +1277,7 @@ def _build_aggregate_contextos_attention_budget_pack(
 ) -> dict[str, Any]:
     phase_name = _aggregate_phase_for_contextos(selected_lobe=selected_lobe, plan=plan)
     transcript_tokens = sum(_estimate_aggregate_text_tokens(message.content) for message in command.messages)
-    artifact_tokens = _estimate_aggregate_text_tokens(plan.metadata.get("failure_evidence") or {})
+    artifact_tokens = _estimate_aggregate_text_tokens(_aggregate_plan_failure_evidence_payload(plan))
     artifact_tokens += _estimate_aggregate_text_tokens([dict(item) for item in prior_handoffs]) if prior_handoffs else 0
     try:
         from polaris.kernelone.context.context_os.attention import AttentionScorer
@@ -1567,7 +1573,7 @@ def _distill_aggregate_lobe_result(
     chain_turn_index: int,
     result: RoleExecutionResultV1,
 ) -> dict[str, Any]:
-    failure_evidence = dict(plan.metadata.get("failure_evidence") or {})
+    failure_evidence = _aggregate_plan_failure_evidence_payload(plan)
     error_summary = (
         result.error_message
         or failure_evidence.get("compiler_output")
@@ -1788,7 +1794,7 @@ def _build_aggregate_lobe_turn_envelope(
         ),
         "failure": {
             "signals": list(plan.metadata.get("failure_signals") or ()),
-            "evidence": dict(plan.metadata.get("failure_evidence") or {}),
+            "evidence": _aggregate_plan_failure_evidence_payload(plan),
             "takeover_evidence_status": dict(plan.metadata.get("takeover_evidence_status") or {}),
             "takeover_directive": (
                 {
@@ -1852,7 +1858,7 @@ def _aggregate_execution_context(
         "prior_handoffs": [dict(item) for item in prior_handoffs],
         "lobe_directive": lobe_directive,
         "failure_signals": list(plan.metadata.get("failure_signals") or ()),
-        "failure_evidence": dict(plan.metadata.get("failure_evidence") or {}),
+        "failure_evidence": _aggregate_plan_failure_evidence_payload(plan),
         "takeover_evidence_status": dict(plan.metadata.get("takeover_evidence_status") or {}),
         "akashic_recall_pack": recall_pack,
         "contextos_attention_budget_pack": attention_budget_pack,
@@ -2079,7 +2085,7 @@ def _render_aggregate_plan_content(plan: AggregateRolePlanResultV1) -> str:
         "execution_order": list(plan.execution_order),
         "required_capability_refs": list(plan.required_capability_refs),
         "failure_signals": list(plan.metadata.get("failure_signals") or ()),
-        "failure_evidence": dict(plan.metadata.get("failure_evidence") or {}),
+        "failure_evidence": _aggregate_plan_failure_evidence_payload(plan),
         "takeover_evidence_status": dict(plan.metadata.get("takeover_evidence_status") or {}),
         "runtime_integrations": [
             {
