@@ -91,6 +91,18 @@ def _fail_task_row_for_test(
     return row
 
 
+def _list_observable_tasks(adapter: Any) -> list[dict[str, Any]]:
+    """Read task rows through the task-runtime-owned observable read model.
+
+    Tests must consume the observable read model (``list_observable_task_rows``)
+    instead of the raw ``list_task_rows`` so assertions validate the same
+    projection that production snapshot/UI consumers see.
+    """
+    rows = adapter.task_runtime.list_observable_task_rows()
+    assert isinstance(rows, list)
+    return rows
+
+
 def _get_task_row(adapter: Any, task_id: Any) -> dict[str, Any]:
     row = adapter.task_runtime.get_task(task_id)
     assert isinstance(row, dict)
@@ -858,7 +870,7 @@ async def test_pm_adapter_pm_stage_creates_tasks_with_current_taskboard_api(tmp_
     rows = payload.get("signals") if isinstance(payload, dict) else []
     assert isinstance(rows, list)
     assert any(isinstance(item, dict) and str(item.get("code") or "") == "pm.execution.summary" for item in rows)
-    board_tasks = adapter.task_runtime.list_task_rows()
+    board_tasks = _list_observable_tasks(adapter)
     assert len(board_tasks) >= 2
     assert all(str(task.get("subject") or "").strip() for task in board_tasks)
 
@@ -890,7 +902,7 @@ async def test_pm_adapter_projection_hint_synthesizes_generic_projection_contrac
     )
 
     assert result["success"] is True
-    board_tasks = adapter.task_runtime.list_task_rows()
+    board_tasks = _list_observable_tasks(adapter)
     assert len(board_tasks) >= 3
     raw_first_metadata = board_tasks[0].get("metadata")
     first_metadata: dict[str, Any] = raw_first_metadata if isinstance(raw_first_metadata, dict) else {}
@@ -1148,7 +1160,7 @@ def test_pm_adapter_create_board_tasks_deduplicates_existing_semantic_tasks(tmp_
 
     created = adapter._create_board_tasks(contracts)
 
-    board_tasks = adapter.task_runtime.list_task_rows()
+    board_tasks = _list_observable_tasks(adapter)
     assert len(board_tasks) == 2
     assert any(int(item.get("id") or 0) == _row_id(existing) for item in created)
 
@@ -1227,7 +1239,7 @@ def test_pm_adapter_cleans_existing_duplicate_tasks_before_new_plan(tmp_path: Pa
         description="主任务",
         metadata={"goal": "实现筛选查询与月度汇总统计"},
     )
-    _update_task_row(adapter, keep["id"], status="in_progress")
+    _claim_task_row_for_test(adapter, keep["id"])
     duplicate = _create_task_row(
         adapter,
         subject="筛选查询与月度汇总统计实现",
@@ -1989,10 +2001,9 @@ async def test_qa_adapter_quality_gate_fails_when_critical_issues_present(tmp_pa
 async def test_qa_adapter_reopens_completed_director_task_on_fail(tmp_path: Path) -> None:
     adapter = QAAdapter(workspace=str(tmp_path))
     director_task = _create_task_row(adapter, subject="实现账单导出", description="A", metadata={})
-    _update_task_row(
+    _complete_task_row_for_test(
         adapter,
         director_task["id"],
-        status="completed",
         metadata={"adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": None}},
     )
 
@@ -2033,10 +2044,9 @@ async def test_qa_adapter_marks_failed_when_rework_retry_exhausted(
     monkeypatch.setenv("KERNELONE_DIRECTOR_TASK_REWORK_MAX_RETRIES", "2")
     adapter = QAAdapter(workspace=str(tmp_path))
     director_task = _create_task_row(adapter, subject="实现账单导出", description="A", metadata={})
-    _update_task_row(
+    _complete_task_row_for_test(
         adapter,
         director_task["id"],
-        status="completed",
         metadata={
             "adapter_result": {
                 "qa_required_for_final_verdict": True,

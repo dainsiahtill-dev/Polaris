@@ -1035,7 +1035,7 @@ def test_quality_gate_task_boundary_validation_reopens_failed_director_task(temp
     assert rework_summary["ready_count"] == 1
     assert rework_summary["tasks"][0]["reason"] == "task_boundary_interface_discrepancy_required"
 
-    rows = TaskRuntimeService(str(temp_workspace)).list_task_rows()
+    rows = TaskRuntimeService(str(temp_workspace)).list_observable_task_rows()
     assert rows[0]["status"] == "pending"
     metadata = rows[0]["metadata"]
     assert metadata["qa_rework_requested"] is True
@@ -1121,7 +1121,7 @@ def test_quality_gate_task_boundary_validation_routes_owner_handoff_to_owner_tas
 
     rows = {
         row["metadata"]["external_task_id"]: row
-        for row in TaskRuntimeService(str(temp_workspace)).list_task_rows()
+        for row in TaskRuntimeService(str(temp_workspace)).list_observable_task_rows()
     }
     assert rows["PM-0001-1-S4"]["status"] == "pending"
     assert rows["PM-0001-1-S4"]["metadata"]["task_boundary_rework_reason"] == (
@@ -1291,7 +1291,7 @@ def test_quality_gate_task_boundary_validation_reports_unmatched_owner_handoff(t
 
     rows = {
         row["metadata"]["external_task_id"]: row
-        for row in TaskRuntimeService(str(temp_workspace)).list_task_rows()
+        for row in TaskRuntimeService(str(temp_workspace)).list_observable_task_rows()
     }
     assert rows["PM-0001-2-step-3"]["status"] == "failed"
 
@@ -1450,7 +1450,7 @@ def test_quality_gate_task_boundary_validation_reports_unknown_owner_handoff(tem
 
     rows = {
         row["metadata"]["external_task_id"]: row
-        for row in TaskRuntimeService(str(temp_workspace)).list_task_rows()
+        for row in TaskRuntimeService(str(temp_workspace)).list_observable_task_rows()
     }
     assert rows["PM-0001-2-step-3"]["status"] == "failed"
     assert "qa_rework_requested" not in rows["PM-0001-2-step-3"]["metadata"]

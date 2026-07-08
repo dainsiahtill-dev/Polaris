@@ -4424,6 +4424,92 @@ def test_pm_delivery_dispatch_uses_observable_task_row_stats() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# WS2 test-file observable read-model fence — raw list_task_rows() calls
+# ---------------------------------------------------------------------------
+#
+# The production ``test_production_read_side_uses_observable_task_rows`` fence
+# already prevents production code from calling ``.list_task_rows()``.  But it
+# skips ``tests/`` directories entirely, so integration tests that construct
+# real ``TaskRuntimeService`` instances can silently reintroduce direct
+# ``list_task_rows()`` calls instead of the observable read-model
+# (``list_observable_task_rows()``).  This section covers the two test files
+# that previously violated the boundary.
+#
+# Mock-class method *definitions* (``def list_task_rows(self, ...)``) that
+# raise ``AssertionError`` on purpose are excluded — they are regression
+# guards, not calls.
+
+ROLE_ADAPTERS_TASKBOARD_ALIGNMENT_TEST = (
+    POLARIS_ROOT
+    / "tests"
+    / "test_role_adapters_taskboard_alignment.py"
+)
+FACTORY_ROUTER_TEST = POLARIS_ROOT / "tests" / "test_factory_router.py"
+TEST_FILE_RAW_LIST_TASK_ROWS_TARGETS = (
+    ROLE_ADAPTERS_TASKBOARD_ALIGNMENT_TEST,
+    FACTORY_ROUTER_TEST,
+)
+
+
+def _test_file_raw_list_task_rows_call_violations(path: Path) -> list[str]:
+    """Detect ``.list_task_rows()`` attribute calls in a test file.
+
+    Method *definitions* (``def list_task_rows(...)``) are excluded because
+    mock classes in tests intentionally define this method as a regression
+    guard (raising ``AssertionError``).  Only actual ``Call`` nodes where
+    the function is an ``ast.Attribute`` with ``attr == "list_task_rows"``
+    are flagged.
+
+    Complexity:
+        O(n) over AST nodes in the file.
+    """
+
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    rel = path.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr != "list_task_rows":
+            continue
+        offenders.append(f"{rel}:{node.lineno} calls raw .list_task_rows()")
+    return offenders
+
+
+def test_role_and_factory_tests_use_observable_task_rows() -> None:
+    """WS2 test-file observable read-model fence for ``list_task_rows()``.
+
+    Integration tests that construct ``TaskRuntimeService`` or mock it must
+    consume the observable read-model (``list_observable_task_rows()``) so
+    assertions validate the same fact-overlaid projection that production
+    snapshot / UI consumers see.  Direct ``.list_task_rows()`` calls bypass
+    execution-fact overlay and can silently pass assertions that would fail
+    under the production read-model.
+
+    Mock-class method *definitions* that raise ``AssertionError`` on purpose
+    are excluded — they are regression guards, not calls.
+    """
+
+    offenders: list[str] = []
+    for path in TEST_FILE_RAW_LIST_TASK_ROWS_TARGETS:
+        if not path.is_file():
+            continue
+        offenders.extend(_test_file_raw_list_task_rows_call_violations(path))
+
+    assert not offenders, (
+        "WS2 test-file observable read-model fence: "
+        "Integration tests must use list_observable_task_rows() instead of "
+        "the raw list_task_rows() so assertions validate the fact-overlaid "
+        "projection. Mock-class method definitions (def list_task_rows) that "
+        "guard against regression are allowed:\n" + "\n".join(offenders)
+    )
+
+
 def test_role_stats_fence_detects_direct_get_task_row_stats_call() -> None:
     """Characterization: the AST detection catches direct ``get_task_row_stats()`` calls.
 
