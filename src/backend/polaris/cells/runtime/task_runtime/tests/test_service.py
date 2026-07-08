@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from polaris.cells.events.fact_stream.public.service import (
     AppendFactEventCommandV1,
+    FactStreamError,
     QueryFactEventsV1,
     append_fact_event,
     query_fact_events,
@@ -1756,6 +1757,95 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert payload["resume_count"] == 0
     assert payload["last_result_summary"] == "done"
     assert payload["lease_expires_at"]
+
+
+def test_task_runtime_execution_event_append_uses_fact_stream_expected_seq(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    expected_seq_values: list[int | None] = []
+    real_append_fact_event = service_module.append_fact_event
+
+    def recording_append(command: AppendFactEventCommandV1) -> object:
+        expected_seq_values.append(command.expected_seq)
+        return real_append_fact_event(command)
+
+    monkeypatch.setattr(service_module, "append_fact_event", recording_append)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="expected seq event")
+    created_id = created["id"]
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-expected-seq",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+    completed = service.complete_execution(
+        created_id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="done",
+    )
+    assert completed["success"] is True
+
+    assert expected_seq_values[:3] == [1, 2, 3]
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    assert [int(event["seq"]) for event in events[:3]] == [1, 2, 3]
+
+
+def test_task_runtime_execution_event_append_retries_expected_seq_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    real_append_fact_event = service_module.append_fact_event
+    expected_seq_values: list[int | None] = []
+    injected_race = False
+
+    def racing_append(command: AppendFactEventCommandV1) -> object:
+        nonlocal injected_race
+        expected_seq_values.append(command.expected_seq)
+        if not injected_race:
+            injected_race = True
+            real_append_fact_event(
+                AppendFactEventCommandV1(
+                    workspace=str(workspace),
+                    stream="task_runtime.execution",
+                    event_type="external_concurrent",
+                    payload={
+                        "event_type": "external_concurrent",
+                        "task_id": "external",
+                        "status": "in_progress",
+                    },
+                    source="test.concurrent_writer",
+                    expected_seq=command.expected_seq,
+                )
+            )
+            raise FactStreamError(
+                "simulated expected_seq drift",
+                code="expected_seq_drift",
+                details={"expected_seq": command.expected_seq},
+            )
+        return real_append_fact_event(command)
+
+    monkeypatch.setattr(service_module, "append_fact_event", racing_append)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(subject="expected seq drift retry")
+
+    assert created["id"] == 1
+    assert expected_seq_values[:2] == [1, 2]
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    assert [str(event.get("event_type") or "") for event in events[:2]] == [
+        "external_concurrent",
+        "created",
+    ]
+    assert [int(event["seq"]) for event in events[:2]] == [1, 2]
 
 
 def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) -> None:

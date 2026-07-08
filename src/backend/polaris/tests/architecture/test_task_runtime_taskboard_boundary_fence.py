@@ -2298,6 +2298,40 @@ def _append_execution_event_calls_pass_fact_event_seq() -> tuple[bool, list[str]
     return success_call_count > 0 and not missing, missing
 
 
+def _append_execution_fact_with_cas_uses_expected_seq_contract() -> tuple[bool, list[str]]:
+    """Detect whether TaskRuntime execution facts opt into FactStream CAS."""
+
+    try:
+        function_def = _task_runtime_service_method_def("_append_execution_fact_with_cas")
+    except AssertionError as exc:
+        return False, [str(exc)]
+
+    offenders: list[str] = []
+    calls_next_seq = any(
+        isinstance(node, ast.Call) and _call_name(node.func) == "self._next_execution_fact_expected_seq"
+        for node in ast.walk(function_def)
+    )
+    if not calls_next_seq:
+        offenders.append("_append_execution_fact_with_cas must derive expected_seq via self._next_execution_fact_expected_seq()")
+
+    append_command_calls = [
+        node
+        for node in ast.walk(function_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "AppendFactEventCommandV1"
+    ]
+    if not append_command_calls:
+        offenders.append("_append_execution_fact_with_cas must construct AppendFactEventCommandV1")
+    for node in append_command_calls:
+        expected_keyword = next((keyword for keyword in node.keywords if keyword.arg == "expected_seq"), None)
+        if expected_keyword is None:
+            offenders.append("AppendFactEventCommandV1 call must pass expected_seq=")
+            continue
+        if not isinstance(expected_keyword.value, ast.Name) or expected_keyword.value.id != "expected_seq":
+            offenders.append("AppendFactEventCommandV1 expected_seq= must use the derived expected_seq local")
+
+    return not offenders, offenders
+
+
 def test_task_runtime_append_event_propagates_fact_stream_sequence_evidence() -> None:
     """WS2 append-only Fact Stream sequence evidence fence.
 
@@ -2348,6 +2382,22 @@ def test_task_runtime_append_event_propagates_fact_stream_sequence_evidence() ->
         "appended.appended_seq from the Fact Stream append-result into the "
         "execution-event append-result/projection so the task_runtime.execution "
         "stream stays append-only reconstructable. Offenders:\n" + "\n".join(offender_blocks)
+    )
+
+
+def test_task_runtime_append_event_uses_fact_stream_expected_seq_cas() -> None:
+    """WS2 CAS fence for TaskRuntime execution-event append operations."""
+
+    service_rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    uses_expected_seq, offenders = _append_execution_fact_with_cas_uses_expected_seq_contract()
+
+    assert uses_expected_seq, (
+        "WS2 execution-ledger SSoT fence: TaskRuntimeService execution facts "
+        "must opt into the FactStream expected_seq CAS contract before append. "
+        "Without this, concurrent TaskRuntime writers can continue appending "
+        "through the non-CAS path and the execution ledger remains a best-effort "
+        f"projection instead of an append-only control-plane fact source. {service_rel} offenders:\n"
+        + "\n".join(offenders)
     )
 
 

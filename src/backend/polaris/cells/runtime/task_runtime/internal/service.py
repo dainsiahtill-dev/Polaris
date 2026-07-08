@@ -11,6 +11,7 @@ from typing import Any, Callable, Mapping, NoReturn, Sequence
 
 from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
+    FactEventAppendedV1,
     FactStreamError,
     QueryFactEventsV1,
 )
@@ -54,6 +55,8 @@ from .execution_session import (
 logger = logging.getLogger(__name__)
 
 _TASK_ID_PATTERN = re.compile(r"^task-(\d+)(?:-|$)", re.IGNORECASE)
+_TASK_RUNTIME_EXECUTION_STREAM = "task_runtime.execution"
+_TASK_RUNTIME_EXECUTION_FACT_CAS_RETRIES = 3
 _REEXECUTION_METADATA_DROP_KEYS = frozenset(
     {
         "adapter_phase",
@@ -2892,17 +2895,10 @@ class TaskRuntimeService:
         )
         event_type_str = str(payload.get("event_type") or "unknown")
         try:
-            command = AppendFactEventCommandV1(
-                workspace=self.workspace,
-                stream="task_runtime.execution",
-                event_type=event_type_str,
+            appended = self._append_execution_fact_with_cas(
+                event_type_str=event_type_str,
                 payload=payload,
-                source="runtime.task_runtime",
-                run_id=str(payload.get("run_id") or "").strip() or None,
-                task_id=str(payload.get("task_id") or "").strip() or None,
-                correlation_id=str(payload.get("session_id") or "").strip() or None,
             )
-            appended = append_fact_event(command)
         except (RuntimeError, ValueError) as exc:
             logger.warning(
                 "Failed to append task runtime execution event %s: %s",
@@ -2942,6 +2938,81 @@ class TaskRuntimeService:
             fact_event_seq=appended.appended_seq,
             published=True,
         )
+
+    def _next_execution_fact_expected_seq(self) -> int:
+        """Return the next expected sequence for the execution fact stream.
+
+        Boundary:
+            This helper reads through the public FactStream query API only. It
+            must not inspect the JSONL store, ``.seq`` cursor, or filesystem
+            internals directly; the subsequent append is still protected by the
+            FactStream CAS contract, so a concurrent append causes an
+            ``expected_seq_drift`` failure instead of silent sequence reuse.
+
+        Complexity:
+            O(n) time in the current FactStream query implementation because
+            the JSONL stream is parsed to compute ``total``; O(1) additional
+            memory from this helper.
+        """
+
+        result = query_fact_events(
+            QueryFactEventsV1(
+                workspace=self.workspace,
+                stream=_TASK_RUNTIME_EXECUTION_STREAM,
+                limit=1,
+                offset=0,
+            )
+        )
+        return int(result.total) + 1
+
+    def _append_execution_fact_with_cas(
+        self,
+        *,
+        event_type_str: str,
+        payload: dict[str, Any],
+    ) -> FactEventAppendedV1:
+        """Append one execution fact with bounded optimistic sequence CAS.
+
+        Concurrent TaskRuntime transitions all append to the same
+        ``task_runtime.execution`` stream. The expected sequence is therefore
+        derived immediately before each append attempt, then enforced by the
+        FactStream store. A CAS drift means another writer legitimately landed
+        first, so the service retries a small fixed number of times; non-CAS
+        failures propagate to the existing append-error projection.
+        """
+
+        last_drift: FactStreamError | None = None
+        for attempt in range(1, _TASK_RUNTIME_EXECUTION_FACT_CAS_RETRIES + 1):
+            expected_seq = self._next_execution_fact_expected_seq()
+            command = AppendFactEventCommandV1(
+                workspace=self.workspace,
+                stream=_TASK_RUNTIME_EXECUTION_STREAM,
+                event_type=event_type_str,
+                payload=payload,
+                source="runtime.task_runtime",
+                run_id=str(payload.get("run_id") or "").strip() or None,
+                task_id=str(payload.get("task_id") or "").strip() or None,
+                correlation_id=str(payload.get("session_id") or "").strip() or None,
+                expected_seq=expected_seq,
+            )
+            try:
+                return append_fact_event(command)
+            except FactStreamError as exc:
+                if exc.code != "expected_seq_drift":
+                    raise
+                last_drift = exc
+                if attempt >= _TASK_RUNTIME_EXECUTION_FACT_CAS_RETRIES:
+                    break
+                logger.debug(
+                    "Retrying task runtime execution event append after expected_seq drift "
+                    "event_type=%s attempt=%s expected_seq=%s",
+                    event_type_str,
+                    attempt,
+                    expected_seq,
+                )
+        if last_drift is not None:
+            raise last_drift
+        raise RuntimeError("task runtime execution event append exhausted without result")
 
     def _publish_factory_execution_event(self, payload: dict[str, Any]) -> bool:
         factory_run_id = str(payload.get("factory_run_id") or "").strip()
