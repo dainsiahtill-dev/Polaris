@@ -8152,12 +8152,124 @@ class TestPersistExecutionBackendMetadata:
 
     def test_calls_update_board_task(self, tmp_path: Any) -> None:
         mock_runtime = MagicMock()
+        mock_runtime.task_exists.return_value = True
+        mock_runtime.update_task_row.return_value = {"id": 1}
         adapter = _make_adapter(tmp_path, task_runtime=mock_runtime)
         from polaris.cells.roles.adapters.internal.director_execution_backend import DirectorExecutionBackendRequest
 
         req = DirectorExecutionBackendRequest(execution_backend="code_edit")
-        adapter._persist_execution_backend_metadata("t1", req)
+        adapter._persist_execution_backend_metadata("task-1", req)
         mock_runtime.update_task_row.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# WS2: _update_task_progress must only write progress statuses as metadata
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateTaskProgressMetadataOnlyStatusProjection:
+    """WS2: progress trace statuses must not propagate to TaskRow status.
+
+    Under the WS2 Execution Ledger SSoT, the TaskRow status column is owned
+    exclusively by ``TaskRuntimeService`` claim/complete/fail transitions.
+    Progress trace events (running, in_progress, claimed, completed, failed,
+    etc.) are preserved as adapter metadata and never written to the TaskRow
+    status column.
+    """
+
+    @pytest.mark.parametrize(
+        "event_status",
+        ["running", "in_progress", "claimed"],
+    )
+    def test_execution_like_status_is_metadata_only(
+        self,
+        tmp_path: Any,
+        event_status: str,
+    ) -> None:
+        mock_runtime = MagicMock()
+        mock_runtime.task_exists.return_value = True
+        mock_runtime.update_task_row.return_value = {"id": 1}
+        adapter = _make_adapter(tmp_path, task_runtime=mock_runtime)
+        adapter._update_task_progress(
+            "1",
+            "executing",
+            event_status=event_status,
+        )
+        mock_runtime.update_task_row.assert_called_once()
+        call_args = mock_runtime.update_task_row.call_args
+        assert call_args[1].get("status") is None
+        metadata = call_args[1].get("metadata", {})
+        assert metadata["adapter_phase"] == "executing"
+        assert metadata["adapter_event_status"] == event_status
+
+    @pytest.mark.parametrize(
+        "event_status",
+        ["completed", "failed", "cancelled", "timeout"],
+    )
+    def test_terminal_status_is_metadata_only(
+        self,
+        tmp_path: Any,
+        event_status: str,
+    ) -> None:
+        mock_runtime = MagicMock()
+        mock_runtime.task_exists.return_value = True
+        mock_runtime.update_task_row.return_value = {"id": 1}
+        adapter = _make_adapter(tmp_path, task_runtime=mock_runtime)
+        adapter._update_task_progress(
+            "1",
+            "executing",
+            event_status=event_status,
+        )
+        mock_runtime.update_task_row.assert_called_once()
+        call_args = mock_runtime.update_task_row.call_args
+        assert call_args[1].get("status") is None
+        metadata = call_args[1].get("metadata", {})
+        assert metadata["adapter_phase"] == "executing"
+        assert metadata["adapter_event_status"] == event_status
+
+    def test_metadata_only_progress_still_writes_metadata(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        mock_runtime = MagicMock()
+        mock_runtime.task_exists.return_value = True
+        mock_runtime.update_task_row.return_value = {"id": 1}
+        adapter = _make_adapter(tmp_path, task_runtime=mock_runtime)
+        adapter._update_task_progress(
+            "1",
+            "analysis",
+            current_file="src/app.py",
+            event_code="file_open",
+        )
+        mock_runtime.update_task_row.assert_called_once()
+        call_kwargs = mock_runtime.update_task_row.call_args
+        assert call_kwargs[0][0] == 1  # normalized task_id
+        assert call_kwargs[1].get("status") is None
+        metadata = call_kwargs[1].get("metadata", {})
+        assert metadata["adapter_phase"] == "analysis"
+        assert metadata["adapter_current_file"] == "src/app.py"
+        assert metadata["adapter_event_code"] == "file_open"
+
+    def test_non_execution_event_status_writes_as_metadata(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        """A non-terminal, non-execution event_status is still stored as
+        metadata (not as TaskRow status)."""
+        mock_runtime = MagicMock()
+        mock_runtime.task_exists.return_value = True
+        mock_runtime.update_task_row.return_value = {"id": 1}
+        adapter = _make_adapter(tmp_path, task_runtime=mock_runtime)
+        adapter._update_task_progress(
+            "1",
+            "executing",
+            event_status="custom_advisory",
+        )
+        mock_runtime.update_task_row.assert_called_once()
+        call_kwargs = mock_runtime.update_task_row.call_args
+        assert call_kwargs[1].get("status") is None
+        metadata = call_kwargs[1].get("metadata", {})
+        assert metadata["adapter_event_status"] == "custom_advisory"
 
 
 # ---------------------------------------------------------------------------

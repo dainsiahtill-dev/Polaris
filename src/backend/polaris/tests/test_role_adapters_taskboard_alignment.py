@@ -225,12 +225,15 @@ def test_task_runtime_execution_event_publishes_factory_progress_channel(
     assert envelope["payload"]["factory_bench_session_id"] == "bench-1"
 
 
-def test_role_adapter_update_board_task_uses_runtime_row_api(tmp_path: Path) -> None:
+def test_role_adapter_update_board_task_rejects_execution_status_shortcut(tmp_path: Path) -> None:
+    """Execution statuses (in_progress/running/claimed) must go through
+    TaskRuntimeService.claim_execution(), not update_task_row().
+    """
     adapter = DirectorAdapter(workspace=str(tmp_path))
 
     class _RowWriteRuntime:
         def __init__(self) -> None:
-            self.updated: list[dict[str, Any]] = []
+            self.calls: list[dict[str, Any]] = []
 
         def task_exists(self, task_id: Any) -> bool:
             return str(task_id or "") == "7"
@@ -242,23 +245,19 @@ def test_role_adapter_update_board_task_uses_runtime_row_api(tmp_path: Path) -> 
             status: str | None = None,
             metadata: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
-            normalized_id = int(str(task_id).removeprefix("task-"))
-            row = {
-                "id": normalized_id,
-                "status": status or "pending",
-                "metadata": dict(metadata or {}),
-            }
-            self.updated.append(row)
-            return dict(row)
-
-        def update_task(self, *_args: Any, **_kwargs: Any) -> None:
-            raise AssertionError("role adapters must use update_task_row()")
+            self.calls.append({"task_id": task_id, "status": status})
+            return {"id": 7, "status": status or "pending", "metadata": dict(metadata or {})}
 
     runtime = _RowWriteRuntime()
     adapter._task_runtime = cast(Any, runtime)
 
-    assert adapter._update_board_task("task-7", status="in_progress", metadata={"phase": "execute"}) is True
-    assert runtime.updated == [{"id": 7, "status": "in_progress", "metadata": {"phase": "execute"}}]
+    for exec_status in ("in_progress", "running", "claimed"):
+        runtime.calls.clear()
+        with pytest.raises(
+            RuntimeError, match=f"execution_task_status_requires_task_runtime_owner_transition:{exec_status}"
+        ):
+            BaseRoleAdapter._update_board_task(adapter, "task-7", status=exec_status, metadata={"phase": "execute"})
+        assert runtime.calls == [], f"update_task_row must not be called for execution status {exec_status}"
 
 
 def test_role_adapter_update_board_task_surfaces_execution_event_failure(tmp_path: Path) -> None:
@@ -288,7 +287,7 @@ def test_role_adapter_update_board_task_surfaces_execution_event_failure(tmp_pat
 
     adapter._task_runtime = cast(Any, _RowWriteRuntime())
 
-    assert adapter._update_board_task("task-7", status="in_progress", metadata={"phase": "execute"}) is False
+    assert adapter._update_board_task("task-7", metadata={"phase": "execute"}) is False
     assert adapter._task_runtime_transition_failure_evidence() == [
         {
             "action": "update_board_task",
@@ -300,7 +299,7 @@ def test_role_adapter_update_board_task_surfaces_execution_event_failure(tmp_pat
                 "error_code": "fact_stream_unavailable",
             },
             "metadata": {
-                "status": "in_progress",
+                "status": None,
                 "metadata_keys": ["phase"],
             },
         }
@@ -398,9 +397,7 @@ async def test_director_execute_projects_task_runtime_transition_failure(
             "metadata": {"status": "in_progress"},
         }
     ]
-    assert result["metadata"]["task_runtime_transition_failures"] == result[
-        "task_runtime_transition_failures"
-    ]
+    assert result["metadata"]["task_runtime_transition_failures"] == result["task_runtime_transition_failures"]
     assert [signal["code"] for signal in result["decision_signals"]] == [
         "existing",
         "task_runtime_transition_failure",
@@ -436,9 +433,7 @@ async def test_pm_execute_projects_task_runtime_transition_failure(
     assert result["success"] is False
     assert result["error_code"] == "task_runtime_transition_failure"
     assert result["task_runtime_transition_failures"][0]["role"] == "pm"
-    assert result["metadata"]["task_runtime_transition_failures"] == result[
-        "task_runtime_transition_failures"
-    ]
+    assert result["metadata"]["task_runtime_transition_failures"] == result["task_runtime_transition_failures"]
 
 
 @pytest.mark.asyncio
@@ -562,9 +557,7 @@ async def test_qa_execute_projects_task_runtime_transition_failure(
     assert result["passed"] is True
     assert result["error_code"] == "task_runtime_transition_failure"
     assert result["task_runtime_transition_failures"][0]["role"] == "qa"
-    assert result["metadata"]["task_runtime_transition_failures"] == result[
-        "task_runtime_transition_failures"
-    ]
+    assert result["metadata"]["task_runtime_transition_failures"] == result["task_runtime_transition_failures"]
 
 
 def test_role_adapter_update_board_task_rejects_terminal_status_shortcut(tmp_path: Path) -> None:
@@ -590,7 +583,7 @@ def test_role_adapter_update_board_task_rejects_terminal_status_shortcut(tmp_pat
         BaseRoleAdapter._update_board_task(adapter, "task-7", status="failed", metadata={"phase": "execute"})
 
 
-def test_director_progress_skips_terminal_status_row_write(tmp_path: Path) -> None:
+def test_director_progress_records_status_as_metadata_only(tmp_path: Path) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
 
     class _ProgressRuntime:
@@ -614,14 +607,26 @@ def test_director_progress_skips_terminal_status_row_write(tmp_path: Path) -> No
     runtime = _ProgressRuntime()
     adapter._task_runtime = cast(Any, runtime)
 
+    # DirectorAdapter._update_task_progress preserves trace statuses as
+    # metadata-only evidence. It must never write them into the TaskRow status
+    # column; that column is owned by TaskRuntimeService transitions.
     adapter._update_task_progress("task-7", "execute", event_status="failed")
-    assert runtime.calls == []
+    assert runtime.calls[-1]["status"] is None
+    assert runtime.calls[-1]["metadata"]["adapter_event_status"] == "failed"
 
     adapter._update_task_progress("task-7", "execute", event_status="running")
-    assert runtime.calls == [{"task_id": 7, "status": "running", "metadata": {}}]
+    assert runtime.calls[-1]["status"] is None
+    assert runtime.calls[-1]["metadata"]["adapter_event_status"] == "running"
+
+    adapter._update_task_progress("task-7", "execute", event_status="planning")
+    assert runtime.calls[-1]["status"] is None
+    assert runtime.calls[-1]["metadata"]["adapter_event_status"] == "planning"
 
     with pytest.raises(RuntimeError, match="terminal_task_status_requires_task_runtime_owner_transition"):
         adapter._update_board_task("task-7", status="failed")
+
+    with pytest.raises(RuntimeError, match="execution_task_status_requires_task_runtime_owner_transition"):
+        adapter._update_board_task("task-7", status="running")
 
 
 def test_director_snapshot_uses_nanosecond_mtime(tmp_path: Path) -> None:
@@ -729,7 +734,9 @@ def test_director_taskboard_snapshot_uses_observable_task_rows(tmp_path: Path) -
             raise AssertionError("Director taskboard snapshots must use observable task rows")
 
         def get_task_row_stats(self) -> dict[str, int]:
-            raise AssertionError("Director taskboard snapshots must use get_observable_task_row_stats, not get_task_row_stats")
+            raise AssertionError(
+                "Director taskboard snapshots must use get_observable_task_row_stats, not get_task_row_stats"
+            )
 
         def get_observable_task_row_stats(self) -> dict[str, int]:
             return {"total": 1, "pending": 1}
@@ -1270,8 +1277,7 @@ def test_pm_adapter_cleans_existing_duplicate_tasks_before_new_plan(tmp_path: Pa
     cancelled_events = [
         event
         for event in events
-        if event.get("event_type") == "cancelled"
-        and event.get("payload", {}).get("task_id") == str(_row_id(duplicate))
+        if event.get("event_type") == "cancelled" and event.get("payload", {}).get("task_id") == str(_row_id(duplicate))
     ]
     assert len(cancelled_events) == 1
     assert cancelled_events[0]["payload"]["details"] == {

@@ -31,7 +31,7 @@ from polaris.kernelone.llm.budget_policy import (
     forced_write_retry_timeout_seconds,
 )
 
-from ..base import BaseRoleAdapter, _is_terminal_task_row_status
+from ..base import BaseRoleAdapter
 from ..director_execution_backend import (
     DirectorExecutionBackendRequest,
     resolve_director_execution_backend,
@@ -2149,11 +2149,26 @@ class DirectorAdapter(BaseRoleAdapter):
         event_detail: str | None = None,
         event_refs: dict[str, Any] | None = None,
     ) -> None:
-        """更新任务进度"""
-        if event_status:
-            if _is_terminal_task_row_status(event_status):
-                return
-            self._update_board_task(task_id, status=event_status)
+        """Record Director progress as metadata-only task evidence.
+
+        WS2 invariant:
+            TaskRow status is owned by ``TaskRuntimeService`` execution
+            transitions.  Director progress statuses such as ``running`` or
+            ``failed`` are trace semantics, not row-state authority.  Delegating
+            to ``BaseRoleAdapter._update_task_progress`` preserves these values
+            under ``adapter_event_status`` without writing the TaskRow status
+            column.
+        """
+        super()._update_task_progress(
+            task_id,
+            phase,
+            current_file=current_file,
+            event_code=event_code,
+            event_status=event_status,
+            event_reason=event_reason,
+            event_detail=event_detail,
+            event_refs=event_refs,
+        )
 
     def _update_board_task(
         self,

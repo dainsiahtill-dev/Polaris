@@ -23,12 +23,19 @@ from polaris.kernelone.storage.paths import resolve_signal_path
 
 _logger = logging.getLogger(__name__)
 _TERMINAL_TASK_ROW_STATUSES = frozenset({"completed", "failed", "cancelled", "timeout"})
+_EXECUTION_TASK_ROW_STATUSES = frozenset({"in_progress", "running", "claimed"})
 
 
 def _is_terminal_task_row_status(status: str | None) -> bool:
     """Return whether a TaskRow status is terminal and must use an owner transition."""
 
     return str(status or "").strip().lower() in _TERMINAL_TASK_ROW_STATUSES
+
+
+def _is_execution_task_row_status(status: str | None) -> bool:
+    """Return whether a TaskRow status is owned by execution claim transitions."""
+
+    return str(status or "").strip().lower() in _EXECUTION_TASK_ROW_STATUSES
 
 
 class BaseRoleAdapter(RoleOrchestrationAdapter):
@@ -221,6 +228,11 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
         if _is_terminal_task_row_status(normalized_status):
             raise RuntimeError(
                 "terminal_task_status_requires_task_runtime_owner_transition:"
+                f"{normalized_status}"
+            )
+        if _is_execution_task_row_status(normalized_status):
+            raise RuntimeError(
+                "execution_task_status_requires_task_runtime_owner_transition:"
                 f"{normalized_status}"
             )
         if not self.task_runtime.task_exists(normalized):

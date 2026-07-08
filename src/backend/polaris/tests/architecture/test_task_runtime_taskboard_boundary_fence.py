@@ -1222,13 +1222,247 @@ def test_base_role_adapter_rejects_terminal_status_shortcuts() -> None:
     assert "terminal_task_status_requires_task_runtime_owner_transition" in source
 
 
+# ---------------------------------------------------------------------------
+# WS2 execution-status row-write fence — execution-like status guard
+# ---------------------------------------------------------------------------
+#
+# Role adapters must not write execution-like TaskRow statuses (running,
+# in_progress, claimed) through _update_board_task().  Execution status is
+# owned by TaskRuntimeService owner transitions (claim_execution,
+# complete_execution, fail_execution).  Writing execution-like status
+# through a role adapter would bypass execution-event projection.
+#
+# _update_board_task() already blocks terminal statuses (completed, failed,
+# cancelled, timeout) via _is_terminal_task_row_status.  This fence extends
+# the invariant to execution-like statuses so the SSoT boundary is
+# comprehensive.
+
+_EXECUTION_LIKE_TASK_ROW_STATUSES = frozenset({"running", "in_progress", "claimed"})
+
+ROLE_ADAPTER_PATHS: dict[str, Path] = {
+    "pm_adapter": PM_ADAPTER,
+    "qa_adapter": QA_ADAPTER,
+    "director_adapter": DIRECTOR_ADAPTER,
+}
+
+
+def _contains_execution_status_guard(path: Path) -> bool:
+    """Return True if ``path`` contains a guard that references execution-like
+    task-row statuses in ``_update_board_task``.
+
+    Low false-positive: checks for the presence of the execution-status
+    guard pattern (``_is_execution_task_row_status`` or
+    ``execution_task_status_requires_task_runtime_owner_transition`` error
+    message) inside the ``_update_board_task`` method body.
+    """
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != "_update_board_task":
+            continue
+        body_text = ast.dump(node)
+        has_execution_guard = "_is_execution_task_row_status" in body_text
+        has_execution_msg = "execution_task_status_requires_task_runtime_owner_transition" in body_text
+        return has_execution_guard or has_execution_msg
+    return False
+
+
+def _director_update_task_progress_uses_metadata_only_delegate(path: Path) -> bool:
+    """Return True if Director progress delegates to Base metadata projection.
+
+    ``BaseRoleAdapter._update_task_progress`` records ``event_status`` under
+    ``adapter_event_status`` and calls ``_update_board_task`` with metadata only.
+    Director must therefore call ``super()._update_task_progress(...)`` and must
+    not directly forward ``event_status`` to ``_update_board_task(status=...)``.
+    """
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != "_update_task_progress":
+            continue
+        has_super_delegate = False
+        forwards_status_to_board = False
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            func = child.func
+            if isinstance(func, ast.Attribute) and func.attr == "_update_task_progress":
+                value = func.value
+                if isinstance(value, ast.Call) and _call_name(value.func) == "super":
+                    has_super_delegate = True
+            if isinstance(func, ast.Attribute) and func.attr == "_update_board_task":
+                for keyword in child.keywords:
+                    if keyword.arg == "status":
+                        forwards_status_to_board = True
+        return has_super_delegate and not forwards_status_to_board
+    return False
+
+
+def _literal_execution_status_update_board_task_calls(
+    path: Path,
+    statuses: set[str],
+) -> list[str]:
+    """Detect literal ``_update_board_task(..., status=<literal>)`` calls
+    where the status value is a string literal in the forbidden set.
+
+    AST-only, low false-positive: only matches ``ast.Constant`` string
+    keyword values, not variables or expressions.
+    """
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    rel = path.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "_update_board_task":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "status":
+                continue
+            status = _string_literal(keyword.value)
+            if status in statuses:
+                offenders.append(
+                    f"{rel}:{node.lineno} calls _update_board_task(status={status!r})"
+                )
+    return offenders
+
+
+def test_base_role_adapter_has_execution_status_guard() -> None:
+    """WS2 execution-status row-write fence: BaseRoleAdapter._update_board_task()
+    must contain a guard that blocks execution-like statuses.
+
+    The guard ensures role adapters cannot write running/in_progress/claimed
+    status through _update_board_task().  Execution status changes must use
+    TaskRuntimeService owner transitions (claim_execution, complete_execution,
+    fail_execution) so task_runtime.execution facts are always appended.
+    """
+    assert _contains_execution_status_guard(ROLE_ADAPTER_BASE), (
+        "WS2 execution-status row-write fence: "
+        "BaseRoleAdapter._update_board_task() must contain a guard that "
+        "blocks execution-like statuses (running, in_progress, claimed). "
+        "Execution status changes must use TaskRuntimeService owner "
+        "transitions so task_runtime.execution facts are always appended."
+    )
+
+
+def test_director_progress_uses_metadata_only_status_projection() -> None:
+    """WS2 execution-status row-write fence: DirectorAdapter._update_task_progress()
+    must preserve progress statuses without writing TaskRow status.
+
+    Director progress events carry trace statuses that may include
+    execution-like values (running, in_progress, claimed) and terminal-looking
+    values (failed/completed).  The progress path must store them through
+    BaseRoleAdapter's metadata-only projection. Execution status changes must
+    use TaskRuntimeService owner transitions.
+    """
+    assert _director_update_task_progress_uses_metadata_only_delegate(DIRECTOR_ADAPTER), (
+        "WS2 execution-status row-write fence: "
+        "DirectorAdapter._update_task_progress() must delegate to "
+        "BaseRoleAdapter._update_task_progress() and must not call "
+        "_update_board_task(status=event_status). Progress statuses are "
+        "metadata evidence; TaskRow status writes must use TaskRuntimeService "
+        "owner transitions."
+    )
+
+
+def test_production_adapters_do_not_write_execution_status_literals() -> None:
+    """WS2 execution-status row-write fence: production role adapters must
+    not call ``_update_board_task(status="running"/"in_progress"/"claimed")``
+    with literal execution-like status values.
+
+    Execution status is owned by TaskRuntimeService owner transitions.
+    Role adapters calling _update_board_task() with execution-like statuses
+    would bypass execution-event projection.  This fence detects literal
+    calls; dynamic/variable status values are covered by the base-class
+    guard fence.
+    """
+    offenders: list[str] = []
+    for _adapter_name, path in sorted(ROLE_ADAPTER_PATHS.items()):
+        if not path.is_file():
+            continue
+        offenders.extend(
+            _literal_execution_status_update_board_task_calls(
+                path, _EXECUTION_LIKE_TASK_ROW_STATUSES
+            )
+        )
+
+    assert not offenders, (
+        "WS2 execution-status row-write fence: "
+        "Production role adapters must not call _update_board_task() with "
+        "literal execution-like status values (running, in_progress, "
+        "claimed). Execution status changes must use TaskRuntimeService "
+        "owner transitions so task_runtime.execution facts are always "
+        "appended:\n" + "\n".join(offenders)
+    )
+
+
+def test_execution_status_fence_detects_literal_status_call() -> None:
+    """Characterization: the AST detection catches
+    ``_update_board_task(status="running")`` calls.
+
+    Uses ``ast.parse`` on a synthetic fragment to prove the detection
+    helper would flag a literal execution-like status keyword.
+    """
+    fragment = 'self._update_board_task(task_id, status="running")\n'
+    tree = ast.parse(fragment)
+    detected = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "_update_board_task":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "status" and _string_literal(keyword.value) == "running":
+                detected = True
+    assert detected, (
+        "Characterization fence: AST detection must flag literal "
+        '_update_board_task(status="running") calls. If this test '
+        "fails, the execution-status fence can silently stop detecting "
+        "violations."
+    )
+
+
+def test_execution_status_fence_allows_metadata_only_update() -> None:
+    """Characterization: the AST detection does NOT flag
+    ``_update_board_task(metadata={...})`` calls without a status keyword.
+
+    Metadata-only updates are the reviewed pattern for role adapters;
+    the fence must not block them.
+    """
+    fragment = 'self._update_board_task(task_id, metadata={"phase": "executing"})\n'
+    tree = ast.parse(fragment)
+    offender_count = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "_update_board_task":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "status" and _string_literal(keyword.value) in _EXECUTION_LIKE_TASK_ROW_STATUSES:
+                offender_count += 1
+    assert offender_count == 0, (
+        "Characterization fence: AST detection must NOT flag "
+        "_update_board_task(metadata={...}) calls. The fence should "
+        "only block literal execution-like status keywords."
+    )
+
+
 def test_director_adapter_progress_does_not_finalize_task_rows() -> None:
     source = DIRECTOR_ADAPTER.read_text(encoding="utf-8")
 
-    assert "_is_terminal_task_row_status(event_status)" in source, (
-        "Director progress events may carry terminal-looking trace statuses, "
-        "but TaskRow terminal writes must stay with TaskRuntimeService owner "
-        "transitions."
+    assert "super()._update_task_progress(" in source, (
+        "Director progress events must use BaseRoleAdapter's metadata-only "
+        "progress projection."
     )
     assert "return super()._update_board_task(task_id, status=status, metadata=metadata)" in source
     assert "self.task_runtime.update_task_row(" not in source
