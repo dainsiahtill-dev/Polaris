@@ -23,6 +23,7 @@ cell should read or write either path directly.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -269,6 +270,10 @@ def _normalize_task_id_list(value: Any) -> list[int]:
     return [_normalize_task_id(item) for item in value]
 
 
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Task dataclass
 # ---------------------------------------------------------------------------
@@ -385,6 +390,18 @@ class Task:
         )
 
 
+@dataclass(frozen=True)
+class TaskBoardRowWriteReceipt:
+    """In-memory anchor for the most recent successful TaskBoard row replace."""
+
+    task_id: int | str
+    task_path: str
+    before_hash: str
+    after_hash: str
+    operation: str
+    written_at: str
+
+
 # ---------------------------------------------------------------------------
 # TaskBoard
 # ---------------------------------------------------------------------------
@@ -414,6 +431,7 @@ class TaskBoard:
         self._ready_condition = threading.Condition(self._lock)
         self._ready_listeners: list[Callable[[], None]] = []
         self._cache: dict[int, Task] = {}
+        self._last_row_write_receipt: TaskBoardRowWriteReceipt | None = None
         self._load_all()
 
     def _logical_path(self, path: Path) -> str:
@@ -516,16 +534,34 @@ class TaskBoard:
         self._cache[task.id] = task
         return task
 
+    def last_row_write_receipt(self) -> TaskBoardRowWriteReceipt | None:
+        """Return the last successful TaskBoard row-write receipt anchor."""
+        with self.transaction():
+            return self._last_row_write_receipt
+
     def _save_task(self, task: Task) -> None:
         """Atomically save a task to disk (write-to-temp + os.replace)."""
         with self.transaction():
             task_path = self.tasks_dir / f"task_{task.id}.json"
             tmp_path = self.tasks_dir / f".task_{task.id}.{uuid.uuid4().hex}.tmp"
             tmp_logical = self._logical_path(tmp_path)
+            task_logical = self._logical_path(task_path)
+            before_hash = ""
+            if task_path.is_file():
+                before_hash = _sha256_text(self._kernel_fs.read_text(task_logical, encoding="utf-8"))
             payload = json.dumps(task.to_dict(), indent=2, ensure_ascii=False) + "\n"
+            after_hash = _sha256_text(payload)
             try:
                 self._kernel_fs.write_text(tmp_logical, payload, encoding="utf-8")
                 self._replace_task_file(tmp_path, task_path)
+                self._last_row_write_receipt = TaskBoardRowWriteReceipt(
+                    task_id=task.id,
+                    task_path=task_logical,
+                    before_hash=before_hash,
+                    after_hash=after_hash,
+                    operation="replace",
+                    written_at=datetime.now(timezone.utc).isoformat(),
+                )
             finally:
                 with suppress(OSError):
                     tmp_path.unlink(missing_ok=True)
@@ -719,15 +755,9 @@ class TaskBoard:
         next_status = _normalize_status(status)
         is_terminal = next_status.is_terminal
         if is_terminal and not allow_terminal_status:
-            raise RuntimeError(
-                "terminal_taskboard_status_requires_task_runtime_owner_transition:"
-                f"{next_status.value}"
-            )
+            raise RuntimeError(f"terminal_taskboard_status_requires_task_runtime_owner_transition:{next_status.value}")
         if next_status in _EXECUTION_OWNER_STATUSES and not allow_execution_status:
-            raise RuntimeError(
-                "taskboard_execution_status_requires_task_runtime_owner_transition:"
-                f"{next_status.value}"
-            )
+            raise RuntimeError(f"taskboard_execution_status_requires_task_runtime_owner_transition:{next_status.value}")
 
         terminal_event_data: dict[str, Any] | None = None
         if is_terminal:
@@ -864,8 +894,7 @@ class TaskBoard:
             self._append_terminal_event_with_cas(event_data)
         except FactStreamError as exc:
             logger.warning(
-                "Failed to append TaskBoard terminal compatibility event "
-                "task_id=%s stream=%s code=%s details=%s: %s",
+                "Failed to append TaskBoard terminal compatibility event task_id=%s stream=%s code=%s details=%s: %s",
                 event_data.get("task_id"),
                 _TASKBOARD_TERMINAL_EVENTS_STREAM,
                 exc.code,
@@ -875,8 +904,7 @@ class TaskBoard:
             )
         except (OSError, TypeError, ValueError) as exc:
             logger.warning(
-                "Failed to append TaskBoard terminal compatibility event "
-                "task_id=%s stream=%s error_type=%s: %s",
+                "Failed to append TaskBoard terminal compatibility event task_id=%s stream=%s error_type=%s: %s",
                 event_data.get("task_id"),
                 _TASKBOARD_TERMINAL_EVENTS_STREAM,
                 type(exc).__name__,
@@ -1276,6 +1304,7 @@ __all__ = [
     "InvalidTaskStateTransitionError",
     "Task",
     "TaskBoard",
+    "TaskBoardRowWriteReceipt",
     "TaskPriority",
     "TaskStatus",
 ]

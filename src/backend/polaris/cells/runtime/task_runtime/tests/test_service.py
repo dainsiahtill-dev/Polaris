@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
@@ -26,6 +27,35 @@ from polaris.kernelone.storage import resolve_runtime_path
 
 def _task_file_path(workspace: Path, task_id: object) -> Path:
     return Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task_id}.json"))
+
+
+def _sha256_utf8_file(path: Path) -> str:
+    return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+
+
+_ROW_WRITE_RECEIPT_FIELDS = frozenset({"task_id", "task_path", "before_hash", "after_hash", "operation", "written_at"})
+
+
+def _assert_task_row_write_receipt(
+    receipt: object,
+    *,
+    task_id: int,
+    task_path: Path,
+) -> dict[str, Any]:
+    assert receipt is not None
+    if isinstance(receipt, dict):
+        values = {field: receipt[field] for field in _ROW_WRITE_RECEIPT_FIELDS}
+    else:
+        values = {field: getattr(receipt, field) for field in _ROW_WRITE_RECEIPT_FIELDS if hasattr(receipt, field)}
+    missing = _ROW_WRITE_RECEIPT_FIELDS - set(values)
+    assert not missing
+    assert values["task_id"] == task_id
+    assert str(values["task_path"]) in {str(task_path), f"runtime/tasks/task_{task_id}.json"}
+    assert isinstance(values["operation"], str)
+    assert values["operation"].strip()
+    assert isinstance(values["written_at"], str)
+    assert values["written_at"].strip()
+    return values
 
 
 def _session_file_path(workspace: Path, task_id: object) -> Path:
@@ -199,6 +229,49 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
     rows = service.list_task_rows()
     assert len(rows) == 1
     assert rows[0]["id"] == created["id"]
+
+
+def test_task_runtime_service_records_taskboard_row_write_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(
+        subject="receipt anchored task",
+        description="create should record a file-write receipt",
+        metadata={"phase": "row-write-receipt"},
+    )
+    task_id = int(created["id"])
+    task_path = _task_file_path(workspace, task_id)
+    create_after_hash = _sha256_utf8_file(task_path)
+
+    create_receipt = _assert_task_row_write_receipt(
+        service._board.last_row_write_receipt(),
+        task_id=task_id,
+        task_path=task_path,
+    )
+    assert create_receipt["before_hash"] in {
+        "",
+        "file_absent",
+        hashlib.sha256(b"").hexdigest(),
+    }
+    assert create_receipt["after_hash"] == create_after_hash
+
+    updated = service.update_task_row(
+        f"task-{task_id}",
+        metadata={"owner_role": "director", "receipt_probe": "update"},
+    )
+    assert updated is not None
+    update_after_hash = _sha256_utf8_file(task_path)
+
+    update_receipt = _assert_task_row_write_receipt(
+        service._board.last_row_write_receipt(),
+        task_id=task_id,
+        task_path=task_path,
+    )
+    assert update_receipt["before_hash"] == create_after_hash
+    assert update_receipt["after_hash"] == update_after_hash
+    assert update_receipt["after_hash"] != update_receipt["before_hash"]
 
 
 def test_task_runtime_service_projects_rows_from_execution_facts(tmp_path: Path) -> None:

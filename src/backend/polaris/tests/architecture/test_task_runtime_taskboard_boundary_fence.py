@@ -401,6 +401,20 @@ TASK_ROW_FILE_ACCESS_METHODS = {
     "write_bytes",
     "write_text",
 }
+TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS = {
+    "_last_row_write_receipt",
+    "TaskBoardRowWriteReceipt",
+}
+TASKBOARD_KERNEL_WRITE_TEXT_NON_ROW_ALLOWLIST = {"_save_max_id"}
+TASKBOARD_DIRECT_ROW_WRITE_METHODS = {
+    "open",
+    "write_bytes",
+    "write_text",
+}
+TASKBOARD_DIRECT_ROW_REPLACE_METHODS = {
+    "rename",
+    "replace",
+}
 
 
 def _looks_like_task_row_file_literal(value: str) -> bool:
@@ -1882,6 +1896,303 @@ def test_taskboard_terminal_event_stream_is_owner_only_compatibility_projection(
         "projection, not an execution-control fact source. Production code "
         "outside task_runtime must consume TaskRuntimeService / execution "
         "ledger projections instead:\n" + "\n".join(offenders)
+    )
+
+
+def _contains_task_row_write_target_literal(node: ast.AST) -> bool:
+    """Return true when ``node`` contains a task-row or task-row-temp path literal."""
+
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Constant)
+            and isinstance(child.value, str)
+            and _looks_like_task_row_file_literal(child.value)
+        ):
+            return True
+        if isinstance(child, ast.JoinedStr):
+            literal_text = "".join(
+                part.value for part in child.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            )
+            if _looks_like_task_row_file_literal(literal_text):
+                return True
+            if "task_" in literal_text and ".tmp" in literal_text:
+                return True
+    return False
+
+
+def _loaded_name_ids(node: ast.AST) -> set[str]:
+    return {child.id for child in ast.walk(node) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)}
+
+
+def _assignment_target_names(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, (ast.Tuple, ast.List)):
+        names: set[str] = set()
+        for item in node.elts:
+            names.update(_assignment_target_names(item))
+        return names
+    return set()
+
+
+def _node_references_any_local_name(node: ast.AST, names: AbstractSet[str]) -> bool:
+    if not names:
+        return False
+    return bool(_loaded_name_ids(node) & set(names))
+
+
+def _is_task_row_payload_expression(node: ast.AST) -> bool:
+    for call in ast.walk(node):
+        if not isinstance(call, ast.Call):
+            continue
+        if _call_name(call.func) != "json.dumps":
+            continue
+        if any(isinstance(child, ast.Call) and _call_name(child.func) == "task.to_dict" for child in ast.walk(call)):
+            return True
+    return False
+
+
+def _taskboard_row_persistence_local_names(function_def: ast.FunctionDef) -> tuple[set[str], set[str]]:
+    """Infer local names that carry task-row paths and serialized row payloads.
+
+    The inference is intentionally narrow and local to one ``TaskBoard``
+    method. It tracks assignments from row-looking path literals, task temp
+    path literals, calls fed by already-tracked names, and
+    ``json.dumps(task.to_dict(...))`` payloads. This keeps the fence
+    structural without turning it into a production data-flow engine.
+    """
+
+    assignments = [
+        node
+        for node in ast.walk(function_def)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and not isinstance(node, ast.AugAssign)
+    ]
+    row_path_names: set[str] = set()
+    row_payload_names: set[str] = set()
+    changed = True
+
+    while changed:
+        changed = False
+        for assignment in assignments:
+            value = assignment.value
+            if value is None:
+                continue
+            targets = list(assignment.targets) if isinstance(assignment, ast.Assign) else [assignment.target]
+            target_names: set[str] = set()
+            for target in targets:
+                target_names.update(_assignment_target_names(target))
+            if not target_names:
+                continue
+
+            value_names = _loaded_name_ids(value)
+            if _contains_task_row_write_target_literal(value) or bool(value_names & row_path_names):
+                before = len(row_path_names)
+                row_path_names.update(target_names)
+                changed = changed or len(row_path_names) != before
+
+            if _is_task_row_payload_expression(value) or bool(value_names & row_payload_names):
+                before = len(row_payload_names)
+                row_payload_names.update(target_names)
+                changed = changed or len(row_payload_names) != before
+
+    return row_path_names, row_payload_names
+
+
+def _call_keyword_value(node: ast.Call, name: str) -> ast.AST | None:
+    return next((keyword.value for keyword in node.keywords if keyword.arg == name), None)
+
+
+def _open_call_uses_write_mode(node: ast.Call) -> bool:
+    mode_node = node.args[1] if len(node.args) > 1 else _call_keyword_value(node, "mode")
+    mode = _string_literal(mode_node)
+    return any(flag in mode for flag in ("w", "a", "x", "+"))
+
+
+def _taskboard_row_write_boundary_violations() -> list[str]:
+    """Validate the TaskBoard row-file write boundary."""
+
+    taskboard = _taskboard_class()
+    methods = [node for node in taskboard.body if isinstance(node, ast.FunctionDef)]
+    offenders: list[str] = []
+    save_task_kernel_write_lines: list[int] = []
+    save_task_replace_call_lines: list[int] = []
+
+    for method in methods:
+        row_path_names, row_payload_names = _taskboard_row_persistence_local_names(method)
+        for node in ast.walk(method):
+            if not isinstance(node, ast.Call):
+                continue
+
+            call = _call_name(node.func)
+            leaf = call.rsplit(".", maxsplit=1)[-1]
+            label = f"TaskBoard.{method.name}():{node.lineno}"
+            receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
+            references_row_receiver = receiver is not None and _node_references_any_local_name(receiver, row_path_names)
+            references_row_path = (
+                references_row_receiver
+                or bool(node.args and _node_references_any_local_name(node.args[0], row_path_names))
+                or _contains_task_row_write_target_literal(node)
+            )
+            references_row_payload = len(node.args) > 1 and _node_references_any_local_name(
+                node.args[1], row_payload_names
+            )
+            references_row_write = references_row_path or references_row_payload
+
+            if call == "self._replace_task_file":
+                if method.name == "_save_task":
+                    save_task_replace_call_lines.append(node.lineno)
+                else:
+                    offenders.append(f"{label} calls self._replace_task_file(); only _save_task may commit row JSON")
+                continue
+
+            if call == "self._kernel_fs.write_text":
+                if method.name == "_save_task":
+                    save_task_kernel_write_lines.append(node.lineno)
+                    if not references_row_path or not references_row_payload:
+                        offenders.append(
+                            f"{label} must pass a tracked task-row temp path and serialized task payload "
+                            "to self._kernel_fs.write_text()"
+                        )
+                    continue
+                if references_row_write or method.name not in TASKBOARD_KERNEL_WRITE_TEXT_NON_ROW_ALLOWLIST:
+                    offenders.append(
+                        f"{label} calls self._kernel_fs.write_text(); row JSON writes must stay in _save_task"
+                    )
+                continue
+
+            if leaf in TASKBOARD_DIRECT_ROW_WRITE_METHODS:
+                if leaf == "open" and not _open_call_uses_write_mode(node):
+                    continue
+                if references_row_write:
+                    offenders.append(f"{label} writes task-row JSON directly via {leaf}(); use _save_task() instead")
+                continue
+
+            if call == "os.replace":
+                if method.name != "_replace_task_file":
+                    offenders.append(f"{label} calls os.replace(); row commits must stay in _replace_task_file()")
+                continue
+
+            if leaf in TASKBOARD_DIRECT_ROW_REPLACE_METHODS and references_row_path:
+                offenders.append(
+                    f"{label} mutates task-row paths via {leaf}(); row commits must stay in _replace_task_file()"
+                )
+
+    if len(save_task_kernel_write_lines) != 1:
+        offenders.append(
+            "TaskBoard._save_task() must call self._kernel_fs.write_text() exactly once "
+            f"for row JSON; found {len(save_task_kernel_write_lines)}"
+        )
+    if len(save_task_replace_call_lines) != 1:
+        offenders.append(
+            "TaskBoard._save_task() must call self._replace_task_file() exactly once "
+            f"after staging row JSON; found {len(save_task_replace_call_lines)}"
+        )
+
+    return offenders
+
+
+def _node_references_row_write_receipt_anchor(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id in TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS:
+            return True
+        if isinstance(child, ast.Attribute) and child.attr in TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS:
+            return True
+    return False
+
+
+def _taskboard_save_task_receipt_anchor_lines(function_def: ast.FunctionDef) -> list[int]:
+    anchor_lines: list[int] = []
+
+    for node in ast.walk(function_def):
+        if isinstance(node, ast.Call) and _node_references_row_write_receipt_anchor(node):
+            anchor_lines.append(node.lineno)
+            continue
+        if isinstance(node, ast.Assign):
+            if any(_node_references_row_write_receipt_anchor(target) for target in node.targets):
+                anchor_lines.append(node.lineno)
+            continue
+        if isinstance(node, ast.AnnAssign) and _node_references_row_write_receipt_anchor(node.target):
+            anchor_lines.append(node.lineno)
+
+    return sorted(set(anchor_lines))
+
+
+def _taskboard_save_task_row_write_receipt_violations() -> list[str]:
+    """Validate that ``_save_task`` records a receipt after row commit."""
+
+    save_task = _taskboard_method("_save_task")
+    kernel_write_lines = [
+        node.lineno
+        for node in ast.walk(save_task)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._kernel_fs.write_text"
+    ]
+    replace_lines = [
+        node.lineno
+        for node in ast.walk(save_task)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._replace_task_file"
+    ]
+    receipt_lines = _taskboard_save_task_receipt_anchor_lines(save_task)
+    offenders: list[str] = []
+
+    if not receipt_lines:
+        offenders.append(
+            "TaskBoard._save_task() must construct or update a row-write receipt anchor "
+            f"({', '.join(sorted(TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS))})"
+        )
+
+    if not kernel_write_lines:
+        offenders.append("TaskBoard._save_task() must stage row JSON through self._kernel_fs.write_text()")
+    if not replace_lines:
+        offenders.append("TaskBoard._save_task() must commit row JSON through self._replace_task_file()")
+    if offenders:
+        return offenders
+
+    commit_line = max(max(kernel_write_lines), max(replace_lines))
+    if not any(line > commit_line for line in receipt_lines):
+        offenders.append(
+            "TaskBoard._save_task() must update its row-write receipt after the staged "
+            "write and replace commit, so the receipt anchors the durable row write"
+        )
+
+    return offenders
+
+
+def test_taskboard_row_json_writes_stay_behind_save_task_and_replace_helper() -> None:
+    """WS2 row-write fence for TaskBoard row JSON persistence.
+
+    Raw TaskBoard row persistence has two responsibilities:
+    ``_save_task`` serializes one task row and stages it via
+    ``KernelFileSystem.write_text``; ``_replace_task_file`` owns the atomic
+    ``os.replace`` commit/retry loop. Other TaskBoard methods may decide row
+    mutations, but they must not grow independent JSON write paths.
+    """
+
+    offenders = _taskboard_row_write_boundary_violations()
+
+    assert not offenders, (
+        "WS2 TaskBoard row-write fence: task row JSON persistence must stay "
+        "behind TaskBoard._save_task(), with durable replace isolated in "
+        "TaskBoard._replace_task_file(). Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_taskboard_save_task_updates_row_write_receipt_after_commit() -> None:
+    """WS2 row-write receipt fence for ``TaskBoard._save_task``.
+
+    The row JSON write path needs a local receipt anchor so future callers can
+    bind row-file persistence to execution/ledger evidence instead of relying
+    on a silent file write. The receipt update must happen after the staged
+    write and replace call; a pre-commit receipt would be misleading when the
+    replace fails.
+    """
+
+    offenders = _taskboard_save_task_row_write_receipt_violations()
+
+    assert not offenders, (
+        "WS2 TaskBoard row-write receipt fence: TaskBoard._save_task() must "
+        "construct or update a row-write receipt anchor after committing the "
+        "row JSON write. Expected anchor names include "
+        f"{sorted(TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS)}. Offenders:\n" + "\n".join(offenders)
     )
 
 
