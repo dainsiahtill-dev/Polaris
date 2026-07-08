@@ -299,3 +299,111 @@ def test_v1_chat_completions_rejects_unknown_execution_mode(tmp_path) -> None:
 
     assert response.status_code == 400
     assert "single_turn" in response.text
+
+
+def test_v1_chat_completions_mapping_shaped_failure_evidence_passes_through_without_reclassification(
+    monkeypatch, tmp_path
+) -> None:
+    """WS6: mapping-shaped failure evidence must flow through Run Ledger public helper
+    without the router performing local dict merge or reclassification."""
+    client = _build_client(str(tmp_path))
+    captured: dict[str, Any] = {}
+
+    async def fake_aggregate_chat_completions(command):
+        captured["command"] = command
+        return AggregateChatCompletionsResultV1(
+            id="aggcmpl-mapping-test",
+            object="chat.completion",
+            model=command.model,
+            choices=(
+                AggregateChatChoiceV1(
+                    index=0,
+                    message=AggregateChatMessageV1(role="assistant", content="{}"),
+                ),
+            ),
+            metadata={"execution_mode": command.execution_mode},
+        )
+
+    monkeypatch.setattr(aggregate_chat, "aggregate_chat_completions", fake_aggregate_chat_completions)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test"},
+        json={
+            "messages": [
+                {"role": "user", "content": "Explain the mapping-shaped failure evidence."},
+            ],
+            "failure_evidence": {
+                "compiler_output": "error TS2322: Type mismatch in main.ts",
+                "changed_files": ["src/main.ts"],
+                "test_command": "npx vitest run",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    command = captured["command"]
+    # Mapping-shaped evidence must overlay into the command payload as-is
+    assert command.failure_evidence["compiler_output"] == "error TS2322: Type mismatch in main.ts"
+    assert command.failure_evidence["changed_files"] == ["src/main.ts"]
+    assert command.failure_evidence["test_command"] == "npx vitest run"
+
+
+def test_v1_chat_completions_failure_evidence_v1_structured_rows_flow_through_run_ledger_projection(
+    monkeypatch, tmp_path
+) -> None:
+    """WS6: FailureEvidenceV1-shaped rows must be projected into items/failure_classes/evidence_refs
+    entirely through the Run Ledger public helper, with zero local reclassification in the router."""
+    client = _build_client(str(tmp_path))
+    captured: dict[str, Any] = {}
+
+    async def fake_aggregate_chat_completions(command):
+        captured["command"] = command
+        return AggregateChatCompletionsResultV1(
+            id="aggcmpl-v1-rows-test",
+            object="chat.completion",
+            model=command.model,
+            choices=(
+                AggregateChatChoiceV1(
+                    index=0,
+                    message=AggregateChatMessageV1(role="assistant", content="{}"),
+                ),
+            ),
+            metadata={"execution_mode": command.execution_mode},
+        )
+
+    monkeypatch.setattr(aggregate_chat, "aggregate_chat_completions", fake_aggregate_chat_completions)
+
+    rows = [
+        {
+            "schema_version": "polaris.failure_evidence.v1",
+            "failure_class": "MISSING_EFFECT_RECEIPT",
+            "responsible_layer": "platform",
+            "evidence_refs": ["tool_lifecycle:turn-1"],
+        },
+        {
+            "schema_version": "polaris.failure_evidence.v1",
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "responsible_layer": "runtime",
+            "evidence_refs": ["provider_response:abc123"],
+        },
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test"},
+        json={
+            "messages": [
+                {"role": "user", "content": "Report structured failure evidence rows."},
+            ],
+            "failure_evidence": rows,
+        },
+    )
+
+    assert response.status_code == 200
+    command = captured["command"]
+    evidence = command.failure_evidence
+    # Run Ledger public helper projects rows into items/failure_classes/evidence_refs
+    assert evidence["items"] == rows
+    assert set(evidence["failure_classes"]) == {"MISSING_EFFECT_RECEIPT", "TOOL_DISPATCH_DROPPED"}
+    assert set(evidence["evidence_refs"]) == {"tool_lifecycle:turn-1", "provider_response:abc123"}

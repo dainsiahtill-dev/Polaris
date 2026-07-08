@@ -37,6 +37,8 @@ class FailureClassV1(str, Enum):
     TOOL_LIFECYCLE_FAILED = "TOOL_LIFECYCLE_FAILED"
     TOOL_LIFECYCLE_UNKNOWN = "TOOL_LIFECYCLE_UNKNOWN"
     TOOL_LIFECYCLE_MISSING = "TOOL_LIFECYCLE_MISSING"
+    QUALITY_GATE_BLOCKED = "QUALITY_GATE_BLOCKED"
+    ROLE_ADAPTER_EXCEPTION = "ROLE_ADAPTER_EXCEPTION"
 
 
 def _failure_class_key(value: Any) -> str:
@@ -44,6 +46,10 @@ def _failure_class_key(value: Any) -> str:
 
 
 _FAILURE_CLASS_BY_KEY: dict[str, FailureClassV1] = {_failure_class_key(item.value): item for item in FailureClassV1}
+# Backward-compatible aliases for legacy hand-written values that predate the
+# canonical taxonomy.  New code must use the canonical enum members directly.
+_FAILURE_CLASS_BY_KEY[_failure_class_key("pm_quality_gate_blocked")] = FailureClassV1.QUALITY_GATE_BLOCKED
+_FAILURE_CLASS_BY_KEY[_failure_class_key("pm_runtime_exception")] = FailureClassV1.ROLE_ADAPTER_EXCEPTION
 _FAILURE_CLASS_TOKEN_SEPARATORS = (":", ";", "\n")
 
 

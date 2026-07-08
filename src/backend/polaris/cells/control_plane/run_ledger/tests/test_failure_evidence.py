@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     FailureEvidenceV1,
@@ -24,6 +26,8 @@ def test_normalize_failure_class_canonicalizes_known_values() -> None:
         FailureClassV1.PATCH_FILE_PROTOCOL_DISABLED.value
     )
     assert normalize_failure_class("text-tool-protocol-disabled") == FailureClassV1.TEXT_TOOL_PROTOCOL_DISABLED.value
+    assert normalize_failure_class("pm_quality_gate_blocked") == FailureClassV1.QUALITY_GATE_BLOCKED.value
+    assert normalize_failure_class("pm-runtime-exception") == FailureClassV1.ROLE_ADAPTER_EXCEPTION.value
 
 
 def test_normalize_failure_class_preserves_unknown_values() -> None:
@@ -515,3 +519,69 @@ def test_task_boundary_failure_evidence_from_verdict_accepts_role_result_metadat
     assert row["failure_class"] == "INCOMPLETE_MATERIALIZATION"
     assert row["reason"] == "target files were not written"
     assert row["metadata"]["missing_target_files"] == ["src/index.ts"]
+
+
+def test_merge_failure_evidence_rows_accepts_single_mapping_as_existing() -> None:
+    """Single Mapping (not wrapped in a list) is preserved as a row."""
+    existing = {
+        "failure_class": "TOOL_RESULT_FAILED",
+        "responsible_layer": "tool_executor",
+    }
+    rows = merge_failure_evidence_rows(existing)
+
+    assert rows == [existing]
+    assert rows[0] is not existing  # defensive copy
+
+
+def test_merge_failure_evidence_payload_ignores_non_mapping_non_list() -> None:
+    """Malformed inputs (str, int, None) produce no rows."""
+    assert merge_failure_evidence_payload({}, None) == {}
+    assert merge_failure_evidence_payload({}, 42) == {}
+    assert merge_failure_evidence_payload({}, "legacy prose text") == {}
+
+
+def test_append_failure_evidence_to_metadata_on_fresh_metadata() -> None:
+    """Appending to metadata without pre-existing failure_evidence keys."""
+    metadata: dict[str, Any] = {}
+    row = {"failure_class": "TOOL_DISPATCH_DROPPED", "responsible_layer": "execution_control_plane"}
+
+    rows = append_failure_evidence_to_metadata(metadata, row)
+
+    assert rows == [row]
+    assert metadata["failure_evidence"] == [row]
+    assert metadata["failure_evidence_summary"]["count"] == 1
+    assert metadata["failure_evidence_summary"]["latest_failure_class"] == "TOOL_DISPATCH_DROPPED"
+
+
+def test_append_failure_evidence_to_metadata_idempotent_on_reappend() -> None:
+    """Re-appending the same row is idempotent (stable de-duplication)."""
+    row = {"failure_class": "TOOL_RESULT_FAILED", "responsible_layer": "tool_executor"}
+    metadata: dict[str, Any] = {"failure_evidence": [row]}
+
+    rows = append_failure_evidence_to_metadata(metadata, row)
+
+    assert rows == [row]
+    assert metadata["failure_evidence_summary"]["count"] == 1
+
+
+def test_merge_failure_evidence_payload_failure_classes_preserves_tuple_projection() -> None:
+    """failure_classes keeps the established tuple projection contract."""
+    payload = merge_failure_evidence_payload(
+        {},
+        [{"failure_class": "TOOL_RESULT_FAILED"}, {"failure_class": "TOOL_DISPATCH_DROPPED"}],
+    )
+    assert isinstance(payload["failure_classes"], tuple)
+
+    # After merging with additional rows, still a tuple.
+    payload = merge_failure_evidence_payload(payload, [{"failure_class": "MISSING_EFFECT_RECEIPT"}])
+    assert isinstance(payload["failure_classes"], tuple)
+    assert payload["failure_classes"] == ("TOOL_RESULT_FAILED", "TOOL_DISPATCH_DROPPED", "MISSING_EFFECT_RECEIPT")
+
+
+def test_summarize_failure_evidence_rows_empty_input() -> None:
+    """Empty input returns a summary with count=0 and None latest_failure_class."""
+    summary = summarize_failure_evidence_rows([])
+    assert summary == {"count": 0, "latest_failure_class": None}
+
+    summary = summarize_failure_evidence_rows([], existing_summary={"source": "previous"})
+    assert summary == {"source": "previous", "count": 0, "latest_failure_class": None}

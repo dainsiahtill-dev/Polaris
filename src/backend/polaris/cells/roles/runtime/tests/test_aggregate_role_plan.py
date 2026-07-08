@@ -728,3 +728,88 @@ async def test_aggregate_chat_completions_facade_is_deterministic(tmp_path) -> N
     assert first.choices[0].message.content == second.choices[0].message.content
     assert first.aggregate_plan is not None
     assert all(lobe.virtual_role_ids == () for lobe in first.aggregate_plan.lobes)
+
+
+@pytest.mark.asyncio
+async def test_aggregate_failure_evidence_v1_rows_project_without_local_reclassification(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """WS6 closure: FailureEvidenceV1-structured rows must flow from plan metadata
+    through turn envelope and execution context entirely via Run Ledger public helpers.
+    No local string reclassification, dict merge, or prose coverage allowed."""
+    runtime = RoleRuntimeService()
+    captured: list[Any] = []
+
+    async def fake_stream_chat_turn(command):
+        captured.append(command)
+        yield {
+            "type": "fingerprint",
+            "profile_id": f"code.{command.role}",
+            "profile_hash": f"hash-{len(captured)}",
+            "bundle_id": "bundle-code",
+            "bundle_version": "v1",
+            "run_id": f"strategy-run-{len(captured)}",
+            "turn_index": len(captured),
+            "cognitive_strategy_override_applied": False,
+        }
+        yield {"type": "content_chunk", "content": f"{command.role} ws6 closure verified"}
+
+    monkeypatch.setattr(runtime, "stream_chat_turn", fake_stream_chat_turn)
+
+    rows = [
+        {
+            "schema_version": "polaris.failure_evidence.v1",
+            "failure_class": "MISSING_EFFECT_RECEIPT",
+            "responsible_layer": "platform",
+            "evidence_refs": ["tool_lifecycle:turn-1"],
+        },
+        {
+            "schema_version": "polaris.failure_evidence.v1",
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "responsible_layer": "runtime",
+            "reason": "Provider returned empty response after retry exhaustion.",
+            "evidence_refs": ["provider_response:abc123"],
+        },
+    ]
+
+    result = await runtime.chat_completions(
+        AggregateChatCompletionsCommandV1(
+            workspace=str(tmp_path),
+            messages=(AggregateChatMessageV1(role="user", content="Verify WS6 evidence projection."),),
+            domain="code",
+            execution_mode="single_turn",
+            failure_signals=("compile_failure",),
+            context={"failure_evidence": rows},
+        )
+    )
+
+    assert result.aggregate_plan is not None
+    plan_evidence = result.aggregate_plan.metadata["failure_evidence"]
+    # Plan metadata must carry the projected items
+    assert plan_evidence["items"] == rows
+    assert set(plan_evidence["failure_classes"]) == {"MISSING_EFFECT_RECEIPT", "TOOL_DISPATCH_DROPPED"}
+    assert set(plan_evidence["evidence_refs"]) == {"tool_lifecycle:turn-1", "provider_response:abc123"}
+
+    # Turn envelope must carry the same evidence via _aggregate_plan_failure_evidence_payload
+    command = captured[0]
+    envelope = json.loads(command.user_message)
+    envelope_evidence = envelope["failure"]["evidence"]
+    assert envelope_evidence["items"] == rows
+    assert set(envelope_evidence["failure_classes"]) == {"MISSING_EFFECT_RECEIPT", "TOOL_DISPATCH_DROPPED"}
+
+    # Execution context must carry the same evidence
+    exec_context = command.context["aggregate_runtime_context"]
+    assert exec_context["failure_evidence"]["items"] == rows
+    assert set(exec_context["failure_evidence"]["failure_classes"]) == {
+        "MISSING_EFFECT_RECEIPT",
+        "TOOL_DISPATCH_DROPPED",
+    }
+
+    # Takeover evidence status must reflect structured keys, not prose-derived keys
+    takeover_status = exec_context["takeover_evidence_status"]
+    assert isinstance(takeover_status, dict)
+    # compile_failure requires: compiler_output, changed_files, test_command
+    # None of these come from the structured rows, so they must be missing
+    assert takeover_status["complete"] is False
+    assert "compiler_output" in takeover_status["missing_keys"]

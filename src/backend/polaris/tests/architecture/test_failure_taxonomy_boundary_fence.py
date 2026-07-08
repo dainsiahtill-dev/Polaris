@@ -16,9 +16,7 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 
-CANONICAL_FAILURE_TAXONOMY = (
-    POLARIS_ROOT / "cells" / "control_plane" / "run_ledger" / "public" / "failure_evidence.py"
-)
+CANONICAL_FAILURE_TAXONOMY = POLARIS_ROOT / "cells" / "control_plane" / "run_ledger" / "public" / "failure_evidence.py"
 QA_VERDICT_ENGINE = POLARIS_ROOT / "cells" / "qa" / "audit_verdict" / "internal" / "verdict_engine.py"
 
 OWNED_FAILURE_CLASS_DEFINITIONS = {
@@ -140,7 +138,7 @@ def _imported_names(path: Path) -> set[str]:
                 names.add(alias.asname or alias.name.rsplit(".", 1)[-1])
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                    names.add(alias.asname or alias.name)
+                names.add(alias.asname or alias.name)
     return names
 
 
@@ -278,3 +276,156 @@ def test_local_failure_class_values_do_not_shadow_run_ledger_taxonomy() -> None:
                 collisions.append(f"{relative_path}:{class_name}.{value}")
 
     assert collisions == []
+
+
+# ---------------------------------------------------------------------------
+# Broad-scope regression fence: no roles.* production file outside Run Ledger
+# public + task_boundary may hand-write failure_class string literals.
+# ---------------------------------------------------------------------------
+
+_ROLES_ECOSYSTEM_ROOTS = (
+    POLARIS_ROOT / "cells" / "roles" / "runtime",
+    POLARIS_ROOT / "cells" / "roles" / "adapters",
+    POLARIS_ROOT / "cells" / "roles" / "kernel",
+)
+_RUN_LEDGER_AND_TASK_BOUNDARY = {
+    "polaris/cells/control_plane/run_ledger/public/failure_evidence.py",
+    "polaris/cells/control_plane/run_ledger/public/task_boundary.py",
+    "polaris/cells/control_plane/run_ledger/public/tool_lifecycle.py",
+}
+# Known WS6 gaps — hand-written failure_class string literals that have not
+# yet been migrated to Run Ledger public enums.  New entries must not be added;
+# each entry represents a WS6 debt item.
+# 2026-07-08: WS6 pm_adapter.py gaps resolved — enum members
+# FailureClassV1.QUALITY_GATE_BLOCKED and FailureClassV1.ROLE_ADAPTER_EXCEPTION
+# now consumed directly.
+_KNOWN_FAILURE_CLASS_STRING_LITERAL_GAPS: frozenset[str] = frozenset()
+
+
+def _roles_ecosystem_production_python_files() -> list[Path]:
+    files: list[Path] = []
+    for root in _ROLES_ECOSYSTEM_ROOTS:
+        for path in sorted(root.rglob("*.py")):
+            if any(part in {"tests", "generated", "__pycache__"} for part in path.parts):
+                continue
+            files.append(path)
+    return files
+
+
+def _failure_class_string_literal_hits_in_file(path: Path) -> list[tuple[int, str]]:
+    """Return (line, description) for bare ``failure_class`` string literal usage."""
+    hits: list[tuple[int, str]] = []
+    tree = _parse_python(path)
+    for node in ast.walk(tree):
+        # Pattern 1: failure_class = "literal_string" assignment
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "failure_class"
+                    and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)
+                ):
+                    hits.append((node.lineno, f'failure_class = "{node.value.value}"'))
+        # Pattern 2: keyword arg failure_class="literal_string"
+        if (
+            isinstance(node, ast.keyword)
+            and node.arg == "failure_class"
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            hits.append((node.lineno, f'failure_class="{node.value.value}"'))
+        # Pattern 3: dict literal {"failure_class": "literal_string"}
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=False):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "failure_class"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    hits.append((node.lineno, f'"failure_class": "{value.value}"'))
+    return hits
+
+
+def test_roles_ecosystem_does_not_hand_write_failure_class_string_literals() -> None:
+    """Roles ecosystem production files must not hand-write failure_class
+    string literals.
+
+    All failure classifications must route through Run Ledger public
+    ``FailureClassV1``, ``TaskBoundaryFailureClassV1``, or ``QaFailureClassV1``
+    enum values.  Bare ``failure_class = "..."`` or ``{"failure_class": "..."}``
+    literals are a reclassification bypass that escapes the canonical taxonomy.
+    """
+
+    offenders: list[str] = []
+    for path in _roles_ecosystem_production_python_files():
+        hits = _failure_class_string_literal_hits_in_file(path)
+        if not hits:
+            continue
+        rel = path.relative_to(BACKEND_ROOT).as_posix()
+        for line, desc in hits:
+            key = f"{rel}:{line}"
+            if key in _KNOWN_FAILURE_CLASS_STRING_LITERAL_GAPS:
+                continue
+            offenders.append(f"{key}: {desc}")
+
+    assert offenders == [], (
+        "roles.* production files must use Run Ledger public enum values for "
+        "failure_class instead of hand-writing bare string literals. "
+        f"Known gaps ({len(_KNOWN_FAILURE_CLASS_STRING_LITERAL_GAPS)}): "
+        + "; ".join(sorted(_KNOWN_FAILURE_CLASS_STRING_LITERAL_GAPS))
+        + ". New offenders: "
+        + "; ".join(offenders)
+    )
+
+
+def test_failure_evidence_summary_not_locally_constructed_outside_run_ledger() -> None:
+    """No roles.adapters production file may locally construct a
+    ``failure_evidence_summary`` metadata key.
+
+    ``failure_evidence_summary`` generation is owned by Run Ledger public
+    ``append_failure_evidence_to_metadata`` / ``merge_failure_evidence_payload``.
+    Consumers may *forward* the already-generated summary, but must not build
+    summary shapes locally or through domain-specific summarizers.
+    """
+
+    adapters_root = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal"
+    offenders: list[str] = []
+
+    for path in sorted(adapters_root.rglob("*.py")):
+        if any(part in {"tests", "generated", "__pycache__"} for part in path.parts):
+            continue
+        tree = _parse_python(path)
+        rel = path.relative_to(BACKEND_ROOT).as_posix()
+        for node in ast.walk(tree):
+            # Detect metadata["failure_evidence_summary"] = expr assignments
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if not isinstance(target, ast.Subscript):
+                        continue
+                    if not isinstance(target.value, ast.Name):
+                        continue
+                    if target.value.id != "metadata":
+                        continue
+                    key = target.slice
+                    if isinstance(key, ast.Constant) and key.value == "failure_evidence_summary":
+                        # Must be reading from metadata.get(...) (forwarding),
+                        # not constructing a new dict/summary
+                        is_forward = (
+                            isinstance(node.value, ast.Call)
+                            and isinstance(node.value.func, ast.Attribute)
+                            and node.value.func.attr == "get"
+                        )
+                        if not is_forward:
+                            offenders.append(
+                                f"{rel}:{node.lineno}: metadata['failure_evidence_summary'] local construct"
+                            )
+
+    assert offenders == [], (
+        "roles.adapters production files must not locally construct "
+        "failure_evidence_summary metadata; that projection is owned by "
+        "Run Ledger public helpers.  Consumers may forward "
+        "completion_metadata.get('failure_evidence_summary') but must not "
+        "build the shape locally. Offenders: " + "; ".join(offenders)
+    )

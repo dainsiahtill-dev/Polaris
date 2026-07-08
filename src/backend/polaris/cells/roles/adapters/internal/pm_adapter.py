@@ -21,6 +21,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, cast
 
+from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.orchestration.pm_planning.public.service import (
     autofix_pm_contract_for_quality,
     evaluate_pm_task_quality,
@@ -588,7 +589,7 @@ class PMAdapter(
                     },
                     role_id=self.role_id,
                     source="pm_adapter",
-                    failure_class="pm_quality_gate_blocked",
+                    failure_class=FailureClassV1.QUALITY_GATE_BLOCKED.value,
                 )
                 return {
                     "success": False,
@@ -703,7 +704,7 @@ class PMAdapter(
                     metadata={"pm_error": str(e)},
                     role_id=self.role_id,
                     source="pm_adapter",
-                    failure_class="pm_runtime_exception",
+                    failure_class=FailureClassV1.ROLE_ADAPTER_EXCEPTION.value,
                 )
             except (RuntimeError, ValueError) as transition_exc:
                 self._record_task_runtime_transition_failure(
@@ -719,9 +720,7 @@ class PMAdapter(
                 )
             else:
                 execution_failure = (
-                    task_row_execution_event_failure(transition_result)
-                    if isinstance(transition_result, dict)
-                    else None
+                    task_row_execution_event_failure(transition_result) if isinstance(transition_result, dict) else None
                 )
                 if execution_failure is not None:
                     self._record_task_runtime_transition_failure(

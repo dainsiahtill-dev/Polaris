@@ -132,6 +132,8 @@ def _direct_plan_metadata_failure_evidence_accesses(module: ast.Module) -> list[
         if function.name in _ALLOWED_PLAN_METADATA_FAILURE_EVIDENCE_ACCESSORS:
             continue
         for node in ast.walk(function):
+            if not isinstance(node, (ast.Call, ast.Subscript)):
+                continue
             if not (_is_plan_metadata_failure_evidence_get(node) or _is_plan_metadata_failure_evidence_subscript(node)):
                 continue
             offenders.append(
@@ -228,4 +230,66 @@ def test_aggregate_chat_does_not_shape_cast_plan_metadata_failure_evidence_local
         f"Ledger public {_RUN_LEDGER_MERGE_HELPER} boundary instead of local "
         "dict(plan.metadata.get(...)) shape assumptions. Offenders: "
         + ", ".join(f"{offender.function_name}:{offender.line}:{offender.expression}" for offender in offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Broad-scope regression fence: no roles.* production file outside the
+# allowed accessor may directly read plan.metadata['failure_evidence'].
+# ---------------------------------------------------------------------------
+
+_ROLES_PRODUCTION_ROOTS = (
+    _POLARIS_ROOT / "cells" / "roles" / "runtime" / "public",
+    _POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal",
+    _POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal",
+    _POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal",
+)
+
+
+def _roles_production_python_files() -> list[Path]:
+    files: list[Path] = []
+    for root in _ROLES_PRODUCTION_ROOTS:
+        for path in sorted(root.rglob("*.py")):
+            if any(part in {"tests", "generated", "__pycache__"} for part in path.parts):
+                continue
+            files.append(path)
+    return files
+
+
+def _plan_metadata_failure_evidence_accesses_in_file(path: Path) -> list[tuple[int, str]]:
+    """Return (line, expression) for direct plan.metadata failure_evidence reads."""
+    hits: list[tuple[int, str]] = []
+    tree = _parse_python_file(path)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Call, ast.Subscript)):
+            continue
+        if _is_plan_metadata_failure_evidence_get(node) or _is_plan_metadata_failure_evidence_subscript(node):
+            hits.append((node.lineno, ast.unparse(node)))
+    return hits
+
+
+def test_no_roles_ecosystem_file_bypasses_aggregate_failure_evidence_accessor() -> None:
+    """No roles.* production file outside aggregate_chat's allowed accessor may
+    directly read plan.metadata['failure_evidence'] or plan.metadata.get('failure_evidence').
+
+    All failure_evidence from an aggregate plan must flow through the
+    ``_aggregate_plan_failure_evidence_payload`` accessor in aggregate_chat,
+    which routes through Run Ledger public merge semantics.
+    """
+
+    offenders: list[str] = []
+    for path in _roles_production_python_files():
+        # aggregate_chat.py is allowed to contain the accessor
+        if path.name == "aggregate_chat.py":
+            continue
+        hits = _plan_metadata_failure_evidence_accesses_in_file(path)
+        for line, expr in hits:
+            rel = path.relative_to(_POLARIS_ROOT.parent)
+            offenders.append(f"{rel.as_posix()}:{line}: {expr}")
+
+    assert offenders == [], (
+        "roles.* production files must not read plan.metadata['failure_evidence'] "
+        "directly; all aggregate failure evidence must route through "
+        f"aggregate_chat.{_AGGREGATE_PLAN_FAILURE_EVIDENCE_PAYLOAD} which "
+        "delegates to Run Ledger public. Offenders: " + "; ".join(offenders)
     )
