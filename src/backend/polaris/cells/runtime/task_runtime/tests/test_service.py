@@ -7,7 +7,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, NoReturn
+from typing import Any, Callable, NamedTuple, NoReturn
 
 import pytest
 from polaris.cells.events.fact_stream.public.service import (
@@ -205,34 +205,36 @@ def _assert_execution_event_append_failure_with_session_write_receipt(
     )
 
 
-def _observe_session_write_lock_states(
+class _SessionWriteFileLockProbe(NamedTuple):
+    entered_lock_paths: list[Path]
+    write_observed_under_file_lock: list[bool]
+
+
+def _observe_session_write_file_lock(
     service: TaskRuntimeService,
     monkeypatch: pytest.MonkeyPatch,
     *,
     task_id: int,
-) -> list[bool]:
-    class TrackingSessionLock:
-        def __init__(self) -> None:
-            self._lock = threading.RLock()
-            self.active = False
-
-        def __enter__(self) -> TrackingSessionLock:
-            self._lock.acquire()
-            self.active = True
-            return self
-
-        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
-            self.active = False
-            self._lock.release()
-
-    observed_lock_states: list[bool] = []
-    tracking_lock = TrackingSessionLock()
+) -> _SessionWriteFileLockProbe:
+    entered_lock_paths: list[Path] = []
+    active_lock_paths: list[Path] = []
+    write_observed_under_file_lock: list[bool] = []
     session_logical_path = service._session_logical_path(task_id)
+    expected_lock_path = service._session_file_lock_path(task_id)
+    original_file_lock = service._board._file_lock
     original_write_json_atomic = service._kernel_fs.write_json_atomic
 
-    def get_tracking_session_lock(candidate_task_id: int) -> TrackingSessionLock:
-        assert candidate_task_id == task_id
-        return tracking_lock
+    @contextmanager
+    def tracking_file_lock(lock_file_path: Path) -> Iterator[object]:
+        lock_path = Path(lock_file_path)
+        entered_lock_paths.append(lock_path)
+        with original_file_lock(lock_path) as lock_handle:
+            active_lock_paths.append(lock_path)
+            try:
+                yield lock_handle
+            finally:
+                released_lock_path = active_lock_paths.pop()
+                assert released_lock_path == lock_path
 
     def wrapped_write_json_atomic(
         logical_path: str,
@@ -242,7 +244,10 @@ def _observe_session_write_lock_states(
         ensure_ascii: bool = False,
     ) -> object:
         if logical_path == session_logical_path:
-            observed_lock_states.append(tracking_lock.active)
+            active_expected_lock = bool(
+                active_lock_paths and active_lock_paths[-1] == expected_lock_path
+            )
+            write_observed_under_file_lock.append(active_expected_lock)
         return original_write_json_atomic(
             logical_path,
             payload,
@@ -250,9 +255,12 @@ def _observe_session_write_lock_states(
             ensure_ascii=ensure_ascii,
         )
 
-    monkeypatch.setattr(service, "_get_session_lock", get_tracking_session_lock)
+    monkeypatch.setattr(service._board, "_file_lock", tracking_file_lock)
     monkeypatch.setattr(service._kernel_fs, "write_json_atomic", wrapped_write_json_atomic)
-    return observed_lock_states
+    return _SessionWriteFileLockProbe(
+        entered_lock_paths=entered_lock_paths,
+        write_observed_under_file_lock=write_observed_under_file_lock,
+    )
 
 
 def _session_file_path(workspace: Path, task_id: object) -> Path:
@@ -506,7 +514,7 @@ def test_claim_execution_records_session_write_receipt(tmp_path: Path) -> None:
     assert receipt["after_hash"] == _sha256_utf8_file(session_path)
 
 
-def test_write_session_normal_path_writes_while_holding_task_session_lock(
+def test_write_session_normal_path_writes_while_holding_session_file_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -527,17 +535,20 @@ def test_write_session_normal_path_writes_while_holding_task_session_lock(
         selection_source="task_id_lookup",
     )
     session_path = _session_file_path(workspace, task_id)
-    observed_lock_states = _observe_session_write_lock_states(
+    file_lock_probe = _observe_session_write_file_lock(
         service,
         monkeypatch,
         task_id=task_id,
     )
+    expected_lock_path = service._session_file_lock_path(task_id)
 
     session_written = service._write_session(session)
 
     assert session_written is True
-    assert observed_lock_states
-    assert all(observed_lock_states)
+    assert file_lock_probe.entered_lock_paths == [expected_lock_path]
+    assert file_lock_probe.write_observed_under_file_lock
+    assert all(file_lock_probe.write_observed_under_file_lock)
+    assert expected_lock_path.is_file()
     persisted_session = json.loads(session_path.read_text(encoding="utf-8"))
     assert persisted_session["session_id"] == session.session_id
     receipt = _assert_task_execution_session_write_receipt(
@@ -691,7 +702,7 @@ def test_append_execution_event_omits_stale_session_write_receipt(tmp_path: Path
     assert details["source"] == "stale-session-receipt-test"
 
 
-def test_write_session_receipt_marks_terminal_session_preserved_when_write_returns_false(
+def test_write_session_terminal_preserved_path_writes_while_holding_session_file_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -715,7 +726,8 @@ def test_write_session_receipt_marks_terminal_session_preserved_when_write_retur
     terminal_session.mark_completed(result_summary="terminal session wins")
     session_path = _session_file_path(workspace, task_id)
     session_path.write_text(
-        json.dumps(terminal_session.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(terminal_session.to_dict(), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
     )
     incoming = TaskExecutionSession.from_dict(
         {
@@ -726,17 +738,20 @@ def test_write_session_receipt_marks_terminal_session_preserved_when_write_retur
             "resumable": True,
         }
     )
-    observed_lock_states = _observe_session_write_lock_states(
+    file_lock_probe = _observe_session_write_file_lock(
         service,
         monkeypatch,
         task_id=task_id,
     )
+    expected_lock_path = service._session_file_lock_path(task_id)
 
     session_written = service._write_session(incoming)
 
     assert session_written is False
-    assert observed_lock_states
-    assert all(observed_lock_states)
+    assert file_lock_probe.entered_lock_paths == [expected_lock_path]
+    assert file_lock_probe.write_observed_under_file_lock
+    assert all(file_lock_probe.write_observed_under_file_lock)
+    assert expected_lock_path.is_file()
     assert incoming.status == "completed"
     persisted_session = json.loads(session_path.read_text(encoding="utf-8"))
     assert persisted_session["status"] == "completed"
@@ -790,6 +805,84 @@ def test_failed_session_write_does_not_update_last_session_write_receipt(
             context_summary="receipt should stay anchored to the last successful write",
         )
 
+    assert service.last_session_write_receipt().to_dict() == baseline
+
+
+def test_session_write_cas_conflict_raises_and_preserves_last_session_write_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="session cas guarded write")
+    task_id = int(created["id"])
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-session-cas-conflict",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    session_id = str(claimed["session"]["session_id"])
+    session_path = _session_file_path(workspace, task_id)
+    baseline = _assert_task_execution_session_write_receipt(
+        service.last_session_write_receipt(),
+        task_id=task_id,
+        session_id=session_id,
+        session_path=session_path,
+        preserved_terminal_session=False,
+    )
+    assert baseline["after_hash"] == _sha256_utf8_file(session_path)
+
+    external_payload = json.loads(session_path.read_text(encoding="utf-8"))
+    external_payload["context_summary"] = "external session update wins CAS race"
+    external_metadata = external_payload.setdefault("metadata", {})
+    assert isinstance(external_metadata, dict)
+    external_metadata["cas_probe"] = "external_update_after_before_hash"
+    external_content = json.dumps(external_payload, indent=2, ensure_ascii=False) + "\n"
+    external_hash = hashlib.sha256(external_content.encode("utf-8")).hexdigest()
+    assert external_hash != baseline["after_hash"]
+
+    session_logical_path = service._session_logical_path(task_id)
+    original_read_current_session_payload_hash = service._read_current_session_payload_hash
+    injected_external_write = False
+    observed_hash_reads: list[str] = []
+
+    def read_hash_with_external_session_change(logical_path: str) -> str:
+        nonlocal injected_external_write
+        current_hash = original_read_current_session_payload_hash(logical_path)
+        if logical_path == session_logical_path:
+            observed_hash_reads.append(current_hash)
+            if not injected_external_write:
+                session_path.write_text(external_content, encoding="utf-8")
+                injected_external_write = True
+        return current_hash
+
+    monkeypatch.setattr(
+        service,
+        "_read_current_session_payload_hash",
+        read_hash_with_external_session_change,
+    )
+
+    with pytest.raises(service_module.TaskExecutionSessionWriteConflictError) as exc_info:
+        service.heartbeat_execution(
+            task_id,
+            session_id=session_id,
+            lease_ttl_seconds=180,
+            context_summary="attempted heartbeat should lose CAS race",
+        )
+
+    assert injected_external_write is True
+    assert observed_hash_reads[0] == baseline["after_hash"]
+    assert observed_hash_reads[-1] == external_hash
+    error_message = str(exc_info.value)
+    assert session_logical_path in error_message
+    assert baseline["after_hash"] in error_message
+    assert external_hash in error_message
+    assert json.loads(session_path.read_text(encoding="utf-8")) == external_payload
+    assert _sha256_utf8_file(session_path) == external_hash
     assert service.last_session_write_receipt().to_dict() == baseline
 
 

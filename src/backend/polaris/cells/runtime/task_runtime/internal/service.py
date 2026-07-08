@@ -80,6 +80,10 @@ _REEXECUTION_METADATA_DROP_KEYS = frozenset(
 )
 
 
+class TaskExecutionSessionWriteConflictError(RuntimeError):
+    """Raised when an execution-session file changes before replacement."""
+
+
 def _raise_retired_entity_api(method: str, replacement: str) -> NoReturn:
     """Fail closed when callers try to use retired Task entity APIs."""
 
@@ -2528,6 +2532,11 @@ class TaskRuntimeService:
                 self._session_locks[task_id] = threading.RLock()
             return self._session_locks[task_id]
 
+    def _session_file_lock_path(self, task_id: int) -> Path:
+        """Return the cooperative cross-process lock path for one session file."""
+
+        return self._kernel_fs.resolve_path(f"runtime/tasks/.task_{int(task_id)}.session.json.lock")
+
     def _session_logical_path(self, task_id: int) -> str:
         return f"runtime/tasks/task_{int(task_id)}.session.json"
 
@@ -2561,6 +2570,27 @@ class TaskRuntimeService:
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning("Failed to hash task runtime session text %s: %s", logical_path, exc)
             return ""
+
+    def _assert_session_payload_unchanged(self, session_path: str, *, before_hash: str) -> None:
+        """Fail closed if a session JSON file changed before atomic replacement."""
+
+        current_hash = self._read_current_session_payload_hash(session_path)
+        if current_hash == before_hash:
+            return
+
+        before_label = before_hash or "<absent>"
+        current_label = current_hash or "<absent>"
+        logger.warning(
+            "TaskRuntime session write conflict: session_path=%s before_hash=%s current_hash=%s",
+            session_path,
+            before_label,
+            current_label,
+        )
+        raise TaskExecutionSessionWriteConflictError(
+            "TaskRuntime session write conflict: "
+            f"session_path={session_path!r} before_hash={before_label!r} "
+            f"current_hash={current_label!r}"
+        )
 
     def _record_session_write_receipt(
         self,
@@ -2609,7 +2639,10 @@ class TaskRuntimeService:
         allow_terminal_downgrade: bool = False,
     ) -> bool:
         task_id = int(session.task_id)
-        with self._get_session_lock(task_id):
+        with (
+            self._get_session_lock(task_id),
+            self._board._file_lock(self._session_file_lock_path(task_id)),
+        ):
             return self._write_session_locked(
                 session,
                 allow_terminal_downgrade=allow_terminal_downgrade,
@@ -2629,6 +2662,7 @@ class TaskRuntimeService:
                 terminal_payload = terminal_session.to_dict()
                 before_hash = self._read_current_session_payload_hash(session_path)
                 after_hash = self._session_payload_hash(terminal_payload)
+                self._assert_session_payload_unchanged(session_path, before_hash=before_hash)
                 self._kernel_fs.write_json_atomic(
                     session_path,
                     terminal_payload,
@@ -2647,6 +2681,7 @@ class TaskRuntimeService:
         session_payload = session.to_dict()
         before_hash = self._read_current_session_payload_hash(session_path)
         after_hash = self._session_payload_hash(session_payload)
+        self._assert_session_payload_unchanged(session_path, before_hash=before_hash)
         self._kernel_fs.write_json_atomic(
             session_path,
             session_payload,

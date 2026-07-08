@@ -8169,6 +8169,9 @@ SESSION_WRITE_RECEIPT_DETAILS_HELPER = "_session_write_receipt_details_for_sessi
 SESSION_WRITE_RECEIPT_OWNER_METHOD = "_write_session"
 SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD = "_write_session_locked"
 SESSION_WRITE_LOCK_HELPER = "_get_session_lock"
+SESSION_WRITE_FILE_LOCK_HELPER = "_file_lock"
+SESSION_WRITE_FILE_LOCK_PATH_HELPER = "_session_file_lock_path"
+SESSION_WRITE_CAS_HELPER = "_assert_session_payload_unchanged"
 SESSION_WRITE_RECEIPT_RECORD_HELPER = "_record_session_write_receipt"
 SESSION_WRITE_RECEIPT_TRANSITION_METHODS = frozenset(
     {
@@ -8260,6 +8263,21 @@ def _sibling_statements_after(
     return []
 
 
+def _sibling_statements_before(
+    statement: ast.stmt,
+    parents: dict[ast.AST, ast.AST],
+) -> list[ast.stmt]:
+    parent = parents.get(statement)
+    if parent is None:
+        return []
+    for _field_name, value in ast.iter_fields(parent):
+        if not isinstance(value, list) or statement not in value:
+            continue
+        index = value.index(statement)
+        return [item for item in value[:index] if isinstance(item, ast.stmt)]
+    return []
+
+
 def _assigned_local_name_from_statement(statement: ast.stmt, call: ast.Call) -> str:
     if isinstance(statement, ast.Assign) and statement.value is call:
         target_names: set[str] = set()
@@ -8318,6 +8336,21 @@ def _write_session_atomic_write_calls(method_def: ast.FunctionDef) -> list[ast.C
         for node in _walk_task_runtime_method_body(method_def)
         if isinstance(node, ast.Call) and _call_name(node.func) == "self._kernel_fs.write_json_atomic"
     ]
+
+
+def _statement_contains_atomic_session_write(statement: ast.stmt) -> bool:
+    return any(
+        isinstance(node, ast.Call) and _call_name(node.func) == "self._kernel_fs.write_json_atomic"
+        for node in ast.walk(statement)
+    )
+
+
+def _direct_statement_call(statement: ast.stmt, call_name: str) -> ast.Call | None:
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+        call = statement.value
+        if _call_name(call.func) == call_name:
+            return call
+    return None
 
 
 def _session_task_id_local_names(method_def: ast.FunctionDef) -> set[str]:
@@ -8389,6 +8422,143 @@ def _write_session_per_task_lock_with_nodes(method_def: ast.FunctionDef) -> list
                 lock_with_nodes.append(node)
 
     return lock_with_nodes
+
+
+def _session_file_lock_path_call_uses_task_id(
+    call: ast.Call,
+    *,
+    task_id_names: AbstractSet[str],
+) -> bool:
+    lock_path_args = list(call.args) + [keyword.value for keyword in call.keywords]
+    return any(_node_references_session_task_id(arg, task_id_names=task_id_names) for arg in lock_path_args)
+
+
+def _node_is_session_file_lock_path_expression(
+    node: ast.AST,
+    *,
+    task_id_names: AbstractSet[str],
+    file_lock_path_names: AbstractSet[str],
+) -> bool:
+    if _node_references_any_local_name(node, file_lock_path_names):
+        return True
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        if _call_name(child.func) != f"self.{SESSION_WRITE_FILE_LOCK_PATH_HELPER}":
+            continue
+        if _session_file_lock_path_call_uses_task_id(child, task_id_names=task_id_names):
+            return True
+    return False
+
+
+def _session_file_lock_path_local_names(method_def: ast.FunctionDef) -> set[str]:
+    task_id_names = _session_task_id_local_names(method_def)
+    assignments = [
+        node for node in _walk_task_runtime_method_body(method_def) if isinstance(node, ast.Assign | ast.AnnAssign)
+    ]
+    file_lock_path_names: set[str] = set()
+    changed = True
+
+    while changed:
+        changed = False
+        for assignment in assignments:
+            value = assignment.value
+            if value is None:
+                continue
+            if not _node_is_session_file_lock_path_expression(
+                value,
+                task_id_names=task_id_names,
+                file_lock_path_names=file_lock_path_names,
+            ):
+                continue
+            targets = list(assignment.targets) if isinstance(assignment, ast.Assign) else [assignment.target]
+            before = len(file_lock_path_names)
+            for target in targets:
+                file_lock_path_names.update(_assignment_target_names(target))
+            changed = changed or len(file_lock_path_names) != before
+
+    return file_lock_path_names
+
+
+def _write_session_file_lock_with_nodes(method_def: ast.FunctionDef) -> list[ast.With]:
+    task_id_names = _session_task_id_local_names(method_def)
+    file_lock_path_names = _session_file_lock_path_local_names(method_def)
+    lock_with_nodes: list[ast.With] = []
+
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.With):
+            continue
+        for item in node.items:
+            context_expr = item.context_expr
+            if not isinstance(context_expr, ast.Call):
+                continue
+            if _call_name(context_expr.func) != f"self._board.{SESSION_WRITE_FILE_LOCK_HELPER}":
+                continue
+            if any(
+                _node_is_session_file_lock_path_expression(
+                    arg,
+                    task_id_names=task_id_names,
+                    file_lock_path_names=file_lock_path_names,
+                )
+                for arg in [*context_expr.args, *(keyword.value for keyword in context_expr.keywords)]
+            ):
+                lock_with_nodes.append(node)
+
+    return lock_with_nodes
+
+
+def _write_session_combined_with_orders_file_lock_after_session_lock(
+    method_def: ast.FunctionDef,
+    with_node: ast.With,
+) -> bool:
+    task_id_names = _session_task_id_local_names(method_def)
+    file_lock_path_names = _session_file_lock_path_local_names(method_def)
+    session_lock_index: int | None = None
+    file_lock_index: int | None = None
+
+    for index, item in enumerate(with_node.items):
+        context_expr = item.context_expr
+        if not isinstance(context_expr, ast.Call):
+            continue
+        call_name = _call_name(context_expr.func)
+        if call_name == f"self.{SESSION_WRITE_LOCK_HELPER}" and _get_session_lock_call_uses_task_id(
+            context_expr,
+            task_id_names=task_id_names,
+        ):
+            session_lock_index = index
+            continue
+        if call_name != f"self._board.{SESSION_WRITE_FILE_LOCK_HELPER}":
+            continue
+        if any(
+            _node_is_session_file_lock_path_expression(
+                arg,
+                task_id_names=task_id_names,
+                file_lock_path_names=file_lock_path_names,
+            )
+            for arg in [*context_expr.args, *(keyword.value for keyword in context_expr.keywords)]
+        ):
+            file_lock_index = index
+
+    return session_lock_index is not None and file_lock_index is not None and session_lock_index < file_lock_index
+
+
+def _session_payload_assert_before_atomic_write(
+    method_def: ast.FunctionDef,
+    write_call: ast.Call,
+) -> ast.Call | None:
+    parents = _parent_lookup(method_def)
+    statement = _enclosing_statement(write_call, parents)
+    if statement is None:
+        return None
+
+    expected_name = f"self.{SESSION_WRITE_CAS_HELPER}"
+    for sibling in reversed(_sibling_statements_before(statement, parents)):
+        if _statement_contains_atomic_session_write(sibling):
+            return None
+        cas_call = _direct_statement_call(sibling, expected_name)
+        if cas_call is not None:
+            return cas_call
+    return None
 
 
 def _session_write_receipt_record_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
@@ -8705,6 +8875,7 @@ def _write_session_lock_boundary_violations() -> list[str]:
     else:
         parents = _parent_lookup(write_session)
         lock_with_nodes = _write_session_per_task_lock_with_nodes(write_session)
+        file_lock_with_nodes = _write_session_file_lock_with_nodes(write_session)
         if not lock_with_nodes:
             offenders.append(
                 f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() must enter "
@@ -8719,6 +8890,39 @@ def _write_session_lock_boundary_violations() -> list[str]:
             )
         else:
             lock_node = lock_with_nodes[0]
+            file_lock_node: ast.With | None = None
+            if not file_lock_with_nodes:
+                offenders.append(
+                    f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() must enter "
+                    "with self._board._file_lock(self._session_file_lock_path(...)) inside "
+                    "the per-task session-lock critical section"
+                )
+            elif len(file_lock_with_nodes) != 1:
+                offenders.append(
+                    f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() must keep "
+                    "session file writes in one cooperative file-lock critical section; "
+                    f"found {len(file_lock_with_nodes)} session file-lock blocks"
+                )
+            elif file_lock_with_nodes[0] is lock_node:
+                if not _write_session_combined_with_orders_file_lock_after_session_lock(write_session, lock_node):
+                    offenders.append(
+                        f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() must acquire "
+                        "the cooperative session file lock after the per-task RLock in the same "
+                        "combined with statement"
+                    )
+                file_lock_node = file_lock_with_nodes[0]
+            elif not _node_is_descendant_of(
+                file_lock_with_nodes[0],
+                lock_node,
+                parents,
+            ):
+                offenders.append(
+                    f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}() must nest "
+                    "the cooperative session file lock inside the per-task RLock section"
+                )
+                file_lock_node = file_lock_with_nodes[0]
+            else:
+                file_lock_node = file_lock_with_nodes[0]
             direct_critical_nodes: list[ast.AST] = [
                 *_write_session_atomic_write_calls(write_session),
                 *_session_write_receipt_record_calls(write_session),
@@ -8732,6 +8936,13 @@ def _write_session_lock_boundary_violations() -> list[str]:
                         "performs a session write/receipt operation outside "
                         f"with self.{SESSION_WRITE_LOCK_HELPER}(<session task_id>)"
                     )
+                if file_lock_node is not None and not _node_is_descendant_of(node, file_lock_node, parents):
+                    lineno = getattr(node, "lineno", "?")
+                    offenders.append(
+                        f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}():{lineno} "
+                        "performs a session write/receipt operation outside the cooperative "
+                        "session-file-lock critical section"
+                    )
 
             locked_owner_calls = _direct_self_method_calls(write_session, SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD)
             for call in locked_owner_calls:
@@ -8740,6 +8951,12 @@ def _write_session_lock_boundary_violations() -> list[str]:
                         f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}():{call.lineno} "
                         f"calls self.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() outside the "
                         "per-task session-lock critical section"
+                    )
+                if file_lock_node is not None and not _node_is_descendant_of(call, file_lock_node, parents):
+                    offenders.append(
+                        f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_OWNER_METHOD}():{call.lineno} "
+                        f"calls self.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() outside the "
+                        "cooperative session-file-lock critical section"
                     )
             if (
                 locked_owner is not None
@@ -8753,7 +8970,7 @@ def _write_session_lock_boundary_violations() -> list[str]:
                 offenders.append(
                     f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() contains durable "
                     "session write/receipt work but TaskRuntimeService._write_session() does not call it "
-                    "inside the per-task session-lock critical section"
+                    "inside the per-task session-lock and cooperative session-file-lock critical section"
                 )
 
     if locked_owner is None:
@@ -8797,6 +9014,40 @@ def _write_session_lock_boundary_violations() -> list[str]:
                 f"TaskRuntimeService.{method_name}():{call.lineno} calls "
                 f"self.{SESSION_WRITE_RECEIPT_RECORD_HELPER}(); session receipt commits must stay behind "
                 "TaskRuntimeService._write_session() and its lock-scoped helper"
+            )
+
+    return offenders
+
+
+def _check_write_session_locked_asserts_payload_unchanged_before_writes() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    locked_owner = method_defs.get(SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD)
+    if locked_owner is None:
+        return [f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() not found"]
+
+    offenders: list[str] = []
+    write_calls = _write_session_atomic_write_calls(locked_owner)
+    if not write_calls:
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}() must own "
+            "the durable session write_json_atomic() calls"
+        )
+        return offenders
+
+    for write_call in write_calls:
+        cas_call = _session_payload_assert_before_atomic_write(locked_owner, write_call)
+        if cas_call is None:
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}():{write_call.lineno} "
+                f"must call self.{SESSION_WRITE_CAS_HELPER}(...) before each durable "
+                "session write_json_atomic() call"
+            )
+            continue
+        if not any(keyword.arg == "before_hash" for keyword in cas_call.keywords):
+            offenders.append(
+                f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}():{cas_call.lineno} "
+                f"must pass before_hash=... to self.{SESSION_WRITE_CAS_HELPER}(...) "
+                "so conflict errors can report the expected payload hash"
             )
 
     return offenders
@@ -8906,13 +9157,13 @@ def test_write_session_updates_session_write_receipt_after_atomic_write() -> Non
     )
 
 
-def test_write_session_holds_per_task_session_lock_around_write_owner() -> None:
+def test_write_session_holds_per_task_and_file_locks_around_write_owner() -> None:
     """WS2 execution-ledger fence: session write RMW work must be lock-guarded.
 
     ``_write_session()`` is the synchronization boundary. It must acquire a
-    per-task in-process session lock derived from ``session.task_id`` and keep
-    durable session writes plus receipt commits in that same critical section,
-    either inline or through the private ``_write_session_locked()`` body.
+    per-task in-process session lock derived from ``session.task_id`` plus a
+    cooperative session file lock derived from the same task id, then keep
+    durable session writes plus receipt commits inside both critical sections.
     """
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
@@ -8921,8 +9172,23 @@ def test_write_session_holds_per_task_session_lock_around_write_owner() -> None:
     assert not offenders, (
         "WS2 execution ledger SSoT session write lock fence: "
         f"{rel}:TaskRuntimeService._write_session() must acquire the per-task "
-        "session lock and keep all durable session writes plus receipt "
-        "commits in the same lock-scoped write body. Offenders:\n" + "\n".join(offenders)
+        "session lock and cooperative session file lock, then keep all durable "
+        "session writes plus receipt commits in the same double-lock-scoped "
+        "write body. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_write_session_locked_asserts_payload_unchanged_before_each_atomic_write() -> None:
+    """WS2 execution-ledger fence: durable session writes must be CAS-guarded."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_write_session_locked_asserts_payload_unchanged_before_writes()
+
+    assert not offenders, (
+        "WS2 execution ledger SSoT session write CAS fence: "
+        f"{rel}:TaskRuntimeService._write_session_locked() must call "
+        f"self.{SESSION_WRITE_CAS_HELPER}(...) before each durable "
+        "session write_json_atomic() path. Offenders:\n" + "\n".join(offenders)
     )
 
 
