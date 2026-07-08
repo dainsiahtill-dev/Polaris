@@ -154,6 +154,19 @@ class TaskRuntimeService:
     def workspace(self) -> str:
         return self._workspace
 
+    def _list_file_task_entities(self) -> list[Task]:
+        """Return raw file-backed ``TaskBoard`` entities for owner-cell use.
+
+        Boundary:
+            This is the ``runtime.task_runtime`` owner-cell raw ``TaskBoard``
+            entity boundary. It is only for mutation paths and file-backed
+            projection assembly that must work with persisted ``Task`` entities.
+            It is not a public read model; observable readers must use task-row
+            projection APIs instead.
+        """
+
+        return self._board.list_all()
+
     def reset_records(self, *, keep_plan: bool = False) -> dict[str, object]:
         """Clear canonical taskboard rows and execution sessions.
 
@@ -219,7 +232,7 @@ class TaskRuntimeService:
         skipped_files: list[str] = []
         deleted_session_files: list[str] = []
         execution_events: list[dict[str, Any]] = []
-        for task in self._board.list_all():
+        for task in self._list_file_task_entities():
             task_id = int(task.id)
             task_file_name = f"task_{task_id}.json"
             try:
@@ -1103,7 +1116,7 @@ class TaskRuntimeService:
         """
 
         rows: list[dict[str, Any]] = []
-        for task in self._board.list_all():
+        for task in self._list_file_task_entities():
             row = self._augment_task_row(task.to_dict())
             status = str(row.get("status") or "").strip().lower()
             if (not include_terminal) and is_terminal_task_row_status(status):
@@ -2041,7 +2054,7 @@ class TaskRuntimeService:
         suspended_rows: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
         execution_events: list[dict[str, Any]] = []
-        for task in self._board.list_all():
+        for task in self._list_file_task_entities():
             task_id = self.normalize_task_id(task.id)
             if task_id is None:
                 continue
@@ -2163,7 +2176,7 @@ class TaskRuntimeService:
         failed: list[dict[str, Any]] = []
         execution_events: list[dict[str, Any]] = []
         inspected = 0
-        tasks = self._board.list_all()
+        tasks = self._list_file_task_entities()
         status_by_id = self._fact_overlaid_dependency_status_rows()
         # Backwards-compatible fallback: callers may pass a metadata-derived
         # dependency token that points at a row absent from the overlay. Make

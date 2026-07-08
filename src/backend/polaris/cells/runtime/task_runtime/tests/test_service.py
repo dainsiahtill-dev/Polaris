@@ -2935,6 +2935,92 @@ def _append_terminal_fact_event(
     )
 
 
+def test_file_task_rows_project_to_observable_rows_across_refresh_suspend_and_reset(
+    tmp_path: Path,
+) -> None:
+    """Raw file-backed rows must remain the common source for public projections.
+
+    This pins the helper extraction boundary without depending on the helper
+    name: existing file rows are still visible, observable reads still overlay
+    execution facts, dependency refresh still mutates stale blockers, suspend
+    still projects resumable execution state, and reexecution reset still walks
+    every persisted task row.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    parent = service.create_task_row(subject="file-backed parent")
+    parent_id = int(parent["id"])
+    child = service.create_task_row(
+        subject="file-backed child",
+        blocked_by=[parent_id],
+    )
+    child_id = int(child["id"])
+
+    file_rows = {int(row["id"]): row for row in service.list_task_rows()}
+    assert set(file_rows) == {parent_id, child_id}
+    assert file_rows[parent_id]["status"] == "pending"
+    assert file_rows[child_id]["status"] == "blocked"
+    assert file_rows[child_id]["blocked_by"] == [parent_id]
+
+    _append_terminal_fact_event(
+        workspace,
+        task_id=str(parent_id),
+        event_type="completed",
+        status="completed",
+        run_id="run-file-row-helper-regression",
+    )
+
+    observable = {int(row["id"]): row for row in service.list_observable_task_rows()}
+    assert observable[parent_id]["status"] == "completed"
+    assert observable[parent_id]["metadata"]["source"] == "task_runtime.execution_fact"
+    assert observable[child_id]["status"] == "pending"
+    assert observable[child_id]["blocked_by"] == []
+
+    persisted_child = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
+    assert persisted_child["status"] == "pending"
+    assert persisted_child["blocked_by"] == []
+
+    claimed = service.claim_execution(
+        child_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-file-row-helper-claim",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+
+    suspended = service.suspend_execution(
+        child_id,
+        session_id=str(claimed["session"]["session_id"]),
+        reason="unit_regression",
+    )
+    assert suspended["success"] is True
+    assert suspended["task"]["status"] == "pending"
+    assert suspended["task"]["resume_state"] == "resumable"
+    assert _session_file_path(workspace, child_id).is_file()
+
+    suspended_observable = {int(row["id"]): row for row in service.list_observable_task_rows()}
+    assert suspended_observable[child_id]["status"] == "pending"
+    assert suspended_observable[child_id]["resume_state"] == "resumable"
+    assert suspended_observable[child_id]["metadata"]["source"] == "task_runtime.execution_fact"
+
+    reset = service.reset_task_rows_for_reexecution(source="unit.file-row-helper")
+
+    assert reset["success"] is True
+    assert set(reset["reset_files"]) == {f"task_{parent_id}.json", f"task_{child_id}.json"}
+    assert reset["deleted_session_files"] == [f"task_{child_id}.session.json"]
+    assert not _session_file_path(workspace, child_id).exists()
+
+    reset_rows = {int(row["id"]): row for row in service.list_observable_task_rows()}
+    assert set(reset_rows) == {parent_id, child_id}
+    assert reset_rows[parent_id]["status"] == "pending"
+    assert reset_rows[child_id]["status"] == "pending"
+    assert reset_rows[child_id]["blocked_by"] == []
+
+
 def test_list_ready_task_rows_skips_file_pending_row_with_terminal_fact(tmp_path: Path) -> None:
     """``list_ready_task_rows`` must drop a pending file row whose latest fact
     is terminal — without rewriting the underlying file row.
