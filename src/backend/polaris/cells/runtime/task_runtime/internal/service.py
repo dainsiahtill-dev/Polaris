@@ -3216,7 +3216,11 @@ class TaskRuntimeService:
         details: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         event_details = self._row_write_receipt_details_for_task(task_row)
-        event_details.update(dict(details or {}))
+        event_details.update(self._session_write_receipt_details_for_session(session))
+        for key, value in dict(details or {}).items():
+            if key in {"row_write_receipt", "session_write_receipt"}:
+                continue
+            event_details[key] = value
         payload = build_task_runtime_execution_event_payload(
             event_type=event_type,
             workspace=self.workspace,
@@ -3297,6 +3301,29 @@ class TaskRuntimeService:
         if self.normalize_task_id(receipt.task_id) != task_id:
             return {}
         return {"row_write_receipt": receipt.to_dict()}
+
+    def _session_write_receipt_details_for_session(
+        self,
+        session: TaskExecutionSession | None,
+    ) -> dict[str, Any]:
+        """Return session-write receipt details when the latest receipt matches the session."""
+
+        if session is None:
+            return {}
+        task_id = self.normalize_task_id(session.task_id)
+        if task_id is None:
+            return {}
+        session_id = str(session.session_id or "").strip()
+        if not session_id:
+            return {}
+        receipt = self.last_session_write_receipt()
+        if receipt is None:
+            return {}
+        if self.normalize_task_id(receipt.task_id) != task_id:
+            return {}
+        if str(receipt.session_id or "").strip() != session_id:
+            return {}
+        return {"session_write_receipt": receipt.to_dict()}
 
     def _next_execution_fact_expected_seq(self) -> int:
         """Return the next expected sequence for the execution fact stream.

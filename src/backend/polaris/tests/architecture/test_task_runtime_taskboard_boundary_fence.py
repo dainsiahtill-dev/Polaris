@@ -407,6 +407,8 @@ TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS = {
 }
 TASKBOARD_CURRENT_ROW_HASH_NAMES = {"current", "current_hash"}
 TASK_RUNTIME_ROW_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME = "_row_write_receipt_details_for_task"
+TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME = "_session_write_receipt_details_for_session"
+TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_KEY = "session_write_receipt"
 TASKBOARD_KERNEL_WRITE_TEXT_NON_ROW_ALLOWLIST = {"_save_max_id"}
 TASKBOARD_DIRECT_ROW_WRITE_METHODS = {
     "open",
@@ -4181,6 +4183,43 @@ def _task_runtime_service_row_write_receipt_projection_helpers() -> dict[str, as
     return {name: method_defs[name] for name in helper_names}
 
 
+def _task_runtime_service_direct_session_write_receipt_projection_helpers() -> dict[str, ast.FunctionDef]:
+    """Return helpers that read the latest session-write receipt through the accessor."""
+
+    method_defs = _task_runtime_service_method_defs()
+    return {
+        name: method_def
+        for name, method_def in method_defs.items()
+        if name != "_append_execution_event"
+        and any(
+            isinstance(node, ast.Call) and _call_name(node.func) == f"self.{SESSION_WRITE_RECEIPT_ACCESSOR}"
+            for node in _walk_task_runtime_method_body(method_def)
+        )
+    }
+
+
+def _task_runtime_service_session_write_receipt_projection_helpers() -> dict[str, ast.FunctionDef]:
+    """Return session receipt projection helpers, including thin wrappers."""
+
+    method_defs = _task_runtime_service_method_defs()
+    helper_names = set(_task_runtime_service_direct_session_write_receipt_projection_helpers())
+
+    changed = True
+    while changed:
+        changed = False
+        for name, method_def in method_defs.items():
+            if name == "_append_execution_event" or name in helper_names:
+                continue
+            if any(
+                isinstance(node, ast.Call) and _self_method_call_name(node) in helper_names
+                for node in _walk_task_runtime_method_body(method_def)
+            ):
+                helper_names.add(name)
+                changed = True
+
+    return {name: method_defs[name] for name in helper_names}
+
+
 def _self_method_call_name(node: ast.Call) -> str:
     func = node.func
     if not isinstance(func, ast.Attribute):
@@ -4226,6 +4265,43 @@ def _assigned_row_write_receipt_detail_names_before_payload(
         targets = list(node.targets) if isinstance(node, ast.Assign) else [node.target]
         assigned_names.update(_target_names(targets))
     return assigned_names
+
+
+def _node_calls_any_self_helper(node: ast.AST, *, helper_names: AbstractSet[str]) -> bool:
+    return any(
+        isinstance(child, ast.Call) and _self_method_call_name(child) in helper_names for child in ast.walk(node)
+    )
+
+
+def _detail_names_receiving_helper_output_before_payload(
+    function_def: ast.FunctionDef,
+    *,
+    helper_names: AbstractSet[str],
+    payload_lineno: int,
+) -> set[str]:
+    """Return details locals assigned or updated from a receipt projection helper."""
+
+    detail_names: set[str] = set()
+    for node in _walk_task_runtime_method_body(function_def):
+        if not hasattr(node, "lineno") or node.lineno >= payload_lineno:
+            continue
+        if isinstance(node, ast.Assign | ast.AnnAssign):
+            value = node.value
+            if value is not None and _node_calls_any_self_helper(value, helper_names=helper_names):
+                targets = list(node.targets) if isinstance(node, ast.Assign) else [node.target]
+                detail_names.update(_target_names(targets))
+            continue
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "update":
+            continue
+        receiver = node.func.value
+        if not isinstance(receiver, ast.Name):
+            continue
+        update_values = list(node.args) + [keyword.value for keyword in node.keywords]
+        if any(_node_calls_any_self_helper(value, helper_names=helper_names) for value in update_values):
+            detail_names.add(receiver.id)
+    return detail_names
 
 
 def _append_execution_event_append_result_calls(function_def: ast.FunctionDef) -> list[ast.Call]:
@@ -4282,6 +4358,284 @@ def _append_result_receipt_detail_projection_violations(
             f"line {node.lineno} build_task_runtime_execution_event_append_result(details=...) "
             f"must use the same receipt-projected {expected_detail_name} local passed to the payload builder"
         )
+    return offenders
+
+
+def _append_execution_event_receipt_helper_projection_violations() -> list[str]:
+    """Validate append-event details are projected through row and session receipt helpers."""
+
+    function_def = _append_execution_event_function_def()
+    row_helper_names = frozenset(_task_runtime_service_row_write_receipt_projection_helpers())
+    session_helper_names = frozenset(_task_runtime_service_session_write_receipt_projection_helpers())
+    offenders: list[str] = []
+
+    for node in _walk_task_runtime_method_body(function_def):
+        if isinstance(node, ast.Attribute) and node.attr == SESSION_WRITE_RECEIPT_ANCHOR:
+            offenders.append(
+                f"line {node.lineno} reads self.{SESSION_WRITE_RECEIPT_ANCHOR} directly; "
+                f"use a session receipt projection helper backed by self.{SESSION_WRITE_RECEIPT_ACCESSOR}()"
+            )
+
+    if not row_helper_names:
+        offenders.append(
+            "TaskRuntimeService must define a row receipt projection helper "
+            f"(preferred name: {TASK_RUNTIME_ROW_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME})"
+        )
+    if not session_helper_names:
+        offenders.append(
+            "TaskRuntimeService must define a session receipt projection helper "
+            f"(preferred name: {TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME}) "
+            f"that calls self.{SESSION_WRITE_RECEIPT_ACCESSOR}()"
+        )
+
+    payload_calls = [
+        node
+        for node in _walk_task_runtime_method_body(function_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "build_task_runtime_execution_event_payload"
+    ]
+    if len(payload_calls) != 1:
+        offenders.append(
+            "TaskRuntimeService._append_execution_event must construct exactly one "
+            f"build_task_runtime_execution_event_payload() call; found {len(payload_calls)}"
+        )
+        return offenders
+
+    payload_call = payload_calls[0]
+    row_helper_call_lines = [
+        node.lineno
+        for node in _walk_task_runtime_method_body(function_def)
+        if isinstance(node, ast.Call)
+        and _self_method_call_name(node) in row_helper_names
+        and node.lineno < payload_call.lineno
+    ]
+    session_helper_call_lines = [
+        node.lineno
+        for node in _walk_task_runtime_method_body(function_def)
+        if isinstance(node, ast.Call)
+        and _self_method_call_name(node) in session_helper_names
+        and node.lineno < payload_call.lineno
+    ]
+    if not row_helper_call_lines:
+        helper_label = (
+            ", ".join(sorted(row_helper_names)) or TASK_RUNTIME_ROW_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME
+        )
+        offenders.append(
+            "TaskRuntimeService._append_execution_event must call a row receipt projection helper "
+            f"({helper_label}) before constructing the execution-event payload"
+        )
+    if not session_helper_call_lines:
+        helper_label = (
+            ", ".join(sorted(session_helper_names)) or TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME
+        )
+        offenders.append(
+            "TaskRuntimeService._append_execution_event must call a session receipt projection helper "
+            f"({helper_label}) before constructing the execution-event payload"
+        )
+
+    details_keyword = next((keyword for keyword in payload_call.keywords if keyword.arg == "details"), None)
+    if details_keyword is None or not isinstance(details_keyword.value, ast.Name):
+        offenders.append(
+            "build_task_runtime_execution_event_payload(details=...) must receive a local details mapping "
+            "that has consumed both row and session receipt helpers"
+        )
+        return offenders
+
+    payload_details_name = details_keyword.value.id
+    row_detail_names = _detail_names_receiving_helper_output_before_payload(
+        function_def,
+        helper_names=row_helper_names,
+        payload_lineno=payload_call.lineno,
+    )
+    session_detail_names = _detail_names_receiving_helper_output_before_payload(
+        function_def,
+        helper_names=session_helper_names,
+        payload_lineno=payload_call.lineno,
+    )
+    if payload_details_name not in row_detail_names:
+        offenders.append(
+            "build_task_runtime_execution_event_payload(details=...) must use the local details mapping "
+            "that consumed the row receipt projection helper"
+        )
+    if payload_details_name not in session_detail_names:
+        offenders.append(
+            "build_task_runtime_execution_event_payload(details=...) must use the local details mapping "
+            "that consumed the session receipt projection helper"
+        )
+
+    return offenders
+
+
+def _session_receipt_accessor_local_names(method_def: ast.FunctionDef) -> set[str]:
+    names: set[str] = set()
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        value = node.value
+        if not isinstance(value, ast.Call) or _call_name(value.func) != f"self.{SESSION_WRITE_RECEIPT_ACCESSOR}":
+            continue
+        targets = list(node.targets) if isinstance(node, ast.Assign) else [node.target]
+        names.update(_target_names(targets))
+    return names
+
+
+def _node_references_attribute_owner(node: ast.AST, *, owner_names: AbstractSet[str], attribute: str) -> bool:
+    return any(
+        isinstance(child, ast.Attribute) and child.attr == attribute and _call_name(child.value) in owner_names
+        for child in ast.walk(node)
+    )
+
+
+def _local_names_sourced_from_session_attribute_before(
+    method_def: ast.FunctionDef,
+    *,
+    attribute: str,
+    before_lineno: int,
+) -> set[str]:
+    names: set[str] = set()
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        if node.lineno >= before_lineno:
+            continue
+        value = node.value
+        if value is None:
+            continue
+        if not _node_references_attribute_owner(value, owner_names={"session"}, attribute=attribute):
+            continue
+        targets = list(node.targets) if isinstance(node, ast.Assign) else [node.target]
+        names.update(_target_names(targets))
+    return names
+
+
+def _identity_check_lines_before_session_receipt_return(
+    method_def: ast.FunctionDef,
+    *,
+    receipt_names: AbstractSet[str],
+    attribute: str,
+    return_lineno: int,
+) -> list[int]:
+    lines: list[int] = []
+    session_derived_names = _local_names_sourced_from_session_attribute_before(
+        method_def,
+        attribute=attribute,
+        before_lineno=return_lineno,
+    )
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.If) or node.lineno >= return_lineno:
+            continue
+        if not _node_references_attribute_owner(node.test, owner_names=receipt_names, attribute=attribute):
+            continue
+        references_session_identity = _node_references_attribute_owner(
+            node.test,
+            owner_names={"session"},
+            attribute=attribute,
+        ) or _node_references_any_local_name(node.test, session_derived_names)
+        if not references_session_identity:
+            continue
+        lines.append(node.lineno)
+    return lines
+
+
+def _dict_value_for_literal_key(node: ast.AST, key: str) -> ast.AST | None:
+    if not isinstance(node, ast.Dict):
+        return None
+    for key_node, value_node in zip(node.keys, node.values, strict=False):
+        if _string_literal(key_node) == key:
+            return value_node
+    return None
+
+
+def _session_write_receipt_detail_return_nodes(method_def: ast.FunctionDef) -> list[ast.Return]:
+    return [
+        node
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Return)
+        and node.value is not None
+        and _dict_value_for_literal_key(node.value, TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_KEY) is not None
+    ]
+
+
+def _call_is_receipt_to_dict(node: ast.AST, *, receipt_names: AbstractSet[str]) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    return isinstance(func, ast.Attribute) and func.attr == "to_dict" and _call_name(func.value) in receipt_names
+
+
+def _session_write_receipt_projection_helper_contract_violations() -> list[str]:
+    """Validate session receipt helpers use the accessor, identity guards, and receipt projection."""
+
+    direct_helpers = _task_runtime_service_direct_session_write_receipt_projection_helpers()
+    offenders: list[str] = []
+    if not direct_helpers:
+        offenders.append(
+            "TaskRuntimeService must define a session receipt projection helper "
+            f"(preferred name: {TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME}) "
+            f"that calls self.{SESSION_WRITE_RECEIPT_ACCESSOR}()"
+        )
+        return offenders
+
+    for helper_name, helper_def in sorted(direct_helpers.items()):
+        receipt_names = _session_receipt_accessor_local_names(helper_def)
+        if not receipt_names:
+            offenders.append(
+                f"TaskRuntimeService.{helper_name}() must store self.{SESSION_WRITE_RECEIPT_ACCESSOR}() "
+                "in a local receipt before projecting details"
+            )
+
+        detail_returns = _session_write_receipt_detail_return_nodes(helper_def)
+        if not detail_returns:
+            offenders.append(
+                f"TaskRuntimeService.{helper_name}() must return a details mapping with key "
+                f"{TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_KEY!r}"
+            )
+            continue
+
+        for return_node in detail_returns:
+            task_check_lines = _identity_check_lines_before_session_receipt_return(
+                helper_def,
+                receipt_names=receipt_names,
+                attribute="task_id",
+                return_lineno=return_node.lineno,
+            )
+            session_check_lines = _identity_check_lines_before_session_receipt_return(
+                helper_def,
+                receipt_names=receipt_names,
+                attribute="session_id",
+                return_lineno=return_node.lineno,
+            )
+            if not task_check_lines:
+                offenders.append(
+                    f"TaskRuntimeService.{helper_name}():{return_node.lineno} returns "
+                    f"{TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_KEY!r} without first checking "
+                    "receipt.task_id against session.task_id"
+                )
+            if not session_check_lines:
+                offenders.append(
+                    f"TaskRuntimeService.{helper_name}():{return_node.lineno} returns "
+                    f"{TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_KEY!r} without first checking "
+                    "receipt.session_id against session.session_id"
+                )
+
+            return_value = return_node.value
+            if return_value is None:
+                offenders.append(
+                    f"TaskRuntimeService.{helper_name}():{return_node.lineno} must return "
+                    f"a details mapping with key {TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_KEY!r}"
+                )
+                continue
+
+            receipt_value = _dict_value_for_literal_key(
+                return_value,
+                TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_KEY,
+            )
+            if receipt_value is None or not _call_is_receipt_to_dict(receipt_value, receipt_names=receipt_names):
+                offenders.append(
+                    f"TaskRuntimeService.{helper_name}():{return_node.lineno} must project "
+                    f"{TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_KEY!r} from receipt.to_dict(); "
+                    "do not reconstruct receipt fields in the execution-event details helper"
+                )
+
     return offenders
 
 
@@ -4794,6 +5148,35 @@ def test_task_runtime_append_event_projects_row_write_receipt_evidence() -> None
         "build_task_runtime_execution_event_payload(details=...), and the "
         "helper must call self._board.last_row_write_receipt(). "
         "The append path must not read _last_row_write_receipt directly. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_append_event_projects_session_write_receipt_evidence() -> None:
+    """WS2 session-write receipt -> execution-event evidence fence.
+
+    ``TaskRuntimeService._append_execution_event`` must not hand-read
+    ``_last_session_write_receipt`` or recompose receipt fields. It must merge
+    a session receipt projection helper into the same event-details mapping as
+    the row receipt helper. The session helper owns the match guard: it may only
+    return ``session_write_receipt`` after the latest receipt's task/session
+    identity matches the event session, and it must project the receipt through
+    ``receipt.to_dict()``.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = (
+        _append_execution_event_receipt_helper_projection_violations()
+        + _session_write_receipt_projection_helper_contract_violations()
+    )
+
+    assert not offenders, (
+        "WS2 session-write receipt evidence fence: "
+        f"{rel}:TaskRuntimeService._append_execution_event must consume both "
+        "row and session receipt helpers before building execution-event "
+        "details. The session helper must call last_session_write_receipt(), "
+        "verify task_id/session_id match, return key 'session_write_receipt', "
+        "and project receipt.to_dict() without reconstructing receipt fields. "
         "Offenders:\n" + "\n".join(offenders)
     )
 
@@ -7781,6 +8164,8 @@ def test_role_stats_fence_allows_get_observable_task_row_stats() -> None:
 SESSION_WRITE_RECEIPT_ANCHOR = "_last_session_write_receipt"
 SESSION_WRITE_RECEIPT_ACCESSOR = "last_session_write_receipt"
 SESSION_WRITE_RECEIPT_CLASS = "TaskExecutionSessionWriteReceipt"
+SESSION_WRITE_RECEIPT_DETAIL_KEY = "session_write_receipt"
+SESSION_WRITE_RECEIPT_DETAILS_HELPER = "_session_write_receipt_details_for_session"
 SESSION_WRITE_RECEIPT_OWNER_METHOD = "_write_session"
 SESSION_WRITE_RECEIPT_RECORD_HELPER = "_record_session_write_receipt"
 SESSION_WRITE_RECEIPT_TRANSITION_METHODS = frozenset(
@@ -8059,6 +8444,27 @@ def _task_runtime_service_self_method_call_lines(method_def: ast.FunctionDef, me
     ]
 
 
+def _task_runtime_method_calls_self_method(method_def: ast.FunctionDef, method_name: str) -> bool:
+    return bool(_task_runtime_service_self_method_call_lines(method_def, method_name))
+
+
+def _task_runtime_method_references_self_attribute(method_def: ast.FunctionDef, attribute: str) -> bool:
+    return any(_is_self_attribute(node, attribute) for node in _walk_task_runtime_method_body(method_def))
+
+
+def _task_runtime_method_contains_literal(method_def: ast.FunctionDef, literal: object) -> bool:
+    return any(
+        isinstance(node, ast.Constant) and node.value == literal for node in _walk_task_runtime_method_body(method_def)
+    )
+
+
+def _task_runtime_method_references_attribute_name(method_def: ast.FunctionDef, attribute: str) -> bool:
+    return any(
+        isinstance(node, ast.Attribute) and node.attr == attribute
+        for node in _walk_task_runtime_method_body(method_def)
+    )
+
+
 def _check_session_write_receipt_record_helper_contract() -> list[str]:
     method_defs = _task_runtime_service_method_defs()
     helper = method_defs.get(SESSION_WRITE_RECEIPT_RECORD_HELPER)
@@ -8168,6 +8574,73 @@ def _check_session_write_receipt_owner_boundary() -> list[str]:
     return offenders
 
 
+def _check_session_write_receipt_event_projection() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    append_event = method_defs.get("_append_execution_event")
+    details_helper = method_defs.get(SESSION_WRITE_RECEIPT_DETAILS_HELPER)
+    offenders: list[str] = []
+
+    if append_event is None:
+        offenders.append("TaskRuntimeService._append_execution_event() not found")
+    else:
+        if not _task_runtime_method_calls_self_method(append_event, "_row_write_receipt_details_for_task"):
+            offenders.append(
+                "TaskRuntimeService._append_execution_event() must project row-write "
+                "receipts through _row_write_receipt_details_for_task()"
+            )
+        if not _task_runtime_method_calls_self_method(append_event, SESSION_WRITE_RECEIPT_DETAILS_HELPER):
+            offenders.append(
+                "TaskRuntimeService._append_execution_event() must project session-write "
+                f"receipts through {SESSION_WRITE_RECEIPT_DETAILS_HELPER}()"
+            )
+        if _task_runtime_method_references_self_attribute(append_event, SESSION_WRITE_RECEIPT_ANCHOR):
+            offenders.append(
+                "TaskRuntimeService._append_execution_event() must not read "
+                f"self.{SESSION_WRITE_RECEIPT_ANCHOR} directly; use "
+                f"{SESSION_WRITE_RECEIPT_DETAILS_HELPER}() so task/session matching "
+                "stays centralized"
+            )
+
+    if details_helper is None:
+        offenders.append(f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_DETAILS_HELPER}() not found")
+        return offenders
+
+    if not _task_runtime_method_calls_self_method(details_helper, SESSION_WRITE_RECEIPT_ACCESSOR):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_DETAILS_HELPER}() must read "
+            f"receipts through {SESSION_WRITE_RECEIPT_ACCESSOR}(), not by touching "
+            f"self.{SESSION_WRITE_RECEIPT_ANCHOR} or rebuilding receipt state"
+        )
+    if _task_runtime_self_attribute_assignment_lines(details_helper, SESSION_WRITE_RECEIPT_ANCHOR):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_DETAILS_HELPER}() must be "
+            "read-only and must not assign the session write receipt anchor"
+        )
+    if _task_runtime_method_references_self_attribute(details_helper, SESSION_WRITE_RECEIPT_ANCHOR):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_DETAILS_HELPER}() must not "
+            f"read self.{SESSION_WRITE_RECEIPT_ANCHOR} directly; the accessor is "
+            "the only projection boundary"
+        )
+    if not _task_runtime_method_calls_self_method(details_helper, "normalize_task_id"):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_DETAILS_HELPER}() must "
+            "normalize and compare task ids before projecting a receipt"
+        )
+    if not _task_runtime_method_references_attribute_name(details_helper, "session_id"):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_DETAILS_HELPER}() must "
+            "compare the session id before projecting a receipt"
+        )
+    if not _task_runtime_method_contains_literal(details_helper, SESSION_WRITE_RECEIPT_DETAIL_KEY):
+        offenders.append(
+            f"TaskRuntimeService.{SESSION_WRITE_RECEIPT_DETAILS_HELPER}() must "
+            f"project details under {SESSION_WRITE_RECEIPT_DETAIL_KEY!r}"
+        )
+
+    return offenders
+
+
 def test_task_runtime_service_initializes_session_write_receipt_anchor() -> None:
     """WS2 execution-ledger fence: service construction must anchor receipts."""
 
@@ -8230,4 +8703,19 @@ def test_session_write_receipt_is_only_written_by_write_session_owner() -> None:
         f"{rel}:claim/heartbeat/complete/fail/suspend paths may only call "
         "_write_session(); they must not assign or construct session write "
         "receipts themselves. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_append_execution_event_projects_session_write_receipt_through_matching_helper() -> None:
+    """WS2 execution-ledger fence: event details must use matched session receipts."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_session_write_receipt_event_projection()
+
+    assert not offenders, (
+        "WS2 execution ledger SSoT session receipt projection fence: "
+        f"{rel}:TaskRuntimeService._append_execution_event() must project the "
+        "latest session write receipt through a single read-only helper that "
+        "matches both task id and session id before exposing it in event "
+        "details. Offenders:\n" + "\n".join(offenders)
     )

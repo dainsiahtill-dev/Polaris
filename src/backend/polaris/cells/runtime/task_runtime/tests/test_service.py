@@ -137,6 +137,25 @@ def _assert_execution_event_row_write_receipt(
     )
 
 
+def _assert_execution_event_session_write_receipt(
+    payload: dict[str, Any],
+    *,
+    task_id: int,
+    session_id: str,
+    session_path: Path,
+    preserved_terminal_session: bool,
+) -> dict[str, Any]:
+    details = payload.get("details")
+    assert isinstance(details, dict)
+    return _assert_task_execution_session_write_receipt(
+        details.get("session_write_receipt"),
+        task_id=task_id,
+        session_id=session_id,
+        session_path=session_path,
+        preserved_terminal_session=preserved_terminal_session,
+    )
+
+
 def _raise_fact_stream_unavailable(
     *,
     event_type_str: str,
@@ -162,6 +181,27 @@ def _assert_execution_event_append_failure_with_row_write_receipt(
         execution_event,
         task_id=task_id,
         task_path=task_path,
+    )
+
+
+def _assert_execution_event_append_failure_with_session_write_receipt(
+    execution_event: dict[str, Any],
+    *,
+    event_type: str,
+    task_id: int,
+    session_id: str,
+    session_path: Path,
+) -> dict[str, Any]:
+    assert execution_event["ok"] is False
+    assert execution_event["event_type"] == event_type
+    assert execution_event["published"] is False
+    assert execution_event["error"] == "fact stream unavailable"
+    return _assert_execution_event_session_write_receipt(
+        execution_event,
+        task_id=task_id,
+        session_id=session_id,
+        session_path=session_path,
+        preserved_terminal_session=False,
     )
 
 
@@ -414,6 +454,147 @@ def test_claim_execution_records_session_write_receipt(tmp_path: Path) -> None:
         preserved_terminal_session=False,
     )
     assert receipt["after_hash"] == _sha256_utf8_file(session_path)
+
+
+def test_claim_execution_event_details_include_session_write_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="session receipt event projection")
+    task_id = int(created["id"])
+
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-session-receipt-event",
+        selection_source="unit",
+    )
+
+    assert claimed["success"] is True
+    session_id = str(claimed["session"]["session_id"])
+    session_path = _session_file_path(workspace, task_id)
+    last_receipt = service.last_session_write_receipt()
+    assert last_receipt is not None
+    expected_receipt = last_receipt.to_dict()
+
+    projected_result = _assert_execution_event_session_write_receipt(
+        claimed["execution_event"],
+        task_id=task_id,
+        session_id=session_id,
+        session_path=session_path,
+        preserved_terminal_session=False,
+    )
+    assert projected_result == expected_receipt
+
+    payload = _execution_event_payload_for_result(workspace, claimed["execution_event"], event_type="claimed")
+    projected_payload = _assert_execution_event_session_write_receipt(
+        payload,
+        task_id=task_id,
+        session_id=session_id,
+        session_path=session_path,
+        preserved_terminal_session=False,
+    )
+    assert projected_payload == expected_receipt
+
+
+def test_heartbeat_execution_event_details_include_session_write_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="heartbeat session receipt event projection")
+    task_id = int(created["id"])
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-heartbeat-session-receipt-event",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    session_id = str(claimed["session"]["session_id"])
+
+    heartbeat = service.heartbeat_execution(
+        task_id,
+        session_id=session_id,
+        lease_ttl_seconds=180,
+        context_summary="renew lease after tool dispatch",
+    )
+
+    assert heartbeat["success"] is True
+    assert heartbeat["execution_event"]["ok"] is True
+    assert heartbeat["execution_event"]["event_type"] == "heartbeat_renewed"
+    session_path = _session_file_path(workspace, task_id)
+    last_receipt = service.last_session_write_receipt()
+    assert last_receipt is not None
+    expected_receipt = last_receipt.to_dict()
+    assert expected_receipt["after_hash"] == _sha256_utf8_file(session_path)
+
+    projected_result = _assert_execution_event_session_write_receipt(
+        heartbeat["execution_event"],
+        task_id=task_id,
+        session_id=session_id,
+        session_path=session_path,
+        preserved_terminal_session=False,
+    )
+    assert projected_result == expected_receipt
+
+    payload = _execution_event_payload_for_result(
+        workspace,
+        heartbeat["execution_event"],
+        event_type="heartbeat_renewed",
+    )
+    projected_payload = _assert_execution_event_session_write_receipt(
+        payload,
+        task_id=task_id,
+        session_id=session_id,
+        session_path=session_path,
+        preserved_terminal_session=False,
+    )
+    assert projected_payload == expected_receipt
+
+
+def test_append_execution_event_omits_stale_session_write_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    first = service.create_task_row(subject="first session receipt task")
+    second = service.create_task_row(subject="second session receipt task")
+    first_claim = service.claim_execution(
+        int(first["id"]),
+        worker_id="director",
+        role_id="director",
+        run_id="run-first-session",
+        selection_source="unit",
+    )
+    second_claim = service.claim_execution(
+        int(second["id"]),
+        worker_id="director",
+        role_id="director",
+        run_id="run-second-session",
+        selection_source="unit",
+    )
+    assert first_claim["success"] is True
+    assert second_claim["success"] is True
+    assert service.last_session_write_receipt().session_id == second_claim["session"]["session_id"]
+
+    first_session = TaskExecutionSession.from_dict(first_claim["session"])
+    event = service._append_execution_event(
+        "heartbeat",
+        task_row=first_claim["task"],
+        session=first_session,
+        details={"source": "stale-session-receipt-test"},
+    )
+
+    assert event["ok"] is True
+    event_details = event.get("details")
+    assert isinstance(event_details, dict)
+    assert "session_write_receipt" not in event_details
+    payload = _execution_event_payload_for_result(workspace, event, event_type="heartbeat")
+    details = payload.get("details")
+    assert isinstance(details, dict)
+    assert "session_write_receipt" not in details
+    assert details["source"] == "stale-session-receipt-test"
 
 
 def test_write_session_receipt_marks_terminal_session_preserved_when_write_returns_false(
@@ -1290,6 +1471,16 @@ def test_claim_execution_fails_closed_on_execution_event_append_failure(
         task_id=task_id,
         task_path=_task_file_path(workspace, task_id),
     )
+    projected_session_receipt = _assert_execution_event_append_failure_with_session_write_receipt(
+        claimed["execution_event"],
+        event_type="claimed",
+        task_id=task_id,
+        session_id=str(claimed["session"]["session_id"]),
+        session_path=_session_file_path(workspace, task_id),
+    )
+    last_receipt = service.last_session_write_receipt()
+    assert last_receipt is not None
+    assert projected_session_receipt == last_receipt.to_dict()
     assert claimed["task"]["status"] == "in_progress"
 
 
