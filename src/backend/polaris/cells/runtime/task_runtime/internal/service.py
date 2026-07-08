@@ -2562,8 +2562,7 @@ class TaskRuntimeService:
         if not target_task_id:
             return None
 
-        for task in self._list_file_task_entities():
-            row = task.to_dict()
+        for row in self._list_file_task_rows(include_terminal=True):
             if self._observable_row_task_id(row) != target_task_id:
                 continue
             return self._runtime_execution_session_from_projected_row(row)

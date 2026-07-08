@@ -1883,9 +1883,9 @@ def test_find_terminal_session_snapshot_reads_row_metadata_without_raw_board_get
     """Terminal metadata fallback must use row projection, not raw TaskBoard.get.
 
     The session file deliberately contains a non-terminal session with the same
-    id, so the only matching terminal snapshot lives in the task-row
-    ``metadata.runtime_execution`` projection. If the fallback reaches for
-    ``self._board.get`` directly, the sentinel below raises and catches the
+    id, so the only matching terminal snapshot lives in the monkeypatched
+    task-row ``metadata.runtime_execution`` projection. If the fallback reaches
+    for ``self._board.get`` directly, the sentinel below raises and catches the
     retired dependency.
     """
 
@@ -1932,9 +1932,20 @@ def test_find_terminal_session_snapshot_reads_row_metadata_without_raw_board_get
     )
     assert _session_file_path(workspace, task_id).exists()
 
+    def projected_file_rows(*, include_terminal: bool = True) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        return [
+            {
+                "id": str(task_id),
+                "metadata": {"runtime_execution": terminal_session.to_dict()},
+            }
+        ]
+
     def reject_raw_board_get(_task_id: object) -> object:
         raise AssertionError("_find_terminal_session_snapshot must not call raw TaskBoard.get")
 
+    monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda _task_id: None)
+    monkeypatch.setattr(service, "_list_file_task_rows", projected_file_rows)
     monkeypatch.setattr(service._board, "get", reject_raw_board_get)
 
     snapshot = service._find_terminal_session_snapshot(incoming)
@@ -1943,6 +1954,61 @@ def test_find_terminal_session_snapshot_reads_row_metadata_without_raw_board_get
     assert snapshot.session_id == terminal_session.session_id
     assert snapshot.status == "failed"
     assert snapshot.last_error == terminal_session.last_error
+
+
+def test_find_projected_runtime_execution_session_reads_row_projection_without_raw_entities(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Projected session lookup must consume row projections, not raw Task entities."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    task_id = 407
+    row_session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="run-row-projection-session",
+        lease_ttl_seconds=120,
+        attempt=2,
+        resume_count=1,
+        origin="unit",
+        selection_source="task_id_lookup",
+    )
+    projected_rows: list[dict[str, Any]] = [
+        {
+            "id": task_id + 1,
+            "metadata": {"runtime_execution": {**row_session.to_dict(), "task_id": task_id + 1}},
+        },
+        {
+            "id": str(task_id),
+            "metadata": {"runtime_execution": row_session.to_dict()},
+        },
+    ]
+
+    def projected_file_rows(*, include_terminal: bool = True) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        return projected_rows
+
+    def reject_raw_task_entities() -> list[Any]:
+        raise AssertionError("_find_projected_runtime_execution_session must not read raw Task entities")
+
+    monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda _task_id: None)
+    monkeypatch.setattr(service, "_list_file_task_rows", projected_file_rows)
+    monkeypatch.setattr(service, "_list_file_task_entities", reject_raw_task_entities)
+
+    session = service._find_projected_runtime_execution_session(task_id)
+
+    assert session is not None
+    assert session.session_id == row_session.session_id
+    assert session.task_id == task_id
+    assert session.role_id == "director"
+    assert session.worker_id == "director-worker"
+    assert session.attempt == 2
+    assert session.resume_count == 1
 
 
 def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_rejects_reclaim(tmp_path: Path) -> None:

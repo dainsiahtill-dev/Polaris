@@ -2494,6 +2494,7 @@ def test_key_task_runtime_methods_route_raw_entities_through_file_task_entities(
 
     direct_call_offenders: list[str] = []
     missing_helper_offenders: list[str] = []
+    unauthorized_helper_consumers: list[str] = []
     for method_name in sorted(TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS):
         method_def = methods[method_name]
         direct_call_offenders.extend(
@@ -2502,6 +2503,14 @@ def test_key_task_runtime_methods_route_raw_entities_through_file_task_entities(
         )
         if not _method_body_directly_calls_self_method(method_def, helper_name):
             missing_helper_offenders.append(f"TaskRuntimeService.{method_name}()")
+
+    for method_name, method_def in sorted(methods.items()):
+        if method_name == helper_name or method_name in TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS:
+            continue
+        for call in _direct_self_method_calls(method_def, helper_name):
+            unauthorized_helper_consumers.append(
+                f"{rel}:{call.lineno} TaskRuntimeService.{method_name}() calls self.{helper_name}()"
+            )
 
     assert not direct_call_offenders, (
         "Critical TaskRuntimeService methods must not call self._board.list_all() "
@@ -2512,6 +2521,133 @@ def test_key_task_runtime_methods_route_raw_entities_through_file_task_entities(
         "Critical TaskRuntimeService methods that need raw file-backed Task "
         f"entities must call self.{helper_name}() so the raw TaskBoard boundary "
         "has one owner-cell bridge. Offenders:\n" + "\n".join(missing_helper_offenders)
+    )
+    assert not unauthorized_helper_consumers, (
+        f"TaskRuntimeService.{helper_name}() is the reviewed raw Task entity "
+        "bridge only for the four owner/path methods in "
+        "TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS. Read-only projection "
+        "consumers must use row projections instead of raw Task entities. "
+        "Offenders:\n" + "\n".join(unauthorized_helper_consumers)
+    )
+
+
+# ---------------------------------------------------------------------------
+# WS2 projected runtime execution session - read-only row projection consumer
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService._find_projected_runtime_execution_session()`` is a
+# read-only consumer that resolves ``metadata.runtime_execution`` from already
+# projected row state after checking execution facts. It must not become a raw
+# TaskBoard entity reader; the raw entity bridge stays limited to the owner/path
+# methods in ``TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS``.
+#
+# The accepted source is ``self._list_file_task_rows()``. Passing
+# ``include_terminal=True`` explicitly is preferred, and omitting the keyword is
+# also allowed because the helper default is ``True``.
+
+PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER = "_find_projected_runtime_execution_session"
+PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE = "_list_file_task_rows"
+
+
+def _projected_runtime_execution_session_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService._find_projected_runtime_execution_session`` AST node."""
+
+    return _task_runtime_service_method_def(PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER)
+
+
+def _list_file_task_rows_call_keeps_terminal_rows(call_node: ast.Call) -> bool:
+    """Return whether ``self._list_file_task_rows(...)`` includes terminal rows."""
+
+    for keyword in call_node.keywords:
+        if keyword.arg != "include_terminal":
+            continue
+        return isinstance(keyword.value, ast.Constant) and keyword.value.value is True
+    return True
+
+
+def _check_projected_runtime_execution_session_uses_file_task_rows() -> list[str]:
+    """Emit offenders if projected session lookup does not use row projections."""
+
+    method_def = _projected_runtime_execution_session_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    row_calls = _direct_self_method_calls(method_def, PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE)
+
+    if not row_calls:
+        return [
+            f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}() "
+            f"does not call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}(); "
+            "metadata.runtime_execution fallback must scan projected task rows "
+            "instead of raw Task entities."
+        ]
+
+    return [
+        f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}():"
+        f"{call_node.lineno} calls self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}() "
+        "without terminal rows; projected runtime execution sessions can live "
+        "on terminal task rows, so pass include_terminal=True or omit the "
+        "keyword to use the helper default."
+        for call_node in row_calls
+        if not _list_file_task_rows_call_keeps_terminal_rows(call_node)
+    ]
+
+
+def _check_projected_runtime_execution_session_forbidden_raw_reads() -> list[str]:
+    """Emit offenders if projected session lookup reads raw TaskBoard state."""
+
+    method_def = _projected_runtime_execution_session_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        if callee == f"self.{TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER}":
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}():"
+                f"{node.lineno} calls {callee}(); read-only projected session "
+                "lookup must consume self._list_file_task_rows() rows, not raw "
+                "Task entities."
+            )
+            continue
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}():"
+                f"{node.lineno} calls {callee}(); read-only projected session "
+                "lookup must not access raw TaskBoard methods."
+            )
+
+    return offenders
+
+
+def test_projected_runtime_execution_session_uses_file_task_rows() -> None:
+    """WS2 projected runtime execution-session fence (positive invariant)."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_projected_runtime_execution_session_uses_file_task_rows()
+
+    assert not offenders, (
+        "WS2 projected runtime execution-session fence: "
+        f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}() "
+        "must call self._list_file_task_rows(include_terminal=True) or at "
+        "least self._list_file_task_rows() so metadata.runtime_execution is "
+        "resolved from projected rows after fact lookup. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_projected_runtime_execution_session_does_not_read_raw_taskboard() -> None:
+    """WS2 projected runtime execution-session fence (negative invariant)."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_projected_runtime_execution_session_forbidden_raw_reads()
+
+    assert not offenders, (
+        "WS2 projected runtime execution-session fence: "
+        f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}() "
+        "is a read-only projection consumer and must not call "
+        "self._list_file_task_entities() or self._board.*. Keep raw Task "
+        "entity access limited to the four owner/path methods in "
+        "TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS. Offenders:\n" + "\n".join(offenders)
     )
 
 
