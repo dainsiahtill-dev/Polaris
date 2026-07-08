@@ -4371,6 +4371,302 @@ def _append_execution_event_row_write_receipt_projection_violations() -> list[st
     return offenders
 
 
+TASK_RUNTIME_TERMINAL_TRANSITION_METHODS = (
+    "complete_execution",
+    "fail_execution",
+    "suspend_execution",
+)
+TASK_RUNTIME_APPEND_FAILURE_RESULT_KEYS = frozenset({"ok", "error", "append_error", "publish_error"})
+
+
+def _contains_append_execution_event_call(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.Call) and _call_name(child.func) == "self._append_execution_event"
+        for child in ast.walk(node)
+    )
+
+
+def _append_execution_event_result_names(method_def: ast.FunctionDef) -> set[str]:
+    """Return locals assigned from ``self._append_execution_event(...)``."""
+
+    names: set[str] = set()
+    for node in _walk_task_runtime_method_body(method_def):
+        value: ast.AST | None = None
+        targets: list[ast.AST] = []
+        if isinstance(node, ast.Assign):
+            value = node.value
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            value = node.value
+            targets = [node.target]
+        if value is None or not _contains_append_execution_event_call(value):
+            continue
+        names.update(_target_names(targets))
+    return names
+
+
+def _expression_sources_append_execution_event_result(node: ast.AST, append_result_names: AbstractSet[str]) -> bool:
+    if isinstance(node, ast.Name) and node.id in append_result_names:
+        return True
+    return _contains_append_execution_event_call(node)
+
+
+def _call_receives_append_execution_event_result(
+    node: ast.Call,
+    *,
+    append_result_names: AbstractSet[str],
+) -> bool:
+    values = list(node.args) + [keyword.value for keyword in node.keywords]
+    return any(_expression_sources_append_execution_event_result(value, append_result_names) for value in values)
+
+
+def _transition_result_builder_helper_defs(method_defs: dict[str, ast.FunctionDef]) -> dict[str, ast.FunctionDef]:
+    """Return private TaskRuntimeService helpers that build transition results."""
+
+    return {
+        name: method_def
+        for name, method_def in method_defs.items()
+        if name.startswith("_")
+        and not name.startswith("__")
+        and any(
+            isinstance(node, ast.Call) and _call_name(node.func) == "build_task_execution_transition_result"
+            for node in _walk_task_runtime_method_body(method_def)
+        )
+    }
+
+
+def _transition_helper_builds_with_execution_event(helper_name: str, helper_def: ast.FunctionDef) -> list[str]:
+    append_result_names = {
+        arg.arg
+        for arg in (*helper_def.args.args, *helper_def.args.kwonlyargs)
+        if "event" in arg.arg or "append" in arg.arg
+    }
+    offenders = _terminal_transition_append_failure_check_violations(
+        helper_name,
+        helper_def,
+        append_result_names=append_result_names,
+    )
+    builder_calls = [
+        node
+        for node in _walk_task_runtime_method_body(helper_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "build_task_execution_transition_result"
+    ]
+    if not builder_calls:
+        offenders.append(f"TaskRuntimeService.{helper_name}() does not call build_task_execution_transition_result()")
+        return offenders
+    if any(_call_keyword_value(node, "execution_event") is not None for node in builder_calls):
+        return offenders
+    offenders.append(
+        f"TaskRuntimeService.{helper_name}() calls build_task_execution_transition_result() "
+        "without execution_event=; the shared helper must own append-result projection"
+    )
+    return offenders
+
+
+def _terminal_transition_helper_call_names(
+    method_def: ast.FunctionDef,
+    *,
+    helper_names: AbstractSet[str],
+    append_result_names: AbstractSet[str],
+) -> set[str]:
+    return {
+        helper_name
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.Call)
+        for helper_name in [_self_method_call_name(node)]
+        if helper_name in helper_names
+        and _call_receives_append_execution_event_result(node, append_result_names=append_result_names)
+    }
+
+
+def _terminal_transition_direct_builder_violations(
+    method_name: str,
+    method_def: ast.FunctionDef,
+    *,
+    append_result_names: AbstractSet[str],
+) -> list[str]:
+    offenders: list[str] = []
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node.func) != "build_task_execution_transition_result":
+            continue
+        if not _call_receives_append_execution_event_result(node, append_result_names=append_result_names):
+            continue
+        offenders.append(
+            f"TaskRuntimeService.{method_name}() calls build_task_execution_transition_result() "
+            "directly with the _append_execution_event result; route terminal transition "
+            "projection through the shared private helper"
+        )
+    return offenders
+
+
+def _append_result_failure_field_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "get" and node.args:
+            return _string_literal(node.args[0])
+    if isinstance(node, ast.Subscript):
+        return _string_literal(node.slice)
+    return ""
+
+
+def _terminal_transition_append_failure_check_violations(
+    method_name: str,
+    method_def: ast.FunctionDef,
+    *,
+    append_result_names: AbstractSet[str],
+) -> list[str]:
+    offenders: list[str] = []
+    for node in _walk_task_runtime_method_body(method_def):
+        if isinstance(node, ast.Call) and _call_name(node.func).endswith("_execution_event_append_failed"):
+            offenders.append(
+                f"TaskRuntimeService.{method_name}() calls {_call_name(node.func)}(); "
+                "append failure projection belongs in the shared transition-result helper"
+            )
+            continue
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                field_name = _append_result_failure_field_name(node)
+                if func.value.id in append_result_names and field_name in TASK_RUNTIME_APPEND_FAILURE_RESULT_KEYS:
+                    offenders.append(
+                        f"TaskRuntimeService.{method_name}() reads _append_execution_event result field "
+                        f"{field_name!r} directly; use the shared transition-result helper"
+                    )
+            continue
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            field_name = _append_result_failure_field_name(node)
+            if node.value.id in append_result_names and field_name in TASK_RUNTIME_APPEND_FAILURE_RESULT_KEYS:
+                offenders.append(
+                    f"TaskRuntimeService.{method_name}() reads _append_execution_event result field "
+                    f"{field_name!r} directly; use the shared transition-result helper"
+                )
+            continue
+        if isinstance(node, ast.Compare):
+            left_field = _string_literal(node.left)
+            if left_field not in TASK_RUNTIME_APPEND_FAILURE_RESULT_KEYS:
+                continue
+            if not any(isinstance(op, ast.In | ast.NotIn) for op in node.ops):
+                continue
+            if any(
+                isinstance(comparator, ast.Name) and comparator.id in append_result_names
+                for comparator in node.comparators
+            ):
+                offenders.append(
+                    f"TaskRuntimeService.{method_name}() checks whether _append_execution_event "
+                    f"result contains field {left_field!r}; use the shared transition-result helper"
+                )
+    return offenders
+
+
+def _terminal_transition_shared_result_helper_violations() -> list[str]:
+    """Validate terminal/suspended transitions converge through one helper.
+
+    ``complete_execution()``, ``fail_execution()``, and ``suspend_execution()``
+    may still perform their own state mutation and event detail construction,
+    but the append result must flow into one private TaskRuntimeService helper
+    that owns ``build_task_execution_transition_result(...)``. This keeps
+    append-failure projection in one place instead of allowing three terminal
+    methods to hand-roll subtly different checks.
+    """
+
+    method_defs = _task_runtime_service_method_defs()
+    helper_defs = _transition_result_builder_helper_defs(method_defs)
+    helper_names = frozenset(helper_defs)
+    helper_calls_by_method: dict[str, set[str]] = {}
+    offenders: list[str] = []
+
+    for method_name in TASK_RUNTIME_TERMINAL_TRANSITION_METHODS:
+        method_def = method_defs.get(method_name)
+        if method_def is None:
+            offenders.append(f"TaskRuntimeService.{method_name}() not found")
+            continue
+        append_result_names = _append_execution_event_result_names(method_def)
+        has_append_event_call = any(
+            isinstance(node, ast.Call) and _call_name(node.func) == "self._append_execution_event"
+            for node in _walk_task_runtime_method_body(method_def)
+        )
+        if not has_append_event_call:
+            offenders.append(f"TaskRuntimeService.{method_name}() must call self._append_execution_event(...)")
+        helper_calls = _terminal_transition_helper_call_names(
+            method_def,
+            helper_names=helper_names,
+            append_result_names=append_result_names,
+        )
+        helper_calls_by_method[method_name] = helper_calls
+        offenders.extend(
+            _terminal_transition_direct_builder_violations(
+                method_name,
+                method_def,
+                append_result_names=append_result_names,
+            )
+        )
+        offenders.extend(
+            _terminal_transition_append_failure_check_violations(
+                method_name,
+                method_def,
+                append_result_names=append_result_names,
+            )
+        )
+        if not helper_calls:
+            offenders.append(
+                f"TaskRuntimeService.{method_name}() must pass its _append_execution_event "
+                "result into a private TaskRuntimeService helper that builds the transition result"
+            )
+
+    if all(helper_calls_by_method.get(name) for name in TASK_RUNTIME_TERMINAL_TRANSITION_METHODS):
+        common_helpers = set.intersection(
+            *(helper_calls_by_method[name] for name in TASK_RUNTIME_TERMINAL_TRANSITION_METHODS)
+        )
+        if len(common_helpers) != 1:
+            rendered = {
+                name: sorted(helper_calls_by_method.get(name, set()))
+                for name in TASK_RUNTIME_TERMINAL_TRANSITION_METHODS
+            }
+            offenders.append(
+                "complete_execution(), fail_execution(), and suspend_execution() must use "
+                f"exactly one shared private transition-result helper; observed {rendered!r}"
+            )
+        else:
+            shared_helper = next(iter(common_helpers))
+            for method_name, helpers in helper_calls_by_method.items():
+                if helpers != {shared_helper}:
+                    offenders.append(
+                        f"TaskRuntimeService.{method_name}() uses transition helper(s) "
+                        f"{sorted(helpers)!r}; expected only {shared_helper!r}"
+                    )
+            offenders.extend(_transition_helper_builds_with_execution_event(shared_helper, helper_defs[shared_helper]))
+
+    return offenders
+
+
+def test_task_runtime_terminal_transitions_use_shared_append_result_helper() -> None:
+    """WS2 terminal transition fence for execution-ledger append failures.
+
+    ``complete_execution()``, ``fail_execution()``, and ``suspend_execution()``
+    are the terminal/suspended state transitions that append
+    ``task_runtime.execution`` facts. They must not build transition results
+    directly from ``_append_execution_event`` or each grow local append-failure
+    branches; one private helper must own the
+    ``build_task_execution_transition_result(..., execution_event=...)``
+    projection so append/publish failures stay a single SSoT concern.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _terminal_transition_shared_result_helper_violations()
+
+    assert not offenders, (
+        "WS2 terminal transition SSoT fence: "
+        f"{rel}:TaskRuntimeService complete_execution(), fail_execution(), and "
+        "suspend_execution() must pass _append_execution_event results into one "
+        "shared private helper that builds build_task_execution_transition_result"
+        "(..., execution_event=...). The three methods must not call the builder "
+        "directly with append results or hand-roll append failure checks. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
+
+
 def _append_execution_fact_with_cas_uses_expected_seq_contract() -> tuple[bool, list[str]]:
     """Detect whether TaskRuntime execution facts opt into FactStream CAS."""
 

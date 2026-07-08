@@ -2010,8 +2010,7 @@ class TaskRuntimeService:
             session=session,
             details={"result_summary": sanitize_summary(result_summary)},
         )
-        result = build_task_execution_transition_result(
-            success=True,
+        result = self._build_terminal_execution_transition_result(
             reason="completed",
             task_row=row,
             session=session,
@@ -2065,8 +2064,7 @@ class TaskRuntimeService:
             session=session,
             details={"error": sanitize_summary(error)},
         )
-        return build_task_execution_transition_result(
-            success=True,
+        return self._build_terminal_execution_transition_result(
             reason="failed",
             task_row=row,
             session=session,
@@ -2127,8 +2125,7 @@ class TaskRuntimeService:
             session=session,
             details={"reason": sanitize_summary(reason)},
         )
-        return build_task_execution_transition_result(
-            success=True,
+        return self._build_terminal_execution_transition_result(
             reason="suspended",
             task_row=row,
             session=session,
@@ -3086,6 +3083,24 @@ class TaskRuntimeService:
         if should_notify_ready:
             self._board.notify_ready_tasks()
         return events
+
+    @staticmethod
+    def _build_terminal_execution_transition_result(
+        *,
+        reason: str,
+        task_row: dict[str, Any],
+        session: TaskExecutionSession,
+        execution_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Project terminal transitions through the shared execution result builder."""
+
+        return build_task_execution_transition_result(
+            success=True,
+            reason=reason,
+            task_row=task_row,
+            session=session,
+            execution_event=execution_event,
+        )
 
     @staticmethod
     def _with_dependency_execution_events(
