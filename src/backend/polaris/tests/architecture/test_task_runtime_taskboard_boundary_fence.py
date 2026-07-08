@@ -1106,10 +1106,12 @@ def test_role_worker_pool_task_runtime_port_does_not_require_live_listener() -> 
     source = ROLE_WORKER_POOL.read_text(encoding="utf-8")
     tree = ast.parse(source)
     port_class: ast.ClassDef | None = None
+    legacy_port_class: ast.ClassDef | None = None
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "TaskRuntimePort":
             port_class = node
-            break
+        if isinstance(node, ast.ClassDef) and node.name == "_LegacyTaskRuntimePort":
+            legacy_port_class = node
 
     assert port_class is not None, "TaskRuntimePort protocol not found"
     port_methods = {item.name for item in port_class.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -1117,10 +1119,16 @@ def test_role_worker_pool_task_runtime_port_does_not_require_live_listener() -> 
     assert "add_ready_listener" not in port_methods, (
         "TaskRuntimePort must not require live listener utilities. Worker wakeup "
         "may use an optional duck-typed add_ready_listener() optimization, but "
-        "the required port contract should stay on ready-row reads and atomic "
-        "claim/complete/fail execution transitions."
+        "the required port contract should stay on the atomic claim-next "
+        "execution transition."
     )
-    assert {"list_ready_task_rows", "claim_execution", "complete_execution", "fail_execution"} <= port_methods
+    assert port_methods == {"claim_next_execution"}
+
+    assert legacy_port_class is not None, "_LegacyTaskRuntimePort protocol not found"
+    legacy_port_methods = {
+        item.name for item in legacy_port_class.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert {"list_ready_task_rows", "claim_execution"} <= legacy_port_methods
 
 
 def test_delivery_pm_taskboard_mainline_uses_task_runtime_service() -> None:
@@ -3911,4 +3919,252 @@ def test_task_has_unresolved_dependencies_has_no_raw_dependency_status_reads() -
         "dependency status from raw TaskBoard rows or recursive observable-row "
         "projections. Use only the fact-overlaid dependency status projection. "
         "Offenders:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# WS2 get_observable_task_row_stats() / get_task_row_stats() — stats
+# delegation through the observable read model
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService.get_observable_task_row_stats()`` is the public
+# stats projection. It must count rows through
+# ``self.list_observable_task_rows()`` so the ``task_runtime.execution``
+# Fact Stream overlay stays in the read model. Calling
+# ``self._list_file_task_rows()`` or ``self.list_task_rows()`` directly
+# would silently regress to raw-file status counts.
+#
+# ``TaskRuntimeService.get_task_row_stats()`` is the compatibility
+# entrypoint. It must purely delegate to
+# ``self.get_observable_task_row_stats()`` without independently
+# computing counts, reading rows, or accessing the raw board.
+
+STATS_OBSERVABLE_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
+    "self._list_file_task_rows": ("raw _list_file_task_rows() bypasses the execution-fact overlay"),
+    "self._board.list_all": ("raw TaskBoard.list_all() bypasses the execution-fact overlay"),
+    "self.list_task_rows": ("raw list_task_rows() regresses to file-backed status only"),
+    "self._board.get": ("raw TaskBoard.get() bypasses the execution-fact overlay"),
+    "self._get_task_by_external_task_id": ("_get_task_by_external_task_id() still walks self._board.list_all()"),
+}
+
+STATS_COMPAT_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
+    **STATS_OBSERVABLE_FORBIDDEN_RAW_READ_TARGETS,
+    "self.list_observable_task_rows": (
+        "get_task_row_stats() must delegate to get_observable_task_row_stats(), "
+        "not independently call list_observable_task_rows()"
+    ),
+}
+
+
+def _get_observable_task_row_stats_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService.get_observable_task_row_stats`` AST node."""
+
+    return _task_runtime_service_method_def("get_observable_task_row_stats")
+
+
+def _get_task_row_stats_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService.get_task_row_stats`` AST node."""
+
+    return _task_runtime_service_method_def("get_task_row_stats")
+
+
+def _check_observable_task_row_stats_calls_list_observable_task_rows() -> list[str]:
+    """Emit offenders if ``get_observable_task_row_stats`` does not call
+    ``self.list_observable_task_rows()``.
+
+    The fence checks both the direct method body and one level of private
+    ``TaskRuntimeService`` helper delegation so the production pattern of
+    factoring through a small helper stays compliant.
+    """
+
+    method_def = _get_observable_task_row_stats_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+
+    if _method_body_calls_self_method(method_def, "list_observable_task_rows"):
+        return []
+
+    for _helper_name, helper_def in _collect_get_task_delegated_helpers(method_def).items():
+        if _method_body_calls_self_method(helper_def, "list_observable_task_rows"):
+            return []
+
+    return [
+        f"{rel}:TaskRuntimeService.get_observable_task_row_stats() does not "
+        "call self.list_observable_task_rows(); the stats projection must "
+        "count through the observable row model so the task_runtime.execution "
+        "Fact Stream overlay remains part of the read-model SSoT."
+    ]
+
+
+def _check_observable_task_row_stats_forbidden_raw_reads() -> list[str]:
+    """Emit offenders if ``get_observable_task_row_stats`` calls raw read methods."""
+
+    method_def = _get_observable_task_row_stats_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for call_node in ast.walk(method_def):
+        if not isinstance(call_node, ast.Call):
+            continue
+        callee = _call_name(call_node.func)
+        for forbidden, reason in STATS_OBSERVABLE_FORBIDDEN_RAW_READ_TARGETS.items():
+            if callee == forbidden:
+                offenders.append(
+                    f"{rel}:TaskRuntimeService.get_observable_task_row_stats():"
+                    f"{call_node.lineno} calls {callee!r}; {reason}. "
+                    "get_observable_task_row_stats() must count through "
+                    "self.list_observable_task_rows() so the "
+                    "task_runtime.execution Fact Stream overlay remains the "
+                    "read-model SSoT."
+                )
+                break
+
+    return offenders
+
+
+def _check_task_row_stats_delegates_to_observable_stats() -> list[str]:
+    """Emit offenders if ``get_task_row_stats`` does not delegate to
+    ``self.get_observable_task_row_stats()``.
+    """
+
+    method_def = _get_task_row_stats_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+
+    if _method_body_calls_self_method(method_def, "get_observable_task_row_stats"):
+        return []
+
+    return [
+        f"{rel}:TaskRuntimeService.get_task_row_stats() does not delegate to "
+        "self.get_observable_task_row_stats(); the compatibility entrypoint "
+        "must delegate entirely to the observable stats projection rather than "
+        "independently reading or computing task-row status counts."
+    ]
+
+
+def _check_task_row_stats_no_independent_reads() -> list[str]:
+    """Emit offenders if ``get_task_row_stats`` reads rows independently."""
+
+    method_def = _get_task_row_stats_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for call_node in ast.walk(method_def):
+        if not isinstance(call_node, ast.Call):
+            continue
+        callee = _call_name(call_node.func)
+        for forbidden, reason in STATS_COMPAT_FORBIDDEN_RAW_READ_TARGETS.items():
+            if callee == forbidden:
+                offenders.append(
+                    f"{rel}:TaskRuntimeService.get_task_row_stats():"
+                    f"{call_node.lineno} calls {callee!r}; {reason}. "
+                    "get_task_row_stats() must delegate to "
+                    "self.get_observable_task_row_stats() without reading "
+                    "rows or computing stats independently."
+                )
+                break
+
+    return offenders
+
+
+def test_observable_task_row_stats_calls_list_observable_task_rows() -> None:
+    """WS2 stats projection fence (positive invariant).
+
+    ``TaskRuntimeService.get_observable_task_row_stats()`` is the public
+    stats projection that Factory, Director, and UI consumers read. It must
+    count through ``self.list_observable_task_rows()`` so late
+    ``task_runtime.execution`` fact evidence and the in-flight execution
+    overlay stay part of the status-count SSoT. Calling
+    ``self._list_file_task_rows()`` or ``self.list_task_rows()`` directly
+    would silently regress to raw-file status counts.
+
+    The fence is structural: it walks the AST of ``get_observable_task_row_stats()``
+    and any private helper it delegates to and verifies
+    ``self.list_observable_task_rows()`` is reachable.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_observable_task_row_stats_calls_list_observable_task_rows()
+
+    assert not offenders, (
+        "WS2 stats projection fence: "
+        f"{rel}:TaskRuntimeService.get_observable_task_row_stats() must call "
+        "self.list_observable_task_rows() so the task_runtime.execution Fact "
+        "Stream overlay remains part of the stats read-model SSoT. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_observable_task_row_stats_does_not_read_raw_rows() -> None:
+    """WS2 stats projection fence (negative invariant).
+
+    ``TaskRuntimeService.get_observable_task_row_stats()`` must not call
+    ``self._list_file_task_rows()``, ``self._board.list_all()``,
+    ``self.list_task_rows()``, or ``self._board.get(...)`` because each of
+    those reads raw ``TaskBoard`` state without the ``task_runtime.execution``
+    fact overlay. Allowing any of them inside the stats method would silently
+    regress the stats projection to the pre-WS2 raw-row view.
+
+    The fence is structural: it walks the ``get_observable_task_row_stats()``
+    AST body.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_observable_task_row_stats_forbidden_raw_reads()
+
+    assert not offenders, (
+        "WS2 stats projection fence: "
+        f"{rel}:TaskRuntimeService.get_observable_task_row_stats() must not "
+        "read raw rows. The stats projection must route through "
+        "self.list_observable_task_rows() so the task_runtime.execution Fact "
+        "Stream overlay stays part of the read-model SSoT. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_row_stats_delegates_to_observable_task_row_stats() -> None:
+    """WS2 stats delegation fence (positive invariant).
+
+    ``TaskRuntimeService.get_task_row_stats()`` is the compatibility
+    entrypoint for task-row status counts. It must delegate entirely to
+    ``self.get_observable_task_row_stats()`` without independently reading
+    rows or computing counts. A method that re-reads observable rows
+    independently would bypass the single delegation chain and create
+    two paths that can diverge if the observable stats computation evolves.
+
+    The fence is structural: it walks the AST of ``get_task_row_stats()``
+    and verifies ``self.get_observable_task_row_stats()`` is called.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_task_row_stats_delegates_to_observable_stats()
+
+    assert not offenders, (
+        "WS2 stats delegation fence: "
+        f"{rel}:TaskRuntimeService.get_task_row_stats() must delegate to "
+        "self.get_observable_task_row_stats() so the stats computation has "
+        "a single authoritative path. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_row_stats_does_not_independently_read_rows() -> None:
+    """WS2 stats delegation fence (negative invariant).
+
+    ``TaskRuntimeService.get_task_row_stats()`` must not call
+    ``self.list_observable_task_rows()``, ``self._list_file_task_rows()``,
+    ``self._board.list_all()``, ``self.list_task_rows()``, or
+    ``self._board.get(...)`` because the compatibility entrypoint must
+    delegate all reads to ``get_observable_task_row_stats()``. Allowing
+    direct observable-row reads would mean ``get_task_row_stats()`` could
+    silently drift from the canonical stats computation.
+
+    The fence is structural: it walks the ``get_task_row_stats()`` AST body.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_task_row_stats_no_independent_reads()
+
+    assert not offenders, (
+        "WS2 stats delegation fence: "
+        f"{rel}:TaskRuntimeService.get_task_row_stats() must not independently "
+        "read rows. The compatibility entrypoint must delegate to "
+        "self.get_observable_task_row_stats() so the stats computation has a "
+        "single authoritative path. Offenders:\n" + "\n".join(offenders)
     )

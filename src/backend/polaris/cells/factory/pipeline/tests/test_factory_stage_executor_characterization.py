@@ -10,11 +10,14 @@ from reading the source, not idealized contracts.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextlib
+import inspect
 import json
 import os
 import sys
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -105,6 +108,73 @@ def test_taskboard_stats_read_observable_owner_projection_when_stats_diverge(
     assert stats["completed"] == 1
     assert stats["failed"] == 1
     assert OrchestrationStageExecutor._is_taskboard_converged(stats) is True
+
+
+# ---------------------------------------------------------------------------
+# WS2 observable stats source regression guards (AST-level)
+# ---------------------------------------------------------------------------
+# These tests statically inspect the *source code* of _read_taskboard_stats
+# to prove it delegates to get_observable_task_row_stats() and never falls
+# back to get_task_row_stats() or list_observable_task_rows().  If a future
+# refactor accidentally swaps the method name, these tests fail at collection
+# time even before any monkeypatching exercises the runtime path.
+# ---------------------------------------------------------------------------
+
+
+def test_read_taskboard_stats_ast_calls_observable_not_legacy() -> None:
+    """_read_taskboard_stats() must call get_observable_task_row_stats().
+
+    It must never call the legacy get_task_row_stats() compatibility wrapper,
+    which would produce identical numbers today but bypasses the
+    fact-overlay contract that observable stats enforce.
+    """
+    src = textwrap.dedent(inspect.getsource(OrchestrationStageExecutor._read_taskboard_stats))
+    tree = ast.parse(src)
+
+    calls_on_instance: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Call)
+        ):
+            calls_on_instance.add(node.func.attr)
+
+    assert "get_observable_task_row_stats" in calls_on_instance, (
+        "_read_taskboard_stats() must call get_observable_task_row_stats() on "
+        "TaskRuntimeService; the observable projection is the WS2 contract"
+    )
+    assert "get_task_row_stats" not in calls_on_instance, (
+        "_read_taskboard_stats() must not call the legacy get_task_row_stats() "
+        "wrapper — use get_observable_task_row_stats() directly"
+    )
+
+
+def test_read_taskboard_stats_ast_does_not_list_rows() -> None:
+    """_read_taskboard_stats() must not call list_observable_task_rows().
+
+    Stats aggregation belongs in the task-runtime service layer via
+    get_observable_task_row_stats().  Factory must not reimplement
+    row-level counting; _read_observable_task_rows() remains available for
+    claimable-row inspection.
+    """
+    src = textwrap.dedent(inspect.getsource(OrchestrationStageExecutor._read_taskboard_stats))
+    tree = ast.parse(src)
+
+    calls_on_instance: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Call)
+        ):
+            calls_on_instance.add(node.func.attr)
+
+    assert "list_observable_task_rows" not in calls_on_instance, (
+        "_read_taskboard_stats() must not call list_observable_task_rows() — "
+        "that method is for claimable-row inspection, not stats aggregation; "
+        "use get_observable_task_row_stats() instead"
+    )
 
 
 def test_failed_quality_handoff_reads_observable_task_rows(
