@@ -102,13 +102,19 @@ def test_non_terminal_session_status_has_no_task_status_projection(session_statu
     assert is_terminal_session_status(session_status) is False
 
 
-@pytest.mark.parametrize("task_status", ["completed", "failed", "cancelled"])
+@pytest.mark.parametrize(
+    "task_status",
+    ["completed", "failed", "cancelled", "timeout"],
+)
 def test_terminal_task_row_status_projection(task_status: str) -> None:
     assert is_terminal_task_row_status(task_status) is True
     assert is_terminal_task_row_status(task_status.upper()) is True
 
 
-@pytest.mark.parametrize("task_status", ["pending", "in_progress", "blocked", "active", "", None])
+@pytest.mark.parametrize(
+    "task_status",
+    ["pending", "in_progress", "blocked", "active", "", None],
+)
 def test_non_terminal_task_row_status_projection(task_status: object) -> None:
     assert is_terminal_task_row_status(task_status) is False
 

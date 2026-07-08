@@ -19,7 +19,7 @@ _TERMINAL_SESSION_STATUS_TO_TASK_STATUS = {
     # their own terminal-status tables.
     "cancelled": "cancelled",
 }
-_TERMINAL_TASK_ROW_STATUSES = frozenset({"completed", "failed", "cancelled"})
+_TERMINAL_TASK_ROW_STATUSES = frozenset({"completed", "failed", "cancelled", "timeout"})
 _TASK_ROW_STATUS_COUNT_KEYS = (
     "pending",
     "in_progress",

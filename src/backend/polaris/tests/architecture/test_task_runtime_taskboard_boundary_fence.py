@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import json
 from collections import Counter
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 from typing import Any
 
@@ -533,6 +534,15 @@ def _taskboard_class() -> ast.ClassDef:
     raise AssertionError("TaskBoard class not found")
 
 
+def _class_def(path: Path, name: str) -> ast.ClassDef:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            return node
+    raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name} class not found")
+
+
 def _taskboard_method(name: str) -> ast.FunctionDef:
     taskboard = _taskboard_class()
     for node in taskboard.body:
@@ -668,10 +678,108 @@ def _assigned_constant_tuple(path: Path, name: str) -> tuple[str, ...]:
     raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name} assignment not found")
 
 
+def _assigned_frozenset_literal_strings(path: Path, name: str) -> set[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            continue
+        return _literal_string_collection_values(node.value, context=name)
+    raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name} assignment not found")
+
+
 def _string_literal(node: ast.AST | None) -> str:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     return ""
+
+
+def _literal_string_collection_values(node: ast.AST, *, context: str) -> set[str]:
+    value_node = node
+    if isinstance(value_node, ast.Call) and _call_name(value_node.func) == "frozenset":
+        if len(value_node.args) != 1 or value_node.keywords:
+            raise AssertionError(f"{context} must remain a one-argument frozenset literal")
+        value_node = value_node.args[0]
+    if not isinstance(value_node, (ast.Set, ast.List, ast.Tuple)):
+        raise AssertionError(f"{context} must remain an AST-readable literal collection")
+
+    values: set[str] = set()
+    for item in value_node.elts:
+        literal_value = _string_literal(item)
+        if not literal_value:
+            raise AssertionError(f"{context} entries must remain literal strings")
+        values.add(literal_value)
+    return values
+
+
+def _enum_string_member_values(enum_class: ast.ClassDef) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for node in enum_class.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        value = _string_literal(node.value)
+        if value:
+            values[node.targets[0].id] = value
+    if not values:
+        raise AssertionError(f"{enum_class.name} must expose AST-readable string enum members")
+    return values
+
+
+def _task_status_member_value(node: ast.AST, enum_values: dict[str, str], *, context: str) -> str:
+    literal_value = _string_literal(node)
+    if literal_value:
+        return literal_value
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "TaskStatus"
+        and node.attr in enum_values
+    ):
+        return enum_values[node.attr]
+    raise AssertionError(f"{context} must reference TaskStatus enum members or literal strings")
+
+
+def _task_status_is_terminal_values() -> set[str]:
+    task_status_class = _class_def(TASK_RUNTIME_INTERNAL_BOARD, "TaskStatus")
+    enum_values = _enum_string_member_values(task_status_class)
+
+    is_terminal = None
+    for node in task_status_class.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "is_terminal":
+            is_terminal = node
+            break
+    if is_terminal is None:
+        raise AssertionError("TaskStatus.is_terminal property not found")
+
+    returns = [
+        node.value
+        for node in ast.walk(is_terminal)
+        if isinstance(node, ast.Return) and node.value is not None
+    ]
+    if len(returns) != 1:
+        raise AssertionError("TaskStatus.is_terminal must keep a single AST-readable return")
+
+    expression = returns[0]
+    if (
+        not isinstance(expression, ast.Compare)
+        or len(expression.ops) != 1
+        or not isinstance(expression.ops[0], ast.In)
+        or len(expression.comparators) != 1
+    ):
+        raise AssertionError("TaskStatus.is_terminal must remain a membership test")
+
+    terminal_collection = expression.comparators[0]
+    if not isinstance(terminal_collection, (ast.Set, ast.List, ast.Tuple)):
+        raise AssertionError("TaskStatus.is_terminal must compare against a literal collection")
+
+    return {
+        _task_status_member_value(item, enum_values, context="TaskStatus.is_terminal")
+        for item in terminal_collection.elts
+    }
 
 
 def _subscript_key(node: ast.AST) -> str:
@@ -1222,6 +1330,38 @@ def test_base_role_adapter_rejects_terminal_status_shortcuts() -> None:
     assert "terminal_task_status_requires_task_runtime_owner_transition" in source
 
 
+def test_task_runtime_terminal_projection_covers_taskboard_terminal_statuses() -> None:
+    """WS2 terminal status convergence fence.
+
+    ``TaskBoard.TaskStatus.is_terminal`` is the canonical row-local terminal
+    predicate, while ``execution_session._TERMINAL_TASK_ROW_STATUSES`` drives
+    the TaskRuntime read-model overlay.  The read model may carry extra
+    compatibility values, but it must cover every TaskBoard terminal status
+    value so future terminal enum additions cannot be missed by runtime
+    projection logic.
+
+    This is intentionally source-level and AST-backed: importing either module
+    would execute production code and could hide drift behind import-time
+    aliases.
+    """
+
+    taskboard_terminal_values = _task_status_is_terminal_values()
+    runtime_terminal_values = _assigned_frozenset_literal_strings(
+        EXECUTION_SESSION_MODULE,
+        "_TERMINAL_TASK_ROW_STATUSES",
+    )
+    missing_values = sorted(taskboard_terminal_values - runtime_terminal_values)
+
+    assert not missing_values, (
+        "WS2 terminal projection convergence fence: "
+        "execution_session._TERMINAL_TASK_ROW_STATUSES must cover every "
+        "TaskBoard.TaskStatus.is_terminal value. Missing runtime projection "
+        f"terminal values: {missing_values}. "
+        f"TaskBoard terminal values: {sorted(taskboard_terminal_values)}. "
+        f"Runtime projection terminal values: {sorted(runtime_terminal_values)}."
+    )
+
+
 # ---------------------------------------------------------------------------
 # WS2 execution-status row-write fence — execution-like status guard
 # ---------------------------------------------------------------------------
@@ -1306,7 +1446,7 @@ def _director_update_task_progress_uses_metadata_only_delegate(path: Path) -> bo
 
 def _literal_execution_status_update_board_task_calls(
     path: Path,
-    statuses: set[str],
+    statuses: AbstractSet[str],
 ) -> list[str]:
     """Detect literal ``_update_board_task(..., status=<literal>)`` calls
     where the status value is a string literal in the forbidden set.
