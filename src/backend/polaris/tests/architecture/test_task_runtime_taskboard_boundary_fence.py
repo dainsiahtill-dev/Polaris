@@ -3352,7 +3352,10 @@ OBSERVABLE_TASK_ROWS_FORBIDDEN_SELF_CALLS = frozenset(
     }
 )
 TASK_ROWS_COMPATIBILITY_METHOD = "list_task_rows"
+TASK_ROWS_COMPATIBILITY_REFRESH_METHOD = "refresh_dependency_unblocks"
+TASK_ROWS_COMPATIBILITY_ROW_SOURCE = "_list_file_task_rows"
 READY_TASK_ROWS_COMPATIBILITY_METHOD = "list_ready_task_rows"
+TASK_ROWS_COMPATIBILITY_SELF_CALL_ALLOWLIST: dict[str, str] = {}
 
 
 def _projected_runtime_execution_session_function_def() -> ast.FunctionDef:
@@ -3676,6 +3679,105 @@ def _check_observable_task_rows_read_only_projection_boundary() -> list[str]:
     return offenders
 
 
+def _call_source_order(call_node: ast.Call) -> tuple[int, int]:
+    """Return a stable source-order key for a direct call node."""
+
+    return (call_node.lineno, call_node.col_offset)
+
+
+def _check_list_task_rows_compatibility_entrypoint_contract() -> list[str]:
+    """Emit offenders if ``list_task_rows`` stops owning refresh-before-file-read."""
+
+    method_def = _task_runtime_service_method_def(TASK_ROWS_COMPATIBILITY_METHOD)
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    refresh_calls = _direct_self_method_calls(method_def, TASK_ROWS_COMPATIBILITY_REFRESH_METHOD)
+    row_source_calls = _direct_self_method_calls(method_def, TASK_ROWS_COMPATIBILITY_ROW_SOURCE)
+    recursive_calls = _direct_self_method_calls(method_def, TASK_ROWS_COMPATIBILITY_METHOD)
+
+    if not refresh_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{TASK_ROWS_COMPATIBILITY_METHOD}() does not call "
+            f"self.{TASK_ROWS_COMPATIBILITY_REFRESH_METHOD}(); the compatibility "
+            "entrypoint must keep dependency refresh explicit."
+        )
+    if not row_source_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{TASK_ROWS_COMPATIBILITY_METHOD}() does not call "
+            f"self.{TASK_ROWS_COMPATIBILITY_ROW_SOURCE}(...); compatibility rows "
+            "must continue to delegate file-backed filtering and augmentation "
+            "to the private row-source helper."
+        )
+    if refresh_calls and row_source_calls:
+        first_refresh = min(refresh_calls, key=_call_source_order)
+        first_row_source = min(row_source_calls, key=_call_source_order)
+        if _call_source_order(first_refresh) >= _call_source_order(first_row_source):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TASK_ROWS_COMPATIBILITY_METHOD}() calls "
+                f"self.{TASK_ROWS_COMPATIBILITY_ROW_SOURCE}() before "
+                f"self.{TASK_ROWS_COMPATIBILITY_REFRESH_METHOD}(); compatibility "
+                "dependency refresh must happen before file-backed row reads."
+            )
+    for call_node in recursive_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{TASK_ROWS_COMPATIBILITY_METHOD}():{call_node.lineno} "
+            f"calls self.{TASK_ROWS_COMPATIBILITY_METHOD}(); the compatibility "
+            f"entrypoint must delegate to self.{TASK_ROWS_COMPATIBILITY_ROW_SOURCE}() "
+            "instead of recursively re-entering itself."
+        )
+
+    return offenders
+
+
+def _check_task_runtime_service_methods_do_not_call_list_task_rows() -> list[str]:
+    """Emit offenders for non-owner methods that call the compatibility row entrypoint."""
+
+    method_defs = _task_runtime_service_method_defs()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+    observed_allowlisted_methods: set[str] = set()
+
+    for method_name, method_def in sorted(method_defs.items()):
+        if method_name == TASK_ROWS_COMPATIBILITY_METHOD:
+            continue
+        direct_calls = _direct_self_method_calls(method_def, TASK_ROWS_COMPATIBILITY_METHOD)
+        if not direct_calls:
+            continue
+        justification = TASK_ROWS_COMPATIBILITY_SELF_CALL_ALLOWLIST.get(method_name)
+        if justification:
+            observed_allowlisted_methods.add(method_name)
+            continue
+        for call_node in direct_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{method_name}():{call_node.lineno} calls "
+                f"self.{TASK_ROWS_COMPATIBILITY_METHOD}(); read-only, status, "
+                "selection, readiness, and projection paths must consume "
+                "side-effect-free row helpers instead of the legacy refreshing "
+                "compatibility entrypoint."
+            )
+
+    for method_name, justification in sorted(TASK_ROWS_COMPATIBILITY_SELF_CALL_ALLOWLIST.items()):
+        if method_name not in method_defs:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{method_name}() is listed in "
+                "TASK_ROWS_COMPATIBILITY_SELF_CALL_ALLOWLIST but no such method exists."
+            )
+        elif not justification.strip():
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{method_name}() has an empty "
+                "TASK_ROWS_COMPATIBILITY_SELF_CALL_ALLOWLIST justification."
+            )
+        elif method_name not in observed_allowlisted_methods:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{method_name}() is listed in "
+                "TASK_ROWS_COMPATIBILITY_SELF_CALL_ALLOWLIST but no direct "
+                f"self.{TASK_ROWS_COMPATIBILITY_METHOD}() call was observed."
+            )
+
+    return offenders
+
+
 def test_transitional_task_row_read_model_rows_load_file_rows_execution_facts_and_projection() -> None:
     """WS2 transitional task-row read-model fence (positive invariant)."""
 
@@ -3725,19 +3827,39 @@ def test_observable_task_rows_do_not_refresh_dependencies_or_read_raw_board() ->
     )
 
 
-def test_list_task_rows_retains_dependency_refresh_entrypoint() -> None:
+def test_list_task_rows_retains_refresh_then_file_row_compatibility_boundary() -> None:
     """WS2 compatibility fence for the existing refreshing row read."""
 
-    method_def = _task_runtime_service_method_def(TASK_ROWS_COMPATIBILITY_METHOD)
-    refresh_calls = _direct_self_method_calls(method_def, "refresh_dependency_unblocks")
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_list_task_rows_compatibility_entrypoint_contract()
 
-    assert refresh_calls, (
+    assert not offenders, (
         "WS2 task-row compatibility fence: "
-        f"{rel}:TaskRuntimeService.{TASK_ROWS_COMPATIBILITY_METHOD}() may keep "
-        "the existing dependency refresh behavior and must continue to call "
-        "self.refresh_dependency_unblocks() before returning compatibility "
-        "rows. Observable read-only projections are fenced separately."
+        f"{rel}:TaskRuntimeService.{TASK_ROWS_COMPATIBILITY_METHOD}() is the "
+        "legacy compatibility entrypoint. It must call "
+        f"self.{TASK_ROWS_COMPATIBILITY_REFRESH_METHOD}() before "
+        f"self.{TASK_ROWS_COMPATIBILITY_ROW_SOURCE}(...), and it must delegate "
+        "row construction to that private file-backed helper instead of "
+        "recursively reading through itself. Observable read-only projections "
+        "are fenced separately. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_runtime_service_methods_do_not_call_list_task_rows_compatibility_entrypoint() -> None:
+    """WS2 compatibility fence: no non-owner method may call ``list_task_rows``."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_task_runtime_service_methods_do_not_call_list_task_rows()
+
+    assert not offenders, (
+        "WS2 task-row compatibility fence: "
+        f"{rel}:TaskRuntimeService.{TASK_ROWS_COMPATIBILITY_METHOD}() is the "
+        "only owner of refresh-before-file-read compatibility behavior. Other "
+        "TaskRuntimeService methods must not call self.list_task_rows(); use "
+        "side-effect-free observable, transitional, dependency-status, or "
+        "file-row helpers as appropriate. Any deliberate exception must be "
+        "encoded in TASK_ROWS_COMPATIBILITY_SELF_CALL_ALLOWLIST with a narrow "
+        "method name and justification. Offenders:\n" + "\n".join(offenders)
     )
 
 
@@ -6025,9 +6147,9 @@ def _collect_direct_list_task_rows_in_method(method_def: ast.FunctionDef) -> lis
     """Return ``self.list_task_rows(...)`` call nodes inside ``method_def``.
 
     Only direct ``self.list_task_rows(...)`` calls are flagged. Indirect calls
-    through locals/aliases or sub-helper methods are not targeted by this fence,
-    and the legitimate callers (``list_observable_task_rows`` itself and the
-    raw write/mutation API) live outside these selection/readiness methods.
+    through locals/aliases or sub-helper methods are outside this local
+    selection/readiness helper; the service-wide compatibility fence owns the
+    complete ``TaskRuntimeService`` self-call boundary.
     """
 
     return [
@@ -6122,11 +6244,12 @@ def test_selection_and_readiness_methods_use_observable_rows_not_raw_list() -> N
     1. The method calls ``self.list_observable_task_rows(...)`` at least once.
     2. The method does NOT call ``self.list_task_rows(...)`` directly.
 
-    ``list_task_rows`` remains the legitimate primitive for
-    ``list_observable_task_rows`` itself and for write/mutation/refresh paths;
-    the fence only bans its direct appearance inside these three selection/
-    readiness methods. Existing ``_task_runtime_service_raw_board_*`` fences
-    and assertion-based invariants continue to apply.
+    ``list_task_rows`` is a legacy compatibility entrypoint with an explicit
+    dependency refresh side effect. A dedicated service-wide fence bans direct
+    ``self.list_task_rows()`` calls from non-owner methods; this narrower fence
+    keeps the selection/readiness expectation close to the methods that choose
+    executable rows. Existing ``_task_runtime_service_raw_board_*`` fences and
+    assertion-based invariants continue to apply.
     """
 
     offenders = _check_selection_readiness_uses_observable_rows()
@@ -6138,9 +6261,9 @@ def test_selection_and_readiness_methods_use_observable_rows_not_raw_list() -> N
         "(self.list_observable_task_rows(...)) instead of the raw file-backed "
         "self.list_task_rows(...), so the task_runtime.execution Fact Stream "
         "overlay stays part of the read-model SSoT for selection and "
-        "readiness. Direct list_task_rows() calls inside write/mutation paths "
-        "and inside list_observable_task_rows() itself remain allowed. "
-        "Offenders:\n" + "\n".join(offenders)
+        "readiness. Direct list_task_rows() calls from other "
+        "TaskRuntimeService methods are blocked by the service-wide "
+        "compatibility-entrypoint fence. Offenders:\n" + "\n".join(offenders)
     )
 
 

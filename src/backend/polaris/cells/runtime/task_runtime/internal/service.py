@@ -1197,14 +1197,21 @@ class TaskRuntimeService:
         raise RuntimeError("TaskRuntimeService.list_all is retired; use list_task_rows()")
 
     def list_task_rows(self, *, include_terminal: bool = True) -> list[dict[str, Any]]:
-        """Return the canonical file-backed task rows.
+        """Return task rows through the execution compatibility path.
 
-        ``refresh_dependency_unblocks()`` is called first so that any stale
-        ``blocked`` state is normalized against the latest
-        ``task_runtime.execution`` fact projection before the rows are returned.
-        The row construction itself delegates to ``_list_file_task_rows`` so
-        that other service methods can rebuild file-backed rows without
-        recursively re-entering this refresh path.
+        Boundary:
+            This method is a compatibility entrypoint, not the read-only
+            observable task-row SSoT for status, UI, selection, or read-model
+            consumers. It calls ``refresh_dependency_unblocks()`` before
+            reading rows, so observation-only callers must use
+            ``list_observable_task_rows()`` or a more specific projection helper
+            when they need a side-effect-free task projection.
+
+        Use this method only for execution/worker compatibility paths that
+        require refresh-before-read behavior. Row construction still delegates
+        to ``_list_file_task_rows(include_terminal=...)`` so the legacy
+        file-backed filtering, sorting, and runtime augmentation semantics stay
+        centralized there.
         """
 
         self.refresh_dependency_unblocks()

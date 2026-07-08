@@ -1577,23 +1577,30 @@ def test_list_task_rows_continues_to_refresh_dependency_unblocks(
             "metadata": {"source": "file_row"},
         }
     ]
-    refresh_calls: list[str] = []
+    events: list[tuple[str, bool | None]] = []
 
     def record_refresh_dependency_unblocks() -> dict[str, Any]:
-        refresh_calls.append("refresh_dependency_unblocks")
+        events.append(("refresh_dependency_unblocks", None))
         return {"unblocked_task_ids": [], "execution_events": []}
 
     def list_file_task_rows(*, include_terminal: bool = True) -> list[dict[str, Any]]:
-        assert include_terminal is False
+        events.append(("_list_file_task_rows", include_terminal))
         return [dict(row) for row in file_rows]
 
     monkeypatch.setattr(service, "refresh_dependency_unblocks", record_refresh_dependency_unblocks)
     monkeypatch.setattr(service, "_list_file_task_rows", list_file_task_rows)
 
-    rows = service.list_task_rows(include_terminal=False)
+    rows_without_terminal = service.list_task_rows(include_terminal=False)
+    rows_with_default_terminal = service.list_task_rows()
 
-    assert rows == file_rows
-    assert refresh_calls == ["refresh_dependency_unblocks"]
+    assert rows_without_terminal == file_rows
+    assert rows_with_default_terminal == file_rows
+    assert events == [
+        ("refresh_dependency_unblocks", None),
+        ("_list_file_task_rows", False),
+        ("refresh_dependency_unblocks", None),
+        ("_list_file_task_rows", True),
+    ]
 
 
 def test_list_ready_task_rows_refreshes_before_observable_projection(
