@@ -62,6 +62,7 @@ from .tool_lifecycle import (
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     build_tool_dispatch_dropped_lifecycle_from_observed_calls,
+    effect_receipts_from_batch_receipts,
     empty_tool_lifecycle_summary,
     failure_evidence_from_lifecycle_receipt,
     merge_tool_lifecycle_summaries,

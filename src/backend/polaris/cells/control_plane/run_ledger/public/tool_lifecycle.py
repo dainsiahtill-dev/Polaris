@@ -565,6 +565,56 @@ def batch_receipt_has_dispatch_evidence(batch_receipt: Any) -> bool:
     return False
 
 
+def _append_effect_receipt_copy(effect_receipts: list[dict[str, Any]], candidate: Any) -> None:
+    if isinstance(candidate, dict):
+        effect_receipts.append(dict(candidate))
+
+
+def _append_top_level_effect_receipts(effect_receipts: list[dict[str, Any]], candidates: Any) -> None:
+    if not isinstance(candidates, list):
+        return
+    for candidate in candidates:
+        _append_effect_receipt_copy(effect_receipts, candidate)
+
+
+def _append_result_effect_receipts(effect_receipts: list[dict[str, Any]], raw_results: Any) -> None:
+    if not isinstance(raw_results, list):
+        return
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        direct = item.get("effect_receipt")
+        if isinstance(direct, dict):
+            _append_effect_receipt_copy(effect_receipts, direct)
+            continue
+        result = item.get("result")
+        if isinstance(result, dict):
+            _append_effect_receipt_copy(effect_receipts, result.get("effect_receipt"))
+
+
+def effect_receipts_from_batch_receipts(receipts: Sequence[Any]) -> list[dict[str, Any]]:
+    """Extract effect receipts from normalized or raw batch receipts.
+
+    Boundary:
+        Run Ledger owns the batch-receipt dispatch/effect evidence key set.
+        Runtime cells should consume this helper instead of locally checking
+        ``"effect_receipts"``, ``"results"``, or ``"raw_results"``.
+
+    Complexity:
+        O(r + n), where ``r`` is the number of batch receipts and ``n`` is the
+        total number of result rows/effect rows inspected.
+    """
+
+    effect_receipts: list[dict[str, Any]] = []
+    for receipt in receipts:
+        if not isinstance(receipt, Mapping):
+            continue
+        _append_top_level_effect_receipts(effect_receipts, receipt.get("effect_receipts"))
+        for key in ("results", "raw_results"):
+            _append_result_effect_receipts(effect_receipts, receipt.get(key))
+    return effect_receipts
+
+
 def build_missing_dispatch_lifecycle_receipt(
     *,
     required_write_tools: Sequence[Any],
@@ -2149,6 +2199,7 @@ __all__ = [
     "build_tool_dispatch_dropped_anomaly_projection",
     "build_tool_dispatch_dropped_lifecycle_from_anomaly_flags",
     "build_tool_dispatch_dropped_lifecycle_from_observed_calls",
+    "effect_receipts_from_batch_receipts",
     "empty_tool_lifecycle_summary",
     "failure_evidence_from_lifecycle_receipt",
     "merge_tool_lifecycle_summaries",

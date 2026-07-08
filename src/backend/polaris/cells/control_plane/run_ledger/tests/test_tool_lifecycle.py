@@ -18,6 +18,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     build_tool_dispatch_dropped_lifecycle_from_observed_calls,
+    effect_receipts_from_batch_receipts,
     empty_tool_lifecycle_summary,
     failure_evidence_from_lifecycle_receipt,
     merge_tool_lifecycle_summaries,
@@ -58,6 +59,7 @@ def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
         "build_native_tool_call_envelopes",
         "build_tool_batch_lifecycle_receipt_from_sources",
         "build_tool_dispatch_dropped_anomaly_from_sources",
+        "effect_receipts_from_batch_receipts",
         "native_tool_call_names_from_facts",
         "observed_tool_call_names_from_sources",
         "project_tool_lifecycle_failure_status",
@@ -1037,6 +1039,43 @@ def test_batch_receipt_has_dispatch_evidence_owns_receipt_key_set() -> None:
     assert batch_receipt_has_dispatch_evidence({"results": []}) is False
     assert batch_receipt_has_dispatch_evidence({"unrelated": [{"tool": "write_file"}]}) is False
     assert batch_receipt_has_dispatch_evidence(None) is False
+
+
+def test_effect_receipts_from_batch_receipts_owns_receipt_key_set() -> None:
+    top_level = {"operation": "top-level", "file": "src/top.py"}
+    result_direct = {"operation": "result-direct", "file": "src/direct.py"}
+    result_nested = {"operation": "result-nested", "file": "src/nested.py"}
+    raw_direct = {"operation": "raw-direct", "file": "src/raw-direct.py"}
+    raw_nested = {"operation": "raw-nested", "file": "src/raw-nested.py"}
+
+    receipts = effect_receipts_from_batch_receipts(
+        [
+            None,
+            "invalid",
+            {
+                "effect_receipts": [top_level, "invalid", None],
+                "results": [
+                    {"effect_receipt": result_direct},
+                    {"result": {"effect_receipt": result_nested}},
+                ],
+                "raw_results": [
+                    {"effect_receipt": raw_direct},
+                    {"result": {"effect_receipt": raw_nested}},
+                    {"result": {"effect_receipt": ["invalid"]}},
+                ],
+            },
+        ]
+    )
+
+    assert receipts == [
+        top_level,
+        result_direct,
+        result_nested,
+        raw_direct,
+        raw_nested,
+    ]
+    sources = [top_level, result_direct, result_nested, raw_direct, raw_nested]
+    assert all(receipt is not source for receipt, source in zip(receipts, sources, strict=True))
 
 
 def test_build_tool_call_lifecycle_run_ledger_event_normalizes_receipt_and_job_token() -> None:

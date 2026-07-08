@@ -22,6 +22,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     append_tool_call_lifecycle_event,
     build_tool_batch_lifecycle_receipt_from_sources,
     build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
+    effect_receipts_from_batch_receipts,
 )
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
@@ -892,40 +893,9 @@ def _capability_token_from_effect_receipt(receipt: dict[str, Any]) -> dict[str, 
     return {}
 
 
-def _append_effect_receipt_copy(effect_receipts: list[dict[str, Any]], candidate: Any) -> None:
-    if isinstance(candidate, dict):
-        effect_receipts.append(dict(candidate))
-
-
-def _append_top_level_effect_receipts(effect_receipts: list[dict[str, Any]], candidates: Any) -> None:
-    if not isinstance(candidates, list):
-        return
-    for candidate in candidates:
-        _append_effect_receipt_copy(effect_receipts, candidate)
-
-
-def _append_result_effect_receipts(effect_receipts: list[dict[str, Any]], raw_results: Any) -> None:
-    if not isinstance(raw_results, list):
-        return
-    for item in raw_results:
-        if not isinstance(item, dict):
-            continue
-        direct = item.get("effect_receipt")
-        if isinstance(direct, dict):
-            _append_effect_receipt_copy(effect_receipts, direct)
-            continue
-        result = item.get("result")
-        if isinstance(result, dict):
-            _append_effect_receipt_copy(effect_receipts, result.get("effect_receipt"))
-
-
 def _effect_receipts_from_batch_receipts(receipts: list[Any]) -> list[dict[str, Any]]:
-    effect_receipts: list[dict[str, Any]] = []
-    for receipt in normalize_batch_receipts(receipts):
-        _append_top_level_effect_receipts(effect_receipts, receipt.get("effect_receipts"))
-        for key in ("results", "raw_results"):
-            _append_result_effect_receipts(effect_receipts, receipt.get(key))
-    return effect_receipts
+    """Compatibility wrapper for Run Ledger-owned effect receipt extraction."""
+    return effect_receipts_from_batch_receipts(normalize_batch_receipts(receipts))
 
 
 def _batch_result_count(receipts: list[Any]) -> int:
