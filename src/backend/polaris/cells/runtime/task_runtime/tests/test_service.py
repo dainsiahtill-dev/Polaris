@@ -1305,6 +1305,145 @@ def test_task_runtime_service_materializes_legacy_task_and_claims_it(tmp_path: P
     assert str(claim["session"]["session_id"])
 
 
+def test_ensure_task_row_reuses_fact_overlaid_row_when_raw_row_is_stale(tmp_path: Path) -> None:
+    """``ensure_task_row`` must dedupe through the observable read model.
+
+    A raw file row can still be ``pending`` while the latest execution fact
+    projects the task as terminal and carries fresher metadata. The ensure
+    path must return the fact-overlaid row, not the stale raw TaskBoard row,
+    and it must not create a duplicate materialized task.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    external_id = "TASK-ENSURE-OVERLAY"
+
+    created = service.create_task_row(
+        subject="raw stale ensure row",
+        description="file row stays pending while fact overlays completion",
+        metadata={"external_task_id": external_id, "owner": "raw"},
+    )
+    created_id = int(created["id"])
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="completed",
+            source="runtime.task_runtime",
+            task_id=str(created_id),
+            run_id="run-ensure-overlaid",
+            payload={
+                "task_id": str(created_id),
+                "run_id": "run-ensure-overlaid",
+                "event_type": "completed",
+                "status": "completed",
+                "execution_state": "completed",
+                "task_row_snapshot": {
+                    "id": created_id,
+                    "task_id": str(created_id),
+                    "subject": "fact-overlaid ensure row",
+                    "description": "latest execution fact owns the read model",
+                    "priority": "HIGH",
+                    "metadata": {
+                        "external_task_id": external_id,
+                        "source_task_id": external_id,
+                        "owner": "fact",
+                        "source": "task_runtime.row_snapshot",
+                    },
+                },
+            },
+        )
+    )
+
+    on_disk = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert on_disk["status"] == "pending"
+    assert on_disk["metadata"]["owner"] == "raw"
+
+    row = service.ensure_task_row(
+        external_task_id=external_id,
+        subject="duplicate should not be created",
+        metadata={"external_task_id": external_id, "owner": "new"},
+    )
+
+    assert row["id"] == created_id
+    assert row["status"] == "completed"
+    assert row["subject"] == "fact-overlaid ensure row"
+    assert row["metadata"]["external_task_id"] == external_id
+    assert row["metadata"]["source_task_id"] == external_id
+    assert row["metadata"]["owner"] == "fact"
+    assert row["metadata"]["source"] == "task_runtime.execution_fact"
+    assert row["metadata"]["previous_status"] == "pending"
+    assert [file_row["id"] for file_row in service.list_task_rows()] == [created_id]
+
+
+def test_ensure_task_row_reuses_observable_external_id_when_raw_metadata_lacks_it(tmp_path: Path) -> None:
+    """External-id dedupe must also work when only the fact overlay carries it."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    external_id = "TASK-ENSURE-FACT-ONLY-ID"
+
+    created = service.create_task_row(
+        subject="raw row without external id",
+        description="external id is introduced by the execution fact snapshot",
+        metadata={"owner": "raw"},
+    )
+    created_id = int(created["id"])
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="claimed",
+            source="runtime.task_runtime",
+            task_id=str(created_id),
+            run_id="run-ensure-fact-external-id",
+            payload={
+                "task_id": str(created_id),
+                "run_id": "run-ensure-fact-external-id",
+                "event_type": "claimed",
+                "status": "in_progress",
+                "execution_state": "in_progress",
+                "session_id": "session-ensure-fact-external-id",
+                "task_row_snapshot": {
+                    "id": created_id,
+                    "task_id": str(created_id),
+                    "subject": "observable external id row",
+                    "description": "fact snapshot carries the external id",
+                    "priority": "HIGH",
+                    "metadata": {
+                        "external_task_id": external_id,
+                        "source_task_id": external_id,
+                        "owner": "fact",
+                        "source": "task_runtime.row_snapshot",
+                    },
+                },
+            },
+        )
+    )
+
+    on_disk = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
+    assert "external_task_id" not in on_disk["metadata"]
+
+    row = service.ensure_task_row(
+        external_task_id=external_id,
+        subject="new row must not be materialized",
+        metadata={"external_task_id": external_id, "owner": "new"},
+    )
+
+    assert row["id"] == created_id
+    assert row["status"] == "in_progress"
+    assert row["subject"] == "observable external id row"
+    assert row["metadata"]["external_task_id"] == external_id
+    assert row["metadata"]["source_task_id"] == external_id
+    assert row["metadata"]["owner"] == "fact"
+    assert row["metadata"]["source"] == "task_runtime.execution_fact"
+    assert [file_row["id"] for file_row in service.list_task_rows()] == [created_id]
+
+
 def test_ensure_task_row_reports_materialized_event_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

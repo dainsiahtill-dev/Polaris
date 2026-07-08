@@ -481,12 +481,13 @@ class TaskRuntimeService:
         token = str(external_id or "").strip()
         if not token:
             return None
-        for task in self._board.list_all():
-            row = task.to_dict()
+        for row in self.list_observable_task_rows():
+            if not isinstance(row, dict):
+                continue
             raw_metadata = row.get("metadata")
             metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
             if self._metadata_matches_external_task_id(metadata, token):
-                return self._augment_task_row(row)
+                return dict(row)
         return None
 
     def create(

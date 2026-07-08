@@ -170,7 +170,6 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_augment_task_row", "get"): 1,
     ("_dependent_rows_blocked_by", "list_all"): 1,
     ("_find_terminal_session_snapshot", "get"): 1,
-    ("_get_task_by_external_task_id", "list_all"): 1,
     ("_list_file_task_rows", "list_all"): 1,
     ("cancel_task_row_for_deduplication", "get"): 1,
     ("claim_execution", "get"): 1,
@@ -3341,6 +3340,126 @@ def test_selection_and_readiness_methods_use_observable_rows_not_raw_list() -> N
 
 
 # ---------------------------------------------------------------------------
+# WS2 external task-id lookup — observable read-model projection
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService._get_task_by_external_task_id()`` is the private
+# materialization lookup used by ``ensure_task_row()`` to deduplicate PM /
+# orchestration contracts by external id. It used to walk raw ``TaskBoard``
+# entities through ``self._board.list_all()``; this fence closes that residual
+# by making the helper read the same observable row model as public snapshot /
+# UI consumers.
+#
+# The check is intentionally narrow and mechanical:
+#
+#   1. The helper must call ``self.list_observable_task_rows()``.
+#   2. The helper must not call raw board reads or the raw file-backed row list.
+#
+# ``_list_file_task_rows()`` remains a legitimate primitive inside
+# ``list_observable_task_rows()``. This fence only protects the external-id
+# lookup helper from bypassing the execution-fact overlay.
+
+EXTERNAL_TASK_ID_LOOKUP_HELPER = "_get_task_by_external_task_id"
+EXTERNAL_TASK_ID_LOOKUP_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
+    "self._board.list_all": "raw TaskBoard.list_all() bypasses the execution-fact overlay",
+    "self._board.get": "raw TaskBoard.get() bypasses the execution-fact overlay",
+    "self.list_task_rows": "raw list_task_rows() regresses to file-backed status only",
+}
+
+
+def _external_task_id_lookup_function_def() -> ast.FunctionDef:
+    """Return the ``TaskRuntimeService._get_task_by_external_task_id`` AST node."""
+
+    return _task_runtime_service_method_def(EXTERNAL_TASK_ID_LOOKUP_HELPER)
+
+
+def _check_external_task_id_lookup_calls_list_observable_task_rows() -> list[str]:
+    """Emit offenders if external-id lookup does not read observable rows."""
+
+    method_def = _external_task_id_lookup_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+
+    if _method_body_calls_self_method(method_def, "list_observable_task_rows"):
+        return []
+
+    return [
+        f"{rel}:TaskRuntimeService.{EXTERNAL_TASK_ID_LOOKUP_HELPER}() does not "
+        "call self.list_observable_task_rows(); external-id materialization "
+        "lookup must scan the observable row projection so the "
+        "task_runtime.execution Fact Stream overlay remains part of the "
+        "read-model SSoT."
+    ]
+
+
+def _check_external_task_id_lookup_forbidden_raw_reads() -> list[str]:
+    """Emit offenders if external-id lookup regresses to raw row reads."""
+
+    method_def = _external_task_id_lookup_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for call_node in ast.walk(method_def):
+        if not isinstance(call_node, ast.Call):
+            continue
+        callee = _call_name(call_node.func)
+        reason = EXTERNAL_TASK_ID_LOOKUP_FORBIDDEN_RAW_READ_TARGETS.get(callee)
+        if reason is None:
+            continue
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{EXTERNAL_TASK_ID_LOOKUP_HELPER}():"
+            f"{call_node.lineno} calls {callee!r}; {reason}. External-id "
+            "materialization lookup must read through "
+            "self.list_observable_task_rows() so execution facts remain part "
+            "of the row projection."
+        )
+
+    return offenders
+
+
+def test_external_task_id_lookup_reads_through_observable_rows() -> None:
+    """WS2 external-id lookup fence (positive invariant).
+
+    ``TaskRuntimeService._get_task_by_external_task_id()`` deduplicates
+    materialized external contracts before ``ensure_task_row()`` creates a
+    new canonical row. The lookup must call ``self.list_observable_task_rows()``
+    rather than walking raw ``TaskBoard`` entities, so late
+    ``task_runtime.execution`` facts and in-flight overlays stay visible to
+    deduplication.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_external_task_id_lookup_calls_list_observable_task_rows()
+
+    assert not offenders, (
+        "WS2 external-id lookup fence: "
+        f"{rel}:TaskRuntimeService.{EXTERNAL_TASK_ID_LOOKUP_HELPER}() must "
+        "call self.list_observable_task_rows() so external-id deduplication "
+        "uses the observable row projection. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_external_task_id_lookup_does_not_regress_to_raw_row_reads() -> None:
+    """WS2 external-id lookup fence (negative invariant).
+
+    ``TaskRuntimeService._get_task_by_external_task_id()`` must not call
+    ``self._board.list_all()``, ``self._board.get()``, or
+    ``self.list_task_rows()``. Those reads bypass the observable read model and
+    would reintroduce the raw ``TaskBoard`` residual that this fence retires.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_external_task_id_lookup_forbidden_raw_reads()
+
+    assert not offenders, (
+        "WS2 external-id lookup fence: "
+        f"{rel}:TaskRuntimeService.{EXTERNAL_TASK_ID_LOOKUP_HELPER}() must not "
+        "read raw TaskBoard rows or raw file-backed task rows. It must route "
+        "through self.list_observable_task_rows() so the task_runtime.execution "
+        "Fact Stream overlay stays part of the read-model SSoT. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
 # WS2 dependency refresh — fact-aware dependency-status projection
 # ---------------------------------------------------------------------------
 #
@@ -4324,8 +4443,9 @@ def test_new_fact_stream_readers_in_task_runtime_service_are_read_only_projectio
 #   1. The projection is reachable from ``get_task()`` (directly or through
 #      a single layer of private ``self.<helper>()`` delegation).
 #   2. ``get_task()`` does not regress to raw row-only reads by calling
-#      ``self._board.get()``, ``self._board.list_all()``,
-#      ``self.list_task_rows()``, or ``self._get_task_by_external_task_id()``.
+#      ``self._board.get()``, ``self._board.list_all()``, or
+#      ``self.list_task_rows()``. It also must not borrow the external-id
+#      materialization lookup helper as its task-id read path.
 #
 # The fence is intentionally line-number-agnostic. New helper methods that
 # ``get_task()`` delegates to (e.g. ``_resolve_observable_task_row``) are
@@ -4336,7 +4456,10 @@ GET_TASK_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
     "self._board.get": "raw TaskBoard.get() bypasses the execution-fact overlay",
     "self._board.list_all": "raw TaskBoard.list_all() bypasses the execution-fact overlay",
     "self.list_task_rows": "raw list_task_rows() regresses to file-backed status only",
-    "self._get_task_by_external_task_id": "_get_task_by_external_task_id() still walks self._board.list_all()",
+    "self._get_task_by_external_task_id": (
+        "_get_task_by_external_task_id() is an external-id materialization lookup, "
+        "not the public task-id read path"
+    ),
 }
 
 GET_TASK_DELEGATED_HELPER_DEPTH = 1
@@ -4506,10 +4629,10 @@ def test_get_task_does_not_regress_to_raw_row_only_reads() -> None:
     ``TaskRuntimeService.get_task()`` must not call
     ``self._board.get(...)``, ``self._board.list_all(...)``,
     ``self.list_task_rows(...)``, or ``self._get_task_by_external_task_id()``
-    because each of those primitives reads raw ``TaskBoard`` state without
-    the ``task_runtime.execution`` fact overlay. Allowing any of them inside
-    ``get_task()`` would silently regress the public single-row read
-    projection to the pre-WS2 raw-row view.
+    because the raw-read primitives bypass the ``task_runtime.execution`` fact
+    overlay, and the external-id lookup helper is not the public task-id read
+    path. Allowing any of them inside ``get_task()`` would silently regress
+    or confuse the public single-row read projection.
 
     The fence is structural and walks both the ``get_task()`` AST body and
     any private helper that ``get_task()`` delegates to (for example
@@ -4550,9 +4673,9 @@ def test_get_task_does_not_regress_to_raw_row_only_reads() -> None:
 #      ``self.list_observable_task_rows()`` either directly or via a single
 #      private ``TaskRuntimeService`` helper it delegates to.
 #   2. Negative invariant: ``task_exists()`` and any delegated helper do
-#      not call ``self._board.get(...)``, ``self._board.list_all(...)``,
-#      ``self.list_task_rows(...)``, or
-#      ``self._get_task_by_external_task_id(...)``.
+#      not call ``self._board.get(...)``, ``self._board.list_all(...)``, or
+#      ``self.list_task_rows(...)``. They also must not borrow the external-id
+#      materialization lookup helper as their task-id existence path.
 #
 # The fence is intentionally line-number-agnostic so future refactors that
 # keep the helper delegation (e.g. ``_resolve_observable_task_row``) stay
@@ -4664,10 +4787,10 @@ def test_task_exists_does_not_regress_to_raw_row_only_reads() -> None:
     ``TaskRuntimeService.task_exists()`` must not call
     ``self._board.get(...)``, ``self._board.list_all(...)``,
     ``self.list_task_rows(...)``, or ``self._get_task_by_external_task_id()``
-    because each of those primitives reads raw ``TaskBoard`` state without
-    the ``task_runtime.execution`` fact overlay. Allowing any of them inside
-    ``task_exists()`` would silently regress the public existence check to
-    the pre-WS2 raw-row view.
+    because the raw-read primitives bypass the ``task_runtime.execution`` fact
+    overlay, and the external-id lookup helper is not the public task-id
+    existence path. Allowing any of them inside ``task_exists()`` would
+    silently regress or confuse the public existence check.
 
     The fence is structural and walks both the ``task_exists()`` AST body
     and any private helper that ``task_exists()`` delegates to (for example
@@ -4772,7 +4895,10 @@ STATS_OBSERVABLE_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
     "self._board.list_all": ("raw TaskBoard.list_all() bypasses the execution-fact overlay"),
     "self.list_task_rows": ("raw list_task_rows() regresses to file-backed status only"),
     "self._board.get": ("raw TaskBoard.get() bypasses the execution-fact overlay"),
-    "self._get_task_by_external_task_id": ("_get_task_by_external_task_id() still walks self._board.list_all()"),
+    "self._get_task_by_external_task_id": (
+        "_get_task_by_external_task_id() is an external-id materialization lookup, "
+        "not a stats projection path"
+    ),
 }
 
 STATS_COMPAT_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
