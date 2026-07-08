@@ -13,6 +13,7 @@ import pytest
 from polaris.cells.events.fact_stream.public.service import (
     AppendFactEventCommandV1,
     FactStreamError,
+    FactStreamQueryResultV1,
     QueryFactEventsV1,
     append_fact_event,
     query_fact_events,
@@ -164,6 +165,59 @@ def _raise_fact_stream_unavailable(
     assert event_type_str
     assert payload
     raise RuntimeError("fact stream unavailable")
+
+
+def _append_execution_fact_probe(
+    workspace: Path,
+    *,
+    task_id: object,
+    event_type: str,
+    status: str,
+    run_id: str,
+    subject: str = "execution fact gateway probe",
+) -> None:
+    task_token = str(task_id)
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type=event_type,
+            source="runtime.task_runtime",
+            task_id=task_token,
+            run_id=run_id,
+            payload={
+                "task_id": task_token,
+                "event_type": event_type,
+                "status": status,
+                "execution_state": status,
+                "run_id": run_id,
+                "task_row_snapshot": {
+                    "id": task_id,
+                    "task_id": task_token,
+                    "subject": subject,
+                },
+            },
+        )
+    )
+
+
+def _spy_execution_fact_gateway(
+    service: TaskRuntimeService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[int, int]]:
+    gateway_calls: list[tuple[int, int]] = []
+    original_gateway = service._query_execution_fact_events
+
+    def query_execution_fact_events_spy(
+        *,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> Any:
+        gateway_calls.append((int(limit), int(offset)))
+        return original_gateway(limit=limit, offset=offset)
+
+    monkeypatch.setattr(service, "_query_execution_fact_events", query_execution_fact_events_spy)
+    return gateway_calls
 
 
 def _assert_execution_event_append_failure_with_row_write_receipt(
@@ -5591,6 +5645,142 @@ def test_list_task_rows_from_execution_facts_uses_latest_fact_window(tmp_path: P
     assert rows[0]["status"] == "completed"
     assert rows[0]["execution_state"] == "completed"
     assert rows[0]["fact_event_seq"] == 3
+
+
+def test_list_task_rows_from_execution_facts_queries_gateway_and_keeps_latest_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The list projection must query execution facts through the service gateway.
+
+    This pins the replacement/monitoring boundary for the Execution Ledger read
+    model while preserving the existing latest-window behavior.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    for event_type, status in (
+        ("created", "pending"),
+        ("claimed", "in_progress"),
+        ("completed", "completed"),
+    ):
+        _append_execution_fact_probe(
+            workspace,
+            task_id="TASK-GATEWAY-WINDOW",
+            event_type=event_type,
+            status=status,
+            run_id="run-gateway-window",
+            subject="gateway latest window row",
+        )
+
+    gateway_calls = _spy_execution_fact_gateway(service, monkeypatch)
+
+    rows = service.list_task_rows_from_execution_facts(limit=2)
+
+    assert gateway_calls == [(2, 0), (2, 1)]
+    assert len(rows) == 1
+    assert rows[0]["task_id"] == "TASK-GATEWAY-WINDOW"
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["execution_state"] == "completed"
+    assert rows[0]["fact_event_seq"] == 3
+
+
+def test_find_latest_execution_fact_row_for_task_pages_backward_through_gateway(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The single-task lookup must page backward through the service gateway."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    target_task_id = 232
+
+    _append_execution_fact_probe(
+        workspace,
+        task_id=target_task_id,
+        event_type="claimed",
+        status="in_progress",
+        run_id="run-gateway-target-claimed",
+        subject="target task first fact",
+    )
+    _append_execution_fact_probe(
+        workspace,
+        task_id=9001,
+        event_type="claimed",
+        status="in_progress",
+        run_id="run-gateway-other-1",
+        subject="other task first fact",
+    )
+    _append_execution_fact_probe(
+        workspace,
+        task_id=target_task_id,
+        event_type="completed",
+        status="completed",
+        run_id="run-gateway-target-completed",
+        subject="target task latest fact",
+    )
+    _append_execution_fact_probe(
+        workspace,
+        task_id=9002,
+        event_type="claimed",
+        status="in_progress",
+        run_id="run-gateway-other-2",
+        subject="other task second fact",
+    )
+    _append_execution_fact_probe(
+        workspace,
+        task_id=9003,
+        event_type="completed",
+        status="completed",
+        run_id="run-gateway-other-3",
+        subject="other task terminal fact",
+    )
+
+    gateway_calls = _spy_execution_fact_gateway(service, monkeypatch)
+
+    row = service._find_latest_execution_fact_row_for_task(target_task_id, page_size=2)
+
+    assert gateway_calls == [(1, 0), (2, 3), (2, 1)]
+    assert row is not None
+    assert row["id"] == target_task_id
+    assert row["task_id"] == str(target_task_id)
+    assert row["status"] == "completed"
+    assert row["execution_state"] == "completed"
+    assert row["fact_event_seq"] == 3
+
+
+def test_next_execution_fact_expected_seq_uses_gateway_total(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CAS seq calculation must use the gateway result total, not storage internals."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    gateway_calls: list[tuple[int, int]] = []
+
+    def query_execution_fact_events_spy(
+        *,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> FactStreamQueryResultV1:
+        gateway_calls.append((int(limit), int(offset)))
+        return FactStreamQueryResultV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            events=(),
+            total=41,
+            next_offset=0,
+        )
+
+    monkeypatch.setattr(service, "_query_execution_fact_events", query_execution_fact_events_spy)
+
+    assert service._next_execution_fact_expected_seq() == 42
+    assert gateway_calls == [(1, 0)]
 
 
 def test_list_task_rows_from_execution_facts_omits_fact_event_seq_when_wrapper_seq_invalid(

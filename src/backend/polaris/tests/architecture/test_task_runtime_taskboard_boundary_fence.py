@@ -5536,7 +5536,9 @@ def _list_reader_queries_latest_fact_window() -> tuple[bool, list[str]]:
                 expression = ast.unparse(node.value)
                 if "result.total" in expression and "event_limit" in expression:
                     has_latest_offset_assignment = True
-        elif isinstance(node, ast.Call) and _call_name(node.func) == "QueryFactEventsV1":
+        elif (
+            isinstance(node, ast.Call) and _call_name(node.func) == f"self.{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}"
+        ):
             for keyword in node.keywords:
                 if keyword.arg != "offset":
                     continue
@@ -5548,7 +5550,9 @@ def _list_reader_queries_latest_fact_window() -> tuple[bool, list[str]]:
     if not has_latest_offset_assignment:
         offenders.append("missing latest_offset assignment from result.total - event_limit")
     if not has_offset_query:
-        offenders.append("missing second QueryFactEventsV1(..., offset=latest_offset) query")
+        offenders.append(
+            f"missing second self.{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}(..., offset=latest_offset) query"
+        )
 
     return not offenders, offenders
 
@@ -6633,18 +6637,14 @@ CLAIM_EXECUTION_SESSION_CREATE_NAMES: frozenset[str] = frozenset(
         "create",  # TaskExecutionSession.create(...)
     }
 )
-# Forward-looking allowlist for private fact-stream readers. New helpers
-# added to ``TaskRuntimeService`` that query the ``task_runtime.execution``
-# Fact Stream directly must be added here so the WS2 claim fence knows
-# they are read-only projections rather than new task-state sources.
+# Execution Fact Query Gateway: the only TaskRuntimeService method allowed
+# to query the ``task_runtime.execution`` Fact Stream directly. Read-model
+# methods must call this private gateway instead of constructing
+# ``QueryFactEventsV1`` or invoking ``query_fact_events`` themselves.
+TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY = "_query_execution_fact_events"
 CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST: frozenset[str] = frozenset(
     {
-        "list_task_rows_from_execution_facts",
-        "_fact_overlaid_dependency_status_rows",
-        "_list_dependency_status_rows",
-        "list_observable_task_rows",
-        "_augment_task_row",
-        "_find_latest_execution_fact_row_for_task",
+        TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY,
     }
 )
 
@@ -6934,118 +6934,141 @@ def _top_level_function_defs(path: Path) -> list[ast.FunctionDef]:
     return [node for node in tree.body if isinstance(node, ast.FunctionDef)]
 
 
-def _function_queries_execution_fact_stream(method_def: ast.FunctionDef) -> bool:
-    """True if ``method_def`` queries the ``task_runtime.execution`` Fact Stream.
+TASK_RUNTIME_EXECUTION_STREAM_CONSTANT_NAMES = frozenset(
+    {
+        "_TASK_RUNTIME_EXECUTION_STREAM",
+        "TASK_RUNTIME_EXECUTION_STREAM",
+    }
+)
 
-    Catches ``QueryFactEventsV1(...)`` and ``query_fact_events(...)`` calls
-    whose stream literal matches ``task_runtime.execution``. Imports or
-    unrelated streams are ignored.
-    """
 
-    for node in ast.walk(method_def):
-        if not isinstance(node, ast.Call):
-            continue
-        callee = _call_name(node.func)
-        if callee not in {"QueryFactEventsV1", "query_fact_events"}:
-            continue
-        for arg in (*node.args, *(keyword.value for keyword in node.keywords)):
-            if _contains_string_literal(arg, TASK_RUNTIME_EXECUTION_STREAM):
-                return True
+def _references_execution_fact_stream(node: ast.AST) -> bool:
+    """Return true for the execution fact stream literal or local constants."""
+
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Constant)
+            and isinstance(child.value, str)
+            and child.value == TASK_RUNTIME_EXECUTION_STREAM
+        ):
+            return True
+        if isinstance(child, ast.Name) and child.id in TASK_RUNTIME_EXECUTION_STREAM_CONSTANT_NAMES:
+            return True
+        if isinstance(child, ast.Attribute) and child.attr in TASK_RUNTIME_EXECUTION_STREAM_CONSTANT_NAMES:
+            return True
     return False
 
 
-def test_new_fact_stream_readers_in_task_runtime_service_are_read_only_projections() -> None:
-    """WS2 claim fact-stream reader containment fence.
+def _call_basename(node: ast.AST) -> str:
+    return _call_name(node).rsplit(".", maxsplit=1)[-1]
 
-    ``TaskRuntimeService`` may add private helpers that query the
-    ``task_runtime.execution`` Fact Stream directly. Each such helper must
-    be a read-only projection: its name must appear in
-    ``CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST`` (a small curated list
-    of reader helpers) and it must not contain any direct write to the
-    ``task_runtime.execution.jsonl`` event file or to
-    ``AppendFactEventCommandV1``.
 
-    The fence is forward-looking: today every fact-stream reader is in the
-    allowlist, so a name-only addition that violates the allowlist (or a
-    helper that secretly writes the fact stream) is caught. The fence does
-    not weaken any existing raw-board read/write allowlist; it only
-    constrains new top-level helpers that touch the Fact Stream.
-    """
+def _is_execution_fact_query_contract_call(node: ast.Call) -> bool:
+    if _call_basename(node.func) != "QueryFactEventsV1":
+        return False
+    for keyword in node.keywords:
+        if keyword.arg == "stream" and _references_execution_fact_stream(keyword.value):
+            return True
+    return any(_references_execution_fact_stream(arg) for arg in node.args)
+
+
+def _function_queries_execution_fact_stream(method_def: ast.FunctionDef) -> bool:
+    """True if ``method_def`` directly queries the execution Fact Stream."""
+
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_basename(node.func)
+        if callee == "query_fact_events":
+            return True
+        if callee == "QueryFactEventsV1" and _is_execution_fact_query_contract_call(node):
+            return True
+    return False
+
+
+def _execution_fact_query_gateway_violations() -> list[str]:
+    """Find TaskRuntimeService methods bypassing the execution fact gateway."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     offenders: list[str] = []
-    known_owners = {"TaskRuntimeService"}  # helpers expected to live on this class
+    method_defs = _task_runtime_service_method_defs()
+    gateway = method_defs.get(TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY)
 
-    # Top-level module functions: every fact-stream reader must be allowlisted.
+    if gateway is None:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}() not found; "
+            "execution fact reads need one private query gateway."
+        )
+        return offenders
+
+    if not any(
+        isinstance(node, ast.Call) and _call_basename(node.func) == "query_fact_events"
+        for node in _walk_task_runtime_method_body(gateway)
+    ):
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}() must call "
+            "query_fact_events(...) directly."
+        )
+    if not any(
+        isinstance(node, ast.Call) and _is_execution_fact_query_contract_call(node)
+        for node in _walk_task_runtime_method_body(gateway)
+    ):
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}() must construct "
+            "QueryFactEventsV1(..., stream=_TASK_RUNTIME_EXECUTION_STREAM, ...)."
+        )
+
+    for method_name, method_def in sorted(method_defs.items()):
+        if method_name == TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY:
+            continue
+        for node in _walk_task_runtime_method_body(method_def):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = _call_basename(node.func)
+            if callee == "query_fact_events":
+                offenders.append(
+                    f"{rel}:TaskRuntimeService.{method_name}():{node.lineno} calls "
+                    "query_fact_events(...) directly; route execution fact reads through "
+                    f"self.{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}(...)."
+                )
+            elif callee == "QueryFactEventsV1" and _is_execution_fact_query_contract_call(node):
+                offenders.append(
+                    f"{rel}:TaskRuntimeService.{method_name}():{node.lineno} constructs "
+                    "QueryFactEventsV1 for task_runtime.execution directly; route through "
+                    f"self.{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}(...)."
+                )
+
     for func_def in _top_level_function_defs(TASK_RUNTIME_INTERNAL_SERVICE):
         if not _function_queries_execution_fact_stream(func_def):
             continue
-        if func_def.name in CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST:
-            continue
         offenders.append(
-            f"{rel}:{func_def.name}() is a new top-level helper that queries "
-            "the task_runtime.execution Fact Stream directly. Add it to "
-            "CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST (read-only "
-            "projection) or refactor it through an allowlisted reader."
+            f"{rel}:{func_def.name}() queries task_runtime.execution directly. "
+            "Execution fact reads must stay behind "
+            f"TaskRuntimeService.{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}()."
         )
 
-    # Bound methods on TaskRuntimeService: any new fact-stream reader must
-    # also be allowlisted and must not bypass the reader projection.
-    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    parents = _parent_lookup(tree)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef) or node.name in (
-            "__init__",
-            "claim_execution",
-        ):
-            continue
-        enclosing = parents.get(node)
-        if not isinstance(enclosing, ast.ClassDef) or enclosing.name not in known_owners:
-            continue
-        if node.name in CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST:
-            continue
-        if not _function_queries_execution_fact_stream(node):
-            continue
-        offenders.append(
-            f"{rel}:TaskRuntimeService.{node.name}() is a new private helper "
-            "that queries the task_runtime.execution Fact Stream directly. "
-            "Add it to CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST "
-            "(read-only projection) so the WS2 claim fence does not treat it "
-            "as a new task-state source."
-        )
-        # Bound fact-stream readers must not write the event file or append
-        # new fact events; that is the role of _append_execution_event only.
-        for child in ast.walk(node):
-            if isinstance(child, ast.Call):
-                callee = _call_name(child.func)
-                if callee == "AppendFactEventCommandV1" and _contains_string_literal(
-                    child, TASK_RUNTIME_EXECUTION_STREAM
-                ):
-                    offenders.append(
-                        f"{rel}:TaskRuntimeService.{node.name}() at line "
-                        f"{child.lineno} appends task_runtime.execution facts; "
-                        "fact-stream readers must remain read-only projections."
-                    )
-            elif isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
-                method = child.func.attr
-                if method in TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS and _contains_string_literal(
-                    child, TASK_RUNTIME_EXECUTION_EVENT_FILE
-                ):
-                    offenders.append(
-                        f"{rel}:TaskRuntimeService.{node.name}() at line "
-                        f"{child.lineno} writes task_runtime.execution.jsonl "
-                        "directly; fact-stream readers must remain read-only."
-                    )
+    return offenders
+
+
+def test_task_runtime_execution_fact_queries_route_through_private_gateway() -> None:
+    """WS2 Execution Ledger SSoT fence: execution fact reads have one gateway.
+
+    ``TaskRuntimeService`` may query ``task_runtime.execution`` directly only
+    inside ``_query_execution_fact_events()``. All other read-model methods
+    must call that gateway so pagination, stream identity, error wrapping, and
+    future projection policy stay centralized.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _execution_fact_query_gateway_violations()
 
     assert not offenders, (
-        "WS2 claim fact-stream reader containment fence: "
-        "New helpers in "
-        f"{rel} that query the task_runtime.execution Fact Stream must be "
-        "added to CLAIM_EXECUTION_FACT_STREAM_READER_ALLOWLIST as read-only "
-        "projections, and must not append new fact events or write the "
-        "event file directly. Do not weaken the existing raw-board "
-        "read/write allowlists to satisfy this fence. Offenders:\n" + "\n".join(offenders)
+        "ECC-WS2-232 Execution Fact Query Gateway fence: "
+        f"{rel}:TaskRuntimeService must keep direct task_runtime.execution "
+        "Fact Stream queries behind the single private "
+        f"{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}() gateway. Append/CAS "
+        "write paths such as _append_execution_fact_with_cas() remain outside "
+        "this read-query fence. Offenders:\n" + "\n".join(offenders)
     )
 
 

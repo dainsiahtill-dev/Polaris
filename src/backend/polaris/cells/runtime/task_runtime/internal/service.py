@@ -15,6 +15,7 @@ from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
     FactEventAppendedV1,
     FactStreamError,
+    FactStreamQueryResultV1,
     QueryFactEventsV1,
 )
 from polaris.cells.events.fact_stream.public.service import append_fact_event, query_fact_events
@@ -1303,6 +1304,23 @@ class TaskRuntimeService:
                 fact["fact_event_seq"] = wrapper_seq
         return project_task_row_from_execution_fact_payload(fact)
 
+    def _query_execution_fact_events(
+        self,
+        *,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> FactStreamQueryResultV1:
+        """Query the task-runtime execution FactStream through one local gateway."""
+
+        return query_fact_events(
+            QueryFactEventsV1(
+                workspace=self.workspace,
+                stream=_TASK_RUNTIME_EXECUTION_STREAM,
+                limit=limit,
+                offset=offset,
+            )
+        )
+
     def list_task_rows_from_execution_facts(self, *, limit: int = 500) -> list[dict[str, Any]]:
         """Return latest task-row read models from ``task_runtime.execution`` facts.
 
@@ -1330,24 +1348,11 @@ class TaskRuntimeService:
 
         event_limit = max(1, int(limit))
         try:
-            result = query_fact_events(
-                QueryFactEventsV1(
-                    workspace=self.workspace,
-                    stream="task_runtime.execution",
-                    limit=event_limit,
-                )
-            )
+            result = self._query_execution_fact_events(limit=event_limit)
             if result.total > len(result.events):
                 latest_offset = max(0, int(result.total) - event_limit)
                 if latest_offset:
-                    result = query_fact_events(
-                        QueryFactEventsV1(
-                            workspace=self.workspace,
-                            stream="task_runtime.execution",
-                            limit=event_limit,
-                            offset=latest_offset,
-                        )
-                    )
+                    result = self._query_execution_fact_events(limit=event_limit, offset=latest_offset)
         except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("failed to load task runtime execution fact rows: %s", exc)
             return []
@@ -1404,14 +1409,7 @@ class TaskRuntimeService:
 
         per_page = max(1, int(page_size))
         try:
-            first_page = query_fact_events(
-                QueryFactEventsV1(
-                    workspace=self.workspace,
-                    stream="task_runtime.execution",
-                    limit=1,
-                    offset=0,
-                )
-            )
+            first_page = self._query_execution_fact_events(limit=1, offset=0)
         except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug(
                 "failed to inspect task runtime execution facts for task_id=%s: %s",
@@ -1427,14 +1425,7 @@ class TaskRuntimeService:
         offset = max(0, total - per_page)
         while True:
             try:
-                result = query_fact_events(
-                    QueryFactEventsV1(
-                        workspace=self.workspace,
-                        stream="task_runtime.execution",
-                        limit=per_page,
-                        offset=offset,
-                    )
-                )
+                result = self._query_execution_fact_events(limit=per_page, offset=offset)
             except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
                 logger.debug(
                     "failed to load task runtime execution fact row for task_id=%s: %s",
@@ -3500,14 +3491,7 @@ class TaskRuntimeService:
             memory from this helper.
         """
 
-        result = query_fact_events(
-            QueryFactEventsV1(
-                workspace=self.workspace,
-                stream=_TASK_RUNTIME_EXECUTION_STREAM,
-                limit=1,
-                offset=0,
-            )
-        )
+        result = self._query_execution_fact_events(limit=1, offset=0)
         return int(result.total) + 1
 
     def _append_execution_fact_with_cas(
