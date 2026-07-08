@@ -339,6 +339,88 @@ def test_task_runtime_service_records_taskboard_row_write_receipt(tmp_path: Path
     assert update_receipt["after_hash"] != update_receipt["before_hash"]
 
 
+def test_taskboard_save_task_fails_closed_when_row_hash_changes_before_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create_task_row(
+        subject="cas guarded task row",
+        description="create establishes the successful row-write baseline",
+        metadata={"phase": "row-cas"},
+    )
+    task_id = int(created["id"])
+    task_path = _task_file_path(workspace, task_id)
+    create_after_hash = _sha256_utf8_file(task_path)
+    create_receipt = _assert_task_row_write_receipt(
+        service._board.last_row_write_receipt(),
+        task_id=task_id,
+        task_path=task_path,
+    )
+    assert create_receipt["after_hash"] == create_after_hash
+
+    attempted_task = service._board.get(task_id)
+    assert attempted_task is not None
+    attempted_task.metadata["cas_probe"] = "attempted_update"
+
+    external_payload = json.loads(task_path.read_text(encoding="utf-8"))
+    external_metadata = external_payload.setdefault("metadata", {})
+    assert isinstance(external_metadata, dict)
+    external_metadata["cas_probe"] = "external_update"
+    external_content = json.dumps(external_payload, indent=2, ensure_ascii=False) + "\n"
+    external_hash = hashlib.sha256(external_content.encode("utf-8")).hexdigest()
+    assert external_hash != create_after_hash
+
+    original_write_text = service._board._kernel_fs.write_text
+    injected_external_write = False
+    attempted_payload_hash: str | None = None
+
+    def write_text_with_external_row_change(
+        logical_path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+    ) -> object:
+        nonlocal attempted_payload_hash, injected_external_write
+        receipt = original_write_text(logical_path, content, encoding=encoding)
+        logical_name = Path(str(logical_path)).name
+        if (
+            not injected_external_write
+            and logical_name.startswith(f".task_{task_id}.")
+            and logical_name.endswith(".tmp")
+        ):
+            attempted_payload_hash = hashlib.sha256(str(content).encode("utf-8")).hexdigest()
+            task_path.write_text(external_content, encoding="utf-8")
+            injected_external_write = True
+        return receipt
+
+    monkeypatch.setattr(service._board._kernel_fs, "write_text", write_text_with_external_row_change)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        service._board._save_task(attempted_task)
+
+    error_message = str(exc_info.value).lower()
+    assert any(term in error_message for term in ("cas", "hash", "concurrent", "changed", "stale", "drift", "conflict"))
+    assert injected_external_write is True
+    assert attempted_payload_hash is not None
+    assert attempted_payload_hash != external_hash
+
+    assert json.loads(task_path.read_text(encoding="utf-8")) == external_payload
+    assert _sha256_utf8_file(task_path) == external_hash
+
+    receipt_after_failure = _assert_task_row_write_receipt(
+        service._board.last_row_write_receipt(),
+        task_id=task_id,
+        task_path=task_path,
+    )
+    assert receipt_after_failure == create_receipt
+    assert receipt_after_failure["after_hash"] == create_after_hash
+    assert receipt_after_failure["after_hash"] != attempted_payload_hash
+
+
 def test_create_task_row_execution_event_details_include_row_write_receipt(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

@@ -405,6 +405,7 @@ TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS = {
     "_last_row_write_receipt",
     "TaskBoardRowWriteReceipt",
 }
+TASKBOARD_CURRENT_ROW_HASH_NAMES = {"current", "current_hash"}
 TASK_RUNTIME_ROW_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME = "_row_write_receipt_details_for_task"
 TASKBOARD_KERNEL_WRITE_TEXT_NON_ROW_ALLOWLIST = {"_save_max_id"}
 TASKBOARD_DIRECT_ROW_WRITE_METHODS = {
@@ -2118,6 +2119,25 @@ def _taskboard_save_task_receipt_anchor_lines(function_def: ast.FunctionDef) -> 
     return sorted(set(anchor_lines))
 
 
+def _taskboard_save_task_receipt_commit_lines(function_def: ast.FunctionDef) -> list[int]:
+    commit_lines: list[int] = []
+
+    for node in ast.walk(function_def):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Attribute) and target.attr == "_last_row_write_receipt" for target in node.targets
+        ):
+            continue
+        if not isinstance(node.value, ast.Call):
+            continue
+        if _call_name(node.value.func) != "TaskBoardRowWriteReceipt":
+            continue
+        commit_lines.append(node.lineno)
+
+    return sorted(set(commit_lines))
+
+
 def _taskboard_save_task_row_write_receipt_violations() -> list[str]:
     """Validate that ``_save_task`` records a receipt after row commit."""
 
@@ -2133,12 +2153,18 @@ def _taskboard_save_task_row_write_receipt_violations() -> list[str]:
         if isinstance(node, ast.Call) and _call_name(node.func) == "self._replace_task_file"
     ]
     receipt_lines = _taskboard_save_task_receipt_anchor_lines(save_task)
+    receipt_commit_lines = _taskboard_save_task_receipt_commit_lines(save_task)
     offenders: list[str] = []
 
     if not receipt_lines:
         offenders.append(
             "TaskBoard._save_task() must construct or update a row-write receipt anchor "
             f"({', '.join(sorted(TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS))})"
+        )
+    if not receipt_commit_lines:
+        offenders.append(
+            "TaskBoard._save_task() must assign self._last_row_write_receipt "
+            "from TaskBoardRowWriteReceipt(...) after the replace commit"
         )
 
     if not kernel_write_lines:
@@ -2153,6 +2179,181 @@ def _taskboard_save_task_row_write_receipt_violations() -> list[str]:
         offenders.append(
             "TaskBoard._save_task() must update its row-write receipt after the staged "
             "write and replace commit, so the receipt anchors the durable row write"
+        )
+    if not any(line > max(replace_lines) for line in receipt_commit_lines):
+        offenders.append(
+            "TaskBoard._save_task() must assign self._last_row_write_receipt = "
+            "TaskBoardRowWriteReceipt(...) after self._replace_task_file() returns "
+            "successfully"
+        )
+
+    return offenders
+
+
+def _taskboard_cas_check_has_mismatch_operator(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.Compare) and any(isinstance(operator, ast.NotEq) for operator in child.ops)
+        for child in ast.walk(node)
+    )
+
+
+def _taskboard_current_hash_source_expression(node: ast.AST) -> bool:
+    call_names = [_call_name(child.func) for child in ast.walk(node) if isinstance(child, ast.Call)]
+    if not call_names:
+        return False
+    references_task_row_path = _node_references_any_local_name(node, {"task_path", "task_logical"})
+    if not references_task_row_path:
+        return False
+    for call_name in call_names:
+        leaf = call_name.rsplit(".", maxsplit=1)[-1]
+        if leaf == "read_text" or "hash" in leaf:
+            return True
+    return False
+
+
+def _taskboard_current_hash_source_lines(function_def: ast.FunctionDef) -> list[int]:
+    source_lines: list[int] = []
+
+    for node in ast.walk(function_def):
+        if isinstance(node, ast.Assign):
+            if not any(_assignment_target_names(target) & TASKBOARD_CURRENT_ROW_HASH_NAMES for target in node.targets):
+                continue
+            if _taskboard_current_hash_source_expression(node.value):
+                source_lines.append(node.lineno)
+            continue
+        if isinstance(node, ast.AnnAssign):
+            if not (_assignment_target_names(node.target) & TASKBOARD_CURRENT_ROW_HASH_NAMES):
+                continue
+            if node.value is not None and _taskboard_current_hash_source_expression(node.value):
+                source_lines.append(node.lineno)
+            continue
+        if isinstance(node, ast.NamedExpr):
+            if not (_assignment_target_names(node.target) & TASKBOARD_CURRENT_ROW_HASH_NAMES):
+                continue
+            if _taskboard_current_hash_source_expression(node.value):
+                source_lines.append(node.lineno)
+
+    return sorted(set(source_lines))
+
+
+def _taskboard_save_task_cas_check_lines(function_def: ast.FunctionDef) -> list[int]:
+    check_lines: list[int] = []
+
+    for node in ast.walk(function_def):
+        if not isinstance(node, ast.If):
+            continue
+        condition_names = _loaded_name_ids(node.test)
+        if "before_hash" not in condition_names:
+            continue
+        if not (condition_names & TASKBOARD_CURRENT_ROW_HASH_NAMES):
+            continue
+        if not _taskboard_cas_check_has_mismatch_operator(node.test):
+            continue
+        if not any(isinstance(child, ast.Raise) for child in ast.walk(node)):
+            continue
+        check_lines.append(node.lineno)
+
+    return sorted(set(check_lines))
+
+
+def _taskboard_cas_helper_call_lines(function_def: ast.FunctionDef) -> list[int]:
+    """Return calls from ``_save_task`` into helperized local-CAS guards."""
+
+    helper_names = {
+        node.name
+        for node in _taskboard_class().body
+        if isinstance(node, ast.FunctionDef)
+        and (
+            "unchanged" in node.name
+            or "conflict" in node.name
+            or ("cas" in node.name.lower() and node.name != "_save_task")
+        )
+        and _taskboard_method_implements_local_cas_guard(node)
+    }
+    if not helper_names:
+        return []
+    return [
+        node.lineno
+        for node in ast.walk(function_def)
+        if isinstance(node, ast.Call) and _call_name(node.func) in {f"self.{name}" for name in helper_names}
+    ]
+
+
+def _taskboard_hash_compare_lines(function_def: ast.FunctionDef) -> list[int]:
+    compare_lines: list[int] = []
+
+    for node in ast.walk(function_def):
+        if not isinstance(node, ast.Compare):
+            continue
+        names = _loaded_name_ids(node)
+        if "before_hash" not in names:
+            continue
+        if not (names & TASKBOARD_CURRENT_ROW_HASH_NAMES):
+            continue
+        if not any(isinstance(operator, (ast.Eq, ast.NotEq)) for operator in node.ops):
+            continue
+        compare_lines.append(node.lineno)
+
+    return sorted(set(compare_lines))
+
+
+def _taskboard_method_implements_local_cas_guard(function_def: ast.FunctionDef) -> bool:
+    current_hash_source_lines = _taskboard_current_hash_source_lines(function_def)
+    compare_lines = _taskboard_hash_compare_lines(function_def)
+    raise_lines = [node.lineno for node in ast.walk(function_def) if isinstance(node, ast.Raise)]
+    if not current_hash_source_lines or not compare_lines or not raise_lines:
+        return False
+    return any(
+        source_line <= compare_line <= raise_line
+        for source_line in current_hash_source_lines
+        for compare_line in compare_lines
+        for raise_line in raise_lines
+    )
+
+
+def _taskboard_save_task_local_cas_violations() -> list[str]:
+    """Validate that ``_save_task`` rechecks the row hash before replace."""
+
+    save_task = _taskboard_method("_save_task")
+    kernel_write_lines = [
+        node.lineno
+        for node in ast.walk(save_task)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._kernel_fs.write_text"
+    ]
+    replace_lines = [
+        node.lineno
+        for node in ast.walk(save_task)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "self._replace_task_file"
+    ]
+    current_hash_source_lines = _taskboard_current_hash_source_lines(save_task)
+    cas_check_lines = _taskboard_save_task_cas_check_lines(save_task)
+    cas_helper_call_lines = _taskboard_cas_helper_call_lines(save_task)
+    offenders: list[str] = []
+
+    if not kernel_write_lines:
+        offenders.append("TaskBoard._save_task() must stage row JSON through self._kernel_fs.write_text()")
+    if not replace_lines:
+        offenders.append("TaskBoard._save_task() must commit row JSON through self._replace_task_file()")
+    if offenders:
+        return offenders
+
+    write_line = max(kernel_write_lines)
+    replace_line = min(replace_lines)
+    valid_check_lines = [
+        check_line
+        for check_line in cas_check_lines
+        if write_line < check_line < replace_line
+        and any(write_line < source_line <= check_line for source_line in current_hash_source_lines)
+    ]
+    valid_helper_lines = [line for line in cas_helper_call_lines if write_line < line < replace_line]
+
+    if not valid_check_lines and not valid_helper_lines:
+        offenders.append(
+            "TaskBoard._save_task() must reread the current task-row hash after "
+            "self._kernel_fs.write_text(tmp) and before self._replace_task_file(tmp_path, task_path). "
+            "The local CAS check must compare before_hash with current/current_hash "
+            "and raise on mismatch before replace; this may be inline or through "
+            "a dedicated helper called in that interval."
         )
 
     return offenders
@@ -2194,6 +2395,26 @@ def test_taskboard_save_task_updates_row_write_receipt_after_commit() -> None:
         "construct or update a row-write receipt anchor after committing the "
         "row JSON write. Expected anchor names include "
         f"{sorted(TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS)}. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_taskboard_save_task_checks_current_row_hash_before_replace() -> None:
+    """WS2 local-CAS fence for ``TaskBoard._save_task`` row replacement.
+
+    ``_save_task`` stages the next row payload before the durable replace.
+    That gap must not blindly overwrite a concurrently changed row: after
+    writing the temp file, the method must reread the current row hash,
+    compare it with ``before_hash``, and raise on mismatch before calling
+    ``_replace_task_file``. Receipt publication remains a post-replace
+    concern and is covered by the row-write receipt fence above.
+    """
+
+    offenders = _taskboard_save_task_local_cas_violations()
+
+    assert not offenders, (
+        "WS2 TaskBoard local CAS fence: TaskBoard._save_task() must guard "
+        "the row replace with a current-hash check between temp-file staging "
+        "and self._replace_task_file(). Offenders:\n" + "\n".join(offenders)
     )
 
 

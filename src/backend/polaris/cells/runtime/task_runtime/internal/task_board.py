@@ -23,6 +23,7 @@ cell should read or write either path directly.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -115,6 +116,10 @@ class TaskPriority(Enum):
 
 class InvalidTaskStateTransitionError(ValueError):
     """Raised when a task status transition is not allowed."""
+
+
+class TaskBoardRowWriteConflictError(RuntimeError):
+    """Raised when a task row changed before an atomic replace."""
 
 
 _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
@@ -551,6 +556,47 @@ class TaskBoard:
         with self.transaction():
             return self._last_row_write_receipt
 
+    def _read_current_task_file_hash(self, task_path: Path) -> str:
+        """Return the current UTF-8 content hash, or empty string when absent."""
+
+        if not task_path.is_file():
+            return ""
+
+        try:
+            logical = self._logical_path(task_path)
+            return _sha256_text(self._kernel_fs.read_text(logical, encoding="utf-8"))
+        except OSError as exc:
+            if exc.errno in {errno.ENOENT, errno.ENOTDIR}:
+                return ""
+            raise
+
+    def _assert_task_row_unchanged(
+        self,
+        *,
+        task_id: int | str,
+        task_path: Path,
+        task_logical: str,
+        before_hash: str,
+    ) -> None:
+        current_hash = self._read_current_task_file_hash(task_path)
+        if current_hash == before_hash:
+            return
+
+        before_label = before_hash or "<absent>"
+        current_label = current_hash or "<absent>"
+        logger.warning(
+            "TaskBoard row write conflict: task_id=%s task_path=%s before_hash=%s current_hash=%s",
+            task_id,
+            task_logical,
+            before_label,
+            current_label,
+        )
+        raise TaskBoardRowWriteConflictError(
+            "TaskBoard row write conflict: "
+            f"task_id={task_id!r} task_path={task_logical!r} "
+            f"before_hash={before_label!r} current_hash={current_label!r}"
+        )
+
     def _save_task(self, task: Task) -> None:
         """Atomically save a task to disk (write-to-temp + os.replace)."""
         with self.transaction():
@@ -558,13 +604,17 @@ class TaskBoard:
             tmp_path = self.tasks_dir / f".task_{task.id}.{uuid.uuid4().hex}.tmp"
             tmp_logical = self._logical_path(tmp_path)
             task_logical = self._logical_path(task_path)
-            before_hash = ""
-            if task_path.is_file():
-                before_hash = _sha256_text(self._kernel_fs.read_text(task_logical, encoding="utf-8"))
+            before_hash = self._read_current_task_file_hash(task_path)
             payload = json.dumps(task.to_dict(), indent=2, ensure_ascii=False) + "\n"
             after_hash = _sha256_text(payload)
             try:
                 self._kernel_fs.write_text(tmp_logical, payload, encoding="utf-8")
+                self._assert_task_row_unchanged(
+                    task_id=task.id,
+                    task_path=task_path,
+                    task_logical=task_logical,
+                    before_hash=before_hash,
+                )
                 self._replace_task_file(tmp_path, task_path)
                 self._last_row_write_receipt = TaskBoardRowWriteReceipt(
                     task_id=task.id,
