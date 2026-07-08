@@ -624,6 +624,13 @@ def _artifact_quality_issue_code_from_typed_metadata(
 
     diagnostic_kind = str(metadata.get("diagnostic_kind") or "").strip()
     language = str(metadata.get("language") or "").strip().lower()
+    if diagnostic_kind == "npm_script_missing_local_config" and source_token == "npm_script_config_scanner":
+        return "npm_script_missing_local_config"
+    if (
+        diagnostic_kind == "npm_script_missing_local_entrypoint"
+        and source_token == "npm_script_entrypoint_scanner"
+    ):
+        return "npm_script_missing_local_entrypoint"
     if diagnostic_kind == "artifact_quality_scan_failed" and source_token == "artifact_quality_scanner":
         return "artifact_quality_scan_failed"
     if diagnostic_kind == "workspace_path_missing" and source_token == "artifact_quality_scanner":
@@ -2635,6 +2642,7 @@ def _npm_script_missing_local_entrypoint_issue(
             "script_issue_source": "npm_script_entrypoint_scanner",
             "script_name": script_name,
             "entrypoint": entrypoint,
+            "diagnostic_kind": "npm_script_missing_local_entrypoint",
         },
     )
 
@@ -2846,6 +2854,7 @@ def _npm_script_missing_local_config_issue(
             "script_issue_source": "npm_script_config_scanner",
             "script_name": script_name,
             "config_path": config_path,
+            "diagnostic_kind": "npm_script_missing_local_config",
         },
     )
 

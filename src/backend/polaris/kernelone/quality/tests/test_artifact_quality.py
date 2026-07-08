@@ -1280,6 +1280,7 @@ def test_artifact_quality_evidence_uses_direct_npm_script_missing_config_issue(t
         "script_issue_source": "npm_script_config_scanner",
         "script_name": "test",
         "config_path": "jest.config.js",
+        "diagnostic_kind": "npm_script_missing_local_config",
     }
 
 
@@ -1315,6 +1316,7 @@ def test_artifact_quality_evidence_uses_direct_npm_script_missing_entrypoint_iss
         "script_issue_source": "npm_script_entrypoint_scanner",
         "script_name": "start",
         "entrypoint": "src/index.js",
+        "diagnostic_kind": "npm_script_missing_local_entrypoint",
     }
 
 
@@ -1700,3 +1702,57 @@ def test_artifact_quality_issue_projection_maps_artifact_quality_scan_failed_dia
     assert metadata["diagnostic_kind"] == "artifact_quality_scan_failed"
     assert metadata["raw"] == "Artifact quality scan failed: scanner unavailable"
     assert metadata["exception_type"] == "OSError"
+
+
+def test_artifact_quality_issue_projection_maps_npm_script_missing_local_diagnostic_kinds() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "npm_script_entrypoint_scanner",
+                "message": "script references a missing entrypoint",
+                "metadata": {
+                    "diagnostic_kind": "npm_script_missing_local_entrypoint",
+                    "manifest_path": "package.json",
+                    "script_name": "start",
+                    "entrypoint": "src/index.js",
+                },
+            },
+            {
+                "source": "npm_script_config_scanner",
+                "message": "script references a missing config file",
+                "metadata": {
+                    "diagnostic_kind": "npm_script_missing_local_config",
+                    "manifest_path": "package.json",
+                    "script_name": "test",
+                    "config_path": "jest.config.js",
+                },
+            },
+        )
+    )
+
+    assert [issue["code"] for issue in issues] == [
+        "npm_script_missing_local_entrypoint",
+        "npm_script_missing_local_config",
+    ]
+    assert issues[0]["metadata"]["diagnostic_kind"] == "npm_script_missing_local_entrypoint"
+    assert issues[1]["metadata"]["diagnostic_kind"] == "npm_script_missing_local_config"
+
+
+def test_artifact_quality_issue_projection_rejects_wrong_source_npm_script_missing_local_kind() -> None:
+    issues = artifact_quality_issues_from_errors(
+        (
+            {
+                "source": "file_artifact_scanner",
+                "message": "entrypoint scanner issue without legacy hints",
+                "metadata": {"diagnostic_kind": "npm_script_missing_local_entrypoint"},
+            },
+            {
+                "source": "package_manifest_scanner",
+                "message": "config scanner issue without legacy hints",
+                "metadata": {"diagnostic_kind": "npm_script_missing_local_config"},
+            },
+        )
+    )
+
+    assert issues[0]["code"] != "npm_script_missing_local_entrypoint"
+    assert issues[1]["code"] != "npm_script_missing_local_config"
