@@ -984,26 +984,27 @@ def _collect_write_error_text(item: Mapping[str, Any]) -> str:
 
 
 def _matching_raw_write_error_text(raw_results: list[Any], item: Mapping[str, Any]) -> str:
-    """Return error text from the raw receipt matching a canonical result item."""
+    """Return error text from the raw receipt matching a canonical result item.
+
+    ``raw_results`` is a transport/debug projection, not an authoritative
+    effect source.  This helper is intentionally limited to error-text fallback
+    for a canonical ``results`` row and requires a stable identity match before
+    raw text can influence guard control flow.
+    """
     call_id = str(item.get("call_id") or "").strip()
     tool_name = str(item.get("tool_name") or "").strip()
+    if not call_id or not tool_name:
+        return ""
+
     candidates: list[Mapping[str, Any]] = []
     for raw_item in raw_results:
         if not isinstance(raw_item, Mapping):
             continue
         raw_call_id = str(raw_item.get("call_id") or "").strip()
         raw_tool_name = str(raw_item.get("tool_name") or "").strip()
-        if call_id:
-            if raw_call_id != call_id:
-                continue
-            if tool_name and raw_tool_name and raw_tool_name != tool_name:
-                continue
-        elif tool_name and raw_tool_name != tool_name:
+        if raw_call_id != call_id or raw_tool_name != tool_name:
             continue
         candidates.append(raw_item)
-
-    if not call_id and len(candidates) != 1:
-        return ""
 
     fragments: list[str] = []
     for raw_item in candidates:

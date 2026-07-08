@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     apply_delivery_mode_filter,
+    batch_write_results_all_failed_on_argument_shape,
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
@@ -205,3 +206,78 @@ class TestInheritMaterializeDowngradeGuard:
         result = TurnTransactionController._inherit_materialize_from_history(self._history("继续"), "继续")
         assert result is not None
         assert result.mode == DeliveryMode.MATERIALIZE_CHANGES
+
+
+class TestBatchWriteArgumentShapeGuard:
+    """Raw result fallback must not become an evidence-drift control source."""
+
+    def test_result_error_text_triggers_argument_shape_guard(self) -> None:
+        receipt = {
+            "results": [
+                {
+                    "call_id": "call-write-1",
+                    "tool_name": "write_file",
+                    "status": "failed",
+                    "result": {"error": "Parameter validation failed: missing argument content"},
+                }
+            ],
+            "raw_results": [
+                {
+                    "call_id": "call-other",
+                    "tool_name": "write_file",
+                    "error": "unrelated raw failure",
+                }
+            ],
+        }
+
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True
+
+    def test_raw_error_text_requires_exact_call_identity(self) -> None:
+        receipt = {
+            "results": [
+                {
+                    "call_id": "call-write-1",
+                    "tool_name": "write_file",
+                    "status": "failed",
+                    "result": {},
+                }
+            ],
+            "raw_results": [
+                {
+                    "call_id": "call-write-1",
+                    "tool_name": "read_file",
+                    "error": "Parameter validation failed: missing argument content",
+                },
+                {
+                    "call_id": "call-write-1",
+                    "error": "Parameter validation failed: missing argument content",
+                },
+                {
+                    "tool_name": "write_file",
+                    "error": "Parameter validation failed: missing argument content",
+                },
+            ],
+        }
+
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is False
+
+    def test_raw_error_text_can_fill_matching_canonical_write_result(self) -> None:
+        receipt = {
+            "results": [
+                {
+                    "call_id": "call-write-1",
+                    "tool_name": "write_file",
+                    "status": "failed",
+                    "result": {},
+                }
+            ],
+            "raw_results": [
+                {
+                    "call_id": "call-write-1",
+                    "tool_name": "write_file",
+                    "error": "Parameter validation failed: missing argument content",
+                }
+            ],
+        }
+
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True

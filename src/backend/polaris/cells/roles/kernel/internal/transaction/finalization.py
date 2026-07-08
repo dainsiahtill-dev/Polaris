@@ -13,7 +13,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import Any
 
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
@@ -38,6 +38,67 @@ logger = logging.getLogger(__name__)
 def _canonical_batch_receipt(receipts: list[dict]) -> dict[str, Any]:
     """Return the canonical batch receipt used by result and completion events."""
     return merge_batch_receipts(receipts) or {"results": []}
+
+
+_ERROR_TEXT_KEYS: tuple[str, ...] = ("error", "message", "error_message", "stderr")
+
+
+def _collect_result_error_text(item: Mapping[str, Any]) -> str:
+    """Collect display-only error text from one receipt-shaped item."""
+    fragments: list[str] = []
+    payload = item.get("result")
+    if isinstance(payload, Mapping):
+        for key in _ERROR_TEXT_KEYS:
+            value = payload.get(key)
+            if value:
+                fragments.append(str(value))
+    elif payload:
+        fragments.append(str(payload))
+
+    for key in _ERROR_TEXT_KEYS:
+        value = item.get(key)
+        if value:
+            fragments.append(str(value))
+    return "\n".join(fragments)
+
+
+def _matching_raw_result_error_text(raw_results: Any, result: Mapping[str, Any]) -> str:
+    """Return display-only raw error text for the exact canonical result row.
+
+    Raw rows may carry transport details that are useful in final text, but
+    they are not authoritative execution/effect evidence.  Require the same
+    stable identity used by the canonical ``results`` row so unrelated
+    ``raw_results`` entries cannot drift into a different tool call.
+    """
+    if not isinstance(raw_results, list):
+        return ""
+
+    call_id = str(result.get("call_id") or "").strip()
+    tool_name = str(result.get("tool_name") or "").strip()
+    if not call_id or not tool_name:
+        return ""
+
+    fragments: list[str] = []
+    for raw_item in raw_results:
+        if not isinstance(raw_item, Mapping):
+            continue
+        raw_call_id = str(raw_item.get("call_id") or "").strip()
+        raw_tool_name = str(raw_item.get("tool_name") or "").strip()
+        if raw_call_id != call_id or raw_tool_name != tool_name:
+            continue
+        raw_error_text = _collect_result_error_text(raw_item)
+        if raw_error_text:
+            fragments.append(raw_error_text)
+    return "\n".join(fragments)
+
+
+def _display_error_for_result(result: Mapping[str, Any], receipt: Mapping[str, Any]) -> str:
+    """Build visible error text without promoting raw rows to effect evidence."""
+    return (
+        _collect_result_error_text(result)
+        or _matching_raw_result_error_text(receipt.get("raw_results"), result)
+        or "unknown"
+    )
 
 
 def _finalization_tool_call_names(tool_calls: Any) -> list[str]:
@@ -477,13 +538,7 @@ class FinalizationHandler:
                     else:
                         content_lines.append(f"**{tool_name}**: {result_value}")
                 else:
-                    raw_results = receipt.get("raw_results") or []
-                    first_raw_error = (
-                        next(iter(raw_results), cast("dict[str, Any]", {})).get("error", "unknown")
-                        if raw_results
-                        else "unknown"
-                    )
-                    error = result.get("result") or first_raw_error
+                    error = _display_error_for_result(result, receipt)
                     content_lines.append(f"**{tool_name}**: Error - {error}")
 
         final_content = "\n\n".join(content_lines)
@@ -637,13 +692,7 @@ class FinalizationHandler:
                         result_text = result_text[:max_per_tool] + "\n[...truncated]"
                     summary_parts.append(f"### Tool: {tool_name}\n```\n{result_text}\n```")
                 else:
-                    raw_results = receipt.get("raw_results") or []
-                    first_raw_error = (
-                        next(iter(raw_results), cast("dict[str, Any]", {})).get("error", "unknown")
-                        if raw_results
-                        else "unknown"
-                    )
-                    error = result.get("result") or first_raw_error
+                    error = _display_error_for_result(result, receipt)
                     summary_parts.append(f"### Tool: {tool_name} (Error)\n```\n{error}\n```")
 
         summary = "\n\n".join(summary_parts)
