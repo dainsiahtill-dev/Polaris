@@ -544,7 +544,8 @@ def _dispatch_director_tasks_impl(
         try:
             task_runtime = taskboard_runtime.get("task_runtime")
             if task_runtime is not None:
-                stats = task_runtime.get_task_row_stats()
+                get_observable_stats = getattr(task_runtime, "get_observable_task_row_stats", None)
+                stats = get_observable_stats() if callable(get_observable_stats) else {}
                 taskboard_stats = stats if isinstance(stats, dict) else {}
         except (RuntimeError, ValueError) as exc:
             logger.warning("Failed to get taskboard stats, skipping stats in summary: %s", exc)

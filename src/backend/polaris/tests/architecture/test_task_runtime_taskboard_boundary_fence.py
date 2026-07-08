@@ -12,6 +12,7 @@ import ast
 import json
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
@@ -4167,4 +4168,341 @@ def test_task_row_stats_does_not_independently_read_rows() -> None:
         "read rows. The compatibility entrypoint must delegate to "
         "self.get_observable_task_row_stats() so the stats computation has a "
         "single authoritative path. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# WS2 stats read-model — role projections must use observable stats
+# ---------------------------------------------------------------------------
+#
+# ``TaskRuntimeService.get_task_row_stats()`` is the compatibility entrypoint
+# that delegates to ``get_observable_task_row_stats()``. Role projections
+# (DirectorStateTracker, PM agent) must call
+# ``get_observable_task_row_stats()`` directly so the execution-fact overlay
+# stays part of the stats read-model. Calling ``get_task_row_stats()`` would
+# add an extra delegation hop and make it easy for a future refactor to
+# silently route stats through the compat path instead of the observable path.
+#
+# ``TaskRuntimeService.get_task_row_stats()`` itself is NOT forbidden — it
+# remains the public compatibility API that delegates to the observable stats.
+
+DIRECTOR_STATE_TRACKER = (
+    POLARIS_ROOT
+    / "cells"
+    / "roles"
+    / "adapters"
+    / "internal"
+    / "director"
+    / "state_tracking.py"
+)
+PM_PLANNING_AGENT_STATS = (
+    POLARIS_ROOT
+    / "cells"
+    / "orchestration"
+    / "pm_planning"
+    / "internal"
+    / "pm_agent.py"
+)
+PM_DELIVERY_DISPATCH_STATS = (
+    POLARIS_ROOT
+    / "delivery"
+    / "cli"
+    / "pm"
+    / "engine"
+    / "_dispatch.py"
+)
+
+
+def _check_role_projection_forbidden_stats_calls(
+    path: Path,
+    *,
+    scope_check: Any = None,
+) -> list[str]:
+    """Emit offenders if ``path`` calls ``get_task_row_stats`` instead of
+    ``get_observable_task_row_stats``.
+
+    Detects two patterns:
+      1. Direct attribute call: ``task_runtime.get_task_row_stats()``
+         or ``self.task_runtime.get_task_row_stats()``
+      2. Dynamic attribute read via ``getattr``:
+         ``getattr(task_runtime, "get_task_row_stats", ...)``
+         followed by a callable invocation.
+
+    ``scope_check`` is an optional predicate ``(function_name: str) -> bool``
+    that filters which enclosing function definitions to inspect. When
+    ``None`` the entire module is checked.
+
+    ``get_observable_task_row_stats`` is always allowed.
+    """
+
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    rel = path.relative_to(BACKEND_ROOT).as_posix()
+    parents = _parent_lookup(tree)
+    offenders: list[str] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Call, ast.Attribute)):
+            continue
+
+        # Pattern 1: direct attribute call — ``<receiver>.get_task_row_stats()``
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "get_task_row_stats":
+                enclosing = _enclosing_function_name(node, parents)
+                if scope_check is not None and not scope_check(enclosing):
+                    continue
+                offenders.append(
+                    f"{rel}:{node.lineno} calls get_task_row_stats() in "
+                    f"{enclosing}(); role projections must use "
+                    "get_observable_task_row_stats() so the execution-fact "
+                    "overlay stays part of the stats read-model"
+                )
+
+        # Pattern 2: dynamic getattr read — ``getattr(<receiver>,
+        # "get_task_row_stats", ...)``
+        if isinstance(node, ast.Call):
+            callee = _call_name(node.func)
+            if callee == "getattr" and node.args:
+                attr_name = _string_literal(node.args[1]) if len(node.args) > 1 else ""
+                if attr_name == "get_task_row_stats":
+                    enclosing = _enclosing_function_name(node, parents)
+                    if scope_check is not None and not scope_check(enclosing):
+                        continue
+                    offenders.append(
+                        f"{rel}:{node.lineno} reads get_task_row_stats via "
+                        f"getattr() in {enclosing}(); role projections must "
+                        "use get_observable_task_row_stats() directly so the "
+                        "execution-fact overlay stays part of the stats "
+                        "read-model"
+                    )
+
+    return offenders
+
+
+def _role_projection_observable_stats_call_lines(
+    path: Path,
+    *,
+    scope_check: Any = None,
+) -> list[int]:
+    """Return call/getattr line numbers for ``get_observable_task_row_stats``."""
+
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    parents = _parent_lookup(tree)
+    lines: list[int] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        enclosing = _enclosing_function_name(node, parents)
+        if scope_check is not None and not scope_check(enclosing):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "get_observable_task_row_stats":
+            lines.append(int(node.lineno))
+            continue
+        if _call_name(func) == "getattr" and len(node.args) > 1:
+            attr_name = _string_literal(node.args[1])
+            if attr_name == "get_observable_task_row_stats":
+                lines.append(int(node.lineno))
+
+    return lines
+
+
+def test_director_state_tracker_uses_observable_task_row_stats() -> None:
+    """WS2 stats read-model fence for DirectorStateTracker.
+
+    ``DirectorStateTracker.build_taskboard_observation_snapshot()`` builds
+    the taskboard snapshot that Director and Factory consumers read. It must
+    call ``get_observable_task_row_stats()`` directly so the
+    ``task_runtime.execution`` Fact Stream overlay stays in the stats
+    read-model. Calling ``get_task_row_stats()`` (the compatibility
+    entrypoint) adds an unnecessary delegation hop and makes it easy for a
+    future refactor to silently route stats through the compat path instead
+    of the observable path.
+
+    ``TaskRuntimeService.get_task_row_stats()`` itself is not forbidden — it
+    remains the public compatibility API that delegates to the observable
+    stats. The fence only targets role-projection consumers outside the
+    ``runtime.task_runtime`` owner cell.
+    """
+
+    rel = DIRECTOR_STATE_TRACKER.relative_to(BACKEND_ROOT).as_posix()
+
+    def scope_check(function_name: str) -> bool:
+        return function_name == "build_taskboard_observation_snapshot"
+
+    offenders = _check_role_projection_forbidden_stats_calls(
+        DIRECTOR_STATE_TRACKER,
+        scope_check=scope_check,
+    )
+    observable_lines = _role_projection_observable_stats_call_lines(
+        DIRECTOR_STATE_TRACKER,
+        scope_check=scope_check,
+    )
+
+    assert not offenders, (
+        "WS2 stats read-model fence: "
+        f"{rel}:DirectorStateTracker.build_taskboard_observation_snapshot "
+        "must use get_observable_task_row_stats() instead of "
+        "get_task_row_stats(). Role projections must call the observable "
+        "stats API directly so the task_runtime.execution Fact Stream "
+        "overlay stays part of the stats read-model. "
+        "TaskRuntimeService.get_task_row_stats() itself remains allowed as "
+        "the compatibility entrypoint. Offenders:\n" + "\n".join(offenders)
+    )
+    assert observable_lines, (
+        "WS2 stats read-model fence: "
+        f"{rel}:DirectorStateTracker.build_taskboard_observation_snapshot "
+        "must call get_observable_task_row_stats() directly; deleting stats "
+        "projection or using only rows would weaken the observable owner API "
+        "contract."
+    )
+
+
+def test_pm_planning_agent_uses_observable_task_row_stats() -> None:
+    """WS2 stats read-model fence for PM planning agent.
+
+    ``PMAgent._tool_taskboard_stats()`` returns taskboard statistics to the
+    PM LLM context. It must call ``get_observable_task_row_stats()`` directly
+    so the ``task_runtime.execution`` Fact Stream overlay stays in the stats
+    read-model. Calling ``get_task_row_stats()`` (the compatibility
+    entrypoint) adds an unnecessary delegation hop and makes it easy for a
+    future refactor to silently route stats through the compat path instead
+    of the observable path.
+
+    ``TaskRuntimeService.get_task_row_stats()`` itself is not forbidden — it
+    remains the public compatibility API that delegates to the observable
+    stats. The fence only targets role-projection consumers outside the
+    ``runtime.task_runtime`` owner cell.
+    """
+
+    rel = PM_PLANNING_AGENT_STATS.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_role_projection_forbidden_stats_calls(
+        PM_PLANNING_AGENT_STATS,
+    )
+    observable_lines = _role_projection_observable_stats_call_lines(
+        PM_PLANNING_AGENT_STATS,
+    )
+
+    assert not offenders, (
+        "WS2 stats read-model fence: "
+        f"{rel} must use get_observable_task_row_stats() instead of "
+        "get_task_row_stats(). Role projections must call the observable "
+        "stats API directly so the task_runtime.execution Fact Stream "
+        "overlay stays part of the stats read-model. "
+        "TaskRuntimeService.get_task_row_stats() itself remains allowed as "
+        "the compatibility entrypoint. Offenders:\n" + "\n".join(offenders)
+    )
+    assert observable_lines, (
+        "WS2 stats read-model fence: "
+        f"{rel} must call get_observable_task_row_stats() directly; deleting "
+        "stats projection or using only rows would weaken the observable "
+        "owner API contract."
+    )
+
+
+def test_pm_delivery_dispatch_uses_observable_task_row_stats() -> None:
+    """WS2 stats read-model fence for PM delivery dispatch summaries."""
+
+    rel = PM_DELIVERY_DISPATCH_STATS.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_role_projection_forbidden_stats_calls(PM_DELIVERY_DISPATCH_STATS)
+    observable_lines = _role_projection_observable_stats_call_lines(PM_DELIVERY_DISPATCH_STATS)
+
+    assert not offenders, (
+        "WS2 stats read-model fence: "
+        f"{rel} must use get_observable_task_row_stats() instead of "
+        "get_task_row_stats() when projecting taskboard summary stats. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
+    assert observable_lines, (
+        "WS2 stats read-model fence: "
+        f"{rel} must call get_observable_task_row_stats() directly; deleting "
+        "taskboard summary stats or using only rows would weaken the "
+        "observable owner API contract."
+    )
+
+
+def test_role_stats_fence_detects_direct_get_task_row_stats_call() -> None:
+    """Characterization: the AST detection catches direct ``get_task_row_stats()`` calls.
+
+    Uses ``ast.parse`` on a synthetic fragment to prove the detection
+    helper would flag a direct attribute call to ``get_task_row_stats``
+    if it appeared in a production role projection. Without this test the
+    fence is purely negative and could silently stop detecting violations
+    if the AST helper drifted.
+    """
+
+    fragment = "x = task_runtime.get_task_row_stats()\n"
+    tree = ast.parse(fragment)
+    detected = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "get_task_row_stats":
+            detected = True
+    assert detected, (
+        "Characterization fence: AST detection must flag direct "
+        "get_task_row_stats() attribute calls. If this test fails, the "
+        "role-projection fence can silently stop detecting violations."
+    )
+
+
+def test_role_stats_fence_detects_getattr_pattern() -> None:
+    """Characterization: the AST detection catches ``getattr(..., "get_task_row_stats", ...)`` calls.
+
+    Uses ``ast.parse`` on a synthetic fragment to prove the detection
+    helper would flag a dynamic getattr-based read of ``get_task_row_stats``
+    if it appeared in a production role projection. Without this test the
+    fence could silently stop detecting the ``getattr`` pattern used by
+    ``DirectorStateTracker.build_taskboard_observation_snapshot``.
+    """
+
+    fragment = (
+        'getter = getattr(task_runtime, "get_task_row_stats", None)\n'
+        "stats = getter() if callable(getter) else {}\n"
+    )
+    tree = ast.parse(fragment)
+    detected = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Name) and node.func.id == "getattr"):
+            continue
+        if len(node.args) >= 2:
+            arg1 = node.args[1]
+            if isinstance(arg1, ast.Constant) and arg1.value == "get_task_row_stats":
+                detected = True
+    assert detected, (
+        "Characterization fence: AST detection must flag "
+        'getattr(..., "get_task_row_stats", ...) calls. If this test '
+        "fails, the role-projection fence can silently stop detecting "
+        "the dynamic getattr pattern used in state_tracking.py."
+    )
+
+
+def test_role_stats_fence_allows_get_observable_task_row_stats() -> None:
+    """Characterization: the AST detection does NOT flag ``get_observable_task_row_stats()``.
+
+    Uses ``ast.parse`` on a synthetic fragment to prove the detection
+    helper accepts the correct API name. Without this test the fence
+    could over-reject and block the production-allowed
+    ``get_observable_task_row_stats`` pattern.
+    """
+
+    fragment = "x = task_runtime.get_observable_task_row_stats()\n"
+    tree = ast.parse(fragment)
+    offender_count = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "get_task_row_stats":
+            offender_count += 1
+    assert offender_count == 0, (
+        "Characterization fence: AST detection must NOT flag "
+        "get_observable_task_row_stats() calls. The fence should only "
+        "block get_task_row_stats(), not the observable API."
     )

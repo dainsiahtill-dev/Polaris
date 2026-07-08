@@ -386,6 +386,41 @@ class TestPMAgentGovernanceTools:
         assert ready["count"] == 2
         assert [task["id"] for task in ready["tasks"]] == [1, 2]
 
+    def test_taskboard_stats_uses_observable_row_stats(self, tmp_path) -> None:
+        """_tool_taskboard_stats must call get_observable_task_row_stats, not
+        the legacy get_task_row_stats compatibility entrypoint."""
+
+        class _ObservableStatsTaskRuntime:
+            def get_observable_task_row_stats(self) -> dict[str, object]:
+                return {"total": 3, "ready": 1, "pending": 2}
+
+            def get_task_row_stats(self) -> dict[str, object]:
+                raise AssertionError(
+                    "PM taskboard stats tool must read via "
+                    "get_observable_task_row_stats, not the legacy entrypoint"
+                )
+
+        agent = PMAgent(str(tmp_path))
+        agent._task_runtime = _ObservableStatsTaskRuntime()  # type: ignore[assignment]
+
+        result = agent._tool_taskboard_stats()
+        assert result["ok"] is True
+        assert result["stats"] == {"total": 3, "ready": 1, "pending": 2}
+
+    def test_taskboard_stats_fail_safe_when_runtime_lacks_observable_api(self, tmp_path) -> None:
+        """When the runtime does not expose get_observable_task_row_stats the
+        tool must fail-safe to an empty stats dict instead of raising."""
+
+        class _MinimalTaskRuntime:
+            pass
+
+        agent = PMAgent(str(tmp_path))
+        agent._task_runtime = _MinimalTaskRuntime()  # type: ignore[assignment]
+
+        result = agent._tool_taskboard_stats()
+        assert result["ok"] is True
+        assert result["stats"] == {}
+
     def test_project_status_report_empty_workspace(self, tmp_path) -> None:
         agent = PMAgent(str(tmp_path))
         result = agent._tool_project_status_report(current_iteration=0)

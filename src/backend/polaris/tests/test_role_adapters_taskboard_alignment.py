@@ -37,6 +37,60 @@ def _update_task_row(adapter: Any, task_id: Any, **kwargs: Any) -> dict[str, Any
     return row
 
 
+def _claim_task_row_for_test(adapter: Any, task_id: Any) -> str:
+    result = adapter.task_runtime.claim_execution(
+        task_id,
+        worker_id="test-worker",
+        role_id="director",
+        run_id="test-run",
+        selection_source="test_role_adapters_taskboard_alignment",
+    )
+    assert result.get("success") is True
+    session = result.get("session")
+    assert isinstance(session, dict)
+    session_id = str(session.get("session_id") or "").strip()
+    assert session_id
+    return session_id
+
+
+def _complete_task_row_for_test(
+    adapter: Any,
+    task_id: Any,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    session_id = _claim_task_row_for_test(adapter, task_id)
+    result = adapter.task_runtime.complete_execution(
+        task_id,
+        session_id=session_id,
+        result_summary="test completed",
+        metadata=metadata,
+    )
+    assert result.get("success") is True
+    row = result.get("task")
+    assert isinstance(row, dict)
+    return row
+
+
+def _fail_task_row_for_test(
+    adapter: Any,
+    task_id: Any,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    session_id = _claim_task_row_for_test(adapter, task_id)
+    result = adapter.task_runtime.fail_execution(
+        task_id,
+        session_id=session_id,
+        error="test failed",
+        metadata=metadata,
+    )
+    assert result.get("success") is True
+    row = result.get("task")
+    assert isinstance(row, dict)
+    return row
+
+
 def _get_task_row(adapter: Any, task_id: Any) -> dict[str, Any]:
     row = adapter.task_runtime.get_task(task_id)
     assert isinstance(row, dict)
@@ -625,22 +679,19 @@ def test_director_taskboard_snapshot_includes_completed_qa_state(tmp_path: Path)
     done_failed_qa = _create_task_row(adapter, subject="任务QA未通过", description="B", metadata={})
     done_passed_qa = _create_task_row(adapter, subject="任务QA通过", description="C", metadata={})
 
-    _update_task_row(
+    _complete_task_row_for_test(
         adapter,
         done_pending_qa["id"],
-        status="completed",
         metadata={"adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": None}},
     )
-    _update_task_row(
+    _complete_task_row_for_test(
         adapter,
         done_failed_qa["id"],
-        status="completed",
         metadata={"adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": False}},
     )
-    _update_task_row(
+    _complete_task_row_for_test(
         adapter,
         done_passed_qa["id"],
-        status="completed",
         metadata={"adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": True}},
     )
 
@@ -666,7 +717,10 @@ def test_director_taskboard_snapshot_uses_observable_task_rows(tmp_path: Path) -
             raise AssertionError("Director taskboard snapshots must use observable task rows")
 
         def get_task_row_stats(self) -> dict[str, int]:
-            return {}
+            raise AssertionError("Director taskboard snapshots must use get_observable_task_row_stats, not get_task_row_stats")
+
+        def get_observable_task_row_stats(self) -> dict[str, int]:
+            return {"total": 1, "pending": 1}
 
         def list_ready_task_rows(self) -> list[dict[str, object]]:
             return []
@@ -2034,10 +2088,9 @@ def test_director_taskboard_snapshot_includes_rework_and_exhausted_states(tmp_pa
             "qa_rework_requested": True,
         },
     )
-    _update_task_row(
+    _fail_task_row_for_test(
         adapter,
         failed_exhausted["id"],
-        status="failed",
         metadata={
             "adapter_result": {"qa_required_for_final_verdict": True, "qa_passed": False},
             "qa_rework_exhausted": True,

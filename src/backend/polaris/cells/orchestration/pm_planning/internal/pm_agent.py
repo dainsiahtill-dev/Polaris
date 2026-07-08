@@ -826,8 +826,18 @@ class PMAgent(RoleAgent):
         }
 
     def _tool_taskboard_stats(self) -> dict[str, Any]:
-        """Get TaskBoard statistics."""
-        stats = self.task_runtime.get_task_row_stats()
+        """Get TaskBoard statistics.
+
+        Reads the observable read-model via ``get_observable_task_row_stats``.
+        Falls back to ``{}`` if the runtime does not yet expose that API.
+        The legacy ``get_task_row_stats`` compatibility entrypoint is *not*
+        called — this ensures the PM agent always reads from the SSoT
+        observable owner API.
+        """
+        get_observable_stats = getattr(self.task_runtime, "get_observable_task_row_stats", None)
+        if not callable(get_observable_stats):
+            return {"ok": True, "stats": {}}
+        stats: dict[str, Any] = get_observable_stats()
         return {"ok": True, "stats": stats}
 
     def _tool_request_approval(self, **kwargs) -> dict[str, Any]:
