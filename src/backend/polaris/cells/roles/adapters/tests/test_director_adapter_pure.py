@@ -5381,6 +5381,135 @@ class TestDirectorFailureClosure:
             "detail": "Director role runtime reported required/native tool calls without dispatch/effect receipt.",
         }
 
+    def test_primary_tool_dispatch_failure_from_metadata_lifecycle_receipt(self) -> None:
+        """Lifecycle receipt in metadata.tool_call_lifecycle_receipt with
+        dispatch_status=dropped and failure_class=tool_dispatch_dropped should
+        be identified even without error/error_code fields.
+        """
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _primary_llm_tool_dispatch_failure,
+        )
+
+        summary: dict[str, Any] = {
+            "success": False,
+            "metadata": {
+                "tool_call_lifecycle_receipt": {
+                    "dispatch_status": "dropped",
+                    "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+                    "native_tool_calls_count": 1,
+                    "decoded_tool_calls_count": 1,
+                    "dispatched_tool_calls_count": 0,
+                    "dropped": True,
+                    "ok": False,
+                },
+            },
+        }
+        result = _primary_llm_tool_dispatch_failure(summary)
+        assert result is not None
+        assert result["error"] == "tool_dispatch_dropped"
+        assert result["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+
+    def test_primary_tool_dispatch_failure_lifecycle_non_dropped_not_misclassified(self) -> None:
+        """Lifecycle receipt with failure_class ≠ tool_dispatch_dropped must
+        not return a tool_dispatch_dropped payload.
+        """
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _primary_llm_tool_dispatch_failure,
+        )
+
+        summary: dict[str, Any] = {
+            "success": False,
+            "metadata": {
+                "tool_call_lifecycle_receipt": {
+                    "dispatch_status": "failed",
+                    "failure_class": FailureClassV1.TOOL_LIFECYCLE_FAILED.value,
+                    "dropped": False,
+                    "ok": False,
+                },
+            },
+        }
+        assert _primary_llm_tool_dispatch_failure(summary) is None
+
+    def test_primary_tool_dispatch_failure_from_tool_lifecycle_summary(self) -> None:
+        """Already-summarized tool_lifecycle_summary with dropped_count > 0
+        should be detected via project_tool_lifecycle_failure_status.
+        """
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _primary_llm_tool_dispatch_failure,
+        )
+
+        summary: dict[str, Any] = {
+            "success": False,
+            "tool_lifecycle_summary": {
+                "ok": False,
+                "event_count": 1,
+                "native_tool_calls_count": 1,
+                "decoded_tool_calls_count": 1,
+                "dispatched_tool_calls_count": 0,
+                "tool_result_count": 0,
+                "effect_receipt_count": 0,
+                "native_tool_call_names": ["write_file"],
+                "dropped_count": 1,
+                "failed_count": 0,
+                "failure_evidence": [],
+                "events": [
+                    {
+                        "status": "dropped",
+                        "dropped": True,
+                        "failed": False,
+                        "native_tool_calls_count": 1,
+                    },
+                ],
+            },
+        }
+        result = _primary_llm_tool_dispatch_failure(summary)
+        assert result is not None
+        assert result["error"] == "tool_dispatch_dropped"
+        assert result["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+        assert result["failure_stage"] == "director_tool_lifecycle"
+
+    def test_llm_stage_summary_carries_tool_lifecycle_evidence(self) -> None:
+        """Stage summary must preserve lifecycle evidence for later attribution.
+
+        The Director adapter receives a compact ``primary_llm_summary`` from
+        quality_gate. Tool dispatch classification must be able to consume the
+        Run Ledger lifecycle evidence from that summary without reparsing error
+        text or reaching back into the full raw provider response.
+        """
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _summarize_llm_stage_result,
+        )
+
+        metadata = {
+            "tool_call_lifecycle_receipt": {
+                "dispatch_status": "dropped",
+                "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+            },
+            "provider": "test-provider",
+        }
+        lifecycle_summary = {
+            "ok": False,
+            "native_tool_calls_count": 1,
+            "dispatched_tool_calls_count": 0,
+            "dropped_count": 1,
+        }
+
+        summary = _summarize_llm_stage_result(
+            {
+                "success": False,
+                "content": "director response",
+                "raw_response": {
+                    "metadata": metadata,
+                    "tool_lifecycle_summary": lifecycle_summary,
+                },
+            },
+            stage="primary",
+        )
+
+        assert summary["stage"] == "primary"
+        assert summary["metadata"] is metadata
+        assert summary["tool_lifecycle_summary"] is lifecycle_summary
+
     @pytest.mark.asyncio
     async def test_execute_fails_when_changed_test_file_keeps_placeholder_arithmetic(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

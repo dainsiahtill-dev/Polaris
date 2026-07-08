@@ -24,6 +24,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureEvidenceV1,
     append_failure_evidence_to_metadata,
     is_failure_class,
+    project_tool_lifecycle_event,
+    project_tool_lifecycle_failure_status,
+    summarize_tool_lifecycle_events,
+    tool_call_lifecycle_receipts_from_metadata,
 )
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.director.runtime.public.service import (
@@ -3787,17 +3791,7 @@ def _summary_field_matches_failure_class(value: Any, expected: FailureClassV1) -
     return False
 
 
-def _primary_llm_tool_dispatch_failure(primary_llm_summary: dict[str, Any] | None) -> dict[str, str] | None:
-    if not isinstance(primary_llm_summary, dict):
-        return None
-    if not any(
-        _summary_field_matches_failure_class(
-            primary_llm_summary.get(key),
-            FailureClassV1.TOOL_DISPATCH_DROPPED,
-        )
-        for key in ("error", "error_code", "failure_class")
-    ):
-        return None
+def _tool_dispatch_dropped_failure_payload() -> dict[str, str]:
     return {
         "error": "tool_dispatch_dropped",
         "error_code": "tool_dispatch_dropped",
@@ -3808,6 +3802,68 @@ def _primary_llm_tool_dispatch_failure(primary_llm_summary: dict[str, Any] | Non
         "root_cause_hint": "required_tool_without_dispatch_receipt",
         "detail": "Director role runtime reported required/native tool calls without dispatch/effect receipt.",
     }
+
+
+def _lifecycle_tool_dispatch_failure_from_summary(
+    primary_llm_summary: dict[str, Any],
+) -> dict[str, str] | None:
+    """Return the tool_dispatch_dropped failure payload if Run Ledger lifecycle
+    evidence in *primary_llm_summary* indicates a dispatch-dropped failure.
+
+    Boundary:
+        Consumes only Run Ledger public helpers:
+        - ``project_tool_lifecycle_failure_status`` for already-summarized data.
+        - ``tool_call_lifecycle_receipts_from_metadata`` +
+          ``project_tool_lifecycle_event`` + ``summarize_tool_lifecycle_events``
+          for raw receipt evidence.
+        No local count/precedence interpretation is maintained here.
+
+    Complexity:
+        O(r * s) where ``r`` is receipt count and ``s`` is receipt size for
+        deduplication; O(r) additional memory.
+    """
+    # 1. Already-summarized lifecycle mapping → public failure status.
+    for key in ("tool_lifecycle_summary", "tool_call_lifecycle_summary"):
+        candidate = primary_llm_summary.get(key)
+        if isinstance(candidate, dict) and candidate:
+            failure_status = project_tool_lifecycle_failure_status(candidate)
+            if failure_status.get("failed") and is_failure_class(
+                failure_status.get("failure_class"), FailureClassV1.TOOL_DISPATCH_DROPPED
+            ):
+                return _tool_dispatch_dropped_failure_payload()
+    # 2. Raw receipt evidence in metadata → public receipt helpers → status.
+    metadata = primary_llm_summary.get("metadata")
+    if isinstance(metadata, dict):
+        receipts = tool_call_lifecycle_receipts_from_metadata(metadata)
+        if receipts:
+            events = tuple(project_tool_lifecycle_event(r) for r in receipts)
+            summary = summarize_tool_lifecycle_events(events)
+            failure_status = project_tool_lifecycle_failure_status(summary)
+            if failure_status.get("failed") and is_failure_class(
+                failure_status.get("failure_class"), FailureClassV1.TOOL_DISPATCH_DROPPED
+            ):
+                return _tool_dispatch_dropped_failure_payload()
+    return None
+
+
+def _primary_llm_tool_dispatch_failure(primary_llm_summary: dict[str, Any] | None) -> dict[str, str] | None:
+    if not isinstance(primary_llm_summary, dict):
+        return None
+    # Lifecycle evidence from Run Ledger public helpers takes priority over
+    # error/error_code/failure_class field matching.
+    lifecycle_result = _lifecycle_tool_dispatch_failure_from_summary(primary_llm_summary)
+    if lifecycle_result is not None:
+        return lifecycle_result
+    # Fallback: legacy error/error_code/failure_class field matching.
+    if not any(
+        _summary_field_matches_failure_class(
+            primary_llm_summary.get(key),
+            FailureClassV1.TOOL_DISPATCH_DROPPED,
+        )
+        for key in ("error", "error_code", "failure_class")
+    ):
+        return None
+    return _tool_dispatch_dropped_failure_payload()
 
 
 def _materialization_failure_evidence_row(

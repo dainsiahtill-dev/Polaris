@@ -104,7 +104,7 @@ def _summarize_llm_stage_result(result: dict[str, Any], *, stage: str) -> dict[s
         or str(raw_payload.get("model") or "").strip()
         or str(metadata.get("model") or execution_stats.get("model") or "").strip()
     )
-    return {
+    summary: dict[str, Any] = {
         "stage": stage,
         "success": bool(result.get("success")),
         "provider": provider,
@@ -113,6 +113,14 @@ def _summarize_llm_stage_result(result: dict[str, Any], *, stage: str) -> dict[s
         "error": str(result.get("error") or raw_payload.get("error") or "").strip(),
         "llm_calls": _safe_int(execution_stats.get("llm_calls")),
     }
+    # Carry lifecycle evidence forward so downstream attribution can consume
+    # Run Ledger public helpers instead of only relying on error text fields.
+    if metadata:
+        summary["metadata"] = metadata
+    lifecycle_summary = raw_payload.get("tool_lifecycle_summary")
+    if isinstance(lifecycle_summary, dict) and lifecycle_summary:
+        summary["tool_lifecycle_summary"] = lifecycle_summary
+    return summary
 
 
 def _safe_int(value: Any) -> int:
