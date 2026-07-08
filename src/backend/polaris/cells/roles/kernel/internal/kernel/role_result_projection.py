@@ -11,7 +11,9 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
+    append_failure_evidence_to_metadata,
     project_completion_audit_evidence_to_metadata,
+    task_boundary_failure_evidence_from_verdict,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
@@ -27,6 +29,7 @@ _LLM_RESPONSE_METADATA_KEYS: tuple[str, ...] = (
     "usage",
     "usage_source",
 )
+
 
 class QualityProjection(Protocol):
     """Minimal quality-result fields needed for RoleTurnResult projection."""
@@ -172,14 +175,23 @@ def project_task_boundary_failure_to_metadata(
     if not isinstance(verdict, Mapping):
         return None
     metadata["task_boundary_verdict"] = dict(verdict)
-    if bool(verdict.get("ok")):
+    failure_evidence_row = task_boundary_failure_evidence_from_verdict(verdict)
+    if not failure_evidence_row:
         return None
-    status = str(verdict.get("status") or "failed").strip() or "failed"
-    failure_class = str(verdict.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
-    reason = str(verdict.get("reason") or "Task boundary failed").strip()
+    row_metadata = failure_evidence_row.get("metadata")
+    task_boundary_metadata = row_metadata if isinstance(row_metadata, Mapping) else {}
+    status = str(task_boundary_metadata.get("task_boundary_status") or verdict.get("status") or "failed").strip()
+    failure_class = str(failure_evidence_row.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
+    reason = str(failure_evidence_row.get("reason") or "Task boundary failed").strip()
+
     metadata["task_boundary_failed"] = True
     metadata["task_boundary_failure_class"] = failure_class
     metadata["task_boundary_failure_status"] = status
+
+    append_failure_evidence_to_metadata(
+        metadata,
+        failure_evidence_row,
+    )
     return f"task_boundary_failed:{status}: {reason}"
 
 

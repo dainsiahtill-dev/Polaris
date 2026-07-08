@@ -12,6 +12,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     summarize_failed_gate_evidence_context_slot,
     summarize_failure_evidence_rows,
     suspected_files_from_failure_evidence_payload,
+    task_boundary_failure_evidence_from_verdict,
 )
 
 
@@ -358,6 +359,24 @@ def test_summarize_failure_evidence_rows_uses_structured_rows_only() -> None:
     }
 
 
+def test_summarize_failure_evidence_rows_projects_explicit_failure_classes() -> None:
+    rows = [
+        {
+            "schema_version": "failure_evidence.v1",
+            "failure_class": "TOOL_DISPATCH_DROPPED",
+            "failure_classes": ["tool-dispatch-dropped", "TOOL_DISPATCH_DROPPED"],
+        }
+    ]
+
+    summary = summarize_failure_evidence_rows(rows)
+
+    assert summary == {
+        "count": 1,
+        "latest_failure_class": "TOOL_DISPATCH_DROPPED",
+        "failure_classes": ["TOOL_DISPATCH_DROPPED"],
+    }
+
+
 def test_suspected_files_from_failure_evidence_payload_uses_structured_fields_only() -> None:
     payload = {
         "changed_files": ["src/main.py", "", "src/main.py"],
@@ -409,3 +428,89 @@ def test_append_failure_evidence_to_metadata_refreshes_rows_and_summary() -> Non
         "count": 2,
         "latest_failure_class": "TOOL_DISPATCH_DROPPED",
     }
+
+def test_task_boundary_failure_evidence_from_verdict_projects_public_row() -> None:
+    task_boundary_failure = task_boundary_failure_evidence_from_verdict(
+        {
+            "ok": False,
+            "task_id": "task-1",
+            "run_id": "run-1",
+            "status": "failed",
+            "failure_class": "TASK_BOUNDARY_FAILED",
+            "responsible_layer": "task_boundary",
+            "reason": "missing required command evidence",
+            "failure_stage": "verification",
+            "root_cause_hint": "missing command receipt",
+            "detail": "required verifier did not produce command evidence",
+            "failed_required_evidence_modalities": ["command"],
+            "diagnostic_context": {"paths": ("src/main.py",)},
+            "evidence_refs": ["run_ledger:task-boundary-1"],
+            "requires_ce_replan": "true",
+        }
+    )
+
+    metadata = {
+        "failure_evidence_summary": {
+            "source": "previous_projection",
+            "owner": "run_ledger_public_helper",
+            "count": 99,
+        },
+    }
+
+    rows = append_failure_evidence_to_metadata(metadata, task_boundary_failure)
+
+    assert task_boundary_failure["failure_class"] == "TASK_BOUNDARY_FAILED"
+    assert task_boundary_failure["responsible_layer"] == "task_boundary"
+    assert task_boundary_failure["reason"] == "missing required command evidence"
+    assert task_boundary_failure["evidence_refs"] == ["run_ledger:task-boundary-1"]
+    assert task_boundary_failure["failure_stage"] == "verification"
+    assert task_boundary_failure["failure_classes"] == ["TASK_BOUNDARY_FAILED"]
+    assert task_boundary_failure["root_cause_hint"] == "missing command receipt"
+    assert task_boundary_failure["detail"] == "required verifier did not produce command evidence"
+    assert task_boundary_failure["requires_ce_replan"] is True
+    assert task_boundary_failure["metadata"]["source"] == "polaris.task_boundary_verdict.v1"
+    assert task_boundary_failure["metadata"]["task_boundary_status"] == "failed"
+    assert task_boundary_failure["metadata"]["task_id"] == "task-1"
+    assert task_boundary_failure["metadata"]["run_id"] == "run-1"
+    assert task_boundary_failure["metadata"]["failed_required_evidence_modalities"] == ["command"]
+    assert task_boundary_failure["metadata"]["diagnostic_context"] == {"paths": ["src/main.py"]}
+    assert rows == [task_boundary_failure]
+    assert metadata["failure_evidence"] == [task_boundary_failure]
+    assert metadata["failure_evidence_summary"] == {
+        "source": "previous_projection",
+        "owner": "run_ledger_public_helper",
+        "count": 1,
+        "latest_failure_class": "TASK_BOUNDARY_FAILED",
+        "failure_classes": ["TASK_BOUNDARY_FAILED"],
+    }
+
+
+def test_task_boundary_failure_evidence_from_verdict_ignores_ok_verdict() -> None:
+    assert (
+        task_boundary_failure_evidence_from_verdict(
+            {
+                "ok": True,
+                "status": "completed_verified",
+                "failure_class": "SHOULD_NOT_PROJECT",
+            }
+        )
+        == {}
+    )
+
+
+def test_task_boundary_failure_evidence_from_verdict_accepts_role_result_metadata() -> None:
+    row = task_boundary_failure_evidence_from_verdict(
+        {
+            "task_boundary_verdict": {
+                "ok": False,
+                "status": "failed",
+                "failure_class": "INCOMPLETE_MATERIALIZATION",
+                "reason": "target files were not written",
+                "missing_target_files": ["src/index.ts"],
+            }
+        }
+    )
+
+    assert row["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+    assert row["reason"] == "target files were not written"
+    assert row["metadata"]["missing_target_files"] == ["src/index.ts"]

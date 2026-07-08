@@ -16,6 +16,13 @@ from typing import Any
 
 from polaris.kernelone.events.final_request_evidence import looks_like_failed_gate_evidence_context_payload
 
+_TASK_BOUNDARY_FAILURE_BOOL_KEYS: tuple[str, ...] = (
+    "repairable_by_director",
+    "requires_ce_replan",
+    "requires_pm_revision",
+)
+_TASK_BOUNDARY_VERDICT_SOURCE = "polaris.task_boundary_verdict.v1"
+
 
 class FailureClassV1(str, Enum):
     """Canonical failure classes carried through run-ledger evidence."""
@@ -148,6 +155,18 @@ def _bool_value(value: Any, *, default: bool = False) -> bool:
     return default
 
 
+def _truthy_metadata_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"1", "true", "yes", "y", "on", "enabled"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", "disabled"}:
+            return False
+    return bool(value)
+
+
 def _int_value(value: Any, *, default: int = 0) -> int:
     if isinstance(value, bool):
         return default
@@ -155,6 +174,105 @@ def _int_value(value: Any, *, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _dedupe_text_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_items: tuple[Any, ...] = (value,)
+    elif isinstance(value, (list, tuple)):
+        raw_items = tuple(value)
+    elif isinstance(value, set):
+        raw_items = tuple(sorted(value, key=lambda item: str(item)))
+    else:
+        return []
+    rows: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        token = _clean_text(item)
+        if token and token not in seen:
+            rows.append(token)
+            seen.add(token)
+    return rows
+
+
+def _json_safe_failure_evidence_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe_failure_evidence_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_failure_evidence_value(item) for item in value]
+    if isinstance(value, set):
+        return [_json_safe_failure_evidence_value(item) for item in sorted(value, key=lambda item: str(item))]
+    return str(value)
+
+
+def _task_boundary_verdict_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    nested = value.get("task_boundary_verdict")
+    if isinstance(nested, Mapping):
+        return dict(nested)
+    return dict(value)
+
+
+def task_boundary_failure_evidence_from_verdict(
+    verdict: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project a failed TaskBoundary verdict into one failure-evidence row.
+
+    Boundary:
+        The Run Ledger public layer owns the canonical row shape. Callers pass a
+        TaskBoundary verdict mapping, or RoleTurnResult metadata containing a
+        ``task_boundary_verdict`` mapping. Successful verdicts return ``{}`` so
+        callers do not accidentally append pass-state as failure evidence.
+
+    Complexity:
+        O(k + r) time and memory, where ``k`` is the fixed verdict metadata key
+        count and ``r`` is the evidence-ref count.
+    """
+
+    if not isinstance(verdict, Mapping):
+        return {}
+    payload = _task_boundary_verdict_mapping(verdict)
+    if bool(payload.get("ok")):
+        return {}
+
+    status = _clean_text(payload.get("status")) or "failed"
+    failure_class = _failure_class_evidence_value(payload.get("failure_class")) or "TASK_BOUNDARY_FAILED"
+    reason = _clean_text(payload.get("reason")) or "Task boundary failed"
+    failure_stage = _clean_text(payload.get("failure_stage")) or "task_boundary"
+    metadata: dict[str, Any] = {
+        str(key): _json_safe_failure_evidence_value(value)
+        for key, value in payload.items()
+    }
+    metadata.update(
+        {
+        "source": _TASK_BOUNDARY_VERDICT_SOURCE,
+        "task_boundary_status": status,
+        "failure_stage": failure_stage,
+        }
+    )
+
+    row = FailureEvidenceV1(
+        failure_class=failure_class,
+        responsible_layer=_clean_text(payload.get("responsible_layer")) or "task_boundary",
+        reason=reason,
+        evidence_refs=tuple(_dedupe_text_list(payload.get("evidence_refs") or payload.get("evidence_ref"))),
+        metadata=metadata,
+    ).to_dict()
+    row["failure_stage"] = failure_stage
+    row["failure_classes"] = [failure_class]
+    row["root_cause_hint"] = _clean_text(payload.get("root_cause_hint")) or reason
+    row["detail"] = _clean_text(payload.get("detail")) or reason
+    for key in _TASK_BOUNDARY_FAILURE_BOOL_KEYS:
+        if key in payload:
+            row[key] = _truthy_metadata_value(payload.get(key))
+    return row
 
 
 def merge_failure_evidence_payload(
@@ -296,6 +414,24 @@ def summarize_failed_gate_evidence_context_slot(value: Any) -> dict[str, Any]:
     }
 
 
+def _explicit_failure_classes_from_rows(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
+    found_explicit_classes = False
+    failure_classes: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        raw_classes = row.get("failure_classes")
+        if not isinstance(raw_classes, (list, tuple, set)):
+            continue
+        found_explicit_classes = True
+        for raw_class in raw_classes:
+            failure_class = _failure_class_evidence_value(raw_class)
+            if not failure_class or failure_class in seen:
+                continue
+            failure_classes.append(failure_class)
+            seen.add(failure_class)
+    return found_explicit_classes, failure_classes
+
+
 def summarize_failure_evidence_rows(
     rows: Any,
     *,
@@ -315,6 +451,9 @@ def summarize_failure_evidence_rows(
     summary = dict(existing_summary) if isinstance(existing_summary, Mapping) else {}
     summary["count"] = len(evidence_rows)
     summary["latest_failure_class"] = evidence_rows[-1].get("failure_class") if evidence_rows else None
+    found_failure_classes, failure_classes = _explicit_failure_classes_from_rows(evidence_rows)
+    if found_failure_classes:
+        summary["failure_classes"] = failure_classes
     return summary
 
 
@@ -441,4 +580,5 @@ __all__ = [
     "summarize_failed_gate_evidence_context_slot",
     "summarize_failure_evidence_rows",
     "suspected_files_from_failure_evidence_payload",
+    "task_boundary_failure_evidence_from_verdict",
 ]

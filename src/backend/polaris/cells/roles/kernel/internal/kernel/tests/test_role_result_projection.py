@@ -402,9 +402,15 @@ def test_project_task_boundary_failure_to_metadata_projects_failure_shape() -> N
         metadata,
         {
             "ok": False,
+            "task_id": "task-1",
+            "run_id": "run-1",
             "status": "missing_entrypoint_target",
             "failure_class": "MISSING_ENTRYPOINT_TARGET",
+            "responsible_layer": "task_boundary",
             "reason": "entrypoint is not materialized",
+            "missing_entrypoint_targets": ["src/main.ts"],
+            "diagnostic_context": {"paths": ("src/main.ts",)},
+            "evidence_refs": ["run-ledger://task-1/task-boundary"],
         },
     )
 
@@ -413,6 +419,26 @@ def test_project_task_boundary_failure_to_metadata_projects_failure_shape() -> N
     assert metadata["task_boundary_failure_class"] == "MISSING_ENTRYPOINT_TARGET"
     assert metadata["task_boundary_failure_status"] == "missing_entrypoint_target"
     assert metadata["task_boundary_verdict"]["reason"] == "entrypoint is not materialized"
+    failure_evidence = metadata["failure_evidence"]
+    assert len(failure_evidence) == 1
+    evidence_row = failure_evidence[0]
+    assert isinstance(evidence_row, dict)
+    assert evidence_row["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+    assert evidence_row["responsible_layer"] == "task_boundary"
+    assert evidence_row["failure_stage"] == "task_boundary"
+    assert evidence_row["root_cause_hint"] == "entrypoint is not materialized"
+    assert evidence_row["detail"] == "entrypoint is not materialized"
+    assert evidence_row["evidence_refs"] == ["run-ledger://task-1/task-boundary"]
+    assert evidence_row["metadata"]["task_boundary_status"] == "missing_entrypoint_target"
+    assert evidence_row["metadata"]["task_id"] == "task-1"
+    assert evidence_row["metadata"]["run_id"] == "run-1"
+    assert evidence_row["metadata"]["missing_entrypoint_targets"] == ["src/main.ts"]
+    assert evidence_row["metadata"]["diagnostic_context"] == {"paths": ["src/main.ts"]}
+    assert metadata["failure_evidence_summary"] == {
+        "count": 1,
+        "latest_failure_class": "MISSING_ENTRYPOINT_TARGET",
+        "failure_classes": ["MISSING_ENTRYPOINT_TARGET"],
+    }
 
 
 def test_project_task_boundary_failure_to_metadata_preserves_ok_verdict_without_failure() -> None:
@@ -425,6 +451,8 @@ def test_project_task_boundary_failure_to_metadata_preserves_ok_verdict_without_
     assert "task_boundary_failed" not in metadata
     assert "task_boundary_failure_class" not in metadata
     assert "task_boundary_failure_status" not in metadata
+    assert "failure_evidence" not in metadata
+    assert "failure_evidence_summary" not in metadata
 
 
 def test_role_result_metadata_uses_monitoring_context_audit_when_not_already_set() -> None:

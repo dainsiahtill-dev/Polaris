@@ -26,6 +26,7 @@ from .failure_evidence import (
     summarize_failed_gate_evidence_context_slot,
     summarize_failure_evidence_rows,
     suspected_files_from_failure_evidence_payload,
+    task_boundary_failure_evidence_from_verdict,
 )
 from .job_token import JobToken
 from .ledger import RunLedger, stable_hash, stable_json
@@ -175,6 +176,7 @@ __all__ = [
     "summarize_run_ledger_projection",
     "summarize_tool_lifecycle_events",
     "suspected_files_from_failure_evidence_payload",
+    "task_boundary_failure_evidence_from_verdict",
     "task_boundary_tool_dispatch_from_lifecycle_metadata",
     "task_boundary_tool_dispatch_from_lifecycle_receipt",
     "tool_call_lifecycle_receipts_from_metadata",
