@@ -50,7 +50,7 @@ from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase
+from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase, has_authoritative_write_receipt
 from polaris.cells.roles.kernel.internal.transaction.read_strategy import (
     ReadStrategy,
     determine_optimal_strategy,
@@ -174,7 +174,7 @@ def _has_write_tools_in_receipt(batch_receipt: dict[str, Any] | None) -> bool:
         status = str(item.get("status") or "").strip()
         if name in WRITE_TOOLS and status == "success":
             return True
-    return False
+    return has_authoritative_write_receipt(batch_receipt)
 
 
 # ---------------------------------------------------------------------------

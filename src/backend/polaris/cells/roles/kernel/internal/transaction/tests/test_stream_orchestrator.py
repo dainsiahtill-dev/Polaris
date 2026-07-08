@@ -75,6 +75,42 @@ class TestHasWriteToolsInReceipt:
 
         assert _has_write_tools_in_receipt(receipt) is False
 
+    def test_top_level_effect_receipt_counts_as_write_evidence(self) -> None:
+        receipt = {
+            "effect_receipts": [
+                {
+                    "operation": "write_file:create",
+                    "file": "src/generated.py",
+                    "status": "success",
+                }
+            ]
+        }
+
+        assert _has_write_tools_in_receipt(receipt) is True
+
+    def test_failed_or_control_plane_effect_receipts_do_not_count(self) -> None:
+        failed_effect_receipt = {
+            "effect_receipts": [
+                {
+                    "operation": "write_file:create",
+                    "file": "src/generated.py",
+                    "status": "failed",
+                }
+            ]
+        }
+        control_plane_effect_receipt = {
+            "effect_receipts": [
+                {
+                    "operation": "write_file:create",
+                    "file": ".polaris/runtime/task.json",
+                    "status": "success",
+                }
+            ]
+        }
+
+        assert _has_write_tools_in_receipt(failed_effect_receipt) is False
+        assert _has_write_tools_in_receipt(control_plane_effect_receipt) is False
+
 
 class TestBuildContinueVisibleContent:
     """测试 _build_continue_visible_content。"""
