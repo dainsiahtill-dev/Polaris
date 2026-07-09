@@ -248,9 +248,11 @@ class TaskRuntimeService:
     def reset_task_rows_for_reexecution(self, *, source: str = "") -> dict[str, Any]:
         """Reset current task rows to a clean pre-execution state.
 
-        This is the owner-cell API for retry/resume preparation.  It preserves
-        task ids and dependency fields, removes stale execution/session state,
-        and emits one ``task_runtime.execution`` fact per row mutation.
+        Boundary:
+            Raw ``TaskBoard`` entity reads are allowed here only because this
+            method is the reexecution mutation owner. It preserves task ids and
+            dependency fields, removes stale execution/session state, and must
+            append one ``task_runtime.execution`` fact per row mutation.
         """
 
         reset_files: list[str] = []
@@ -2314,6 +2316,12 @@ class TaskRuntimeService:
         leases active. The role kernel guard checks these leases immediately
         before tool execution; suspending here makes late LLM responses
         fail-closed instead of writing files after the run has been cancelled.
+
+        Boundary:
+            Raw ``TaskBoard`` entity reads are allowed here only because this
+            method is the run-cancellation mutation owner. Cancellation must
+            suspend matching execution sessions, update the persisted task rows,
+            and append ``task_runtime.execution`` facts for each row mutation.
         """
 
         normalized_run_id = str(run_id or "").strip()
@@ -2478,6 +2486,12 @@ class TaskRuntimeService:
 
     def refresh_dependency_unblocks(self) -> dict[str, Any]:
         """Normalize stale BLOCKED rows whose dependencies are now complete.
+
+        Boundary:
+            Raw ``TaskBoard`` entity reads are allowed here only because this
+            method is the dependency-maintenance mutation owner. The dependency
+            status source remains fact-aware; persisted entities are used only
+            for row-local ``TaskBoard.update`` mutations and event evidence.
 
         Dependency status is anchored on the fact-overlay-aware projection
         (``_fact_overlaid_dependency_status_rows``) so that the latest

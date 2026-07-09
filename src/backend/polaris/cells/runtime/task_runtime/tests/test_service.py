@@ -73,6 +73,27 @@ def _execution_event_payload_for_result(
     return payload
 
 
+def _execution_event_payloads_by_task_id(
+    workspace: Path,
+    *,
+    event_type: str,
+) -> dict[int, dict[str, Any]]:
+    events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type=event_type,
+        )
+    ).events
+    payloads: dict[int, dict[str, Any]] = {}
+    for event in events:
+        payload = event.get("payload")
+        assert isinstance(payload, dict)
+        task_id = int(str(payload.get("task_id") or "0"))
+        payloads[task_id] = payload
+    return payloads
+
+
 def _assert_task_row_write_receipt(
     receipt: object,
     *,
@@ -4326,6 +4347,56 @@ def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp
     assert persisted["metadata"]["late_projection"] == "workspace_quality_gate_failed"
 
 
+def test_task_runtime_service_refresh_dependency_unblocks_uses_fact_status_source(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    parent = service.create_task_row(subject="fact-completed prerequisite")
+    parent_id = int(parent["id"])
+    child = service.create_task_row(subject="blocked by fact-completed parent", blocked_by=[parent_id])
+    child_id = int(child["id"])
+
+    parent_file_before = json.loads(_task_file_path(workspace, parent_id).read_text(encoding="utf-8"))
+    assert parent_file_before["status"] == "pending"
+    _append_terminal_fact_event(
+        workspace,
+        task_id=str(parent_id),
+        event_type="completed",
+        status="completed",
+        run_id="run-fact-aware-dependency-refresh",
+    )
+
+    refresh = service.refresh_dependency_unblocks()
+
+    assert refresh["unblocked_task_ids"] == [child_id]
+    assert refresh["refreshed_task_ids"] == []
+    assert refresh["failed"] == []
+    assert len(refresh["execution_events"]) == 1
+    assert refresh["execution_events"][0]["ok"] is True
+    assert refresh["execution_events"][0]["event_type"] == "dependencies_unblocked"
+    payload = _execution_event_payload_for_result(
+        workspace,
+        refresh["execution_events"][0],
+        event_type="dependencies_unblocked",
+    )
+    assert payload["task_id"] == str(child_id)
+    assert payload["status"] == "pending"
+    assert payload["execution_state"] == "pending"
+    assert payload["details"]["previous_blockers"] == [parent_id]
+    assert payload["details"]["resolved_dependencies"] == []
+    _assert_execution_event_row_write_receipt(
+        payload,
+        task_id=child_id,
+        task_path=_task_file_path(workspace, child_id),
+    )
+    parent_file_after = json.loads(_task_file_path(workspace, parent_id).read_text(encoding="utf-8"))
+    assert parent_file_after["status"] == "pending"
+    child_file_after = json.loads(_task_file_path(workspace, child_id).read_text(encoding="utf-8"))
+    assert child_file_after["status"] == "pending"
+    assert child_file_after["blocked_by"] == []
+
+
 def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_dependencies(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -4365,6 +4436,19 @@ def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_depende
     assert refresh["unblocked_task_ids"] == [child_id]
     assert refresh["execution_events"][0]["ok"] is True
     assert refresh["execution_events"][0]["event_type"] == "dependencies_unblocked"
+    refresh_payload = _execution_event_payload_for_result(
+        workspace,
+        refresh["execution_events"][0],
+        event_type="dependencies_unblocked",
+    )
+    assert refresh_payload["task_id"] == str(child_id)
+    assert refresh_payload["details"]["previous_blockers"] == []
+    assert refresh_payload["details"]["resolved_dependencies"] == [parent_id]
+    _assert_execution_event_row_write_receipt(
+        refresh_payload,
+        task_id=int(child_id),
+        task_path=_task_file_path(workspace, child_id),
+    )
     fact_rows = service.list_task_rows_from_execution_facts()
     fact_child = next(row for row in fact_rows if row["id"] == child_id)
     assert fact_child["status"] == "pending"
@@ -4425,6 +4509,21 @@ def test_task_runtime_service_records_dependency_blocker_refresh_events(tmp_path
     assert refresh["refreshed_task_ids"] == [child_id]
     assert refresh["execution_events"][0]["ok"] is True
     assert refresh["execution_events"][0]["event_type"] == "dependency_blockers_refreshed"
+    refresh_payload = _execution_event_payload_for_result(
+        workspace,
+        refresh["execution_events"][0],
+        event_type="dependency_blockers_refreshed",
+    )
+    assert refresh_payload["task_id"] == str(child_id)
+    assert refresh_payload["status"] == "blocked"
+    assert refresh_payload["execution_state"] == "blocked"
+    assert refresh_payload["details"]["previous_blockers"] == [completed_parent_id, active_parent_id]
+    assert refresh_payload["details"]["active_blockers"] == [active_parent_id]
+    _assert_execution_event_row_write_receipt(
+        refresh_payload,
+        task_id=child_id,
+        task_path=_task_file_path(workspace, child_id),
+    )
     child_row = service.get_task(child_id)
     assert child_row is not None
     assert child_row["status"] == "blocked"
@@ -4487,33 +4586,64 @@ def test_task_runtime_reset_rows_for_reexecution_emits_execution_facts(tmp_path:
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create_task_row(subject="dirty task", metadata={"scope": "src/App.tsx"})
-    created_id = created["id"]
-    claimed = service.claim_execution(
-        created_id,
+    first = service.create_task_row(subject="dirty task one", metadata={"scope": "src/App.tsx"})
+    second = service.create_task_row(subject="dirty task two", metadata={"scope": "src/main.py"})
+    first_id = int(first["id"])
+    second_id = int(second["id"])
+    first_claim = service.claim_execution(
+        first_id,
         worker_id="director",
         role_id="director",
         run_id="run-reset-row",
         selection_source="unit",
     )
-    assert claimed["success"] is True
-    assert _session_file_path(workspace, created_id).is_file()
+    second_claim = service.claim_execution(
+        second_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-reset-row",
+        selection_source="unit",
+    )
+    assert first_claim["success"] is True
+    assert second_claim["success"] is True
+    assert _session_file_path(workspace, first_id).is_file()
+    assert _session_file_path(workspace, second_id).is_file()
 
     result = service.reset_task_rows_for_reexecution(source="unit.reset")
 
     assert result["success"] is True
-    assert result["reset_files"] == [f"task_{created_id}.json"]
-    assert result["deleted_session_files"] == [f"task_{created_id}.session.json"]
-    assert not _session_file_path(workspace, created_id).exists()
-    task_payload = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
-    assert task_payload["status"] == "pending"
-    assert task_payload["assignee"] == ""
-    assert "runtime_execution" not in task_payload["metadata"]
+    assert set(result["reset_files"]) == {f"task_{first_id}.json", f"task_{second_id}.json"}
+    assert set(result["deleted_session_files"]) == {
+        f"task_{first_id}.session.json",
+        f"task_{second_id}.session.json",
+    }
+    assert not _session_file_path(workspace, first_id).exists()
+    assert not _session_file_path(workspace, second_id).exists()
+    assert len(result["execution_events"]) == 2
+    assert [event["event_type"] for event in result["execution_events"]] == [
+        "reexecution_reset",
+        "reexecution_reset",
+    ]
+    assert all(event["ok"] is True for event in result["execution_events"])
 
-    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
-    reset_event = next(event for event in events if event.get("event_type") == "reexecution_reset")
-    assert reset_event["payload"]["task_id"] == str(created_id)
-    assert reset_event["payload"]["details"]["source"] == "unit.reset"
+    reset_payloads = _execution_event_payloads_by_task_id(workspace, event_type="reexecution_reset")
+    assert set(reset_payloads) == {first_id, second_id}
+    for task_id in (first_id, second_id):
+        task_payload = json.loads(_task_file_path(workspace, task_id).read_text(encoding="utf-8"))
+        assert task_payload["status"] == "pending"
+        assert task_payload["assignee"] == ""
+        assert "runtime_execution" not in task_payload["metadata"]
+        reset_payload = reset_payloads[task_id]
+        assert reset_payload["task_id"] == str(task_id)
+        assert reset_payload["status"] == "pending"
+        assert reset_payload["execution_state"] == "pending"
+        assert reset_payload["details"]["source"] == "unit.reset"
+        assert reset_payload["details"]["previous_status"] == "in_progress"
+        _assert_execution_event_row_write_receipt(
+            reset_payload,
+            task_id=task_id,
+            task_path=_task_file_path(workspace, task_id),
+        )
 
 
 def test_task_runtime_import_rows_for_reexecution_preserves_ids_and_events(tmp_path: Path) -> None:
@@ -4941,6 +5071,30 @@ def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_pat
     assert len(suspended["execution_events"]) == 1
     assert suspended["execution_events"][0]["ok"] is True
     assert suspended["execution_events"][0]["event_type"] == "suspended"
+    payload = _execution_event_payload_for_result(
+        workspace,
+        suspended["execution_events"][0],
+        event_type="suspended",
+    )
+    assert payload["task_id"] == str(cancelled_task_id)
+    assert payload["run_id"] == "director-cancelled"
+    assert payload["status"] == "pending"
+    assert payload["execution_state"] == "pending"
+    assert payload["details"]["reason"] == "factory_stage_timeout"
+    assert payload["details"]["run_id"] == "director-cancelled"
+    assert payload["details"]["source"] == "runtime.task_runtime.suspend_active_executions_for_run"
+    _assert_execution_event_row_write_receipt(
+        payload,
+        task_id=int(cancelled_task_id),
+        task_path=_task_file_path(workspace, cancelled_task_id),
+    )
+    _assert_execution_event_session_write_receipt(
+        payload,
+        task_id=int(cancelled_task_id),
+        session_id=str(cancelled_claim["session"]["session_id"]),
+        session_path=_session_file_path(workspace, cancelled_task_id),
+        preserved_terminal_session=False,
+    )
 
     cancelled_heartbeat = service.heartbeat_execution(
         cancelled_task_id,
@@ -4953,6 +5107,12 @@ def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_pat
     assert cancelled_row["status"] == "pending"
     assert cancelled_row["resume_state"] == "resumable"
     assert cancelled_row["metadata"]["cancellation_reason"] == "factory_stage_timeout"
+    other_row = service.get_task(other_task_id)
+    assert other_row is not None
+    assert other_row["status"] == "in_progress"
+    other_session = json.loads(_session_file_path(workspace, other_task_id).read_text(encoding="utf-8"))
+    assert other_session["status"] == "active"
+    assert other_session["run_id"] == "director-other"
 
     other_heartbeat = service.heartbeat_execution(
         other_task_id,

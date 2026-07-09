@@ -206,6 +206,36 @@ TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
         "suspend_active_executions_for_run",
     }
 )
+TASK_RUNTIME_SERVICE_EXPECTED_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
+    {
+        "_list_file_task_rows",
+        "refresh_dependency_unblocks",
+        "reset_task_rows_for_reexecution",
+        "suspend_active_executions_for_run",
+    }
+)
+TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_OWNER_REQUIREMENTS = {
+    "refresh_dependency_unblocks": frozenset(
+        {
+            "self._append_execution_event",
+            "self._board.update",
+            "self._fact_overlaid_dependency_status_rows",
+        }
+    ),
+    "reset_task_rows_for_reexecution": frozenset(
+        {
+            "self._append_execution_event",
+            "self._replace_task_row_for_reexecution",
+        }
+    ),
+    "suspend_active_executions_for_run": frozenset(
+        {
+            "self._append_execution_event",
+            "self._board.update",
+            "self._suspend_active_session_for_run_locked",
+        }
+    ),
+}
 TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS = {
     "create",
     "notify_ready_tasks",
@@ -3298,6 +3328,69 @@ def test_key_task_runtime_methods_route_raw_entities_through_file_task_entities(
         "TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS. Read-only projection "
         "consumers must use row projections instead of raw Task entities. "
         "Offenders:\n" + "\n".join(unauthorized_helper_consumers)
+    )
+
+
+def _task_runtime_method_direct_call_names(method_def: ast.FunctionDef) -> set[str]:
+    return {_call_name(node.func) for node in _walk_task_runtime_method_body(method_def) if isinstance(node, ast.Call)}
+
+
+def _check_raw_board_entity_consumer_owner_requirements() -> list[str]:
+    methods = _task_runtime_service_method_defs()
+    helper_name = TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for method_name, required_calls in sorted(TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_OWNER_REQUIREMENTS.items()):
+        method_def = methods.get(method_name)
+        if method_def is None:
+            offenders.append(f"TaskRuntimeService.{method_name}() not found")
+            continue
+        helper_calls = _direct_self_method_calls(method_def, helper_name)
+        if not helper_calls:
+            continue
+
+        direct_call_names = _task_runtime_method_direct_call_names(method_def)
+        missing_calls = sorted(required_calls.difference(direct_call_names))
+        if missing_calls:
+            helper_lines = ", ".join(str(call.lineno) for call in helper_calls)
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{method_name}() calls self.{helper_name}() "
+                f"at line(s) {helper_lines} but is missing required owner-boundary "
+                f"calls: {missing_calls}"
+            )
+
+    return offenders
+
+
+def test_task_runtime_service_raw_board_entity_consumer_allowlist_is_locked() -> None:
+    """WS2 fence: raw Task entity consumers cannot silently expand."""
+
+    assert (
+        TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS == TASK_RUNTIME_SERVICE_EXPECTED_RAW_BOARD_ENTITY_CONSUMERS
+    ), (
+        "TaskRuntimeService raw Task entity consumers must stay locked to the "
+        "reviewed file-row projection bridge plus the three owner mutation "
+        "boundaries. Add a dedicated owner-boundary AST requirement before "
+        "changing this set."
+    )
+
+
+def test_raw_task_entity_owner_consumers_keep_required_mutation_and_event_boundaries() -> None:
+    """WS2 fence: raw Task entity scans must stay paired with owner writes."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_raw_board_entity_consumer_owner_requirements()
+
+    assert not offenders, (
+        "TaskRuntimeService raw Task entity consumers that call "
+        f"self.{TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER}() must keep the "
+        "reviewed owner boundary calls in the same method: reexecution reset "
+        "must replace rows and append execution facts; dependency unblock "
+        "refresh must use fact-overlaid dependency status, update the board, "
+        "and append execution facts; bulk run suspend must suspend the locked "
+        "session, update the board, and append execution facts. "
+        f"{rel} offenders:\n" + "\n".join(offenders)
     )
 
 
