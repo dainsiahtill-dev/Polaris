@@ -1549,6 +1549,22 @@ def _assert_task_row_read_model_fallback_coverage(
     assert coverage["fact_row_ids_without_file_row"] == fact_row_ids_without_file_row
 
 
+def _assert_task_row_read_model_projection_parity_coverage(
+    coverage: dict[str, Any],
+    *,
+    parity_ratio: float,
+    observable_projection_parity_ready: bool,
+    transitional_only_row_ids: list[str],
+    fact_only_row_ids: list[str],
+    row_ids_with_projection_mismatch: list[str],
+) -> None:
+    assert coverage["parity_ratio"] == pytest.approx(parity_ratio)
+    assert coverage["observable_projection_parity_ready"] is observable_projection_parity_ready
+    assert coverage["transitional_only_row_ids"] == transitional_only_row_ids
+    assert coverage["fact_only_row_ids"] == fact_only_row_ids
+    assert coverage["row_ids_with_projection_mismatch"] == row_ids_with_projection_mismatch
+
+
 def _runtime_execution_projected_row(task_id: int, *, subject: str | None = None) -> dict[str, Any]:
     session = TaskExecutionSession.create(
         task_id=task_id,
@@ -1741,6 +1757,153 @@ def test_task_row_read_model_fallback_coverage_does_not_refresh_dependency_unblo
     )
 
 
+def test_task_row_read_model_projection_parity_coverage_ready_for_fact_only_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    monkeypatch.setattr(service, "_list_file_task_rows", lambda: [])
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            {
+                "id": 41,
+                "task_id": "41",
+                "subject": "fact-only row is already the future projection",
+                "status": "in_progress",
+                "metadata": {"source": "task_runtime.execution_fact"},
+            }
+        ],
+    )
+
+    coverage = service.task_row_read_model_projection_parity_coverage()
+
+    _assert_task_row_read_model_projection_parity_coverage(
+        coverage,
+        parity_ratio=1.0,
+        observable_projection_parity_ready=True,
+        transitional_only_row_ids=[],
+        fact_only_row_ids=[],
+        row_ids_with_projection_mismatch=[],
+    )
+
+
+def test_task_row_read_model_projection_parity_coverage_reports_row_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    monkeypatch.setattr(
+        service,
+        "_list_file_task_rows",
+        lambda: [
+            {
+                "id": 52,
+                "task_id": "52",
+                "subject": "file row field that the fact snapshot does not preserve",
+                "status": "pending",
+                "metadata": {"source": "file_row"},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            {
+                "id": 52,
+                "task_id": "52",
+                "subject": "fact-only row has different observable content",
+                "status": "pending",
+                "metadata": {"source": "task_runtime.execution_fact"},
+            }
+        ],
+    )
+
+    coverage = service.task_row_read_model_projection_parity_coverage()
+
+    _assert_task_row_read_model_projection_parity_coverage(
+        coverage,
+        parity_ratio=0.0,
+        observable_projection_parity_ready=False,
+        transitional_only_row_ids=[],
+        fact_only_row_ids=[],
+        row_ids_with_projection_mismatch=["52"],
+    )
+
+
+def test_task_row_read_model_projection_parity_coverage_reports_projection_only_row_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    monkeypatch.setattr(
+        service,
+        "_list_file_task_rows",
+        lambda: [
+            {
+                "id": 61,
+                "task_id": "61",
+                "subject": "file-only transitional row",
+                "status": "pending",
+                "metadata": {"source": "file_row"},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            {
+                "id": 62,
+                "task_id": "62",
+                "subject": "fact-only future row",
+                "status": "in_progress",
+                "metadata": {"source": "task_runtime.execution_fact"},
+            }
+        ],
+    )
+    projection_calls: list[tuple[list[dict[str, Any]], list[dict[str, Any]]]] = []
+
+    def project_observable_task_rows(
+        file_rows: list[dict[str, Any]],
+        fact_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        projection_calls.append(
+            (
+                [dict(row) for row in file_rows],
+                [dict(row) for row in fact_rows],
+            )
+        )
+        if file_rows:
+            return [dict(file_rows[0])]
+        return [dict(fact_rows[0])]
+
+    monkeypatch.setattr(service, "_project_observable_task_rows", project_observable_task_rows)
+
+    coverage = service.task_row_read_model_projection_parity_coverage()
+
+    _assert_task_row_read_model_projection_parity_coverage(
+        coverage,
+        parity_ratio=0.0,
+        observable_projection_parity_ready=False,
+        transitional_only_row_ids=["61"],
+        fact_only_row_ids=["62"],
+        row_ids_with_projection_mismatch=[],
+    )
+    assert len(projection_calls) == 2
+
+
 def test_observable_task_row_stats_include_delegated_read_model_fallback_coverage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1764,7 +1927,15 @@ def test_observable_task_row_stats_include_delegated_read_model_fallback_coverag
         "transitional_file_fallback_required": True,
         "sentinel": "coverage-from-task-row-read-model-fallback",
     }
-    sentinel_readiness: dict[str, Any] = {"ready": False, "blocking_reasons": ["sentinel-readiness"]}
+    sentinel_parity_coverage: dict[str, Any] = {
+        "observable_projection_parity_ready": False,
+        "sentinel": "task-row-read-model-projection-parity",
+    }
+    sentinel_readiness: dict[str, Any] = {
+        "ready": False,
+        "blocking_reasons": ["sentinel-readiness"],
+        "task_row_read_model_projection_parity_coverage": sentinel_parity_coverage,
+    }
     coverage_calls: list[str] = []
 
     def fallback_coverage() -> dict[str, Any]:
@@ -1784,6 +1955,10 @@ def test_observable_task_row_stats_include_delegated_read_model_fallback_coverag
     assert stats["completed"] == 1
     assert stats["read_model_fallback_coverage"] is sentinel_coverage
     assert stats["read_model_cutover_readiness"] is sentinel_readiness
+    assert (
+        stats["read_model_cutover_readiness"]["task_row_read_model_projection_parity_coverage"]
+        is sentinel_parity_coverage
+    )
     assert coverage_calls == ["task_row_read_model_fallback_coverage"]
 
 
@@ -1964,7 +2139,15 @@ def test_observable_task_row_stats_include_delegated_projected_runtime_execution
         "projected_session_file_fallback_required": False,
         "sentinel": "projected-runtime-execution-session-coverage",
     }
-    sentinel_readiness: dict[str, Any] = {"ready": True, "blocking_reasons": []}
+    sentinel_parity_coverage: dict[str, Any] = {
+        "observable_projection_parity_ready": True,
+        "sentinel": "task-row-read-model-projection-parity",
+    }
+    sentinel_readiness: dict[str, Any] = {
+        "ready": True,
+        "blocking_reasons": [],
+        "task_row_read_model_projection_parity_coverage": sentinel_parity_coverage,
+    }
     coverage_calls: list[str] = []
 
     def projected_session_fallback_coverage() -> dict[str, Any]:
@@ -1994,6 +2177,10 @@ def test_observable_task_row_stats_include_delegated_projected_runtime_execution
     assert stats["pending"] == 1
     assert stats["projected_runtime_execution_session_fallback_coverage"] is sentinel_coverage
     assert stats["read_model_cutover_readiness"] is sentinel_readiness
+    assert (
+        stats["read_model_cutover_readiness"]["task_row_read_model_projection_parity_coverage"]
+        is sentinel_parity_coverage
+    )
     assert coverage_calls == ["projected_runtime_execution_session_fallback_coverage"]
 
 
@@ -2056,20 +2243,47 @@ def test_task_row_read_model_cutover_readiness_ready_when_file_rows_and_projecte
     ) -> list[dict[str, Any]]:
         assert include_terminal is True
         assert augment_runtime_state in {False, True}
+        projected_session_row = _runtime_execution_projected_row(
+            2,
+            subject="covered projected session",
+        )
+        projected_session_row["metadata"] = {
+            **dict(projected_session_row["metadata"]),
+            "previous_status": "",
+        }
         return [
-            {"id": 1, "task_id": "1", "subject": "covered file row", "status": "pending"},
-            _runtime_execution_projected_row(2, subject="covered file projected session"),
+            {
+                "id": 1,
+                "task_id": "1",
+                "subject": "covered row",
+                "status": "pending",
+                "metadata": {"source": "shared_projection", "previous_status": "pending"},
+            },
+            projected_session_row,
+        ]
+
+    def fact_rows() -> list[dict[str, Any]]:
+        projected_session_row = _runtime_execution_projected_row(
+            2,
+            subject="covered projected session",
+        )
+        projected_session_row["metadata"] = {
+            **dict(projected_session_row["metadata"]),
+            "previous_status": "",
+        }
+        return [
+            {
+                "id": 1,
+                "task_id": "1",
+                "subject": "covered row",
+                "status": "pending",
+                "metadata": {"source": "shared_projection", "previous_status": "pending"},
+            },
+            projected_session_row,
         ]
 
     monkeypatch.setattr(service, "_list_file_task_rows", file_rows)
-    monkeypatch.setattr(
-        service,
-        "list_task_rows_from_execution_facts",
-        lambda: [
-            {"id": 1, "task_id": "1", "subject": "covered fact row", "status": "pending"},
-            _runtime_execution_projected_row(2, subject="covered fact projected session"),
-        ],
-    )
+    monkeypatch.setattr(service, "list_task_rows_from_execution_facts", fact_rows)
 
     readiness = service.task_row_read_model_cutover_readiness()
 
@@ -2077,6 +2291,65 @@ def test_task_row_read_model_cutover_readiness_ready_when_file_rows_and_projecte
         readiness,
         ready=True,
         blocking_reasons=[],
+    )
+    assert readiness["observable_projection_parity_ready"] is True
+    _assert_task_row_read_model_projection_parity_coverage(
+        readiness["task_row_read_model_projection_parity_coverage"],
+        parity_ratio=1.0,
+        observable_projection_parity_ready=True,
+        transitional_only_row_ids=[],
+        fact_only_row_ids=[],
+        row_ids_with_projection_mismatch=[],
+    )
+
+
+def test_task_row_read_model_cutover_readiness_blocks_when_projection_parity_mismatches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    monkeypatch.setattr(
+        service,
+        "_list_file_task_rows",
+        lambda **_: [
+            {
+                "id": 71,
+                "task_id": "71",
+                "subject": "file row needs fact parity",
+                "status": "pending",
+                "metadata": {"source": "file_row"},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            {
+                "id": 71,
+                "task_id": "71",
+                "subject": "fact row differs from transitional overlay",
+                "status": "pending",
+                "metadata": {"source": "task_runtime.execution_fact"},
+            }
+        ],
+    )
+
+    readiness = service.task_row_read_model_cutover_readiness()
+
+    assert readiness["ready"] is False
+    assert readiness["observable_projection_parity_ready"] is False
+    assert "observable_projection_parity_mismatch" in readiness["blocking_reasons"]
+    _assert_task_row_read_model_projection_parity_coverage(
+        readiness["task_row_read_model_projection_parity_coverage"],
+        parity_ratio=0.0,
+        observable_projection_parity_ready=False,
+        transitional_only_row_ids=[],
+        fact_only_row_ids=[],
+        row_ids_with_projection_mismatch=["71"],
     )
 
 
@@ -2159,20 +2432,49 @@ def test_observable_task_row_stats_include_read_model_cutover_readiness(
     ) -> list[dict[str, Any]]:
         assert include_terminal is True
         assert augment_runtime_state in {False, True}
+        projected_session_row = _runtime_execution_projected_row(
+            2,
+            subject="stats covered projected session",
+        )
+        projected_session_row["metadata"] = {
+            **dict(projected_session_row["metadata"]),
+            "previous_status": "",
+        }
         return [
-            {"id": 1, "task_id": "1", "subject": "stats covered row", "status": "pending", "blocked_by": []},
-            _runtime_execution_projected_row(2, subject="stats covered projected session"),
+            {
+                "id": 1,
+                "task_id": "1",
+                "subject": "stats covered row",
+                "status": "pending",
+                "blocked_by": [],
+                "metadata": {"source": "shared_projection", "previous_status": "pending"},
+            },
+            projected_session_row,
+        ]
+
+    def fact_rows() -> list[dict[str, Any]]:
+        projected_session_row = _runtime_execution_projected_row(
+            2,
+            subject="stats covered projected session",
+        )
+        projected_session_row["metadata"] = {
+            **dict(projected_session_row["metadata"]),
+            "previous_status": "",
+        }
+        return [
+            {
+                "id": 1,
+                "task_id": "1",
+                "subject": "stats covered row",
+                "status": "pending",
+                "blocked_by": [],
+                "metadata": {"source": "shared_projection", "previous_status": "pending"},
+            },
+            projected_session_row,
         ]
 
     monkeypatch.setattr(service, "_list_file_task_rows", file_rows)
-    monkeypatch.setattr(
-        service,
-        "list_task_rows_from_execution_facts",
-        lambda: [
-            {"id": 1, "task_id": "1", "subject": "stats covered fact", "status": "pending", "blocked_by": []},
-            _runtime_execution_projected_row(2, subject="stats covered fact projected session"),
-        ],
-    )
+    monkeypatch.setattr(service, "list_task_rows_from_execution_facts", fact_rows)
 
     direct_readiness = service.task_row_read_model_cutover_readiness()
     stats = service.get_observable_task_row_stats()
@@ -2182,6 +2484,14 @@ def test_observable_task_row_stats_include_read_model_cutover_readiness(
         stats["read_model_cutover_readiness"],
         ready=True,
         blocking_reasons=[],
+    )
+    _assert_task_row_read_model_projection_parity_coverage(
+        stats["read_model_cutover_readiness"]["task_row_read_model_projection_parity_coverage"],
+        parity_ratio=1.0,
+        observable_projection_parity_ready=True,
+        transitional_only_row_ids=[],
+        fact_only_row_ids=[],
+        row_ids_with_projection_mismatch=[],
     )
 
 

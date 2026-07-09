@@ -1306,6 +1306,81 @@ class TaskRuntimeService:
             "transitional_file_fallback_required": bool(file_row_ids_without_execution_fact),
         }
 
+    def task_row_read_model_projection_parity_coverage(self) -> dict[str, Any]:
+        """Return observable row parity coverage for fact-only cutover.
+
+        Boundary:
+            This is a read-only projection audit. It loads file-backed task rows
+            and latest execution-fact rows through the existing read boundaries,
+            then compares the current transitional observable projection with
+            the future fact-only observable projection. It must not claim tasks,
+            mutate sessions, append facts, refresh dependency unblocks, or write
+            task rows.
+
+        Complexity:
+            O(r + f + p) time and memory over file rows, fact rows, and the two
+            projected observable row sets.
+        """
+
+        file_rows = self._list_file_task_rows()
+        fact_rows = self.list_task_rows_from_execution_facts()
+        transitional_rows = self._project_observable_task_rows(file_rows, fact_rows)
+        fact_only_rows = self._project_observable_task_rows([], fact_rows)
+
+        transitional_rows_by_id = TaskRuntimeService._task_row_read_model_rows_by_task_id(
+            transitional_rows,
+            self._task_row_read_model_task_id,
+        )
+        fact_only_rows_by_id = TaskRuntimeService._task_row_read_model_rows_by_task_id(
+            fact_only_rows,
+            self._task_row_read_model_task_id,
+        )
+        transitional_row_ids = set(transitional_rows_by_id)
+        fact_only_row_ids = set(fact_only_rows_by_id)
+        shared_row_ids = transitional_row_ids & fact_only_row_ids
+
+        transitional_only_row_ids = sorted(
+            transitional_row_ids - fact_only_row_ids,
+            key=self._task_row_read_model_task_id_sort_key,
+        )
+        fact_only_row_ids_without_transitional = sorted(
+            fact_only_row_ids - transitional_row_ids,
+            key=self._task_row_read_model_task_id_sort_key,
+        )
+        row_ids_with_projection_mismatch = sorted(
+            (
+                task_id
+                for task_id in shared_row_ids
+                if not TaskRuntimeService._task_row_read_model_rows_equal(
+                    transitional_rows_by_id[task_id],
+                    fact_only_rows_by_id[task_id],
+                )
+            ),
+            key=self._task_row_read_model_task_id_sort_key,
+        )
+
+        parity_denominator = len(transitional_row_ids | fact_only_row_ids)
+        if parity_denominator == 0:
+            parity_ratio = 1.0
+        else:
+            parity_matches = len(shared_row_ids) - len(row_ids_with_projection_mismatch)
+            parity_ratio = parity_matches / parity_denominator
+        observable_projection_parity_ready = (
+            not transitional_only_row_ids
+            and not fact_only_row_ids_without_transitional
+            and not row_ids_with_projection_mismatch
+        )
+
+        return {
+            "transitional_rows_count": len(transitional_rows),
+            "fact_only_rows_count": len(fact_only_rows),
+            "transitional_only_row_ids": transitional_only_row_ids,
+            "fact_only_row_ids": fact_only_row_ids_without_transitional,
+            "row_ids_with_projection_mismatch": row_ids_with_projection_mismatch,
+            "parity_ratio": parity_ratio,
+            "observable_projection_parity_ready": observable_projection_parity_ready,
+        }
+
     def projected_runtime_execution_session_fallback_coverage(self) -> dict[str, Any]:
         """Return structured coverage for projected runtime-execution sessions.
 
@@ -1366,18 +1441,20 @@ class TaskRuntimeService:
         """Return read-only readiness for future fact-only task-row cutover.
 
         Boundary:
-            This projection only composes the existing task-row and projected
-            runtime-execution session fallback coverage read models. It must
-            not call file row/entity loaders, refresh APIs, mutation APIs, or
-            session writers directly; the underlying coverage methods remain
-            the only data boundary for this readiness signal.
+            This projection only composes the task-row fallback, projected
+            runtime-execution session fallback, and observable projection parity
+            coverage read models. It must not call file row/entity loaders,
+            refresh APIs, mutation APIs, or session writers directly; the
+            underlying coverage methods remain the only data boundary for this
+            readiness signal.
 
         Complexity:
-            O(c) additional time and memory over the two coverage dictionaries,
+            O(c) additional time and memory over the three coverage dictionaries,
             excluding the cost already owned by the delegated coverage methods.
         """
 
         task_row_read_model_fallback_coverage = self.task_row_read_model_fallback_coverage()
+        task_row_read_model_projection_parity_coverage = self.task_row_read_model_projection_parity_coverage()
         projected_runtime_execution_session_fallback_coverage = (
             self.projected_runtime_execution_session_fallback_coverage()
         )
@@ -1388,19 +1465,30 @@ class TaskRuntimeService:
         projected_session_file_fallback_required = bool(
             projected_runtime_execution_session_fallback_coverage.get("projected_session_file_fallback_required")
         )
+        observable_projection_parity_ready = bool(
+            task_row_read_model_projection_parity_coverage.get("observable_projection_parity_ready")
+        )
 
         blocking_reasons: list[str] = []
         if task_row_file_fallback_required:
             blocking_reasons.append("task_row_file_fallback_required")
         if projected_session_file_fallback_required:
             blocking_reasons.append("projected_session_file_fallback_required")
+        if not observable_projection_parity_ready:
+            blocking_reasons.append("observable_projection_parity_mismatch")
 
         return {
-            "ready": not task_row_file_fallback_required and not projected_session_file_fallback_required,
+            "ready": (
+                not task_row_file_fallback_required
+                and not projected_session_file_fallback_required
+                and observable_projection_parity_ready
+            ),
             "blocking_reasons": blocking_reasons,
             "task_row_file_fallback_required": task_row_file_fallback_required,
             "projected_session_file_fallback_required": projected_session_file_fallback_required,
+            "observable_projection_parity_ready": observable_projection_parity_ready,
             "task_row_read_model_fallback_coverage": task_row_read_model_fallback_coverage,
+            "task_row_read_model_projection_parity_coverage": task_row_read_model_projection_parity_coverage,
             "projected_runtime_execution_session_fallback_coverage": (
                 projected_runtime_execution_session_fallback_coverage
             ),
@@ -1700,6 +1788,37 @@ class TaskRuntimeService:
 
     def _task_row_read_model_task_id_set(self, rows: list[dict[str, Any]]) -> set[str]:
         return {task_id for row in rows if (task_id := self._task_row_read_model_task_id(row))}
+
+    @staticmethod
+    def _task_row_read_model_rows_by_task_id(
+        rows: list[dict[str, Any]],
+        task_id_for_row: Callable[[dict[str, Any]], str | None],
+    ) -> dict[str, dict[str, Any]]:
+        """Return task rows keyed by normalized read-model task id.
+
+        Boundary:
+            This pure helper does not load, mutate, or normalize rows itself; it
+            only applies the provided task-id reader to already projected rows.
+
+        Complexity:
+            O(r) time and memory over the provided rows.
+        """
+
+        return {task_id: row for row in rows if (task_id := task_id_for_row(row))}
+
+    @staticmethod
+    def _task_row_read_model_rows_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        """Return full row-dict equality for observable projection parity.
+
+        Boundary:
+            This pure helper compares already loaded row dictionaries only. It
+            performs no projection, I/O, mutation, or lossy field normalization.
+
+        Complexity:
+            O(s) time over the nested row payload size.
+        """
+
+        return left == right
 
     def _task_row_read_model_task_id_sort_key(self, task_id: str) -> tuple[int, str]:
         normalized_task_id = self.normalize_task_id(task_id)
@@ -2511,6 +2630,10 @@ class TaskRuntimeService:
             overlay instead of treating file-backed rows as the only truth.
             Selection and mutation paths must continue to use their explicit
             row/session APIs.
+
+        Complexity:
+            O(r + c) time and memory over observable rows and delegated coverage
+            dictionaries.
         """
 
         stats = task_row_status_counts(self.list_observable_task_rows())

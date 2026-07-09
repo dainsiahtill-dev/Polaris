@@ -3417,6 +3417,7 @@ PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD = "projected_runtim
 PROJECTED_RUNTIME_EXECUTION_SESSION_PROJECTED_ROW_READER = "_runtime_execution_session_from_projected_row"
 TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD = "_transitional_task_row_read_model_rows"
 TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD = "task_row_read_model_fallback_coverage"
+TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD = "task_row_read_model_projection_parity_coverage"
 TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD = "task_row_read_model_cutover_readiness"
 OBSERVABLE_TASK_ROWS_METHOD = "list_observable_task_rows"
 OBSERVABLE_TASK_ROWS_FILE_SOURCE = "_list_file_task_rows"
@@ -3469,6 +3470,42 @@ TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_FORBIDDEN_CALLS: frozenset[str] = frozense
         "self.refresh_dependency_unblocks",
     }
 )
+TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_REQUIRED_SELF_CALLS: frozenset[str] = frozenset(
+    {
+        OBSERVABLE_TASK_ROWS_FILE_SOURCE,
+        OBSERVABLE_TASK_ROWS_FACT_SOURCE,
+        OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE,
+    }
+)
+TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_ID_HELPERS: frozenset[str] = frozenset(
+    {
+        "_observable_row_task_id",
+        "_task_row_read_model_task_id",
+        "_task_row_read_model_task_id_set",
+        "_task_row_read_model_task_id_sort_key",
+        "normalize_task_id",
+    }
+)
+TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_ALLOWED_SELF_CALLS: frozenset[str] = (
+    TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_REQUIRED_SELF_CALLS
+    | TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_ID_HELPERS
+)
+TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_FORBIDDEN_CALLS: dict[str, str] = {
+    "self._list_file_task_entities": "raw Task entity reads are outside projection parity coverage",
+    "self.refresh_dependency_unblocks": "dependency refresh mutates runtime task state",
+    "self.append_execution_event": "execution event append is a mutation path",
+    "self._append_execution_event": "execution event append is a mutation path",
+    "self.claim_execution": "claim_execution() mutates execution ownership",
+    "self.update_task_row": "update_task_row() mutates row projection state",
+    "self.create_task_row": "create_task_row() mutates row projection state",
+    "_list_file_task_entities": "raw Task entity reads are outside projection parity coverage",
+    "refresh_dependency_unblocks": "dependency refresh mutates runtime task state",
+    "append_execution_event": "execution event append is a mutation path",
+    "_append_execution_event": "execution event append is a mutation path",
+    "claim_execution": "claim_execution() mutates execution ownership",
+    "update_task_row": "update_task_row() mutates row projection state",
+    "create_task_row": "create_task_row() mutates row projection state",
+}
 PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_REQUIRED_SELF_CALLS: frozenset[str] = frozenset(
     {
         OBSERVABLE_TASK_ROWS_FACT_SOURCE,
@@ -3503,11 +3540,12 @@ PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_FORBIDDEN_CALLS: frozenset
 TASK_ROW_READ_MODEL_CUTOVER_READINESS_ALLOWED_SELF_CALLS: frozenset[str] = frozenset(
     {
         TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD,
+        TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD,
         PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD,
     }
 )
 TASK_ROW_READ_MODEL_CUTOVER_READINESS_FORBIDDEN_CALLS: dict[str, str] = {
-    "self._list_file_task_rows": "file task-row reads must stay behind fallback coverage projection",
+    "self._list_file_task_rows": "file task-row reads must stay behind projection coverage methods",
     "self._list_file_task_entities": "raw TaskBoard entity reads are outside cutover readiness",
     "self.refresh_dependency_unblocks": "dependency refresh mutates runtime task state",
     "self.append_execution_event": "execution event append is a mutation path",
@@ -3515,7 +3553,7 @@ TASK_ROW_READ_MODEL_CUTOVER_READINESS_FORBIDDEN_CALLS: dict[str, str] = {
     "self.claim_execution": "claim_execution() mutates execution ownership",
     "self.update_task_row": "update_task_row() mutates row projection state",
     "self.create_task_row": "create_task_row() mutates row projection state",
-    "_list_file_task_rows": "file task-row reads must stay behind fallback coverage projection",
+    "_list_file_task_rows": "file task-row reads must stay behind projection coverage methods",
     "_list_file_task_entities": "raw TaskBoard entity reads are outside cutover readiness",
     "refresh_dependency_unblocks": "dependency refresh mutates runtime task state",
     "append_execution_event": "execution event append is a mutation path",
@@ -3778,6 +3816,12 @@ def _task_row_read_model_fallback_coverage_function_def() -> ast.FunctionDef:
     return _task_runtime_service_method_def(TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD)
 
 
+def _task_row_read_model_projection_parity_coverage_function_def() -> ast.FunctionDef | None:
+    """Return the task-row read-model projection parity coverage AST node."""
+
+    return _task_runtime_service_method_defs().get(TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD)
+
+
 def _projected_runtime_execution_session_fallback_coverage_function_def() -> ast.FunctionDef:
     """Return the projected runtime-execution session fallback coverage AST node."""
 
@@ -3883,6 +3927,65 @@ def _check_task_row_read_model_fallback_coverage_projection_boundary() -> list[s
     return offenders
 
 
+def _check_task_row_read_model_projection_parity_coverage_boundary() -> list[str]:
+    """Emit offenders if projection parity coverage stops being read-only."""
+
+    method_def = _task_row_read_model_projection_parity_coverage_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    if method_def is None:
+        return [
+            f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD}() "
+            "must exist as the read-only WS2 projection parity coverage surface."
+        ]
+
+    offenders: list[str] = []
+    for source_method in sorted(TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_REQUIRED_SELF_CALLS):
+        source_calls = _direct_self_method_calls(method_def, source_method)
+        if not source_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD}() "
+                f"does not call self.{source_method}(); projection parity coverage "
+                "must compare the same file rows, execution-fact rows, and "
+                "observable projection used by the task-row read model."
+            )
+
+    allowed_self_calls = {
+        f"self.{method_name}"
+        for method_name in sorted(TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_ALLOWED_SELF_CALLS)
+    }
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        forbidden_reason = TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_FORBIDDEN_CALLS.get(callee)
+        if forbidden_reason is not None:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD}():"
+                f"{node.lineno} calls {callee}(); {forbidden_reason}. "
+                "Projection parity coverage is observational and must not "
+                "refresh, append events, claim work, mutate rows, or read raw "
+                "Task entities."
+            )
+            continue
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD}():"
+                f"{node.lineno} calls {callee}(); projection parity coverage "
+                "must consume reviewed row/fact projection helpers instead of "
+                "raw TaskBoard methods."
+            )
+            continue
+        if callee.startswith("self.") and callee not in allowed_self_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD}():"
+                f"{node.lineno} calls {callee}(); projection parity coverage "
+                "may only call the file-row loader, execution-fact loader, "
+                "observable projection, or pure task-id normalization helpers."
+            )
+
+    return offenders
+
+
 def _check_projected_runtime_execution_session_fallback_coverage_boundary() -> list[str]:
     """Emit offenders if projected session fallback coverage stops being read-only."""
 
@@ -3983,7 +4086,9 @@ def _check_task_row_read_model_cutover_readiness_boundary() -> list[str]:
             offenders.append(
                 f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD}() "
                 f"does not call self.{coverage_method}(); cutover readiness "
-                "must derive from the two fallback coverage projections."
+                "must derive from task-row fallback coverage, projection parity "
+                "coverage, and projected runtime-execution session fallback "
+                "coverage."
             )
 
     allowed_self_calls = {
@@ -3999,7 +4104,7 @@ def _check_task_row_read_model_cutover_readiness_boundary() -> list[str]:
                 f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD}():"
                 f"{node.lineno} calls {callee}(); {forbidden_reason}. "
                 "Cutover readiness must be a read-only composition over "
-                "fallback coverage projections."
+                "projection parity and projected-session coverage."
             )
             continue
         if callee.startswith("self._board."):
@@ -4013,8 +4118,9 @@ def _check_task_row_read_model_cutover_readiness_boundary() -> list[str]:
             offenders.append(
                 f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD}():"
                 f"{node.lineno} calls {callee}(); cutover readiness may only "
-                "call the task-row and projected runtime-execution session "
-                "fallback coverage projections."
+                "call task-row fallback coverage, task-row projection parity "
+                "coverage, and projected runtime-execution session fallback "
+                "coverage projections."
             )
 
     return offenders
@@ -4202,6 +4308,26 @@ def test_task_row_read_model_fallback_coverage_is_read_only_projection() -> None
     )
 
 
+def test_ws2_projection_parity_task_row_read_model_coverage_boundary_is_read_only() -> None:
+    """WS2 projection parity boundary: coverage is read-only and source-complete."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_task_row_read_model_projection_parity_coverage_boundary()
+
+    assert not offenders, (
+        "WS2 projection parity task-row read-model coverage boundary: "
+        f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD}() "
+        "must exist and remain a read-only projection coverage method. It must "
+        "load file-backed task rows through self._list_file_task_rows(), load "
+        "task_runtime.execution fact rows through "
+        "self.list_task_rows_from_execution_facts(), and compare the observable "
+        "projection from self._project_observable_task_rows(...). It may use "
+        "pure task-id normalization helpers only; it must not refresh "
+        "dependencies, append execution events, claim/update/create rows, read "
+        "raw Task entities, or call self._board.*. Offenders:\n" + "\n".join(offenders)
+    )
+
+
 def test_projected_runtime_execution_session_fallback_coverage_is_read_only_projection() -> None:
     """WS2 projected runtime-execution session fallback-coverage fence."""
 
@@ -4220,17 +4346,18 @@ def test_projected_runtime_execution_session_fallback_coverage_is_read_only_proj
     )
 
 
-def test_ws2_task_row_read_model_cutover_readiness_boundary_composes_coverage_only() -> None:
-    """WS2 cutover readiness boundary: readiness composes coverage only."""
+def test_ws2_projection_parity_cutover_readiness_boundary_composes_coverage_only() -> None:
+    """WS2 projection parity cutover readiness boundary: compose coverage only."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     offenders = _check_task_row_read_model_cutover_readiness_boundary()
 
     assert not offenders, (
-        "WS2 task-row read-model cutover readiness boundary: "
+        "WS2 projection parity cutover readiness boundary: "
         f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD}() "
         "must exist and remain a read-only composition over "
-        f"self.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}() and "
+        f"self.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}(), "
+        f"self.{TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD}(), and "
         f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}(). "
         "It must not call file TaskBoard row/entity readers, dependency refresh, "
         "execution event append, claim/update/create row APIs, raw TaskBoard "
