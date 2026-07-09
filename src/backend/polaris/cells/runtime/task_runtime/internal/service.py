@@ -1362,6 +1362,50 @@ class TaskRuntimeService:
             "projected_session_file_fallback_required": bool(file_projected_session_task_ids_without_execution_fact),
         }
 
+    def task_row_read_model_cutover_readiness(self) -> dict[str, Any]:
+        """Return read-only readiness for future fact-only task-row cutover.
+
+        Boundary:
+            This projection only composes the existing task-row and projected
+            runtime-execution session fallback coverage read models. It must
+            not call file row/entity loaders, refresh APIs, mutation APIs, or
+            session writers directly; the underlying coverage methods remain
+            the only data boundary for this readiness signal.
+
+        Complexity:
+            O(c) additional time and memory over the two coverage dictionaries,
+            excluding the cost already owned by the delegated coverage methods.
+        """
+
+        task_row_read_model_fallback_coverage = self.task_row_read_model_fallback_coverage()
+        projected_runtime_execution_session_fallback_coverage = (
+            self.projected_runtime_execution_session_fallback_coverage()
+        )
+
+        task_row_file_fallback_required = bool(
+            task_row_read_model_fallback_coverage.get("transitional_file_fallback_required")
+        )
+        projected_session_file_fallback_required = bool(
+            projected_runtime_execution_session_fallback_coverage.get("projected_session_file_fallback_required")
+        )
+
+        blocking_reasons: list[str] = []
+        if task_row_file_fallback_required:
+            blocking_reasons.append("task_row_file_fallback_required")
+        if projected_session_file_fallback_required:
+            blocking_reasons.append("projected_session_file_fallback_required")
+
+        return {
+            "ready": not task_row_file_fallback_required and not projected_session_file_fallback_required,
+            "blocking_reasons": blocking_reasons,
+            "task_row_file_fallback_required": task_row_file_fallback_required,
+            "projected_session_file_fallback_required": projected_session_file_fallback_required,
+            "task_row_read_model_fallback_coverage": task_row_read_model_fallback_coverage,
+            "projected_runtime_execution_session_fallback_coverage": (
+                projected_runtime_execution_session_fallback_coverage
+            ),
+        }
+
     def _dependency_status_read_model_rows(self) -> list[dict[str, Any]]:
         """Load transitional dependency-status read-model rows.
 
@@ -2474,6 +2518,7 @@ class TaskRuntimeService:
         stats["projected_runtime_execution_session_fallback_coverage"] = (
             self.projected_runtime_execution_session_fallback_coverage()
         )
+        stats["read_model_cutover_readiness"] = self.task_row_read_model_cutover_readiness()
         return stats
 
     def get_task_row_stats(self) -> dict[str, Any]:

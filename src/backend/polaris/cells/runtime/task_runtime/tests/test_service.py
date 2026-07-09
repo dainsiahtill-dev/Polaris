@@ -1592,6 +1592,16 @@ def _assert_projected_runtime_execution_session_fallback_coverage(
     )
 
 
+def _assert_task_row_read_model_cutover_readiness(
+    readiness: dict[str, Any],
+    *,
+    ready: bool,
+    blocking_reasons: list[str],
+) -> None:
+    assert readiness["ready"] is ready
+    assert readiness["blocking_reasons"] == blocking_reasons
+
+
 def test_task_row_read_model_fallback_coverage_reports_full_file_coverage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1754,6 +1764,7 @@ def test_observable_task_row_stats_include_delegated_read_model_fallback_coverag
         "transitional_file_fallback_required": True,
         "sentinel": "coverage-from-task-row-read-model-fallback",
     }
+    sentinel_readiness: dict[str, Any] = {"ready": False, "blocking_reasons": ["sentinel-readiness"]}
     coverage_calls: list[str] = []
 
     def fallback_coverage() -> dict[str, Any]:
@@ -1762,6 +1773,7 @@ def test_observable_task_row_stats_include_delegated_read_model_fallback_coverag
 
     monkeypatch.setattr(service, "list_observable_task_rows", lambda: [dict(row) for row in observable_rows])
     monkeypatch.setattr(service, "task_row_read_model_fallback_coverage", fallback_coverage)
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", lambda: sentinel_readiness)
 
     stats = service.get_observable_task_row_stats()
 
@@ -1771,6 +1783,7 @@ def test_observable_task_row_stats_include_delegated_read_model_fallback_coverag
     assert stats["in_progress"] == 1
     assert stats["completed"] == 1
     assert stats["read_model_fallback_coverage"] is sentinel_coverage
+    assert stats["read_model_cutover_readiness"] is sentinel_readiness
     assert coverage_calls == ["task_row_read_model_fallback_coverage"]
 
 
@@ -1951,6 +1964,7 @@ def test_observable_task_row_stats_include_delegated_projected_runtime_execution
         "projected_session_file_fallback_required": False,
         "sentinel": "projected-runtime-execution-session-coverage",
     }
+    sentinel_readiness: dict[str, Any] = {"ready": True, "blocking_reasons": []}
     coverage_calls: list[str] = []
 
     def projected_session_fallback_coverage() -> dict[str, Any]:
@@ -1972,12 +1986,14 @@ def test_observable_task_row_stats_include_delegated_projected_runtime_execution
         "projected_runtime_execution_session_fallback_coverage",
         projected_session_fallback_coverage,
     )
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", lambda: sentinel_readiness)
 
     stats = service.get_observable_task_row_stats()
 
     assert stats["total"] == 1
     assert stats["pending"] == 1
     assert stats["projected_runtime_execution_session_fallback_coverage"] is sentinel_coverage
+    assert stats["read_model_cutover_readiness"] is sentinel_readiness
     assert coverage_calls == ["projected_runtime_execution_session_fallback_coverage"]
 
 
@@ -2022,6 +2038,150 @@ def test_projected_runtime_execution_session_fallback_coverage_does_not_refresh_
         projected_session_file_fallback_required=False,
         file_projected_session_task_ids_without_execution_fact=[],
         fact_projected_session_task_ids_without_file_row=[],
+    )
+
+
+def test_task_row_read_model_cutover_readiness_ready_when_file_rows_and_projected_sessions_have_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    def file_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = False,
+    ) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        assert augment_runtime_state in {False, True}
+        return [
+            {"id": 1, "task_id": "1", "subject": "covered file row", "status": "pending"},
+            _runtime_execution_projected_row(2, subject="covered file projected session"),
+        ]
+
+    monkeypatch.setattr(service, "_list_file_task_rows", file_rows)
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            {"id": 1, "task_id": "1", "subject": "covered fact row", "status": "pending"},
+            _runtime_execution_projected_row(2, subject="covered fact projected session"),
+        ],
+    )
+
+    readiness = service.task_row_read_model_cutover_readiness()
+
+    _assert_task_row_read_model_cutover_readiness(
+        readiness,
+        ready=True,
+        blocking_reasons=[],
+    )
+
+
+def test_task_row_read_model_cutover_readiness_blocks_when_file_row_requires_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    monkeypatch.setattr(
+        service,
+        "_list_file_task_rows",
+        lambda **_: [
+            {"id": 1, "task_id": "1", "subject": "covered file row", "status": "pending"},
+            {"id": 2, "task_id": "2", "subject": "missing execution fact", "status": "pending"},
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [{"id": 1, "task_id": "1", "subject": "covered fact row", "status": "pending"}],
+    )
+
+    readiness = service.task_row_read_model_cutover_readiness()
+
+    assert readiness["ready"] is False
+    assert "task_row_file_fallback_required" in readiness["blocking_reasons"]
+
+
+def test_task_row_read_model_cutover_readiness_blocks_when_projected_session_requires_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    def file_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = False,
+    ) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        assert augment_runtime_state in {False, True}
+        return [
+            _runtime_execution_projected_row(1, subject="covered projected session"),
+            _runtime_execution_projected_row(2, subject="projected session missing fact session"),
+        ]
+
+    monkeypatch.setattr(service, "_list_file_task_rows", file_rows)
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            _runtime_execution_projected_row(1, subject="covered fact projected session"),
+            {"id": 2, "task_id": "2", "subject": "fact row without projected runtime execution"},
+        ],
+    )
+
+    readiness = service.task_row_read_model_cutover_readiness()
+
+    assert readiness["ready"] is False
+    assert "projected_session_file_fallback_required" in readiness["blocking_reasons"]
+
+
+def test_observable_task_row_stats_include_read_model_cutover_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    def file_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = False,
+    ) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        assert augment_runtime_state in {False, True}
+        return [
+            {"id": 1, "task_id": "1", "subject": "stats covered row", "status": "pending", "blocked_by": []},
+            _runtime_execution_projected_row(2, subject="stats covered projected session"),
+        ]
+
+    monkeypatch.setattr(service, "_list_file_task_rows", file_rows)
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            {"id": 1, "task_id": "1", "subject": "stats covered fact", "status": "pending", "blocked_by": []},
+            _runtime_execution_projected_row(2, subject="stats covered fact projected session"),
+        ],
+    )
+
+    direct_readiness = service.task_row_read_model_cutover_readiness()
+    stats = service.get_observable_task_row_stats()
+
+    assert stats["read_model_cutover_readiness"] == direct_readiness
+    _assert_task_row_read_model_cutover_readiness(
+        stats["read_model_cutover_readiness"],
+        ready=True,
+        blocking_reasons=[],
     )
 
 
