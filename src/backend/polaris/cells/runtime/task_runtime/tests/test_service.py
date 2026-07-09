@@ -1667,6 +1667,113 @@ def test_task_row_read_model_fallback_coverage_does_not_refresh_dependency_unblo
     )
 
 
+def test_observable_task_row_stats_include_delegated_read_model_fallback_coverage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    observable_rows: list[dict[str, Any]] = [
+        {"id": 1, "task_id": "1", "status": "pending", "blocked_by": []},
+        {"id": 2, "task_id": "2", "status": "in_progress", "blocked_by": []},
+        {"id": 3, "task_id": "3", "status": "completed", "blocked_by": []},
+        {"id": 4, "task_id": "4", "status": "pending", "blocked_by": [1]},
+    ]
+    sentinel_coverage: dict[str, Any] = {
+        "file_rows_count": 4,
+        "fact_rows_count": 3,
+        "projected_rows_count": 4,
+        "file_row_ids_without_execution_fact": ["4"],
+        "fact_row_ids_without_file_row": [],
+        "coverage_ratio": 0.75,
+        "transitional_file_fallback_required": True,
+        "sentinel": "coverage-from-task-row-read-model-fallback",
+    }
+    coverage_calls: list[str] = []
+
+    def fallback_coverage() -> dict[str, Any]:
+        coverage_calls.append("task_row_read_model_fallback_coverage")
+        return sentinel_coverage
+
+    monkeypatch.setattr(service, "list_observable_task_rows", lambda: [dict(row) for row in observable_rows])
+    monkeypatch.setattr(service, "task_row_read_model_fallback_coverage", fallback_coverage)
+
+    stats = service.get_observable_task_row_stats()
+
+    assert stats["total"] == 4
+    assert stats["ready"] == 1
+    assert stats["pending"] == 2
+    assert stats["in_progress"] == 1
+    assert stats["completed"] == 1
+    assert stats["read_model_fallback_coverage"] is sentinel_coverage
+    assert coverage_calls == ["task_row_read_model_fallback_coverage"]
+
+
+def test_get_task_row_stats_delegates_to_observable_stats_without_rebuilding_coverage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    sentinel_stats: dict[str, Any] = {
+        "total": 7,
+        "ready": 2,
+        "pending": 3,
+        "read_model_fallback_coverage": {"sentinel": "observable-stats"},
+    }
+    observable_stats_calls: list[str] = []
+
+    def observable_stats() -> dict[str, Any]:
+        observable_stats_calls.append("get_observable_task_row_stats")
+        return sentinel_stats
+
+    def reject_fallback_coverage() -> NoReturn:
+        raise AssertionError("get_task_row_stats must not rebuild fallback coverage")
+
+    def reject_observable_rows() -> NoReturn:
+        raise AssertionError("get_task_row_stats must delegate instead of rebuilding status counts")
+
+    monkeypatch.setattr(service, "get_observable_task_row_stats", observable_stats)
+    monkeypatch.setattr(service, "task_row_read_model_fallback_coverage", reject_fallback_coverage)
+    monkeypatch.setattr(service, "list_observable_task_rows", reject_observable_rows)
+
+    stats = service.get_task_row_stats()
+
+    assert stats is sentinel_stats
+    assert observable_stats_calls == ["get_observable_task_row_stats"]
+
+
+def test_task_row_stats_outlets_do_not_refresh_dependency_unblocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    refresh_calls: list[str] = []
+
+    def reject_refresh_dependency_unblocks() -> NoReturn:
+        refresh_calls.append("refresh_dependency_unblocks")
+        raise AssertionError("task-row stats must be read-only")
+
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", reject_refresh_dependency_unblocks)
+    monkeypatch.setattr(service, "list_observable_task_rows", lambda: [{"id": 1, "task_id": "1", "status": "pending"}])
+    monkeypatch.setattr(
+        service,
+        "task_row_read_model_fallback_coverage",
+        lambda: {"sentinel": "read-only-fallback-coverage"},
+    )
+
+    observable_stats = service.get_observable_task_row_stats()
+    compatibility_stats = service.get_task_row_stats()
+
+    assert observable_stats["total"] == 1
+    assert compatibility_stats["total"] == 1
+    assert refresh_calls == []
+
+
 def test_list_observable_task_rows_delegates_to_transitional_read_model_helper(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

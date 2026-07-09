@@ -8168,6 +8168,30 @@ STATS_COMPAT_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
         "get_task_row_stats() must delegate to get_observable_task_row_stats(), "
         "not independently call list_observable_task_rows()"
     ),
+    "self.task_row_read_model_fallback_coverage": (
+        "get_task_row_stats() must delegate to get_observable_task_row_stats(), "
+        "not independently project fallback coverage"
+    ),
+    "task_row_status_counts": (
+        "get_task_row_stats() must delegate to get_observable_task_row_stats(), not independently compute status counts"
+    ),
+}
+STATS_FALLBACK_COVERAGE_FIELD = "read_model_fallback_coverage"
+STATS_EXIT_METHODS: frozenset[str] = frozenset(
+    {
+        "get_observable_task_row_stats",
+        "get_task_row_stats",
+    }
+)
+STATS_EXIT_FORBIDDEN_MUTATION_TARGETS: dict[str, str] = {
+    "self.refresh_dependency_unblocks": "dependency refresh is a side-effecting maintenance path",
+    "self._append_execution_event": "execution fact append is a mutation path",
+    "self._board.update": "raw TaskBoard.update() mutates task rows",
+    "self._board.create": "raw TaskBoard.create() mutates task rows",
+    "self._write_session": "session writes must stay outside stats projections",
+    "self.claim_execution": "claim_execution() mutates execution ownership",
+    "self.complete_execution": "complete_execution() mutates execution state",
+    "self.fail_execution": "fail_execution() mutates execution state",
 }
 
 
@@ -8181,6 +8205,101 @@ def _get_task_row_stats_function_def() -> ast.FunctionDef:
     """Return the ``TaskRuntimeService.get_task_row_stats`` AST node."""
 
     return _task_runtime_service_method_def("get_task_row_stats")
+
+
+def _method_statements_without_docstring(method_def: ast.FunctionDef) -> list[ast.stmt]:
+    """Return method body statements excluding the leading docstring."""
+
+    body = list(method_def.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        return body[1:]
+    return body
+
+
+def _node_contains_self_method_call(node: ast.AST, method_name: str) -> bool:
+    """Return whether an AST node contains ``self.<method_name>(...)``."""
+
+    return any(isinstance(child, ast.Call) and _call_is_self_method(child, method_name) for child in ast.walk(node))
+
+
+def _local_names_bound_to_self_method_call(method_def: ast.FunctionDef, method_name: str) -> set[str]:
+    """Return local names assigned from ``self.<method_name>(...)``."""
+
+    names: set[str] = set()
+    for node in _walk_task_runtime_method_body(method_def):
+        targets: list[ast.expr] = []
+        value: ast.AST | None = None
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value = node.value
+        if value is None or not _node_contains_self_method_call(value, method_name):
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+    return names
+
+
+def _node_is_or_contains_bound_name(node: ast.AST, bound_names: AbstractSet[str]) -> bool:
+    """Return whether a node references one of the provided local names."""
+
+    return any(isinstance(child, ast.Name) and child.id in bound_names for child in ast.walk(node))
+
+
+def _stats_field_receives_fallback_coverage(method_def: ast.FunctionDef) -> bool:
+    """Return whether fallback coverage is projected under the stats field."""
+
+    coverage_names = _local_names_bound_to_self_method_call(
+        method_def,
+        TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD,
+    )
+
+    for node in _walk_task_runtime_method_body(method_def):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = list(node.targets) if isinstance(node, ast.Assign) else [node.target]
+            value = node.value
+            if value is None:
+                continue
+            if not (
+                _node_contains_self_method_call(value, TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD)
+                or _node_is_or_contains_bound_name(value, coverage_names)
+            ):
+                continue
+            if any(
+                isinstance(target, ast.Subscript) and _subscript_key(target) == STATS_FALLBACK_COVERAGE_FIELD
+                for target in targets
+            ):
+                return True
+
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=False):
+                if _string_literal(key) != STATS_FALLBACK_COVERAGE_FIELD:
+                    continue
+                if _node_contains_self_method_call(
+                    value,
+                    TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD,
+                ) or _node_is_or_contains_bound_name(value, coverage_names):
+                    return True
+
+    return False
+
+
+def _return_is_direct_self_method_call(method_def: ast.FunctionDef, method_name: str) -> bool:
+    """Return whether a method body is exactly ``return self.<method_name>()``."""
+
+    statements = _method_statements_without_docstring(method_def)
+    if len(statements) != 1 or not isinstance(statements[0], ast.Return):
+        return False
+    value = statements[0].value
+    return isinstance(value, ast.Call) and _call_is_self_method(value, method_name)
 
 
 def _check_observable_task_row_stats_calls_list_observable_task_rows() -> list[str]:
@@ -8210,6 +8329,35 @@ def _check_observable_task_row_stats_calls_list_observable_task_rows() -> list[s
     ]
 
 
+def _check_observable_task_row_stats_projects_fallback_coverage() -> list[str]:
+    """Emit offenders if observable stats do not expose fallback coverage."""
+
+    method_def = _get_observable_task_row_stats_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    coverage_calls = _direct_self_method_calls(method_def, TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD)
+    if not coverage_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.get_observable_task_row_stats() does not call "
+            f"self.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}(); observable "
+            "stats must expose fallback coverage for the transitional task-row "
+            "read model."
+        )
+        return offenders
+
+    if not _stats_field_receives_fallback_coverage(method_def):
+        offenders.append(
+            f"{rel}:TaskRuntimeService.get_observable_task_row_stats() calls "
+            f"self.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}() but does "
+            f"not project the result under stats[{STATS_FALLBACK_COVERAGE_FIELD!r}]. "
+            "Coverage must be a nested stats field so downstream observers can "
+            "audit fallback-read-model drift without invoking a separate method."
+        )
+
+    return offenders
+
+
 def _check_observable_task_row_stats_forbidden_raw_reads() -> list[str]:
     """Emit offenders if ``get_observable_task_row_stats`` calls raw read methods."""
 
@@ -8236,6 +8384,30 @@ def _check_observable_task_row_stats_forbidden_raw_reads() -> list[str]:
     return offenders
 
 
+def _check_stats_entrypoints_do_not_mutate_task_runtime_state() -> list[str]:
+    """Emit offenders if stats exits call mutation/session/fact-append paths."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for method_name in sorted(STATS_EXIT_METHODS):
+        method_def = _task_runtime_service_method_def(method_name)
+        for call_node in _walk_task_runtime_method_body(method_def):
+            if not isinstance(call_node, ast.Call):
+                continue
+            callee = _call_name(call_node.func)
+            reason = STATS_EXIT_FORBIDDEN_MUTATION_TARGETS.get(callee)
+            if reason is None:
+                continue
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{method_name}():{call_node.lineno} "
+                f"calls {callee}(); {reason}. Stats exits must remain "
+                "read-only projections over the observable task-row read model."
+            )
+
+    return offenders
+
+
 def _check_task_row_stats_delegates_to_observable_stats() -> list[str]:
     """Emit offenders if ``get_task_row_stats`` does not delegate to
     ``self.get_observable_task_row_stats()``.
@@ -8252,6 +8424,24 @@ def _check_task_row_stats_delegates_to_observable_stats() -> list[str]:
         "self.get_observable_task_row_stats(); the compatibility entrypoint "
         "must delegate entirely to the observable stats projection rather than "
         "independently reading or computing task-row status counts."
+    ]
+
+
+def _check_task_row_stats_is_pure_observable_stats_delegate() -> list[str]:
+    """Emit offenders if compat stats does more than one direct delegation."""
+
+    method_def = _get_task_row_stats_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+
+    if _return_is_direct_self_method_call(method_def, "get_observable_task_row_stats"):
+        return []
+
+    return [
+        f"{rel}:TaskRuntimeService.get_task_row_stats() must contain only "
+        "return self.get_observable_task_row_stats() after its optional "
+        "docstring. The compatibility stats exit must not compute counts, "
+        "read rows, call fallback coverage, refresh dependencies, or perform "
+        "any session/fact/task mutation itself."
     ]
 
 
@@ -8308,6 +8498,29 @@ def test_observable_task_row_stats_calls_list_observable_task_rows() -> None:
     )
 
 
+def test_observable_task_row_stats_projects_read_model_fallback_coverage() -> None:
+    """WS2 stats projection fence for fallback coverage.
+
+    ``TaskRuntimeService.get_observable_task_row_stats()`` must expose
+    ``task_row_read_model_fallback_coverage()`` as a nested stats field. The
+    coverage method is the read-only audit surface for file-row fallback while
+    the task-row read model is still transitional; leaving it out of the stats
+    exit would make downstream observers call a second method or miss fallback
+    drift entirely.
+    """
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_observable_task_row_stats_projects_fallback_coverage()
+
+    assert not offenders, (
+        "WS2 stats fallback-coverage fence: "
+        f"{rel}:TaskRuntimeService.get_observable_task_row_stats() must call "
+        f"self.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}() and project "
+        f"the result under stats[{STATS_FALLBACK_COVERAGE_FIELD!r}]. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
+
+
 def test_observable_task_row_stats_does_not_read_raw_rows() -> None:
     """WS2 stats projection fence (negative invariant).
 
@@ -8334,6 +8547,23 @@ def test_observable_task_row_stats_does_not_read_raw_rows() -> None:
     )
 
 
+def test_stats_entrypoints_do_not_mutate_task_runtime_state() -> None:
+    """WS2 stats projection fence: stats exits are read-only."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_stats_entrypoints_do_not_mutate_task_runtime_state()
+
+    assert not offenders, (
+        "WS2 stats read-only fence: "
+        f"{rel}:TaskRuntimeService.get_observable_task_row_stats() and "
+        "get_task_row_stats() must not call dependency refresh, execution "
+        "fact append, raw TaskBoard create/update, session writes, or "
+        "claim/complete/fail execution transitions. Stats exits must remain "
+        "read-only projections over observable task rows and nested fallback "
+        "coverage. Offenders:\n" + "\n".join(offenders)
+    )
+
+
 def test_task_row_stats_delegates_to_observable_task_row_stats() -> None:
     """WS2 stats delegation fence (positive invariant).
 
@@ -8356,6 +8586,20 @@ def test_task_row_stats_delegates_to_observable_task_row_stats() -> None:
         f"{rel}:TaskRuntimeService.get_task_row_stats() must delegate to "
         "self.get_observable_task_row_stats() so the stats computation has "
         "a single authoritative path. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_row_stats_is_pure_observable_task_row_stats_delegate() -> None:
+    """WS2 stats delegation fence: compatibility stats is a pure shim."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_task_row_stats_is_pure_observable_stats_delegate()
+
+    assert not offenders, (
+        "WS2 stats delegation fence: "
+        f"{rel}:TaskRuntimeService.get_task_row_stats() must remain a pure "
+        "compatibility shim whose only executable statement is "
+        "return self.get_observable_task_row_stats(). Offenders:\n" + "\n".join(offenders)
     )
 
 

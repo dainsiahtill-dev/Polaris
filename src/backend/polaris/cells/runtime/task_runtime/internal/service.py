@@ -2405,7 +2405,9 @@ class TaskRuntimeService:
             row/session APIs.
         """
 
-        return task_row_status_counts(self.list_observable_task_rows())
+        stats = task_row_status_counts(self.list_observable_task_rows())
+        stats["read_model_fallback_coverage"] = self.task_row_read_model_fallback_coverage()
+        return stats
 
     def get_task_row_stats(self) -> dict[str, Any]:
         """Compatibility entrypoint for observable task-row status counts."""
