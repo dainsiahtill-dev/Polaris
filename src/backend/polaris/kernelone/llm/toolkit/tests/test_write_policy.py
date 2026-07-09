@@ -159,3 +159,23 @@ def test_validate_tool_write_policy_allows_scoped_package_diff_with_evidence() -
         "before": "vitest run",
         "after": "vitest run --coverage",
     }
+
+
+def test_validate_tool_write_policy_blocks_package_scripts_collapse() -> None:
+    before = json.dumps(
+        {"scripts": {"build": "tsc --noEmit", "test": "node --test"}},
+        ensure_ascii=False,
+    )
+    after = "{}"
+
+    verdict = validate_tool_write_policy(
+        changed_files=["package.json"],
+        allowed_scope=["package.json"],
+        agents_md="",
+        operation="write_file",
+        package_before=before,
+        package_after=after,
+    )
+
+    assert verdict.allowed is False
+    assert "package.json writes may not remove all existing scripts" in verdict.reasons

@@ -104,6 +104,53 @@ _TASK_TYPE_TO_TEMPERATURE_PHASE: dict[str, str] = {
     "write_code": "code_generation",
 }
 
+_CONFIG_MANIFEST_FILENAMES = {
+    ".babelrc",
+    ".eslintrc",
+    ".prettierrc",
+    "cargo.toml",
+    "composer.json",
+    "go.mod",
+    "package.json",
+    "pom.xml",
+    "pyproject.toml",
+    "requirements.txt",
+    "tsconfig.json",
+}
+
+_CONFIG_MANIFEST_SUFFIXES = (
+    ".config.js",
+    ".config.mjs",
+    ".config.ts",
+    ".lock",
+    ".toml",
+    ".yaml",
+    ".yml",
+)
+
+_SOURCE_MATERIALIZATION_SUFFIXES = (
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".go",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".mjs",
+    ".php",
+    ".py",
+    ".rs",
+    ".ts",
+    ".tsx",
+)
+
+_SOURCE_MATERIALIZATION_ACTION_RE = re.compile(
+    r"\b(implement|create|build|generate|materialize|write|scaffold|module|class|function|实现|创建|新增|生成|落盘)\b",
+    re.IGNORECASE,
+)
+
 _TEMPERATURE_BY_PHASE: dict[str, float] = {
     "code_generation": 0.15,
     "code_review": 0.25,
@@ -195,6 +242,42 @@ def _metadata_path_tuple(metadata: dict[str, Any], key: str) -> tuple[str, ...]:
     return _normalize_paths(metadata.get(key))
 
 
+def _is_config_manifest_path(path: str) -> bool:
+    normalized = str(path or "").strip().replace("\\", "/").strip("/")
+    if not normalized:
+        return False
+    filename = normalized.rsplit("/", 1)[-1].lower()
+    lowered = normalized.lower()
+    if filename in _CONFIG_MANIFEST_FILENAMES:
+        return True
+    return any(lowered.endswith(suffix) for suffix in _CONFIG_MANIFEST_SUFFIXES)
+
+
+def _is_config_manifest_boundary(paths: tuple[str, ...]) -> bool:
+    return bool(paths) and all(_is_config_manifest_path(path) for path in paths)
+
+
+def _is_source_materialization_path(path: str) -> bool:
+    normalized = str(path or "").strip().replace("\\", "/").strip("/")
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    filename = lowered.rsplit("/", 1)[-1]
+    if _is_config_manifest_path(lowered):
+        return False
+    if re.search(r"(^|/)(tests?|specs?|__tests__)/|(\.test|\.spec|_test|test_)", lowered):
+        return False
+    if filename.startswith("."):
+        return False
+    return lowered.endswith(_SOURCE_MATERIALIZATION_SUFFIXES)
+
+
+def _is_fresh_source_materialization_boundary(paths: tuple[str, ...], text: str) -> bool:
+    return any(_is_source_materialization_path(path) for path in paths) and bool(
+        _SOURCE_MATERIALIZATION_ACTION_RE.search(text)
+    )
+
+
 def _explicit_task_type(metadata: dict[str, Any]) -> str:
     for key in ("task_type", "task_kind", "intent", "phase"):
         mapped = _TASK_TYPE_ALIASES.get(_normalize_token(metadata.get(key)))
@@ -210,12 +293,16 @@ def _infer_task_type(text: str) -> str:
     return "generic"
 
 
-def _resolve_task_type(metadata: dict[str, Any], text: str) -> tuple[str, str]:
+def _resolve_task_type(metadata: dict[str, Any], text: str, target_files: tuple[str, ...] = ()) -> tuple[str, str]:
     if _QUALITY_REPAIR_MARKER_RE.search(text):
         return "bugfix", "quality_repair_marker"
     explicit = _explicit_task_type(metadata)
     if explicit:
         return explicit, "metadata"
+    if _is_config_manifest_boundary(target_files):
+        return "config", "target_files_config_boundary"
+    if _is_fresh_source_materialization_boundary(target_files, text):
+        return "write_code", "target_files_source_materialization_boundary"
     return _infer_task_type(text), "heuristic_text"
 
 
@@ -345,7 +432,7 @@ def resolve_director_execution_profile(
             description=description,
         )
     )
-    task_type, task_type_source = _resolve_task_type(normalized_metadata, text)
+    task_type, task_type_source = _resolve_task_type(normalized_metadata, text, normalized_targets)
     project_type, project_type_source = _resolve_project_type(normalized_metadata, text)
     phase, phase_source = _resolve_phase(normalized_metadata, task_type)
     if task_type_source == "quality_repair_marker":

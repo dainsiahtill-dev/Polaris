@@ -3105,30 +3105,46 @@ def _build_typescript_unresolved_identifier_plan(
 ) -> RepairPlan | None:
     operations: list[RepairOperation] = []
     identifiers: list[dict[str, str]] = []
+    import_repairs: set[tuple[str, str]] = set()
     for item in _parse_typescript_cannot_find_name_errors(diagnostics):
         path = item["file"]
         original = str(base_files.get(path) or "")
+        missing_symbol = item["symbol"]
+        if not original or not _TS_IDENTIFIER_RE.fullmatch(missing_symbol):
+            continue
         line_number = _to_positive_int(item.get("line"))
         repaired, replacement = _repair_typescript_unresolved_identifier_lines(
             original,
             target_line_number=line_number,
-            missing_symbol=item["symbol"],
+            missing_symbol=missing_symbol,
         )
-        if not original or repaired == original or not replacement:
-            continue
+        repair_kind = "typescript_unresolved_identifier_alias"
+        if repaired == original or not replacement:
+            if (path, missing_symbol) in import_repairs:
+                continue
+            repaired, replacement = _repair_typescript_unresolved_identifier_import(
+                path=path,
+                original=original,
+                base_files=base_files,
+                missing_symbol=missing_symbol,
+            )
+            repair_kind = "typescript_unresolved_identifier_import"
+            if repaired == original or not replacement:
+                continue
+            import_repairs.add((path, missing_symbol))
         operations.extend(
             _text_replace_operations_from_repair(
                 path=path,
                 original=original,
                 repaired=repaired,
                 metadata={
-                    "repair_kind": "typescript_unresolved_identifier_alias",
-                    "symbol": item["symbol"],
+                    "repair_kind": repair_kind,
+                    "symbol": missing_symbol,
                     "replacement": replacement,
                 },
             )
         )
-        identifiers.append({"file": path, "symbol": item["symbol"], "replacement": replacement})
+        identifiers.append({"file": path, "symbol": missing_symbol, "replacement": replacement})
     return _repair_plan_or_none(
         rule_id="typescript.unresolved_identifier",
         source_tool=TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
@@ -5474,8 +5490,8 @@ def _typescript_usage_compatible_member_type(usage_line: str, member: str) -> st
     escaped = re.escape(member)
     line = str(usage_line or "")
     if _typescript_member_name_suggests_string(member) and (
-        re.search(rf"\.\s*{escaped}\s*(?:={2,3}|!==?)", line)
-        or re.search(rf"(?:={2,3}|!==?)\s*[^;\n]*\.\s*{escaped}\b", line)
+        re.search(rf"\.\s*{escaped}\s*(?:={2, 3}|!==?)", line)
+        or re.search(rf"(?:={2, 3}|!==?)\s*[^;\n]*\.\s*{escaped}\b", line)
         or re.search(rf"\.\s*{escaped}\s*\.\s*(?:length|trim|toLowerCase|toUpperCase|includes)\b", line)
     ):
         return "string"
@@ -5804,6 +5820,37 @@ def _resolve_relative_ts_module_path(importer_path: str, module_ref: str, base_f
     return ""
 
 
+def _repair_typescript_unresolved_identifier_import(
+    *,
+    path: str,
+    original: str,
+    base_files: Mapping[str, str],
+    missing_symbol: str,
+) -> tuple[str, str]:
+    if not _TS_IDENTIFIER_RE.fullmatch(missing_symbol):
+        return original, ""
+    for match in _TS_NAMED_IMPORT_RE.finditer(original):
+        module_ref = str(match.group("module") or "")
+        module_path = _resolve_relative_ts_module_path(path, module_ref, base_files)
+        if not module_path:
+            continue
+        module_text = str(base_files.get(module_path) or "")
+        if not _typescript_module_exports_symbol(module_text, missing_symbol):
+            continue
+        symbols = str(match.group("symbols") or "")
+        existing = _parse_named_import_symbols(symbols)
+        if missing_symbol in existing:
+            continue
+        replacement_symbols = _typescript_named_import_symbols_with_added_symbol(symbols, missing_symbol)
+        if replacement_symbols == symbols:
+            continue
+        return (
+            f"{original[: match.start('symbols')]}{replacement_symbols}{original[match.end('symbols') :]}",
+            f"import:{module_ref}:{missing_symbol}",
+        )
+    return original, ""
+
+
 def _parse_named_import_symbols(symbols: str) -> list[str]:
     parsed: list[str] = []
     for raw in str(symbols or "").split(","):
@@ -5811,6 +5858,22 @@ def _parse_named_import_symbols(symbols: str) -> list[str]:
         if _TS_IDENTIFIER_RE.fullmatch(token):
             parsed.append(token)
     return _dedupe_preserve_order(parsed)
+
+
+def _typescript_named_import_symbols_with_added_symbol(symbols: str, missing_symbol: str) -> str:
+    if not _TS_IDENTIFIER_RE.fullmatch(missing_symbol):
+        return str(symbols or "")
+    raw_symbols = str(symbols or "")
+    parts = [part.strip() for part in raw_symbols.split(",") if part.strip()]
+    if not parts:
+        return raw_symbols
+    if "\n" not in raw_symbols and "\r" not in raw_symbols:
+        leading = " " if raw_symbols[:1].isspace() else ""
+        trailing = " " if raw_symbols[-1:].isspace() else ""
+        return f"{leading}{', '.join([*parts, missing_symbol])}{trailing}"
+    newline = "\r\n" if "\r\n" in raw_symbols else "\n"
+    indent = _typescript_named_specifier_indent(raw_symbols)
+    return newline + "".join(f"{indent}{part},{newline}" for part in [*parts, missing_symbol])
 
 
 def _typescript_imported_const_class_alias_available(
@@ -7946,10 +8009,7 @@ def _is_string_literal_suggestion_diagnostic(diagnostic: RepairDiagnostic) -> bo
     if str(metadata.get("actual") or "").strip() and str(metadata.get("suggestion") or "").strip():
         return True
     message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
-    return (
-        "not assignable to type" in message
-        and "did you mean" in message
-    )
+    return "not assignable to type" in message and "did you mean" in message
 
 
 def _is_number_to_function_argument(diagnostic: RepairDiagnostic) -> bool:

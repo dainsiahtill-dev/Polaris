@@ -123,6 +123,66 @@ def _summarize_llm_stage_result(result: dict[str, Any], *, stage: str) -> dict[s
     return summary
 
 
+def _build_materialization_quality_failure_evidence_context(
+    *,
+    artifact_quality_errors: list[str],
+    missing_target_files: list[str],
+    repair_target_files: list[str],
+    changed_files: list[str],
+    repair_attempt: int,
+) -> dict[str, Any]:
+    """Project quality-repair diagnostics into final-request evidence slots."""
+
+    quality_errors = [str(error).strip() for error in artifact_quality_errors if str(error or "").strip()]
+    missing_targets = [str(path).strip() for path in missing_target_files if str(path or "").strip()]
+    repair_targets = [str(path).strip() for path in repair_target_files if str(path or "").strip()]
+    changed = [str(path).strip() for path in changed_files if str(path or "").strip()]
+    failure_class = "INCOMPLETE_MATERIALIZATION" if missing_targets else "WORKSPACE_QUALITY_GATE_FAILED"
+    return {
+        "schema_version": "polaris.failure_evidence.v1",
+        "source": "director.materialization_quality_repair",
+        "failure_class": failure_class,
+        "responsible_layer": "director",
+        "repairable_by_director": True,
+        "requires_ce_replan": False,
+        "requires_pm_revision": False,
+        "quality_errors": quality_errors[:20],
+        "failed_checks": ["artifact_quality", "task_boundary"],
+        "missing_target_files": missing_targets[:20],
+        "repair_target_files": repair_targets[:20],
+        "changed_files": changed[:40],
+        "attempt": repair_attempt,
+    }
+
+
+def _build_materialization_quality_workspace_evidence_context(
+    *,
+    artifact_quality_errors: list[str],
+    missing_target_files: list[str],
+    repair_target_files: list[str],
+    changed_files: list[str],
+    repair_attempt: int,
+) -> dict[str, Any]:
+    """Project failed workspace quality state into a structured context slot."""
+
+    quality_errors = [str(error).strip() for error in artifact_quality_errors if str(error or "").strip()]
+    missing_targets = [str(path).strip() for path in missing_target_files if str(path or "").strip()]
+    repair_targets = [str(path).strip() for path in repair_target_files if str(path or "").strip()]
+    changed = [str(path).strip() for path in changed_files if str(path or "").strip()]
+    return {
+        "schema_version": "polaris.workspace_quality_evidence.v1",
+        "source": "director.materialization_quality_repair",
+        "all_checks_passed": False,
+        "quality_errors": quality_errors[:20],
+        "missing_required_modalities": ["code"] if missing_targets else [],
+        "failed_required_modalities": ["command"] if quality_errors else [],
+        "missing_target_files": missing_targets[:20],
+        "repair_target_files": repair_targets[:20],
+        "changed_files": changed[:40],
+        "attempt": repair_attempt,
+    }
+
+
 def _safe_int(value: Any) -> int:
     try:
         return int(value)
@@ -1771,10 +1831,7 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
                 continue
         local_module_match = _NPM_SCRIPT_MISSING_LOCAL_MODULE_RE.search(text)
         if local_module_match:
-            entrypoint = (
-                typed_issue_paths_by_raw.get(text)
-                or str(local_module_match.group("entrypoint") or "").strip()
-            )
+            entrypoint = typed_issue_paths_by_raw.get(text) or str(local_module_match.group("entrypoint") or "").strip()
             if entrypoint and not _path_within_task_write_scope(
                 entrypoint,
                 task=task,
@@ -2578,11 +2635,28 @@ async def _run_materialization_quality_repair_retry(
         workspace_full=workspace_full,
         interface_discrepancy_evidence=task_boundary_discrepancy_evidence,
     )
+    failed_gate_evidence = _build_materialization_quality_failure_evidence_context(
+        artifact_quality_errors=prompt_artifact_quality_errors,
+        missing_target_files=missing_target_files,
+        repair_target_files=repair_target_files,
+        changed_files=changed_files,
+        repair_attempt=repair_attempt,
+    )
+    workspace_quality_evidence = _build_materialization_quality_workspace_evidence_context(
+        artifact_quality_errors=prompt_artifact_quality_errors,
+        missing_target_files=missing_target_files,
+        repair_target_files=repair_target_files,
+        changed_files=changed_files,
+        repair_attempt=repair_attempt,
+    )
     repair_context = {
         **dict(context or {}),
         "run_id": run_id,
         "task_id": target_task_id,
         "delivery_mode": "materialize_changes",
+        "failed_gate_evidence": failed_gate_evidence,
+        "failure_evidence": failed_gate_evidence,
+        "workspace_quality_evidence": workspace_quality_evidence,
         "director_quality_repair": {
             "artifact_quality_errors": prompt_safe_artifact_quality_errors,
             "changed_files": changed_files[:40],
@@ -2591,6 +2665,8 @@ async def _run_materialization_quality_repair_retry(
             "semantic_quality_target_files": semantic_quality_target_files[:20],
             "explicit_quality_target_files": explicit_quality_target_files[:20],
             "repair_target_files": repair_target_files[:12],
+            "failed_gate_evidence": failed_gate_evidence,
+            "workspace_quality_evidence": workspace_quality_evidence,
         },
     }
     promote_task_contract = getattr(adapter, "_promote_task_contract_to_runtime_context", None)

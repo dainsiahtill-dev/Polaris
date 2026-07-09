@@ -121,6 +121,148 @@ def test_failure_taxonomy_classifies_missing_run_ledger_gate_as_control_plane() 
     assert taxonomy["evidence"] == ["run ledger projection missing"]
 
 
+def test_failure_taxonomy_classifies_director_rate_limit_as_runtime_environment() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "chain": {
+            "audit_bundle": {
+                "failure": {
+                    "code": "director.provider_rate_limit",
+                    "detail": "Director LLM provider rate limit/quota failure before tool dispatch: 429 Token Plan 用量上限",
+                    "failure_class": "RESOURCE_BUDGET_EXHAUSTED",
+                    "responsible_layer": "model_provider",
+                }
+            }
+        },
+        "factory_gates": [
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            }
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: source_files_present",
+        },
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:director_provider_rate_limit"
+    assert taxonomy["evidence"]
+    assert "429" in taxonomy["evidence"][0]
+    assert "Token Plan" in taxonomy["evidence"][0]
+    assert taxonomy["evidence"]
+    assert "Token Plan 用量上限" in taxonomy["evidence"][0]
+    assert taxonomy["evidence"] == [
+        "Director LLM provider rate limit/quota failure before tool dispatch: 429 Token Plan 用量上限"
+    ]
+
+
+def test_failure_taxonomy_reads_director_rate_limit_from_runtime_llm_events(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    events_dir = runtime_dir / "events"
+    events_dir.mkdir(parents=True)
+    (events_dir / "director.llm.events.jsonl").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "event_type": "llm_error",
+                    "role": "director",
+                    "model": "MiniMax-M3",
+                    "error_category": "rate_limit",
+                    "error_message": "429 Rate limited: Token Plan 用量上限",
+                }
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "workspace": str(tmp_path),
+        "runtime_dir": str(runtime_dir),
+        "chain": {
+            "audit_bundle": {
+                "failure": {
+                    "code": "director_no_materialized_changes",
+                    "detail": "Director dispatch failed: error=director_no_materialized_changes",
+                }
+            }
+        },
+        "factory_gates": [
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            }
+        ],
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:director_provider_rate_limit"
+
+
+def test_failure_taxonomy_reads_director_provider_invalid_request_from_runtime_llm_events(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    events_dir = runtime_dir / "events"
+    events_dir.mkdir(parents=True)
+    (events_dir / "director.llm.events.jsonl").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "event_type": "llm_error",
+                    "role": "director",
+                    "model": "kimi-for-coding",
+                    "error_category": "unknown",
+                    "error_message": (
+                        "400 Client Error from https://api.kimi.com/coding/v1/messages: "
+                        '{"error":{"type":"invalid_request_error","message":'
+                        "\"tool_choice 'specified' is incompatible with thinking enabled\"}}"
+                    ),
+                }
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "workspace": str(tmp_path),
+        "runtime_dir": str(runtime_dir),
+        "chain": {
+            "audit_bundle": {
+                "failure": {
+                    "code": "director_no_materialized_changes",
+                    "detail": "Director dispatch failed: error=director_no_materialized_changes",
+                }
+            }
+        },
+        "factory_gates": [
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            }
+        ],
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:director_provider_invalid_request"
+    assert "tool_choice" in taxonomy["evidence"][0]
+
+
 def test_failure_taxonomy_does_not_mask_real_run_failure_when_ledger_projection_exists() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,

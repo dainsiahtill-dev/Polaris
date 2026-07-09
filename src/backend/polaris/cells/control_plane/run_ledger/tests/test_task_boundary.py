@@ -110,6 +110,58 @@ def test_task_boundary_reports_unresolved_local_import_in_current_source(tmp_pat
     assert verdict["unresolved_local_imports"] == ["src/meteor.js -> ./_util/hash.js (src/_util/hash.js)"]
 
 
+def test_task_boundary_reports_test_framework_content_in_non_test_source(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src" / "models"
+    src_dir.mkdir(parents=True)
+    (src_dir / "humidity.ts").write_text(
+        'import { describe, it, expect } from "vitest";\n'
+        "describe('humidity model', () => {\n"
+        "  it('checks comfort', () => expect(1).toBe(1));\n"
+        "});\n",
+        encoding="utf-8",
+    )
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1-source-modules",
+        run_id="run-1",
+        target_files=["src/models/humidity.ts"],
+        completed_artifacts=["src/models/humidity.ts"],
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "artifact_semantic_mismatch"
+    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["responsible_layer"] == "director"
+    assert verdict["artifact_semantic_mismatches"] == [
+        "src/models/humidity.ts: non-test source contains test framework structure"
+    ]
+
+
+def test_task_boundary_allows_test_framework_content_in_test_source(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "humidity.test.ts").write_text(
+        'import { describe, it, expect } from "vitest";\n'
+        "describe('humidity model', () => {\n"
+        "  it('checks comfort', () => expect(1).toBe(1));\n"
+        "});\n",
+        encoding="utf-8",
+    )
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-2-tests",
+        run_id="run-1",
+        target_files=["tests/humidity.test.ts"],
+        completed_artifacts=["tests/humidity.test.ts"],
+    ).to_dict()
+
+    assert verdict["ok"] is True
+    assert verdict["status"] == "completed_verified"
+    assert verdict["artifact_semantic_mismatches"] == []
+
+
 def test_task_boundary_allows_local_import_declared_downstream(tmp_path: Path) -> None:
     src_dir = tmp_path / "src"
     src_dir.mkdir()

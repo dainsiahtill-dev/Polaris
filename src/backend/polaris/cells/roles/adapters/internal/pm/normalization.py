@@ -90,6 +90,33 @@ def _pm_contract_mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _pm_quality_contract_context_payload(context: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(context, dict):
+        return {}
+
+    metadata = _pm_contract_mapping(context.get("metadata"))
+    payload: dict[str, Any] = {}
+    payload_metadata: dict[str, Any] = {}
+    for key in (
+        "factory_bench_level",
+        "factory_bench_project_id",
+        "language",
+        "level_contract",
+        "delivery_depth_contract",
+    ):
+        value = context.get(key)
+        if value is None and key in metadata:
+            value = metadata.get(key)
+        if value is None:
+            continue
+        copied = dict(value) if isinstance(value, dict) else value
+        payload[key] = copied
+        payload_metadata[key] = dict(value) if isinstance(value, dict) else value
+    if payload_metadata:
+        payload["metadata"] = payload_metadata
+    return payload
+
+
 class PMContractNormalizationMixin(_PMAdapterMixinBase):
     """PM 合同归一化 mixin：标题/路径/scope/projection 字段归一与结构化校验。"""
 
@@ -559,8 +586,12 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         contracts: list[dict[str, Any]],
         *,
         directive: str = "",
+        context: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        payload = {"tasks": [dict(item) for item in contracts if isinstance(item, dict)]}
+        payload = _pm_quality_contract_context_payload(context)
+        payload["tasks"] = [dict(item) for item in contracts if isinstance(item, dict)]
+        if directive:
+            payload["directive"] = directive
         autofix_pm_contract_for_quality(
             payload,
             workspace_full=str(Path(self.workspace).resolve()),

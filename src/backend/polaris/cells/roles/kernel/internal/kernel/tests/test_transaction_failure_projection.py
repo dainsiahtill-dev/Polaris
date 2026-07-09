@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -43,6 +44,47 @@ def test_tool_filter_conflict_result_records_projection() -> None:
     assert result.metadata["tool_filter_audit"] == {"missing": ["write_file"]}
     assert result.metadata["provider_id"] == "test-provider"
     context_gateway.record_projection_outcome.assert_called_once_with(success=False, tokens_used=13)
+
+
+def test_transaction_exception_metadata_preserves_ledger_provider_over_profile() -> None:
+    context_gateway = MagicMock(record_projection_outcome=MagicMock(return_value={}))
+    exc = RuntimeError("fallback provider failed")
+    vars(exc)["turn_ledger"] = SimpleNamespace(
+        llm_calls=[
+            {
+                "metadata": {
+                    "provider": "openai_compat-local",
+                    "provider_id": "openai_compat-local",
+                    "model": "gemma-local",
+                    "context_snapshot_ref": "ctx-gemma",
+                    "final_request_context_audit": {"final_request_token_estimate": 42},
+                }
+            }
+        ],
+        anomaly_flags=[],
+    )
+
+    metadata = failure.build_transaction_exception_metadata(
+        exc=exc,
+        role="director",
+        profile=cast(RoleProfile, _Profile(provider_id="primary-provider", model="primary-model")),
+        request=type("Request", (), {"run_id": "run-1", "task_id": "TASK-1", "context_override": {}})(),
+        turn_id="turn-1",
+        messages=[],
+        tool_definitions=[],
+        tool_filter_audit=None,
+        context_gateway=context_gateway,
+        context_result=type("Context", (), {"token_estimate": 21})(),
+        workspace=".",
+        projection_reason="TransactionKernel error",
+        dropped_ledger_reason="dropped ledger failed",
+    )
+
+    assert metadata["provider_id"] == "openai_compat-local"
+    assert metadata["provider"] == "openai_compat-local"
+    assert metadata["model"] == "gemma-local"
+    assert metadata["context_snapshot_ref"] == "ctx-gemma"
+    context_gateway.record_projection_outcome.assert_called_once_with(success=False, tokens_used=21)
 
 
 @pytest.mark.asyncio

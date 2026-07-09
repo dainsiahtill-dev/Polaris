@@ -1157,7 +1157,7 @@ def test_final_request_context_audit_uses_active_fallback_request_options() -> N
                 "role": "user",
                 "content": "Fallback plain text request with TASK-1 target_files src/index.ts",
             }
-        ]
+        ],
     }
     fallback_request.input = ""
 
@@ -1314,6 +1314,48 @@ class TestDecisionCaller:
         assert result["usage"]["native_tool_calls_count"] == 2
         assert result["usage"]["decision_caller_native_tool_calls_count"] == 2
         assert result["usage"]["native_tool_call_names"] == ["repo_rg", "read_file"]
+
+    async def test_call_error_preserves_response_metadata_on_exception(self) -> None:
+        """DecisionCaller errors must keep final request evidence for TransactionKernel."""
+        invoker = Mock()
+        invoker.call = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                error="rate limited",
+                error_category="rate_limit",
+                metadata={
+                    "provider": "openai_compat-local",
+                    "provider_id": "openai_compat-local",
+                    "model": "gemma-local",
+                    "context_snapshot_ref": "ctx-gemma",
+                    "final_request_context_audit": {"final_request_token_estimate": 42},
+                },
+            )
+        )
+        caller = DecisionCaller(invoker)
+
+        profile = Mock()
+        profile.role_id = "director"
+        context = Mock()
+        context.message = "write files"
+        context.history = ()
+        context.task_id = None
+        context.context_override = None
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await caller.call(
+                profile=profile,
+                system_prompt="sys",
+                context=context,
+                tool_definitions=[{"name": "write_file"}],
+            )
+
+        metadata = vars(exc_info.value).get("llm_response_metadata")
+        assert isinstance(metadata, dict)
+        assert metadata["provider_id"] == "openai_compat-local"
+        assert metadata["model"] == "gemma-local"
+        assert metadata["context_snapshot_ref"] == "ctx-gemma"
+        assert metadata["error_category"] == "rate_limit"
 
     async def test_call_preserves_native_tool_calls_alias_without_tool_calls_field(self) -> None:
         """DecisionCaller should consume the shared response alias normalizer."""

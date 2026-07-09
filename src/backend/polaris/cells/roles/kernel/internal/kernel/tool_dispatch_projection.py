@@ -42,6 +42,13 @@ def llm_metadata_from_ledger_on_error(
             if not isinstance(raw_metadata, dict):
                 continue
             for key in (
+                "provider",
+                "provider_id",
+                "model",
+                "error_category",
+                "error_message",
+                "error_type",
+                "llm_call_failed",
                 "final_request_context_audit",
                 "context_snapshot_ref",
                 "context_snapshot_degraded",

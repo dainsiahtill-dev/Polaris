@@ -99,6 +99,44 @@ def _file_param_enum(tool_definitions: list[dict[str, Any]], tool_name: str) -> 
     return []
 
 
+@pytest.mark.asyncio
+async def test_transaction_controller_records_llm_error_metadata_on_decision_exception() -> None:
+    async def _raising_provider(_payload: dict[str, Any]) -> dict[str, Any]:
+        exc = RuntimeError("rate limited")
+        vars(exc)["llm_response_metadata"] = {
+            "provider": "openai_compat-local",
+            "provider_id": "openai_compat-local",
+            "model": "gemma-local",
+            "context_snapshot_ref": "ctx-gemma",
+            "final_request_context_audit": {"final_request_token_estimate": 42},
+        }
+        vars(exc)["llm_response_model"] = "gemma-local"
+        raise exc
+
+    controller = TurnTransactionController(
+        llm_provider=_raising_provider,
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(domain="code", role_id="director"),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await controller.execute(
+            "turn-decision-error",
+            [{"role": "user", "content": "write package.json"}],
+            [_tool_schema("write_file")],
+        )
+
+    ledger = vars(exc_info.value).get("turn_ledger")
+    assert ledger is not None
+    assert ledger.llm_calls
+    call = ledger.llm_calls[-1]
+    assert call["phase"] == "decision_error"
+    assert call["model"] == "gemma-local"
+    assert call["tokens_in"] == 42
+    assert call["metadata"]["provider_id"] == "openai_compat-local"
+    assert call["metadata"]["context_snapshot_ref"] == "ctx-gemma"
+
+
 def _patch_transaction_kernel_factory(return_value: Any) -> Any:
     return patch(
         "polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor.create_transaction_kernel",

@@ -201,8 +201,15 @@ def record_projection_failure(
 
 def _profile_error_metadata(*, profile: RoleProfile, base: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(base)
-    if profile.provider_id:
-        metadata["provider_id"] = str(profile.provider_id).strip()
-    if profile.model:
-        metadata["model"] = str(profile.model).strip()
+    provider_id = str(metadata.get("provider_id") or metadata.get("provider") or "").strip()
+    if not provider_id and profile.provider_id:
+        provider_id = str(profile.provider_id).strip()
+    if provider_id:
+        metadata.setdefault("provider_id", provider_id)
+        metadata.setdefault("provider", provider_id)
+    model = str(metadata.get("model") or "").strip()
+    if not model and profile.model:
+        model = str(profile.model).strip()
+    if model:
+        metadata.setdefault("model", model)
     return metadata

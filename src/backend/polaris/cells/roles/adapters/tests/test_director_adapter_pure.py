@@ -77,6 +77,8 @@ from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
+    _build_materialization_quality_failure_evidence_context,
+    _build_materialization_quality_workspace_evidence_context,
     _extract_task_interface_contract,
     _go_runtime_smoke_repair_target_files,
     _materialization_interface_discrepancy_evidence,
@@ -90,6 +92,12 @@ from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter 
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
+from polaris.kernelone.events.final_request_evidence import (
+    looks_like_ce_blueprint_payload,
+    looks_like_failed_gate_evidence_context_payload,
+    looks_like_pm_contract_payload,
+    looks_like_workspace_quality_evidence_payload,
+)
 from polaris.kernelone.quality import scan_workspace_artifact_quality
 
 # ---------------------------------------------------------------------------
@@ -125,6 +133,28 @@ def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
     else:
         adapter = DirectorAdapter(workspace=str(tmp_path), task_runtime=task_runtime)
     return adapter
+
+
+def test_quality_repair_context_projects_structured_failure_and_workspace_evidence() -> None:
+    failure_evidence = _build_materialization_quality_failure_evidence_context(
+        artifact_quality_errors=["Artifact quality scan failed: declared target file missing 'src/index.ts'"],
+        missing_target_files=["src/index.ts"],
+        repair_target_files=["src/index.ts"],
+        changed_files=["package.json"],
+        repair_attempt=1,
+    )
+    workspace_evidence = _build_materialization_quality_workspace_evidence_context(
+        artifact_quality_errors=["Artifact quality scan failed: declared target file missing 'src/index.ts'"],
+        missing_target_files=["src/index.ts"],
+        repair_target_files=["src/index.ts"],
+        changed_files=["package.json"],
+        repair_attempt=1,
+    )
+
+    assert looks_like_failed_gate_evidence_context_payload(failure_evidence)
+    assert looks_like_workspace_quality_evidence_payload(workspace_evidence)
+    assert failure_evidence["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+    assert workspace_evidence["all_checks_passed"] is False
 
 
 def test_prepare_role_dialogue_context_bounds_forced_write_retry_budget() -> None:
@@ -173,6 +203,49 @@ def test_prepare_role_dialogue_context_caps_existing_large_forced_write_budget()
         "max_output_tokens": 65_536,
         "max_tokens": 128_000,
     }
+
+
+def test_prepare_role_dialogue_context_timeout_override_is_not_shadowed_by_ceiling() -> None:
+    context, timeout = _prepare_role_dialogue_context(
+        {
+            "llm_call_timeout_seconds": 420.0,
+            "llm_call_timeout_ceiling_seconds": 660.0,
+            "request_timeout_ceiling_seconds": 660.0,
+        },
+        timeout_seconds=660.0,
+        stage_label="first_call",
+    )
+
+    assert timeout == 420.0
+    assert context["llm_call_timeout_ceiling_seconds"] == 420.0
+    assert context["request_timeout_ceiling_seconds"] == 420.0
+    assert context["director_role_call_timeout_budget"]["timeout_seconds"] == 420.0
+
+
+def test_prepare_role_dialogue_context_injects_current_task_write_boundary() -> None:
+    context, _ = _prepare_role_dialogue_context(
+        {
+            "target_files": ["package.json", "src/models/Humidity.ts"],
+            "project_declared_target_files": [
+                "package.json",
+                "src/models/Humidity.ts",
+                "tests/simulation.test.ts",
+            ],
+        },
+        timeout_seconds=300.0,
+        stage_label="first_call",
+    )
+
+    boundary = context["current_task_write_boundary"]
+    assert boundary["schema_version"] == "director.current_task_write_boundary.v1"
+    assert boundary["current_target_files"] == ["package.json", "src/models/Humidity.ts"]
+    assert boundary["project_declared_target_files_are_inventory_only"] is True
+    assert boundary["project_files_absent_from_current_target_are_downstream_or_read_only"] == [
+        "tests/simulation.test.ts"
+    ]
+    assert boundary["non_test_current_targets"] == ["package.json", "src/models/Humidity.ts"]
+    assert boundary["test_current_targets"] == []
+    assert "Do not embed tests/spec content into non-test source files" in " ".join(boundary["rules"])
 
 
 def test_extract_task_interface_contract_accepts_ce_module_interface_contract_alias() -> None:
@@ -3949,6 +4022,60 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         assert envelope["pm_contract"]["hash"] == "pm-contract-hash"
         assert envelope["ce_blueprint"]["hash"] == "ce-blueprint-hash"
         assert envelope["handoff_decision"]["allowed"] is True
+
+    def test_promote_task_contract_replaces_summary_slots_with_structured_evidence(self, tmp_path: Any) -> None:
+        BlueprintPersistence(str(tmp_path)).save(
+            "ce_TASK-1",
+            {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "task_id": "TASK-1",
+                "target_files": ["package.json", "src/index.ts"],
+                "scope_paths": ["package.json", "src/index.ts"],
+                "execution_checklist": ["Create package.json", "Create src/index.ts"],
+                "module_interface_contract": {
+                    "schema_version": "chief_engineer.module_interface_contract.v1",
+                    "modules": [{"path": "src/index.ts", "role": "entrypoint"}],
+                },
+            },
+        )
+        task = {
+            "subject": "Implement project entrypoint",
+            "metadata": {
+                "task_id": "TASK-1",
+                "pm_task_id": "TASK-1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["package.json", "src/index.ts"],
+                "scope_paths": ["package.json", "src/index.ts"],
+                "acceptance_criteria": ["Entrypoint compiles"],
+            },
+        }
+        context: dict[str, Any] = {
+            "task_contract": "PM contract summary text already projected",
+            "ce_blueprint": "CE blueprint summary text already projected",
+            "metadata": {
+                "task_contract": "PM contract summary text already projected",
+                "ce_blueprint": "CE blueprint summary text already projected",
+            },
+        }
+
+        DirectorAdapter._promote_task_contract_to_runtime_context(
+            task=task,
+            context=context,
+            workspace=str(tmp_path),
+        )
+
+        assert isinstance(context["pm_contract"], dict)
+        assert isinstance(context["task_contract"], dict)
+        assert isinstance(context["ce_blueprint"], dict)
+        assert isinstance(context["chief_engineer_blueprint"], dict)
+        assert looks_like_pm_contract_payload(context["pm_contract"])
+        assert looks_like_pm_contract_payload(context["task_contract"])
+        assert looks_like_ce_blueprint_payload(context["ce_blueprint"])
+        assert looks_like_ce_blueprint_payload(context["chief_engineer_blueprint"])
+        assert isinstance(context["metadata"]["pm_contract"], dict)
+        assert isinstance(context["metadata"]["task_contract"], dict)
+        assert isinstance(context["metadata"]["ce_blueprint"], dict)
 
     def test_ce_blueprint_does_not_expand_claimed_task_write_boundary(self, tmp_path: Any) -> None:
         BlueprintPersistence(str(tmp_path)).save(

@@ -54,7 +54,16 @@ class DecisionCaller:
             turn_round=turn_round,
         )
         if getattr(response, "error", None):
-            raise RuntimeError(str(response.error))
+            metadata = dict(getattr(response, "metadata", {}) or {})
+            metadata.setdefault("error_message", str(response.error))
+            error_category = str(getattr(response, "error_category", "") or "").strip()
+            if error_category:
+                metadata.setdefault("error_category", error_category)
+            exc = RuntimeError(str(response.error))
+            vars(exc)["llm_response_metadata"] = metadata
+            vars(exc)["llm_response_model"] = str(metadata.get("model") or "unknown")
+            vars(exc)["llm_response_error_category"] = error_category
+            raise exc
         native_tool_calls = native_tool_calls_from_response(response)
         metadata = dict(getattr(response, "metadata", {}) or {})
         native_facts = native_tool_call_facts_from_sources(metadata, native_tool_calls)

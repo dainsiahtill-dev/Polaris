@@ -24,6 +24,7 @@ _LOOPBACK_RATE_LIMIT_EXEMPT_PREFIXES = (
     "/v2/context",
     "/v2/factory/bench",
     "/v2/factory/runs",
+    "/v2/instances",
 )
 _AUTH_PROBES = frozenset(
     {

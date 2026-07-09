@@ -44,7 +44,13 @@ def test_removed_stream_paths_are_normal_absent_actions() -> None:
 
 
 def test_bootstrap_endpoints_are_loopback_sensitive_not_public() -> None:
-    for path in ("/v2/settings", "/v2/runtime/storage/layout", "/v2/state/snapshot", "/v2/llm/status", "/v2/memos/list"):
+    for path in (
+        "/v2/settings",
+        "/v2/runtime/storage/layout",
+        "/v2/state/snapshot",
+        "/v2/llm/status",
+        "/v2/memos/list",
+    ):
         assert classify_endpoint(path) == EndpointPolicy.AUTH_BOOTSTRAP
         assert is_bootstrap_rate_limit_sensitive(path) is True
         assert is_always_rate_limit_exempt(path) is False
@@ -67,7 +73,7 @@ def test_retired_llm_status_alias_is_not_bootstrap_sensitive() -> None:
     assert is_bootstrap_rate_limit_sensitive("/llm/status") is False
 
 
-def test_factory_control_plane_paths_are_loopback_rate_limit_exempt_only() -> None:
+def test_loopback_control_plane_paths_are_rate_limit_exempt_only() -> None:
     for path in (
         "/v2/context/99d3de73eedeba4206d0dce2",
         "/v2/context/99d3de73eedeba4206d0dce2/final-request",
@@ -76,6 +82,10 @@ def test_factory_control_plane_paths_are_loopback_rate_limit_exempt_only() -> No
         "/v2/factory/runs/factory_123/artifacts",
         "/v2/factory/bench/sessions",
         "/v2/factory/bench/sessions/bench-1/events",
+        "/v2/instances",
+        "/v2/instances/start",
+        "/v2/instances/main/restart",
+        "/v2/instances/main/logs",
     ):
         assert classify_endpoint(path) == EndpointPolicy.AUTH_ACTION
         assert is_loopback_rate_limit_exempt(path) is True

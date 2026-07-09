@@ -2409,6 +2409,70 @@ class TestAutofixPmContractForQuality:
         post_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
         assert not any("Director task boundary is too broad" in item for item in post_report["critical_issues"])
 
+    def test_autofix_keeps_lightweight_l1_director_task_single_boundary(self, tmp_path: Any) -> None:
+        payload: dict[str, Any] = {
+            "workspace": str(tmp_path),
+            "overall_goal": "Build a small TypeScript simulation toy.",
+            "directive": "Bench Level Contract (Mandatory): level: 1",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Implement lightweight TypeScript simulation",
+                    "goal": "Create package, config, models, and entrypoints for an L1 simulation.",
+                    "description": "One lightweight L1 task includes manifest, source models, and entrypoints.",
+                    "acceptance_criteria": [
+                        "`npm run build` exits 0",
+                        "`npm run test` exits 0",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Create files", "Run tests"],
+                    "scope_paths": [
+                        "package.json",
+                        "tsconfig.json",
+                        "src/models/firefly.ts",
+                        "src/models/flower.ts",
+                        "src/models/moonphase.ts",
+                        "src/models/humidity.ts",
+                        "src/index.ts",
+                        "src/main.ts",
+                    ],
+                    "target_files": [
+                        "package.json",
+                        "tsconfig.json",
+                        "src/models/firefly.ts",
+                        "src/models/flower.ts",
+                        "src/models/moonphase.ts",
+                        "src/models/humidity.ts",
+                        "src/index.ts",
+                        "src/main.ts",
+                    ],
+                },
+                {
+                    "id": "TASK-2",
+                    "title": "Add tests",
+                    "goal": "Create behavior tests for the simulation.",
+                    "acceptance_criteria": ["verify tests/simulation.test.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "verification",
+                    "depends_on": ["TASK-1"],
+                    "execution_checklist": ["Write tests"],
+                    "scope_paths": ["tests/simulation.test.ts"],
+                    "target_files": ["tests/simulation.test.ts"],
+                },
+            ],
+        }
+
+        initial_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
+        assert not any("Director task boundary is too broad" in item for item in initial_report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        assert stats["oversized_director_tasks_split"] == 0
+        assert stats["task_boundary_tasks_added"] == 0
+        assert [task["id"] for task in payload["tasks"]] == ["TASK-1", "TASK-2"]
+
     def test_autofix_does_not_split_documentation_only_director_task(self, tmp_path: Any) -> None:
         payload: dict[str, Any] = {
             "workspace": str(tmp_path),

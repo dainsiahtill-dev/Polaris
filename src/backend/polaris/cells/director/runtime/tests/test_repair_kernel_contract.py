@@ -258,12 +258,7 @@ def test_public_repair_diagnostics_preserve_typed_artifact_issue_fields() -> Non
 
 
 def test_public_repair_diagnostics_preserve_kernelone_rust_issue_locations() -> None:
-    raw_error = (
-        "error[E0583]: file not found for module `weather`\n"
-        "  --> src/main.rs:2:1\n"
-        "   |\n"
-        "2  | mod weather;\n"
-    )
+    raw_error = "error[E0583]: file not found for module `weather`\n  --> src/main.rs:2:1\n   |\n2  | mod weather;\n"
     issues = artifact_quality_issues_from_errors((raw_error,))
 
     diagnostics = normalize_director_repair_issue_diagnostics(issues)
@@ -476,9 +471,7 @@ def test_public_repair_planning_preserves_typed_planner_route(monkeypatch: pytes
 
     assert result.error_code == "typed_planner_seen"
     assert captured["mode"] == "commit"
-    assert captured["artifact_quality_errors"] == (
-        "src/app.ts(1,1): error TS9999: Unknown future compiler error.",
-    )
+    assert captured["artifact_quality_errors"] == ("src/app.ts(1,1): error TS9999: Unknown future compiler error.",)
     diagnostics = captured["diagnostics"]
     assert isinstance(diagnostics, tuple)
     assert diagnostics[0].code == "typescript_ts9999"
@@ -2911,6 +2904,57 @@ def test_public_typescript_nullable_dom_global_covers_window_possibly_undefined(
     content_after = planning["composition_summary"]["patches"][0]["content_after"]
     assert 'if (typeof window === "undefined") {' in content_after
     assert "window.dispatchEvent" in content_after
+
+
+def test_public_typescript_unresolved_identifier_import_from_existing_barrel_is_plannable() -> None:
+    diagnostic = "src/main.ts(7,47): error TS2304: Cannot find name 'dayOfYear'."
+    main = (
+        'import { createMoonPhase, fromDayOfCycle, ambientLightAt } from "./index.js";\n'
+        "\n"
+        "export function run(now: number): string {\n"
+        "  const moon = createMoonPhase(fromDayOfCycle(dayOfYear(now)));\n"
+        "  return `${moon}:${ambientLightAt(moon)}`;\n"
+        "}\n"
+    )
+    barrel = 'export { createMoonPhase, fromDayOfCycle, ambientLightAt, dayOfYear } from "./models/MoonPhase.js";\n'
+    moon = (
+        "export type MoonPhase = 'new' | 'full';\n"
+        "export function createMoonPhase(_day: number): MoonPhase { return 'new'; }\n"
+        "export function fromDayOfCycle(day: number): number { return day % 29; }\n"
+        "export function ambientLightAt(_moon: MoonPhase): number { return 0.5; }\n"
+        "export function dayOfYear(now: number): number { return Math.floor(now / 86400000); }\n"
+    )
+    base_files = {
+        "src/main.ts": main,
+        "src/index.ts": barrel,
+        "src/models/MoonPhase.ts": moon,
+    }
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+            source_tools=(ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,),
+        )
+    ).to_dict()
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert probe["status"] == "covered_plannable"
+    assert probe["plannable_source_tools"] == [ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL]
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.unresolved_identifier"
+    assert planning["plan_summary"]["operation_count"] == 1
+    patch = planning["composition_summary"]["patches"][0]
+    assert patch["path"] == "src/main.ts"
+    assert 'dayOfYear } from "./index.js";' in patch["content_after"]
 
 
 def test_typescript_nullable_canvas_context_runtime_plans_composition_inside_kernel() -> None:
@@ -9075,13 +9119,7 @@ def test_go_error_string_helper_rule_inserts_narrow_error_type() -> None:
 
 def test_go_error_string_helper_rule_uses_typed_identifier_metadata() -> None:
     relative_path = "models/gallery.go"
-    content = (
-        "package models\n"
-        "\n"
-        "var (\n"
-        '    ErrDuplicateCapsule = errString("capsule id already exists")\n'
-        ")\n"
-    )
+    content = 'package models\n\nvar (\n    ErrDuplicateCapsule = errString("capsule id already exists")\n)\n'
     diagnostic = RepairDiagnostic(
         source="artifact_quality",
         code="go_compile_error",

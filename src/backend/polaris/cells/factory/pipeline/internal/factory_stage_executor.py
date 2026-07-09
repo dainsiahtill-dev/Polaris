@@ -144,6 +144,25 @@ _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES = frozenset(
         ".tsx",
     }
 )
+_DIRECTOR_PROVIDER_RATE_LIMIT_TOKENS: tuple[str, ...] = (
+    "429",
+    "rate_limit",
+    "rate limit",
+    "rate-limited",
+    "too many requests",
+    "token plan",
+    "quota",
+    "用量上限",
+)
+_DIRECTOR_PROVIDER_UNAVAILABLE_TOKENS: tuple[str, ...] = (
+    "provider_timeout",
+    "request timeout",
+    "transport timeout",
+    "timed out",
+    "circuit_open",
+    "circuit breaker is open",
+    "circuitopenerror",
+)
 _DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT"
 _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
 _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS = 60
@@ -3073,6 +3092,97 @@ class OrchestrationStageExecutor:
             )
         return False, signals
 
+    def _director_provider_health_failure_signal(self) -> dict[str, Any] | None:
+        try:
+            from polaris.cells.factory.pipeline.internal.bench_gates import collect_llm_events
+        except (ImportError, RuntimeError):
+            return None
+        try:
+            events = collect_llm_events(self.workspace, None)
+        except (RuntimeError, OSError, ValueError, TypeError):
+            return None
+        return self._director_provider_health_failure_signal_from_events(events)
+
+    @staticmethod
+    def _director_provider_health_failure_signal_from_events(
+        events: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        for event in reversed(events):
+            if not isinstance(event, dict):
+                continue
+            if str(event.get("role") or "").strip().lower() != "director":
+                continue
+            if bool(event.get("skipped")):
+                continue
+            event_name = str(event.get("event") or "").strip().lower()
+            if event_name not in {"llm_error", "call_error", "error"} and not bool(event.get("terminal")):
+                continue
+            error_text = OrchestrationStageExecutor._llm_event_error_text(event)
+            if not error_text:
+                continue
+            lowered = error_text.lower()
+            provider_id = str(event.get("provider_id") or "").strip()
+            model = str(event.get("model") or "").strip()
+            source_path = str(event.get("source_path") or "").strip()
+            if any(token in lowered for token in _DIRECTOR_PROVIDER_RATE_LIMIT_TOKENS):
+                return {
+                    "code": "director.provider_rate_limit",
+                    "severity": "error",
+                    "detail": "Director LLM provider rate limit/quota failure before tool dispatch",
+                    "provider_id": provider_id,
+                    "model": model,
+                    "source_path": source_path,
+                    "error_excerpt": error_text[:600],
+                    "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                    "responsible_layer": "model_provider",
+                    "repairable_by_director": False,
+                    "requires_ce_replan": False,
+                    "requires_pm_revision": False,
+                }
+            if any(token in lowered for token in _DIRECTOR_PROVIDER_UNAVAILABLE_TOKENS):
+                return {
+                    "code": "director.provider_unavailable",
+                    "severity": "error",
+                    "detail": "Director LLM provider transport/circuit failure before tool dispatch",
+                    "provider_id": provider_id,
+                    "model": model,
+                    "source_path": source_path,
+                    "error_excerpt": error_text[:600],
+                    "failure_class": QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
+                    "responsible_layer": "model_provider",
+                    "repairable_by_director": False,
+                    "requires_ce_replan": False,
+                    "requires_pm_revision": False,
+                }
+        return None
+
+    @staticmethod
+    def _llm_event_error_text(event: dict[str, Any]) -> str:
+        raw_value = event.get("raw")
+        raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
+        data_value = raw.get("data")
+        data: dict[str, Any] = data_value if isinstance(data_value, dict) else {}
+        metadata_value = raw.get("metadata")
+        metadata: dict[str, Any] = metadata_value if isinstance(metadata_value, dict) else {}
+        data_metadata_value = data.get("metadata")
+        data_metadata: dict[str, Any] = data_metadata_value if isinstance(data_metadata_value, dict) else {}
+        parts: list[str] = []
+        for source in (event, raw, data, metadata, data_metadata):
+            for key in (
+                "event",
+                "event_type",
+                "error_category",
+                "error_code",
+                "error_message",
+                "message",
+                "status",
+                "retry_decision",
+            ):
+                value = source.get(key) if isinstance(source, dict) else None
+                if isinstance(value, str) and value.strip():
+                    parts.append(value.strip())
+        return "\n".join(parts)
+
     async def _execute_docs_generation(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing docs generation for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
@@ -4288,6 +4398,14 @@ class OrchestrationStageExecutor:
                 )
                 base_options["llm_call_timeout_seconds"] = min(requested_llm_timeout, director_timeout_seconds)
                 base_options["director_llm_timeout_seconds"] = min(requested_director_timeout, director_timeout_seconds)
+                base_options["metadata"].update(
+                    {
+                        "llm_call_timeout_seconds": base_options["llm_call_timeout_seconds"],
+                        "director_llm_timeout_seconds": base_options["director_llm_timeout_seconds"],
+                        "request_timeout_seconds": base_options["llm_call_timeout_seconds"],
+                        "timeout_seconds": base_options["llm_call_timeout_seconds"],
+                    }
+                )
                 round_requested_task_ids = self._read_claimable_director_task_ids(limit=max_workers)
                 if not round_requested_task_ids and attempts:
                     settle_result = await self._settle_inflight_director_run_after_timeout(
@@ -4780,6 +4898,13 @@ class OrchestrationStageExecutor:
 
         if fanout_quality_handoff:
             self._downgrade_quality_handoff_blocking_signals(stage_signals)
+        provider_health_signal = self._director_provider_health_failure_signal()
+        if provider_health_signal and not any(
+            str(item.get("code") or "") == str(provider_health_signal.get("code") or "")
+            for item in stage_signals
+            if isinstance(item, dict)
+        ):
+            stage_signals.append(provider_health_signal)
         stage_signals.extend(snapshot_signals)
         if (
             requires_taskboard_convergence

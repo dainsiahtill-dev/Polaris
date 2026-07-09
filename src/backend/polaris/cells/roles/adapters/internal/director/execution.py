@@ -146,6 +146,8 @@ class DirectorPatchExecutor:
         raw_candidates: list[Any] = []
         if isinstance(context, dict):
             raw_candidates.append(context.get("llm_call_timeout_seconds"))
+            raw_candidates.append(context.get("director_llm_timeout_seconds"))
+            raw_candidates.append(context.get("director_dispatch_timeout_seconds"))
 
         for raw in raw_candidates:
             if raw is None:

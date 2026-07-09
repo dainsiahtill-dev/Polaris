@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from polaris.cells.director.tasking.internal.prompt_builder import PromptBuilder
 from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
 
 
@@ -23,6 +24,20 @@ def _task(metadata: dict | None = None, *, subject: str = "", description: str =
     task.description = description
     task.metadata = metadata if metadata is not None else {}
     return task
+
+
+def _prompt_builder() -> PromptBuilder:
+    def compact(value: object, *, max_chars: int = 260) -> str:
+        return str(value)[:max_chars]
+
+    target_resolver = MagicMock()
+    target_resolver.workspace = "/tmp"
+    return PromptBuilder(
+        target_resolver=target_resolver,
+        verification_repair=MagicMock(),
+        codegen_rounds=MagicMock(),
+        compact_fragment=compact,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -533,6 +548,39 @@ def test_prompt_includes_project_declared_targets_and_manifest_entrypoint_rule()
     assert "do not invent unowned local entrypoint files" in prompt
     assert "allowed_local_entrypoints=package.json, src/index.js, src/engine/rules.js" in prompt
     assert "Do not invent src/cli.js unless it is a declared target file." in prompt
+    assert "Project declared target files are project-level inventory only" in prompt
+    assert "the current task write authority remains limited to Target files" in prompt
+
+
+def test_prompt_distinguishes_current_targets_from_project_declared_inventory() -> None:
+    builder = _prompt_builder()
+    target_files = ["package.json", "src/models/Humidity.ts"]
+    task = _task(
+        {
+            "target_files": target_files,
+            "project_declared_target_files": [
+                "package.json",
+                "src/models/Humidity.ts",
+                "tests/simulation.test.ts",
+            ],
+            "factory_bench_project_id": "L1-01",
+            "factory_bench_level": 1,
+        },
+        subject="Implement TypeScript source modules",
+        description="Project-level acceptance requires tests, but this task owns source modules only.",
+    )
+
+    prompt = "\n".join(
+        [
+            builder._target_file_prompt_text(task, target_files, round_files=target_files),
+            builder._contract_context_section(task),
+        ]
+    )
+
+    assert "tests/simulation.test.ts" in prompt
+    assert "Current-task write boundary: write only the files listed above" in prompt
+    assert "Project-level declared files that are absent from this list are downstream or read-only context" in prompt
+    assert "do not embed tests/spec content into non-test source files" in prompt
 
 
 def test_prompt_includes_ce_architecture_decisions() -> None:

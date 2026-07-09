@@ -237,17 +237,37 @@ def _normalize_anthropic_thinking(value: Any, *, require_enabled: bool = False) 
     return normalized
 
 
+def _sanitize_anthropic_payload_tool_choice(payload: dict[str, Any], config: dict[str, Any], model: str) -> None:
+    if "tool_choice" not in payload:
+        return
+    if not payload.get("tools"):
+        payload.pop("tool_choice", None)
+        return
+    tool_choice = _convert_tool_choice_to_anthropic(
+        payload.get("tool_choice"),
+        disable_parallel_tool_use=_coerce_disable_parallel_tool_use(config),
+    )
+    if not isinstance(tool_choice, dict) or not tool_choice:
+        payload.pop("tool_choice", None)
+        return
+    if not _supports_tool_choice(config, model):
+        payload.pop("tool_choice", None)
+        return
+    payload["tool_choice"] = tool_choice
+
+
 def _sanitize_anthropic_payload_options(payload: dict[str, Any], config: dict[str, Any], model: str) -> None:
     require_enabled = _requires_enabled_thinking(config, model)
     if "thinking" not in payload:
         if require_enabled:
             payload["thinking"] = {"type": "enabled"}
-        return
-    normalized = _normalize_anthropic_thinking(payload.get("thinking"), require_enabled=require_enabled)
-    if normalized is None:
-        payload.pop("thinking", None)
-        return
-    payload["thinking"] = normalized
+    else:
+        normalized = _normalize_anthropic_thinking(payload.get("thinking"), require_enabled=require_enabled)
+        if normalized is None:
+            payload.pop("thinking", None)
+        else:
+            payload["thinking"] = normalized
+    _sanitize_anthropic_payload_tool_choice(payload, config, model)
 
 
 def _coerce_disable_parallel_tool_use(config: dict[str, Any]) -> bool | None:
@@ -364,8 +384,10 @@ def _supports_tool_choice(config: dict[str, Any], model: str) -> bool:
     Some Anthropic-compatible endpoints expose native tools but reject the
     `tool_choice` field for reasoning/thinking models. DeepSeek's Anthropic
     endpoint currently returns HTTP 400 ("Thinking mode does not support this
-    tool_choice") in that case. Omitting the field preserves tool availability
-    while letting the provider use its default auto-selection behavior.
+    tool_choice") in that case. Kimi's coding endpoint requires thinking but
+    rejects forced tool choice while thinking is enabled. Omitting the field
+    preserves tool availability while letting the provider use its default
+    native tool selection behavior.
     """
 
     raw_flag = config.get("disable_tool_choice")
@@ -385,7 +407,9 @@ def _supports_tool_choice(config: dict[str, Any], model: str) -> bool:
             str(model or ""),
         ]
     ).lower()
-    return "deepseek" not in token
+    if "deepseek" in token:
+        return False
+    return not ("api.kimi.com/coding" in token or "kimi-for-coding" in token)
 
 
 def _inject_api_key(config: dict[str, Any], api_key: str | None) -> dict[str, Any]:
@@ -430,13 +454,16 @@ def _apply_anthropic_tools(payload: dict[str, Any], config: dict[str, Any], mode
     if not anthropic_tools:
         return
     payload["tools"] = anthropic_tools
+    disable_parallel_tool_use = _coerce_disable_parallel_tool_use(config)
+    tool_choice = _convert_tool_choice_to_anthropic(
+        config.get("tool_choice"),
+        disable_parallel_tool_use=disable_parallel_tool_use,
+    )
+    if not isinstance(tool_choice, dict) or not tool_choice:
+        return
     if _supports_tool_choice(config, model):
-        tool_choice = _convert_tool_choice_to_anthropic(
-            config.get("tool_choice"),
-            disable_parallel_tool_use=_coerce_disable_parallel_tool_use(config),
-        )
-        if isinstance(tool_choice, dict) and tool_choice:
-            payload["tool_choice"] = tool_choice
+        payload["tool_choice"] = tool_choice
+        return
 
 
 class AnthropicProvider(BaseProvider):

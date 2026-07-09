@@ -172,6 +172,7 @@ if TYPE_CHECKING:
             contracts: list[dict[str, Any]],
             *,
             directive: str = "",
+            context: dict[str, Any] | None = None,
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]: ...
 
         def _validate_task_contracts(self, task_contracts: list[dict[str, Any]]) -> PlanValidationResult: ...

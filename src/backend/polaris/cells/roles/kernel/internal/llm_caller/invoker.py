@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import hashlib
 import json
 import logging
 import time
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -32,8 +33,8 @@ from polaris.kernelone.llm.engine._executor_base import coerce_required_flag
 from polaris.kernelone.llm.runtime_config import (
     RoleBindingSlot,
     clear_role_provider_override,
+    get_role_binding_candidates,
     get_role_binding_override,
-    get_role_binding_slots,
     get_role_provider_override,
     is_role_binding_healthy,
     mark_role_binding_unhealthy,
@@ -80,6 +81,15 @@ if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _RoleBindingFallbackFailure:
+    profile: RoleProfile
+    prepared: PreparedLLMRequest
+    active_request: Any
+    error: str
+    model: str
 
 
 def _with_context_os_audit(metadata: dict[str, Any], prepared: PreparedLLMRequest | None) -> dict[str, Any]:
@@ -170,6 +180,82 @@ def _request_tool_surface_disabled(active_request: Any, prepared: PreparedLLMReq
     return not (isinstance(tools, list) and tools)
 
 
+def _profile_lacks_forced_tool_choice(profile: Any) -> bool:
+    token = " ".join(
+        [
+            str(getattr(profile, "provider_id", "") or ""),
+            str(getattr(profile, "model", "") or ""),
+            str(getattr(profile, "provider_type", "") or ""),
+            str(getattr(profile, "name", "") or ""),
+        ]
+    ).lower()
+    return "kimi" in token or "deepseek" in token
+
+
+def _allowed_tool_names_from_prepared(prepared: PreparedLLMRequest) -> list[str]:
+    names: list[str] = []
+    for tool in prepared.native_tool_schemas or []:
+        if not isinstance(tool, dict):
+            continue
+        function_block = tool.get("function")
+        name = str(function_block.get("name") or "").strip() if isinstance(function_block, dict) else ""
+        if not name:
+            name = str(tool.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    if names:
+        return names
+
+    options = prepared.request_options if isinstance(prepared.request_options, dict) else {}
+    raw_tools = options.get("tools")
+    if not isinstance(raw_tools, list):
+        return names
+    for tool in raw_tools:
+        if not isinstance(tool, dict):
+            continue
+        function_block = tool.get("function")
+        name = str(function_block.get("name") or "").strip() if isinstance(function_block, dict) else ""
+        if not name:
+            name = str(tool.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _recover_text_tool_calls_from_response_text(
+    *,
+    response_text: str,
+    raw_payload: dict[str, Any],
+    prepared: PreparedLLMRequest,
+    provider_hint: str,
+) -> list[dict[str, Any]]:
+    if not str(response_text or "").strip():
+        return []
+    allowed_tool_names = _allowed_tool_names_from_prepared(prepared)
+    if not allowed_tool_names:
+        return []
+    try:
+        from polaris.infrastructure.llm.tools.parser_adapter import LLMToolkitParserAdapter
+    except (ImportError, RuntimeError, ValueError):
+        return []
+
+    parsed = LLMToolkitParserAdapter().parse_calls(
+        text=response_text,
+        response_payload=raw_payload,
+        provider_hint=provider_hint,
+        allowed_tool_names=allowed_tool_names,
+    )
+    calls: list[dict[str, Any]] = []
+    for item in parsed:
+        to_openai_format = getattr(item, "to_openai_format", None)
+        if not callable(to_openai_format):
+            continue
+        call = to_openai_format()
+        if isinstance(call, dict):
+            calls.append(call)
+    return calls
+
+
 def _required_tool_not_called_error(
     *,
     prepared: PreparedLLMRequest,
@@ -201,6 +287,14 @@ def _required_tool_not_called_error(
         response_text=response_text,
     )
     if _called_required_native_tool(native_tool_calls, required_tools):
+        return ""
+    recovered_tool_calls = _recover_text_tool_calls_from_response_text(
+        response_text=response_text,
+        raw_payload=raw_payload,
+        prepared=prepared,
+        provider_hint=_provider,
+    )
+    if _called_required_native_tool(recovered_tool_calls, required_tools):
         return ""
     return "required_tool_not_called: required_tools=" + ",".join(required_tools)
 
@@ -266,20 +360,38 @@ def _context_snapshot_degraded_payload(exc: BaseException) -> dict[str, str]:
     }
 
 
-async def _store_call_start_context_snapshot(
+def _snapshot_messages_for_request(*, request: Any, prepared: PreparedLLMRequest) -> list[Any]:
+    ctx = getattr(request, "context", None)
+    raw_messages = ctx.get("chat_messages") if isinstance(ctx, dict) else None
+    if isinstance(raw_messages, list) and raw_messages:
+        messages = [dict(item) for item in raw_messages if isinstance(item, dict)]
+        if messages:
+            return messages
+    messages = [dict(item) for item in getattr(prepared, "messages", []) or [] if isinstance(item, dict)]
+    if messages:
+        return messages
+    request_input = str(getattr(request, "input", "") or "")
+    if request_input.strip():
+        return [{"role": "user", "content": request_input}]
+    return []
+
+
+async def _store_active_request_context_snapshot(
     *,
     workspace: str | None,
+    active_request: Any,
     prepared: PreparedLLMRequest,
     profile: Any,
     run_id: str,
     call_id: str,
-) -> None:
-    """Persist the final provider messages before call_start emits its ref."""
-    request = prepared.ai_request
+) -> str | None:
+    """Persist final provider request evidence for the concrete active request."""
+
+    request = active_request
     ctx = _clear_context_snapshot_context(request)
-    messages = list(getattr(prepared, "messages", []) or [])
+    messages = _snapshot_messages_for_request(request=request, prepared=prepared)
     if not messages:
-        return
+        return None
     try:
         context_store_hash = await AIExecutor._store_context_messages(
             workspace,
@@ -302,9 +414,30 @@ async def _store_call_start_context_snapshot(
         )
         if isinstance(ctx, dict):
             ctx["context_snapshot_degraded"] = _context_snapshot_degraded_payload(exc)
-        return
+        return None
     if context_store_hash and isinstance(ctx, dict):
         ctx["context_snapshot_ref"] = str(context_store_hash)
+    return str(context_store_hash) if context_store_hash else None
+
+
+async def _store_call_start_context_snapshot(
+    *,
+    workspace: str | None,
+    prepared: PreparedLLMRequest,
+    profile: Any,
+    run_id: str,
+    call_id: str,
+) -> None:
+    """Persist the final provider messages before call_start emits its ref."""
+
+    await _store_active_request_context_snapshot(
+        workspace=workspace,
+        active_request=prepared.ai_request,
+        prepared=prepared,
+        profile=profile,
+        run_id=run_id,
+        call_id=call_id,
+    )
 
 
 def _usage_int(payload: dict[str, Any], *keys: str) -> int:
@@ -481,7 +614,7 @@ class LLMInvoker:
         if not LLMInvoker._role_allows_binding_fallback(role_id):
             return ()
         try:
-            slots = get_role_binding_slots(role_id)
+            slots = get_role_binding_candidates(role_id)
         except (RuntimeError, ValueError, TypeError):
             return ()
         current_provider = str(getattr(profile, "provider_id", "") or "").strip()
@@ -542,7 +675,7 @@ class LLMInvoker:
 
         if LLMInvoker._profile_uses_healthy_binding(role_id, profile):
             return profile
-        for slot in get_role_binding_slots(role_id):
+        for slot in get_role_binding_candidates(role_id):
             if is_role_binding_healthy(
                 role_id,
                 provider_id=slot.provider_id,
@@ -604,6 +737,7 @@ class LLMInvoker:
         call_id: str,
         event_emitter: Any | None,
         original_error: str,
+        failure_sink: list[_RoleBindingFallbackFailure] | None = None,
     ) -> tuple[RoleProfile, PreparedLLMRequest, Any, Any] | None:
         self._mark_profile_binding_unhealthy(role_id, profile)
         fallback_slots = self._fallback_slots_for_role(role_id, profile)
@@ -611,6 +745,10 @@ class LLMInvoker:
             return None
 
         for slot in fallback_slots:
+            fallback_prepared: PreparedLLMRequest | None = None
+            fallback_active_request: Any | None = None
+            fallback_error = ""
+
             previous_binding = get_role_binding_override(role_id)
             previous_provider = get_role_provider_override(role_id)
             set_role_binding_override(
@@ -651,6 +789,63 @@ class LLMInvoker:
                     response_model=response_model,
                     platform_retry_max=platform_retry_max,
                 )
+                fallback_active_request = fallback_prepared.ai_request
+                fallback_required_tools = _required_tools_from_final_request_audit(
+                    build_final_request_context_audit_for_request(
+                        ai_request=fallback_prepared.ai_request,
+                        prepared=fallback_prepared,
+                        profile=fallback_profile,
+                    )
+                )
+                if fallback_required_tools and _profile_lacks_forced_tool_choice(fallback_profile):
+                    fallback_active_request = request_preparer._build_required_tool_text_fallback_request(
+                        prepared=fallback_prepared,
+                        profile=fallback_profile,
+                        error_message="required_tool_not_called: required_tools=" + ",".join(fallback_required_tools),
+                    )
+                    await self._emit_required_tool_retry_request_audit(
+                        prepared=fallback_prepared,
+                        request=fallback_active_request,
+                        request_profile=fallback_profile,
+                        role_id=role_id,
+                        run_id=run_id,
+                        task_id=task_id,
+                        attempt=attempt,
+                        model=slot.model,
+                        call_id=call_id,
+                        event_emitter=event_emitter,
+                        retry_decision="required_tool_text_fallback",
+                    )
+                    fallback_response = await self._invoke_with_profile_binding(
+                        executor=executor,
+                        request=fallback_active_request,
+                        profile=fallback_profile,
+                        role_id=role_id,
+                    )
+                    fallback_ok, fallback_error = read_response_status(fallback_response)
+                    if fallback_ok:
+                        fallback_error = _required_tool_not_called_error(
+                            prepared=fallback_prepared,
+                            active_request=fallback_prepared.ai_request,
+                            response=fallback_response,
+                            profile=fallback_profile,
+                        )
+                    if fallback_ok and not fallback_error:
+                        return (
+                            fallback_profile,
+                            fallback_prepared,
+                            fallback_active_request,
+                            fallback_response,
+                        )
+                    raise RuntimeError(fallback_error or "required_tool_text_fallback_failed")
+                await _store_active_request_context_snapshot(
+                    workspace=self.workspace,
+                    active_request=fallback_prepared.ai_request,
+                    prepared=fallback_prepared,
+                    profile=fallback_profile,
+                    run_id=run_id,
+                    call_id=f"{call_id}-role_binding_fallback_request",
+                )
                 fallback_audit_metadata = _with_final_request_context_audit(
                     {
                         "fallback_request": True,
@@ -679,7 +874,12 @@ class LLMInvoker:
                     backoff_seconds=0.0,
                     metadata=fallback_audit_metadata,
                 )
-                fallback_response = await executor.invoke(fallback_prepared.ai_request)
+                fallback_response = await self._invoke_with_profile_binding(
+                    executor=executor,
+                    request=fallback_prepared.ai_request,
+                    profile=fallback_profile,
+                    role_id=role_id,
+                )
             except (RuntimeError, TypeError, ValueError) as exc:
                 fallback_error = str(exc)
             else:
@@ -696,6 +896,20 @@ class LLMInvoker:
             finally:
                 self._restore_role_binding_override(role_id, previous_binding, previous_provider)
 
+            normalized_fallback_error = str(fallback_error or "").strip()
+            if failure_sink is not None and fallback_prepared is not None and normalized_fallback_error:
+                request = (
+                    fallback_active_request if fallback_active_request is not None else fallback_prepared.ai_request
+                )
+                failure_sink.append(
+                    _RoleBindingFallbackFailure(
+                        profile=fallback_profile,
+                        prepared=fallback_prepared,
+                        active_request=request,
+                        error=normalized_fallback_error,
+                        model=slot.model,
+                    )
+                )
             fallback_category = classify_error(fallback_error)
             if is_retryable_error(fallback_category):
                 mark_role_binding_unhealthy(
@@ -708,6 +922,203 @@ class LLMInvoker:
                 return None
 
         return None
+
+    async def _invoke_with_profile_binding(
+        self,
+        *,
+        executor: Any,
+        request: Any,
+        profile: RoleProfile,
+        role_id: str,
+    ) -> Any:
+        """Invoke a retry request while preserving the selected provider/model."""
+
+        previous_binding = get_role_binding_override(role_id)
+        previous_provider = get_role_provider_override(role_id)
+        provider_id = str(getattr(profile, "provider_id", "") or "").strip()
+        model = str(getattr(profile, "model", "") or "").strip()
+        previous_request_provider = getattr(request, "provider_id", None)
+        previous_request_model = getattr(request, "model", None)
+        if provider_id and model:
+            set_role_binding_override(
+                role_id,
+                provider_id=provider_id,
+                model=model,
+            )
+            with contextlib.suppress(AttributeError, TypeError):
+                request.provider_id = provider_id
+            with contextlib.suppress(AttributeError, TypeError):
+                request.model = model
+        try:
+            return await executor.invoke(request)
+        finally:
+            with contextlib.suppress(AttributeError, TypeError):
+                request.provider_id = previous_request_provider
+            with contextlib.suppress(AttributeError, TypeError):
+                request.model = previous_request_model
+            self._restore_role_binding_override(role_id, previous_binding, previous_provider)
+
+    async def _emit_required_tool_retry_request_audit(
+        self,
+        *,
+        prepared: PreparedLLMRequest,
+        request: Any,
+        request_profile: RoleProfile,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        model: str,
+        call_id: str,
+        event_emitter: Any | None,
+        retry_decision: str,
+    ) -> None:
+        await _store_active_request_context_snapshot(
+            workspace=self.workspace,
+            active_request=request,
+            prepared=prepared,
+            profile=request_profile,
+            run_id=run_id,
+            call_id=f"{call_id}-{retry_decision}",
+        )
+        audit_metadata = _with_final_request_context_audit(
+            {
+                "fallback_request": True,
+                "retry_decision": retry_decision,
+                "context_snapshot_ref": self._extract_context_snapshot_ref(request),
+            },
+            prepared=prepared,
+            active_request=request,
+            profile=request_profile,
+        )
+        self._emit_call_retry_event(
+            event_emitter=event_emitter,
+            role=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=str(getattr(request_profile, "model", "") or model),
+            provider=str(getattr(request_profile, "provider_id", "") or ""),
+            call_id=call_id,
+            retry_decision=retry_decision,
+            backoff_seconds=0.0,
+            metadata=audit_metadata,
+        )
+
+    async def _retry_required_tool_if_missing(
+        self,
+        *,
+        request_preparer: LLMRequestPreparer,
+        executor: Any,
+        prepared: PreparedLLMRequest,
+        profile: RoleProfile,
+        response: Any,
+        active_request: Any,
+        response_error: str,
+        is_response_ok: bool,
+        native_tool_fallback: bool,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        model: str,
+        call_id: str,
+        event_emitter: Any | None,
+    ) -> tuple[PreparedLLMRequest, Any, Any, bool, str, bool]:
+        """Run the required-tool retry rung for the currently selected binding."""
+
+        if is_response_ok:
+            response_error = _required_tool_not_called_error(
+                prepared=prepared,
+                active_request=active_request,
+                response=response,
+                profile=profile,
+            )
+            if response_error:
+                is_response_ok = False
+
+        if is_response_ok or "required_tool_not_called" not in str(response_error or "").lower():
+            return prepared, active_request, response, is_response_ok, response_error, native_tool_fallback
+
+        validation_prepared = prepared
+        validation_active_request = active_request
+        if _profile_lacks_forced_tool_choice(profile):
+            retry_request = request_preparer._build_required_tool_text_fallback_request(
+                prepared=prepared,
+                profile=profile,
+                error_message=response_error,
+            )
+            await self._emit_required_tool_retry_request_audit(
+                prepared=prepared,
+                request=retry_request,
+                request_profile=profile,
+                role_id=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                model=model,
+                call_id=call_id,
+                event_emitter=event_emitter,
+                retry_decision="required_tool_text_fallback",
+            )
+            response = await self._invoke_with_profile_binding(
+                executor=executor,
+                request=retry_request,
+                profile=profile,
+                role_id=role_id,
+            )
+            active_request = retry_request
+            native_tool_fallback = True
+            logger.warning("[invoker] required-tool text fallback: provider cannot force native tool_choice")
+            is_response_ok, response_error = read_response_status(response)
+            if is_response_ok:
+                response_error = _required_tool_not_called_error(
+                    prepared=validation_prepared,
+                    active_request=validation_active_request,
+                    response=response,
+                    profile=profile,
+                )
+                if response_error:
+                    is_response_ok = False
+        else:
+            retry_request = request_preparer._build_required_tool_retry_request(
+                prepared=prepared,
+                profile=profile,
+                error_message=response_error,
+            )
+            await self._emit_required_tool_retry_request_audit(
+                prepared=prepared,
+                request=retry_request,
+                request_profile=profile,
+                role_id=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                model=model,
+                call_id=call_id,
+                event_emitter=event_emitter,
+                retry_decision="required_tool_not_called_retry",
+            )
+            response = await self._invoke_with_profile_binding(
+                executor=executor,
+                request=retry_request,
+                profile=profile,
+                role_id=role_id,
+            )
+            active_request = retry_request
+            logger.warning("[invoker] required-tool re-ask: provider returned prose without required tool call")
+            is_response_ok, response_error = read_response_status(response)
+            if is_response_ok:
+                response_error = _required_tool_not_called_error(
+                    prepared=prepared,
+                    active_request=active_request,
+                    response=response,
+                    profile=profile,
+                )
+                if response_error:
+                    is_response_ok = False
+
+        return prepared, active_request, response, is_response_ok, response_error, native_tool_fallback
 
     def _get_executor(self) -> Any:
         """Get or create AIExecutor instance (lazy, respects DI injection)."""
@@ -790,6 +1201,30 @@ class LLMInvoker:
                 return ref.strip()
         return None
 
+    @staticmethod
+    def _profile_bound_request_for_evidence(request: Any, profile: RoleProfile) -> Any:
+        """Return an evidence-only request view pinned to ``profile`` binding."""
+
+        try:
+            bound_request = copy.copy(request)
+        except (TypeError, ValueError):
+            bound_request = request
+
+        ctx = getattr(request, "context", None)
+        if isinstance(ctx, dict):
+            with contextlib.suppress(AttributeError, TypeError):
+                bound_request.context = dict(ctx)
+
+        provider_id = str(getattr(profile, "provider_id", "") or "").strip()
+        model = str(getattr(profile, "model", "") or "").strip()
+        if provider_id:
+            with contextlib.suppress(AttributeError, TypeError):
+                bound_request.provider_id = provider_id
+        if model:
+            with contextlib.suppress(AttributeError, TypeError):
+                bound_request.model = model
+        return bound_request
+
     def _build_call_error_response(
         self,
         *,
@@ -810,11 +1245,17 @@ class LLMInvoker:
         start_time: float,
     ) -> LLMResponse:
         """Emit the call_error event and build the failure ``LLMResponse``."""
+        active_request = self._profile_bound_request_for_evidence(active_request, profile)
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         classified = classify_error(response_error)
         active_context = active_request.context if isinstance(active_request.context, dict) else {}
+        provider_id = str(getattr(active_request, "provider_id", None) or getattr(profile, "provider_id", "") or "")
+        active_model = str(getattr(active_request, "model", None) or getattr(profile, "model", "") or model or "")
         event_metadata = _with_final_request_context_audit(
             {
+                "provider": provider_id,
+                "provider_id": provider_id,
+                "model": active_model,
                 "native_tool_calling_fallback": native_tool_fallback,
                 "native_response_format_fallback": native_response_fallback,
                 "native_tool_mode": str(active_context.get("native_tool_mode") or prepared.native_tool_mode),
@@ -849,6 +1290,8 @@ class LLMInvoker:
                 _with_final_request_context_audit(
                     {
                         "model": model,
+                        "provider": provider_id,
+                        "provider_id": provider_id,
                         "elapsed_ms": round(elapsed_ms, 2),
                         "native_tool_calling_fallback": native_tool_fallback,
                         "native_response_format_fallback": native_response_fallback,
@@ -921,12 +1364,29 @@ class LLMInvoker:
         native_tool_calls, native_tool_provider = extract_native_tool_calls(
             raw_payload, provider_id=response_provider, model=response_model_name, response_text=response_text
         )
+        text_tool_recovery_metadata: dict[str, Any] = {}
+        if not native_tool_calls:
+            recovered_tool_calls = _recover_text_tool_calls_from_response_text(
+                response_text=response_text,
+                raw_payload=raw_payload,
+                prepared=prepared,
+                provider_hint=native_tool_provider,
+            )
+            if recovered_tool_calls:
+                native_tool_calls = recovered_tool_calls
+                native_tool_provider = "openai"
+                text_tool_recovery_metadata = {
+                    "text_tool_recovery_used": True,
+                    "text_tool_recovery_call_count": len(recovered_tool_calls),
+                    "text_tool_recovery_provider": "toolkit_parser",
+                }
         native_tool_call_envelopes = build_native_tool_call_envelope_payloads(
             native_tool_calls,
             provider=native_tool_provider,
         )
         native_tool_metadata: dict[str, Any] = {}
         project_native_tool_call_envelopes_to_metadata(native_tool_metadata, native_tool_call_envelopes)
+        native_tool_metadata.update(text_tool_recovery_metadata)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         provider_usage = _normalize_provider_usage(getattr(response, "usage", None)) or _normalize_provider_usage(
@@ -998,7 +1458,7 @@ class LLMInvoker:
             context_tokens_after=final_context_tokens,
             compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
             response_content=response_text,
-            tool_calls_count=0,
+            tool_calls_count=len(native_tool_calls),
             metadata=_with_context_os_audit(event_metadata, prepared),
         )
 
@@ -1074,7 +1534,15 @@ class LLMInvoker:
         orchestrator can repoint its locals.
         """
 
-        def emit_fallback_request_audit(retry_decision: str, request: Any, request_profile: RoleProfile) -> None:
+        async def emit_fallback_request_audit(retry_decision: str, request: Any, request_profile: RoleProfile) -> None:
+            await _store_active_request_context_snapshot(
+                workspace=self.workspace,
+                active_request=request,
+                prepared=prepared,
+                profile=request_profile,
+                run_id=run_id,
+                call_id=f"{call_id}-{retry_decision}",
+            )
             audit_metadata = _with_final_request_context_audit(
                 {
                     "fallback_request": True,
@@ -1104,7 +1572,7 @@ class LLMInvoker:
             active_request = request_preparer._build_structured_fallback_request(
                 prepared=prepared, profile=profile, response_model=response_model or dict, mode="chat"
             )
-            emit_fallback_request_audit("response_format_text_fallback", active_request, profile)
+            await emit_fallback_request_audit("response_format_text_fallback", active_request, profile)
             response = await executor.invoke(active_request)
             native_response_fallback = True
             is_response_ok, response_error = read_response_status(response)
@@ -1123,36 +1591,43 @@ class LLMInvoker:
             active_request = request_preparer._build_reasoning_truncation_retry_request(
                 prepared=prepared, profile=profile
             )
-            emit_fallback_request_audit("reasoning_truncation_retry", active_request, profile)
+            await emit_fallback_request_audit("reasoning_truncation_retry", active_request, profile)
             response = await executor.invoke(active_request)
             logger.warning(
                 "[invoker] reasoning-truncation re-ask: reserved output budget + minimal-reasoning directive"
             )
             is_response_ok, response_error = read_response_status(response)
 
-        if not is_response_ok and "required_tool_not_called" in response_error.lower():
-            active_request = request_preparer._build_required_tool_retry_request(
-                prepared=prepared,
-                profile=profile,
-                error_message=response_error,
-            )
-            emit_fallback_request_audit("required_tool_not_called_retry", active_request, profile)
-            response = await executor.invoke(active_request)
-            logger.warning("[invoker] required-tool re-ask: provider returned prose without required tool call")
-            is_response_ok, response_error = read_response_status(response)
-            if is_response_ok:
-                response_error = _required_tool_not_called_error(
-                    prepared=prepared,
-                    active_request=active_request,
-                    response=response,
-                    profile=profile,
-                )
-                if response_error:
-                    is_response_ok = False
+        (
+            prepared,
+            active_request,
+            response,
+            is_response_ok,
+            response_error,
+            native_tool_fallback,
+        ) = await self._retry_required_tool_if_missing(
+            request_preparer=request_preparer,
+            executor=executor,
+            prepared=prepared,
+            profile=profile,
+            response=response,
+            active_request=active_request,
+            response_error=response_error,
+            is_response_ok=is_response_ok,
+            native_tool_fallback=native_tool_fallback,
+            role_id=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=model,
+            call_id=call_id,
+            event_emitter=event_emitter,
+        )
 
         if not is_response_ok:
             classified = classify_error(response_error)
             if is_retryable_error(classified):
+                fallback_failures: list[_RoleBindingFallbackFailure] = []
                 fallback = await self._try_role_binding_fallback(
                     request_preparer=request_preparer,
                     profile=profile,
@@ -1171,6 +1646,7 @@ class LLMInvoker:
                     call_id=call_id,
                     event_emitter=event_emitter,
                     original_error=response_error,
+                    failure_sink=fallback_failures,
                 )
                 if fallback is not None:
                     profile, prepared, active_request, response = fallback
@@ -1178,15 +1654,41 @@ class LLMInvoker:
                     native_tool_fallback = False
                     native_response_fallback = False
                     is_response_ok, response_error = read_response_status(response)
-                    if is_response_ok:
-                        response_error = _required_tool_not_called_error(
-                            prepared=prepared,
-                            active_request=active_request,
-                            response=response,
-                            profile=profile,
-                        )
-                        if response_error:
-                            is_response_ok = False
+                    (
+                        prepared,
+                        active_request,
+                        response,
+                        is_response_ok,
+                        response_error,
+                        native_tool_fallback,
+                    ) = await self._retry_required_tool_if_missing(
+                        request_preparer=request_preparer,
+                        executor=executor,
+                        prepared=prepared,
+                        profile=profile,
+                        response=response,
+                        active_request=active_request,
+                        response_error=response_error,
+                        is_response_ok=is_response_ok,
+                        native_tool_fallback=native_tool_fallback,
+                        role_id=role_id,
+                        run_id=run_id,
+                        task_id=task_id,
+                        attempt=attempt,
+                        model=model,
+                        call_id=call_id,
+                        event_emitter=event_emitter,
+                    )
+                elif fallback_failures:
+                    latest_failure = fallback_failures[-1]
+                    profile = latest_failure.profile
+                    prepared = latest_failure.prepared
+                    active_request = latest_failure.active_request
+                    response_error = latest_failure.error
+                    model = latest_failure.model
+                    native_tool_fallback = False
+                    native_response_fallback = False
+                    is_response_ok = False
 
         return FallbackLadderResult(
             response=response,
@@ -1419,6 +1921,9 @@ class LLMInvoker:
         start_time = time.perf_counter()
         prepared: PreparedLLMRequest | None = None
         active_request: Any | None = None
+        request_preparer: LLMRequestPreparer | None = None
+        executor: Any | None = None
+        prompt_tokens = max(1, len(system_prompt) // 4)
 
         try:
             profile = self._profile_for_healthy_binding(role_id, profile)
@@ -1687,6 +2192,32 @@ class LLMInvoker:
 
         except RuntimeError as e:
             logger.exception(f"LLM call unexpected error: {e}")
+            fallback_response = await self._try_retryable_exception_role_binding_fallback(
+                exc=e,
+                request_preparer=request_preparer,
+                executor=executor,
+                prepared=prepared,
+                active_request=active_request or (prepared.ai_request if prepared else None),
+                profile=profile,
+                context=context,
+                system_prompt=system_prompt,
+                temperature=effective_temperature,
+                effective_max_tokens=effective_max_tokens,
+                response_model=response_model,
+                platform_retry_max=platform_retry_max,
+                model=model,
+                role_id=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                turn_round=turn_round,
+                call_id=call_id,
+                event_emitter=event_emitter,
+                prompt_tokens=prompt_tokens,
+                start_time=start_time,
+            )
+            if fallback_response is not None:
+                return fallback_response
             return self._call_exception_response(
                 e,
                 prepared=prepared,
@@ -1701,6 +2232,161 @@ class LLMInvoker:
                 event_emitter=event_emitter,
                 start_time=start_time,
             )
+
+    async def _try_retryable_exception_role_binding_fallback(
+        self,
+        *,
+        exc: RuntimeError,
+        request_preparer: LLMRequestPreparer | None,
+        executor: Any | None,
+        prepared: PreparedLLMRequest | None,
+        active_request: Any,
+        profile: RoleProfile,
+        context: ContextRequest,
+        system_prompt: str,
+        temperature: float,
+        effective_max_tokens: int,
+        response_model: type | None,
+        platform_retry_max: int,
+        model: str,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        turn_round: int,
+        call_id: str,
+        event_emitter: Any | None,
+        prompt_tokens: int,
+        start_time: float,
+    ) -> LLMResponse | None:
+        """Fallback to another role binding when a provider raises a retryable exception.
+
+        Normal provider failures that return ``AIResponse(ok=False, error=...)``
+        already flow through ``_run_fallback_ladder``. Some provider adapters
+        raise ``RuntimeError`` for quota, 5xx, timeout, or circuit-breaker
+        failures before an ``AIResponse`` exists. Those failures are still
+        provider-route failures, so they should use the same role binding
+        fallback path before the turn is marked failed.
+        """
+
+        if prepared is None or request_preparer is None or executor is None:
+            return None
+        error_category = classify_error(str(exc))
+        if not is_retryable_error(error_category):
+            return None
+
+        fallback_failures: list[_RoleBindingFallbackFailure] = []
+        fallback = await self._try_role_binding_fallback(
+            request_preparer=request_preparer,
+            profile=profile,
+            system_prompt=system_prompt,
+            context=context,
+            temperature=temperature,
+            max_tokens=effective_max_tokens,
+            response_model=response_model,
+            platform_retry_max=platform_retry_max,
+            executor=executor,
+            role_id=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=model,
+            call_id=call_id,
+            event_emitter=event_emitter,
+            original_error=str(exc),
+            failure_sink=fallback_failures,
+        )
+        if fallback is None:
+            if fallback_failures:
+                latest_failure = fallback_failures[-1]
+                return self._build_call_error_response(
+                    prepared=latest_failure.prepared,
+                    active_request=latest_failure.active_request,
+                    response_error=latest_failure.error,
+                    profile=latest_failure.profile,
+                    native_tool_fallback=False,
+                    native_response_fallback=False,
+                    allow_native_tool_text_fallback=False,
+                    model=latest_failure.model,
+                    role_id=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    call_id=call_id,
+                    event_emitter=event_emitter,
+                    start_time=start_time,
+                )
+            return None
+
+        fallback_profile, fallback_prepared, fallback_active_request, fallback_raw_response = fallback
+        fallback_model = str(getattr(fallback_profile, "model", "") or model)
+        is_response_ok, response_error = read_response_status(fallback_raw_response)
+        native_tool_fallback = False
+        (
+            fallback_prepared,
+            fallback_active_request,
+            fallback_raw_response,
+            is_response_ok,
+            response_error,
+            native_tool_fallback,
+        ) = await self._retry_required_tool_if_missing(
+            request_preparer=request_preparer,
+            executor=executor,
+            prepared=fallback_prepared,
+            profile=fallback_profile,
+            response=fallback_raw_response,
+            active_request=fallback_active_request,
+            response_error=response_error,
+            is_response_ok=is_response_ok,
+            native_tool_fallback=native_tool_fallback,
+            role_id=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=fallback_model,
+            call_id=call_id,
+            event_emitter=event_emitter,
+        )
+
+        if not is_response_ok:
+            return self._build_call_error_response(
+                prepared=fallback_prepared,
+                active_request=fallback_active_request,
+                response_error=response_error,
+                profile=fallback_profile,
+                native_tool_fallback=native_tool_fallback,
+                native_response_fallback=False,
+                allow_native_tool_text_fallback=False,
+                model=fallback_model,
+                role_id=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                call_id=call_id,
+                event_emitter=event_emitter,
+                start_time=start_time,
+            )
+
+        return self._finalize_call_response(
+            cache=get_global_llm_cache(),
+            prepared=fallback_prepared,
+            active_request=fallback_active_request,
+            response=fallback_raw_response,
+            cache_eligible=False,
+            prompt_fingerprint=None,
+            temperature=temperature,
+            model=fallback_model,
+            profile=fallback_profile,
+            prompt_tokens=prompt_tokens,
+            turn_round=turn_round,
+            role_id=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            call_id=call_id,
+            event_emitter=event_emitter,
+            start_time=start_time,
+        )
 
     def _call_exception_response(
         self,

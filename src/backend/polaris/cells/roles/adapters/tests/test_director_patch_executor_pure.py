@@ -69,6 +69,11 @@ class TestResolveLlmCallTimeoutSeconds:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 120.0})
         assert result == 120.0
 
+    def test_director_dispatch_timeout_context_can_raise_above_env_floor(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS", "120")
+        result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"director_dispatch_timeout_seconds": 420.0})
+        assert result == 420.0
+
     def test_clamped_to_maximum(self) -> None:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 9999.0})
         assert result == 1800.0

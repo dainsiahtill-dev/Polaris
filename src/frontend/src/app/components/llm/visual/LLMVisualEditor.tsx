@@ -10,7 +10,16 @@ import {
   type Edge,
   type ReactFlowInstance,
 } from "@xyflow/react";
-import { Trash2, Unplug, Activity, LayoutGrid, Maximize } from "lucide-react";
+import {
+  Activity,
+  ChevronDown,
+  ChevronUp,
+  LayoutGrid,
+  Maximize,
+  SlidersHorizontal,
+  Trash2,
+  Unplug,
+} from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { devLogger } from "@/app/utils/devLogger";
 import { useVisualLLMConfig } from "./hooks/useVisualLLMConfig";
@@ -54,6 +63,8 @@ type ContextMenuState = {
 };
 
 type LayoutPoint = { x: number; y: number };
+
+const EDGE_CONTEXT_MENU_HIT_DISTANCE = 28;
 
 const isVisualRoleId = (value: string): value is VisualRoleId =>
   isKnownLlmRoleId(value);
@@ -138,6 +149,7 @@ export function LLMVisualEditor({
   const [modelDraft, setModelDraft] = useState("");
   const [providerDraft, setProviderDraft] = useState("");
   const [showAddModel, setShowAddModel] = useState(false);
+  const [showConcurrencyPanel, setShowConcurrencyPanel] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [showValidationPanel, setShowValidationPanel] = useState(true);
 
@@ -186,17 +198,10 @@ export function LLMVisualEditor({
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node<VisualNodeData>) => {
       event.preventDefault();
-      const containerRect = editorContainerRef.current?.getBoundingClientRect();
-      const menuX = containerRect
-        ? event.clientX - containerRect.left
-        : event.clientX;
-      const menuY = containerRect
-        ? event.clientY - containerRect.top
-        : event.clientY;
       setContextMenu({
         visible: true,
-        x: menuX,
-        y: menuY,
+        x: event.clientX,
+        y: event.clientY,
         type: "node",
         data: node,
       });
@@ -207,22 +212,118 @@ export function LLMVisualEditor({
   const onEdgeContextMenu = useCallback(
     (event: React.MouseEvent, edge: Edge) => {
       event.preventDefault();
-      const containerRect = editorContainerRef.current?.getBoundingClientRect();
-      const menuX = containerRect
-        ? event.clientX - containerRect.left
-        : event.clientX;
-      const menuY = containerRect
-        ? event.clientY - containerRect.top
-        : event.clientY;
       setContextMenu({
         visible: true,
-        x: menuX,
-        y: menuY,
+        x: event.clientX,
+        y: event.clientY,
         type: "edge",
         data: edge,
       });
     },
     [],
+  );
+
+  const findNearestEdgeAtClientPoint = useCallback(
+    (clientX: number, clientY: number): Edge | null => {
+      const container = editorContainerRef.current;
+      if (!container) return null;
+
+      const paths = Array.from(
+        container.querySelectorAll<SVGPathElement>(
+          ".llm-visual-edge-hit-target",
+        ),
+      );
+      let bestEdgeId = "";
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      paths.forEach((path) => {
+        const edgeId = path.dataset.edgeId;
+        if (!edgeId) return;
+
+        const length = path.getTotalLength();
+        const matrix = path.getScreenCTM();
+        if (!Number.isFinite(length) || length <= 0 || !matrix) return;
+
+        const steps = Math.min(72, Math.max(18, Math.ceil(length / 14)));
+        for (let index = 0; index <= steps; index += 1) {
+          const point = path.getPointAtLength((length * index) / steps);
+          const screenPoint = new DOMPoint(point.x, point.y).matrixTransform(
+            matrix,
+          );
+          const distance = Math.hypot(
+            screenPoint.x - clientX,
+            screenPoint.y - clientY,
+          );
+          if (distance < bestDistance) {
+            bestEdgeId = edgeId;
+            bestDistance = distance;
+          }
+        }
+      });
+
+      if (!bestEdgeId || bestDistance > EDGE_CONTEXT_MENU_HIT_DISTANCE) {
+        return null;
+      }
+      return edges.find((edge) => edge.id === bestEdgeId) || null;
+    },
+    [edges],
+  );
+
+  const resolveEdgeFromContextMenuEvent = useCallback(
+    (event: MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest(".react-flow__node")) {
+        return null;
+      }
+      const edgeId =
+        target
+          ?.closest<SVGPathElement>("[data-edge-id]")
+          ?.getAttribute("data-edge-id") ||
+        target?.closest<SVGGElement>(".react-flow__edge")?.dataset.id ||
+        "";
+      return (
+        edges.find((item) => item.id === edgeId) ||
+        findNearestEdgeAtClientPoint(event.clientX, event.clientY)
+      );
+    },
+    [edges, findNearestEdgeAtClientPoint],
+  );
+
+  const openEdgeContextMenu = useCallback(
+    (edge: Edge, clientX: number, clientY: number) => {
+      setContextMenu({
+        visible: true,
+        x: clientX,
+        y: clientY,
+        type: "edge",
+        data: edge,
+      });
+    },
+    [],
+  );
+
+  const onFlowContainerContextMenuCapture = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const edge = resolveEdgeFromContextMenuEvent(event);
+      if (!edge) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openEdgeContextMenu(edge, event.clientX, event.clientY);
+    },
+    [openEdgeContextMenu, resolveEdgeFromContextMenuEvent],
+  );
+
+  const onPaneContextMenu = useCallback(
+    (event: MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
+      event.preventDefault();
+      const edge = resolveEdgeFromContextMenuEvent(event);
+      if (!edge) {
+        setContextMenu(null);
+        return;
+      }
+      openEdgeContextMenu(edge, event.clientX, event.clientY);
+    },
+    [openEdgeContextMenu, resolveEdgeFromContextMenuEvent],
   );
 
   const onPaneClick = useCallback(() => {
@@ -446,6 +547,7 @@ export function LLMVisualEditor({
       data-testid="llm-visual-editor"
       ref={editorContainerRef}
       className="relative soft-panel rounded-xl p-4"
+      onContextMenuCapture={onFlowContainerContextMenuCapture}
     >
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
@@ -543,147 +645,193 @@ export function LLMVisualEditor({
         </div>
       ) : null}
 
-      <div className="mb-3 border-y border-white/10 py-3">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-[10px] font-semibold text-text-main">
-            并发容量
-          </div>
-          <div className="text-[10px] text-text-dim">
-            Provider 上限 ∩ Role 上限 ∩ Binding 上限
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-          <div className="min-w-0">
-            <div className="mb-1 text-[10px] font-semibold text-text-dim">
-              Provider
-            </div>
-            <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
-              {providers.map(([providerId, provider]) => {
-                const providerCfg =
-                  typeof provider === "object" && provider !== null
-                    ? (provider as Record<string, unknown>)
-                    : {};
-                const value =
-                  typeof providerCfg.max_concurrency === "number"
-                    ? providerCfg.max_concurrency
-                    : "";
-                return (
-                  <label
-                    key={providerId}
-                    className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
-                  >
-                    <span className="truncate text-text-main">
-                      {providerId}
-                    </span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={value}
-                      onChange={(event) =>
-                        handleProviderConcurrencyChange(
-                          providerId,
-                          event.target.value,
-                        )
-                      }
-                      className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
-                      placeholder="auto"
-                    />
-                  </label>
-                );
-              })}
+      <div className="mb-3 rounded-lg border border-white/10 bg-black/15 px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <SlidersHorizontal size={14} className="text-cyan-300" />
+            <div className="min-w-0">
+              <div className="text-[10px] font-semibold text-text-main">
+                并发容量
+              </div>
+              <div className="truncate text-[10px] text-text-dim">
+                Provider 上限 ∩ Role 上限 ∩ Binding 上限
+              </div>
             </div>
           </div>
-
-          <div className="min-w-0">
-            <div className="mb-1 text-[10px] font-semibold text-text-dim">
-              Role
-            </div>
-            <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
-              {roleConcurrencyRows.map(({ roleId, roleCfg }) => {
-                const value =
-                  typeof roleCfg.max_concurrency === "number"
-                    ? roleCfg.max_concurrency
-                    : typeof roleCfg.concurrency === "number"
-                      ? roleCfg.concurrency
-                      : "";
-                return (
-                  <label
-                    key={roleId}
-                    className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
-                  >
-                    <span className="truncate text-text-main">
-                      {getLlmRoleDefinition(roleId).label}
-                    </span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={value}
-                      onChange={(event) =>
-                        handleRoleConcurrencyChange(roleId, event.target.value)
-                      }
-                      className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
-                      placeholder="1"
-                    />
-                  </label>
-                );
-              })}
-              {roleConcurrencyRows.length === 0 ? (
-                <div className="text-[10px] text-text-dim">暂无 Role 绑定</div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="min-w-0">
-            <div className="mb-1 text-[10px] font-semibold text-text-dim">
-              Binding
-            </div>
-            <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
-              {bindingRows.map(({ roleId, binding, index }) => {
-                const value =
-                  typeof binding.max_concurrency === "number"
-                    ? binding.max_concurrency
-                    : typeof binding.concurrency === "number"
-                      ? binding.concurrency
-                      : "";
-                return (
-                  <label
-                    key={`${roleId}:${binding.provider_id}:${binding.model}:${index}`}
-                    className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
-                  >
-                    <span className="truncate text-text-main">
-                      {getLlmRoleDefinition(roleId).label} ·{" "}
-                      {binding.provider_id}/{binding.model}
-                    </span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={value}
-                      onChange={(event) =>
-                        handleBindingConcurrencyChange(
-                          roleId,
-                          binding.provider_id,
-                          binding.model,
-                          event.target.value,
-                        )
-                      }
-                      className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
-                      placeholder="auto"
-                    />
-                  </label>
-                );
-              })}
-              {bindingRows.length === 0 ? (
-                <div className="text-[10px] text-text-dim">暂无 Binding</div>
-              ) : null}
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[10px] text-cyan-100">
+              Provider {providers.length}
+            </span>
+            <span className="rounded border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[10px] text-emerald-100">
+              Role {roleConcurrencyRows.length}
+            </span>
+            <span className="rounded border border-fuchsia-400/20 bg-fuchsia-400/10 px-2 py-1 text-[10px] text-fuchsia-100">
+              Binding {bindingRows.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowConcurrencyPanel((value) => !value)}
+              className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.08] px-2.5 py-1 text-[10px] font-semibold text-text-main transition-colors hover:bg-white/[0.14]"
+              data-testid="llm-visual-toggle-concurrency"
+            >
+              {showConcurrencyPanel ? (
+                <>
+                  收起
+                  <ChevronUp size={12} />
+                </>
+              ) : (
+                <>
+                  展开
+                  <ChevronDown size={12} />
+                </>
+              )}
+            </button>
           </div>
         </div>
+
+        {showConcurrencyPanel ? (
+          <div className="mt-3 grid grid-cols-1 gap-3 border-t border-white/10 pt-3 xl:grid-cols-3">
+            <div className="min-w-0">
+              <div className="mb-1 text-[10px] font-semibold text-text-dim">
+                Provider
+              </div>
+              <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
+                {providers.map(([providerId, provider]) => {
+                  const providerCfg =
+                    typeof provider === "object" && provider !== null
+                      ? (provider as Record<string, unknown>)
+                      : {};
+                  const value =
+                    typeof providerCfg.max_concurrency === "number"
+                      ? providerCfg.max_concurrency
+                      : "";
+                  return (
+                    <label
+                      key={providerId}
+                      className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
+                    >
+                      <span className="truncate text-text-main">
+                        {providerId}
+                      </span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={value}
+                        onChange={(event) =>
+                          handleProviderConcurrencyChange(
+                            providerId,
+                            event.target.value,
+                          )
+                        }
+                        className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
+                        placeholder="auto"
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="min-w-0">
+              <div className="mb-1 text-[10px] font-semibold text-text-dim">
+                Role
+              </div>
+              <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
+                {roleConcurrencyRows.map(({ roleId, roleCfg }) => {
+                  const value =
+                    typeof roleCfg.max_concurrency === "number"
+                      ? roleCfg.max_concurrency
+                      : typeof roleCfg.concurrency === "number"
+                        ? roleCfg.concurrency
+                        : "";
+                  return (
+                    <label
+                      key={roleId}
+                      className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
+                    >
+                      <span className="truncate text-text-main">
+                        {getLlmRoleDefinition(roleId).label}
+                      </span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={value}
+                        onChange={(event) =>
+                          handleRoleConcurrencyChange(
+                            roleId,
+                            event.target.value,
+                          )
+                        }
+                        className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
+                        placeholder="1"
+                      />
+                    </label>
+                  );
+                })}
+                {roleConcurrencyRows.length === 0 ? (
+                  <div className="text-[10px] text-text-dim">
+                    暂无 Role 绑定
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="min-w-0">
+              <div className="mb-1 text-[10px] font-semibold text-text-dim">
+                Binding
+              </div>
+              <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
+                {bindingRows.map(({ roleId, binding, index }) => {
+                  const value =
+                    typeof binding.max_concurrency === "number"
+                      ? binding.max_concurrency
+                      : typeof binding.concurrency === "number"
+                        ? binding.concurrency
+                        : "";
+                  return (
+                    <label
+                      key={`${roleId}:${binding.provider_id}:${binding.model}:${index}`}
+                      className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
+                    >
+                      <span className="truncate text-text-main">
+                        {getLlmRoleDefinition(roleId).label} ·{" "}
+                        {binding.provider_id}/{binding.model}
+                      </span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={value}
+                        onChange={(event) =>
+                          handleBindingConcurrencyChange(
+                            roleId,
+                            binding.provider_id,
+                            binding.model,
+                            event.target.value,
+                          )
+                        }
+                        className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
+                        placeholder="auto"
+                      />
+                    </label>
+                  );
+                })}
+                {bindingRows.length === 0 ? (
+                  <div className="text-[10px] text-text-dim">
+                    暂无 Binding
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
-      <div className="h-[60vh] min-h-[520px] soft-inset rounded-xl overflow-hidden">
+      <div
+        className="h-[60vh] min-h-[520px] soft-inset rounded-xl overflow-hidden"
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -694,6 +842,7 @@ export function LLMVisualEditor({
           onConnect={onConnect}
           onNodeContextMenu={onNodeContextMenu}
           onEdgeContextMenu={onEdgeContextMenu}
+          onPaneContextMenu={onPaneContextMenu}
           onPaneClick={onPaneClick}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}

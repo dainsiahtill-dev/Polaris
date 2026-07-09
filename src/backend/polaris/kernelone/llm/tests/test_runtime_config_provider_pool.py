@@ -16,6 +16,7 @@ from polaris.kernelone.llm.runtime_config import (
     RoleModelConfig,
     RuntimeConfigManager,
     clear_role_provider_override,
+    get_role_binding_candidates,
     get_role_binding_slots,
     get_role_concurrency,
     get_role_model,
@@ -221,6 +222,81 @@ class TestConfigParsing:
         assert len(slots) == 3
         assert [slot.provider_id for slot in slots] == ["kimi", "kimi", "minimax"]
 
+    def test_failover_candidates_include_all_bindings_when_worker_concurrency_is_one(self, tmp_path: Path) -> None:
+        mgr = _manager_with_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {
+                    "minimax": {"type": "anthropic_compat", "model": "MiniMax-M3"},
+                    "kimi": {"type": "anthropic_compat", "model": "kimi-for-coding"},
+                },
+                "roles": {
+                    "director": {
+                        "provider_id": "minimax",
+                        "model": "MiniMax-M3",
+                        "provider_pool": ["minimax"],
+                        "concurrency": 1,
+                        "bindings": [
+                            {"provider_id": "minimax", "model": "MiniMax-M3"},
+                            {"provider_id": "kimi", "model": "kimi-for-coding"},
+                        ],
+                    }
+                },
+            },
+        )
+
+        worker_slots = mgr.get_role_binding_slots("director")
+        failover_candidates = mgr.get_role_binding_candidates("director")
+
+        assert [slot.provider_id for slot in worker_slots] == ["minimax"]
+        assert [slot.provider_id for slot in failover_candidates] == ["minimax", "kimi"]
+
+        set_runtime_config_manager(mgr)
+        try:
+            assert [slot.provider_id for slot in get_role_binding_slots("director")] == ["minimax"]
+            assert [slot.provider_id for slot in get_role_binding_candidates("director")] == ["minimax", "kimi"]
+        finally:
+            reset_runtime_config_manager()
+
+    def test_failover_candidates_append_explicit_backup_role_without_worker_slot(self, tmp_path: Path) -> None:
+        mgr = _manager_with_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {
+                    "minimax": {"type": "anthropic_compat", "model": "MiniMax-M3"},
+                    "kimi": {"type": "anthropic_compat", "model": "kimi-for-coding"},
+                    "gemma": {"type": "openai_compat", "model": "gemma-4-12B-it-Q8_0"},
+                },
+                "roles": {
+                    "director": {
+                        "provider_id": "minimax",
+                        "model": "MiniMax-M3",
+                        "provider_pool": ["minimax"],
+                        "concurrency": 1,
+                        "bindings": [
+                            {"provider_id": "minimax", "model": "MiniMax-M3"},
+                            {"provider_id": "kimi", "model": "kimi-for-coding"},
+                        ],
+                    },
+                    "_director_backup": {
+                        "provider_id": "gemma",
+                        "model": "gemma-4-12B-it-Q8_0",
+                        "bindings": [{"provider_id": "gemma", "model": "gemma-4-12B-it-Q8_0"}],
+                    },
+                },
+            },
+        )
+
+        worker_slots = mgr.get_role_binding_slots("director")
+        failover_candidates = mgr.get_role_binding_candidates("director")
+
+        assert [slot.provider_id for slot in worker_slots] == ["minimax"]
+        assert [slot.provider_id for slot in failover_candidates] == ["minimax", "kimi", "gemma"]
+        assert {slot.role_id for slot in failover_candidates} == {"director"}
+        assert str(failover_candidates[-1].binding_id).startswith("director:backup:")
+
 
 class TestThreadOverride:
     def teardown_method(self) -> None:
@@ -307,6 +383,47 @@ class TestThreadOverride:
         set_role_binding_override("director", provider_id="kimi", model="kimi-k1")
 
         assert get_role_model("director") == ("kimi", "kimi-k1")
+
+    def test_binding_override_honors_explicit_backup_role_candidate(self, tmp_path: Path) -> None:
+        from polaris.kernelone.llm.engine._executor_base import resolve_provider_model
+
+        mgr = _manager_with_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {
+                    "minimax": {"type": "anthropic_compat", "model": "MiniMax-M3"},
+                    "kimi": {"type": "anthropic_compat", "model": "kimi-for-coding"},
+                    "gemma": {"type": "openai_compat", "model": "gemma-4-12B-it-Q8_0"},
+                },
+                "roles": {
+                    "director": {
+                        "provider_id": "minimax",
+                        "model": "MiniMax-M3",
+                        "provider_pool": ["minimax"],
+                        "concurrency": 1,
+                        "bindings": [
+                            {"provider_id": "minimax", "model": "MiniMax-M3"},
+                            {"provider_id": "kimi", "model": "kimi-for-coding"},
+                        ],
+                    },
+                    "_director_backup": {
+                        "provider_id": "gemma",
+                        "model": "gemma-4-12B-it-Q8_0",
+                        "bindings": [{"provider_id": "gemma", "model": "gemma-4-12B-it-Q8_0"}],
+                    },
+                },
+            },
+        )
+        set_runtime_config_manager(mgr)
+
+        set_role_binding_override("director", provider_id="gemma", model="gemma-4-12B-it-Q8_0")
+
+        assert get_role_model("director") == ("gemma", "gemma-4-12B-it-Q8_0")
+        assert resolve_provider_model(provider_id="minimax", model="MiniMax-M3", role="director") == (
+            "gemma",
+            "gemma-4-12B-it-Q8_0",
+        )
 
 
 class TestModuleHelpers:

@@ -394,7 +394,11 @@ class PMAdapter(
                         "detail": "PM LLM invocation bypassed by deterministic planning fallback",
                     }
                 )
-                normalized_contracts, quality = self._evaluate_contract_quality(contracts, directive=directive)
+                normalized_contracts, quality = self._evaluate_contract_quality(
+                    contracts,
+                    directive=directive,
+                    context=context,
+                )
             else:
                 response = await self._call_role_llm(message, context={"mode": "pm_task_contract"})
                 raw_output = self._response_text(response)
@@ -404,7 +408,11 @@ class PMAdapter(
                     projection_hint=projection_hint,
                 )
                 if contracts:
-                    normalized_contracts, quality = self._evaluate_contract_quality(contracts, directive=directive)
+                    normalized_contracts, quality = self._evaluate_contract_quality(
+                        contracts,
+                        directive=directive,
+                        context=context,
+                    )
                 else:
                     quality_signals.append(
                         {
@@ -431,7 +439,11 @@ class PMAdapter(
                     projection_hint=projection_hint,
                 )
                 if contracts:
-                    normalized_contracts, quality = self._evaluate_contract_quality(contracts, directive=directive)
+                    normalized_contracts, quality = self._evaluate_contract_quality(
+                        contracts,
+                        directive=directive,
+                        context=context,
+                    )
                 else:
                     quality_signals.append(
                         {
@@ -448,6 +460,7 @@ class PMAdapter(
                         normalized_contracts, quality = self._evaluate_contract_quality(
                             synthesized_contracts,
                             directive=directive,
+                            context=context,
                         )
                         quality_signals.append(
                             {
@@ -481,6 +494,7 @@ class PMAdapter(
                     synthesized_normalized, synthesized_quality = self._evaluate_contract_quality(
                         synthesized_contracts,
                         directive=directive,
+                        context=context,
                     )
                     if (
                         synthesized_normalized

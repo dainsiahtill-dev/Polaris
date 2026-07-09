@@ -2749,6 +2749,153 @@ _RUNTIME_ENVIRONMENT_FAILURE_TOKENS = (
     "runtime.environment",
     "workspace_switch_failed",
 )
+_MODEL_PROVIDER_RATE_LIMIT_TOKENS = (
+    "director.provider_rate_limit",
+    "rate_limit",
+    "rate limit",
+    "rate-limited",
+    "too many requests",
+    "token plan",
+    "用量上限",
+)
+_MODEL_PROVIDER_UNAVAILABLE_TOKENS = (
+    "director.provider_unavailable",
+    "provider_timeout",
+    "request timeout",
+    "transport timeout",
+    "circuit_open",
+    "circuit breaker is open",
+)
+_MODEL_PROVIDER_INVALID_REQUEST_TOKENS = (
+    "invalid_request_error",
+    "tool_choice",
+    "incompatible with thinking",
+    "thinking mode does not support",
+)
+
+
+def _has_model_provider_invalid_request(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return all(token in lowered for token in _MODEL_PROVIDER_INVALID_REQUEST_TOKENS[:3]) or (
+        "thinking mode does not support" in lowered and "tool_choice" in lowered
+    )
+
+
+def _record_model_provider_failure_text(record: dict[str, Any]) -> str:
+    event_error_texts: list[str] = []
+    for event in _record_llm_events(record):
+        if str(event.get("role") or "").strip().lower() != "director":
+            continue
+        if bool(event.get("skipped")):
+            continue
+        event_name = str(event.get("event") or "").strip().lower()
+        if event_name not in {"llm_error", "call_error", "error"} and not bool(event.get("terminal")):
+            continue
+        error_text = _llm_event_error_text(event)
+        if error_text:
+            event_error_texts.append(error_text)
+    return json.dumps(
+        {
+            "failure_reasons": record.get("failure_reasons"),
+            "failure_evidence": record.get("failure_evidence"),
+            "chain": record.get("chain"),
+            "chain_diagnostics": record.get("chain_diagnostics"),
+            "llm_route_audit": record.get("llm_route_audit"),
+            "factory_gates": record.get("factory_gates"),
+            "llm_event_errors": event_error_texts,
+        },
+        ensure_ascii=False,
+        default=str,
+    ).lower()
+
+
+def _record_llm_events(record: dict[str, Any]) -> list[dict[str, Any]]:
+    workspace_text = str(record.get("workspace") or record.get("project_workspace") or "").strip()
+    if not workspace_text:
+        return []
+    runtime_candidates: list[Path] = []
+    runtime_dir = str(record.get("runtime_dir") or "").strip()
+    if runtime_dir:
+        runtime_candidates.append(Path(runtime_dir))
+    runtime_dirs = record.get("runtime_dirs")
+    if isinstance(runtime_dirs, list):
+        for item in runtime_dirs:
+            path_text = str(item or "").strip()
+            if path_text:
+                runtime_candidates.append(Path(path_text))
+    try:
+        return collect_llm_events(Path(workspace_text), runtime_candidates or None)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return []
+
+
+def _llm_event_error_text(event: dict[str, Any]) -> str:
+    raw_value = event.get("raw")
+    raw = raw_value if isinstance(raw_value, dict) else {}
+    data_value = raw.get("data")
+    data = data_value if isinstance(data_value, dict) else {}
+    metadata_value = raw.get("metadata")
+    metadata = metadata_value if isinstance(metadata_value, dict) else {}
+    data_metadata_value = data.get("metadata")
+    data_metadata = data_metadata_value if isinstance(data_metadata_value, dict) else {}
+    parts: list[str] = []
+    for source in (event, raw, data, metadata, data_metadata):
+        for key in (
+            "event",
+            "event_type",
+            "error_category",
+            "error_code",
+            "error_message",
+            "message",
+            "status",
+            "retry_decision",
+        ):
+            value = source.get(key) if isinstance(source, dict) else None
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+    return "\n".join(parts)
+
+
+def _record_has_model_provider_failure(record: dict[str, Any]) -> bool:
+    text = _record_model_provider_failure_text(record)
+    return (
+        any(token in text for token in _MODEL_PROVIDER_RATE_LIMIT_TOKENS)
+        or any(token in text for token in _MODEL_PROVIDER_UNAVAILABLE_TOKENS)
+        or _has_model_provider_invalid_request(text)
+    )
+
+
+def _model_provider_failure_reason(record: dict[str, Any]) -> str:
+    text = _record_model_provider_failure_text(record)
+    if any(token in text for token in _MODEL_PROVIDER_RATE_LIMIT_TOKENS):
+        return "director_provider_rate_limit"
+    if any(token in text for token in _MODEL_PROVIDER_UNAVAILABLE_TOKENS):
+        return "director_provider_unavailable"
+    if _has_model_provider_invalid_request(text):
+        return "director_provider_invalid_request"
+    return "model_provider_failure"
+
+
+def _model_provider_failure_evidence(record: dict[str, Any]) -> str:
+    for event in _record_llm_events(record):
+        if str(event.get("role") or "").strip().lower() != "director":
+            continue
+        error_text = _llm_event_error_text(event)
+        lowered = error_text.lower()
+        if (
+            any(token in lowered for token in _MODEL_PROVIDER_RATE_LIMIT_TOKENS)
+            or any(token in lowered for token in _MODEL_PROVIDER_UNAVAILABLE_TOKENS)
+            or _has_model_provider_invalid_request(lowered)
+        ):
+            return error_text[:1000]
+    chain = record.get("chain")
+    audit_bundle = chain.get("audit_bundle") if isinstance(chain, dict) else {}
+    failure = audit_bundle.get("failure") if isinstance(audit_bundle, dict) else {}
+    if isinstance(failure, dict):
+        detail = str(failure.get("detail") or failure.get("code") or "").strip()
+        if detail:
+            return detail
+    return ""
 
 
 def _record_has_runtime_environment_failure(record: dict[str, Any]) -> bool:
@@ -2975,7 +3122,10 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         gate.get("gate") in {"run_ledger_projection", "run_ledger_event"} and not gate.get("ok")
         for gate in _gate_failures(record)
     )
-    if _record_has_runtime_environment_failure(record):
+    if _record_has_model_provider_failure(record):
+        category, reason = "runtime_environment", _model_provider_failure_reason(record)
+        evidence.append(_model_provider_failure_evidence(record))
+    elif _record_has_runtime_environment_failure(record):
         category, reason = "runtime_environment", _runtime_environment_failure_reason(record)
         evidence.append(_runtime_environment_failure_evidence(record))
         if run_ledger_gate_failed:

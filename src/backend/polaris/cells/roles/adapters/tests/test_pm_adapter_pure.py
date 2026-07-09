@@ -493,6 +493,60 @@ class TestFrontendTestRepairContracts:
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
+    def test_l1_factory_context_prevents_lightweight_typescript_task_boundary_split(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 发光昆虫花园模拟器
+
+## Goal
+- 用 TypeScript 实现「发光昆虫花园模拟器」。创意钩子: 萤火虫根据花朵情绪和月相组成实时灯光舞蹈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口。
+- package.json 脚本不得是只检查 manifest 的占位脚本; build/test/start 或等价脚本必须实际运行产品入口或核心规则验证。
+- 附 README.md 说明如何运行。
+- 关键验收维度: 萤火虫根据花朵情绪和月相组成实时灯光舞蹈; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。
+
+## Deterministic Checks
+- ts_syntax
+- package_scripts
+- content_any:firefly|flower|moon|humidity
+- source_target_coverage:src/**/*.ts
+
+## Language-Specific Runnable Contract (TypeScript)
+- 必须包含 `package.json` 且定义 `scripts.start` / `scripts.build` 脚本。
+- `npm install && npm run build` 必须成功。
+- 必须包含 `tsconfig.json`。
+- `tsc --noEmit` 必须通过。
+""".strip()
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+
+        normalized, quality = adapter._evaluate_contract_quality(
+            contracts,
+            directive=directive,
+            context={
+                "factory_bench_level": 1,
+                "level_contract": {"schema_version": "factory-bench.level_contract.v1", "level": 1},
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "level": 1,
+                },
+            },
+        )
+
+        assert [item["id"] for item in normalized] == ["TASK-1", "TASK-2", "TASK-3"]
+        assert all(not (item.get("metadata") or {}).get("task_boundary_split") for item in normalized)
+        assert normalized[0]["factory_bench_level"] == 1
+        assert quality["ok"] is True
+        assert (quality.get("score") or 0) >= 80
+
     def test_typescript_placeholder_script_rule_does_not_route_to_qa_repair(
         self,
         tmp_path: Any,
@@ -1100,6 +1154,7 @@ class TestFrontendTestRepairContracts:
             quality_contracts: list[dict[str, Any]],
             *,
             directive: str = "",
+            context: dict[str, Any] | None = None,
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             return quality_contracts, {
                 "ok": False,
@@ -2290,6 +2345,7 @@ class TestListBoardTaskRows:
             contracts: list[dict[str, Any]],
             *,
             directive: str = "",
+            context: dict[str, Any] | None = None,
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             return contracts, {
                 "ok": False,

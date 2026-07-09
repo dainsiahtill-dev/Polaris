@@ -402,6 +402,11 @@ class PromptBuilder:
             else:
                 provenance = "tentative_inferred_write_target"
             rows.append(f"- {path} [{provenance}]")
+        rows.append(
+            "- Current-task write boundary: write only the files listed above. "
+            "Project-level declared files that are absent from this list are downstream or read-only context; "
+            "do not embed tests/spec content into non-test source files to satisfy project-level test requirements."
+        )
         return "\n".join(rows)
 
     def _context_file_prompt_text(self, task: Task, target_files: list[str]) -> str:
@@ -518,6 +523,10 @@ class PromptBuilder:
         declared_targets = self._metadata_items(metadata.get("project_declared_target_files"), limit=24, max_chars=140)
         if declared_targets:
             lines.append("- Project declared target files: " + "; ".join(declared_targets))
+            lines.append(
+                "- Project declared target files are project-level inventory only; "
+                "the current task write authority remains limited to Target files."
+            )
         declared_source_targets = self._metadata_items(
             metadata.get("project_declared_source_targets"),
             limit=20,

@@ -232,6 +232,43 @@ class TestAnthropicProviderToolConversion:
         assert "tools" in captured["payload"]
         assert "tool_choice" not in captured["payload"]
 
+    def test_invoke_omits_specified_tool_choice_for_kimi_coding_thinking_endpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicProvider()
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://api.kimi.com/coding",
+            "provider_id": "kimi",
+            "tools": [{"name": "write_file", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "write_file"},
+        }
+        result = provider.invoke("Edit", "kimi-for-coding", config)
+
+        assert result.ok is True
+        assert captured["payload"]["thinking"] == {"type": "enabled"}
+        assert "tools" in captured["payload"]
+        assert "tool_choice" not in captured["payload"]
+
     def test_invoke_omits_tool_choice_when_config_disables_it(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -432,6 +469,44 @@ class TestAnthropicProviderToolConversion:
 
         assert result.ok is True
         assert captured["payload"]["thinking"] == {"type": "enabled"}
+
+    def test_request_overrides_cannot_reintroduce_unsupported_tool_choice_for_kimi(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicProvider()
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://api.kimi.com/coding",
+            "provider_id": "kimi",
+            "tools": [{"name": "write_file", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "write_file"},
+            "request_overrides": {"tool_choice": "required"},
+        }
+        result = provider.invoke("Edit", "kimi-for-coding", config)
+
+        assert result.ok is True
+        assert captured["payload"]["thinking"] == {"type": "enabled"}
+        assert "tools" in captured["payload"]
+        assert "tool_choice" not in captured["payload"]
 
 
 class TestAnthropicProviderEdgeCases:

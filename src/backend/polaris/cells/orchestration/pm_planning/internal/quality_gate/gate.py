@@ -314,6 +314,61 @@ def _is_domain_split_repair_task(task: dict[str, Any]) -> bool:
     }
 
 
+def _task_factory_bench_level(task: dict[str, Any]) -> int | None:
+    candidates: list[Any] = [task.get("factory_bench_level")]
+    metadata = task.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.append(metadata.get("factory_bench_level"))
+        delivery_depth = metadata.get("delivery_depth_contract")
+        if isinstance(delivery_depth, dict):
+            candidates.append(delivery_depth.get("level"))
+        level_contract = metadata.get("level_contract")
+        if isinstance(level_contract, dict):
+            candidates.append(level_contract.get("level"))
+    for candidate in candidates:
+        try:
+            level = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        if level > 0:
+            return level
+    return None
+
+
+def _normalized_factory_bench_level(normalized: dict[str, Any]) -> int | None:
+    candidates: list[Any] = [normalized.get("factory_bench_level")]
+    metadata = normalized.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.append(metadata.get("factory_bench_level"))
+    for key in ("delivery_depth_contract", "level_contract"):
+        payload = normalized.get(key)
+        if isinstance(payload, dict):
+            candidates.append(payload.get("level"))
+    for candidate in candidates:
+        try:
+            level = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        if level > 0:
+            return level
+    directive = str(normalized.get("directive") or normalized.get("overall_goal") or "")
+    match = re.search(r"(?:factory[_-]?bench[_-]?level|bench\s+level\s+contract|level)\D{0,40}(\d+)", directive, re.I)
+    if match:
+        try:
+            level = int(match.group(1))
+        except (TypeError, ValueError):
+            return None
+        return level if level > 0 else None
+    return None
+
+
+def _lightweight_bench_task_can_stay_single_boundary(task: dict[str, Any], paths: list[str]) -> bool:
+    level = _task_factory_bench_level(task)
+    if level is None or level > 1:
+        return False
+    return 1 < len(paths) <= 8
+
+
 def _director_task_is_too_broad(task: dict[str, Any]) -> bool:
     if not _is_director_task(task):
         return False
@@ -322,12 +377,12 @@ def _director_task_is_too_broad(task: dict[str, Any]) -> bool:
     if _is_domain_split_repair_task(task):
         return False
     paths = _task_write_file_targets(task)
+    if _lightweight_bench_task_can_stay_single_boundary(task, paths):
+        return False
     if len(paths) <= _MAX_DIRECTOR_TASK_FILE_TARGETS:
         return False
     source_like = [
-        path
-        for path in paths
-        if _director_task_boundary_bucket(path) in {*_SOURCE_BOUNDARY_BUCKETS, "entrypoints"}
+        path for path in paths if _director_task_boundary_bucket(path) in {*_SOURCE_BOUNDARY_BUCKETS, "entrypoints"}
     ]
     has_foundation = any(_director_task_boundary_bucket(path) == "foundation" for path in paths)
     has_tests = any(_director_task_boundary_bucket(path) == "tests" for path in paths)
@@ -351,7 +406,16 @@ def _director_task_split_groups(task: dict[str, Any]) -> list[tuple[str, list[st
         bucket = _director_task_boundary_bucket(path)
         grouped.setdefault(bucket, []).append(path)
     ordered: list[tuple[str, list[str]]] = []
-    for bucket in ("foundation", "source_models", "source_core", "source_modules", "source", "entrypoints", "tests", "docs"):
+    for bucket in (
+        "foundation",
+        "source_models",
+        "source_core",
+        "source_modules",
+        "source",
+        "entrypoints",
+        "tests",
+        "docs",
+    ):
         files = grouped.get(bucket) or []
         if files:
             for offset in range(0, len(files), _MAX_DIRECTOR_TASK_FILE_TARGETS):
@@ -621,6 +685,7 @@ def evaluate_pm_task_quality(
     active_dir = _normalize_path(os.path.dirname(active_doc)) if active_doc else ""
     is_card3d_contract = _is_card3d_pm_contract(normalized, tasks)
     is_game_contract = _is_game_pm_contract(normalized, tasks)
+    contract_bench_level = _normalized_factory_bench_level(normalized)
 
     for index, task in enumerate(tasks, start=1):
         if not isinstance(task, dict):
@@ -780,7 +845,10 @@ def evaluate_pm_task_quality(
                         f"{task_id}: file-level scope_paths missing from target_files "
                         f"({', '.join(missing_file_scope_targets[:3])})"
                     )
-                if _director_task_is_too_broad(task):
+                boundary_task = task
+                if contract_bench_level is not None and _task_factory_bench_level(task) is None:
+                    boundary_task = {**task, "factory_bench_level": contract_bench_level}
+                if _director_task_is_too_broad(boundary_task):
                     critical_issues.append(
                         f"{task_id}: Director task boundary is too broad; split manifest/config, source, "
                         "entrypoint, and test targets into dependent tasks"
@@ -924,6 +992,10 @@ def autofix_pm_contract_for_quality(
 
     verify_command = detect_integration_verify_command(workspace_full)
     normalized_tasks = [task for task in tasks if isinstance(task, dict)]
+    contract_bench_level = _normalized_factory_bench_level(normalized)
+    if contract_bench_level is not None:
+        for task in normalized_tasks:
+            task.setdefault("factory_bench_level", contract_bench_level)
     primary_language = _infer_primary_contract_language(normalized, normalized_tasks)
     if primary_language == "go":
         stats["language_contract_paths_sanitized"] += _sanitize_language_contract_paths_in_place(

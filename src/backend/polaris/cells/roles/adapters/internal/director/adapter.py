@@ -107,10 +107,7 @@ def _string_list_payload(value: Any, *, limit: int = 8) -> list[str]:
 # single-sourced in polaris.kernelone.llm.budget_policy (blueprint Phase 1);
 # the local names below are kept as compatibility aliases for this module.
 _ROLE_CALL_TIMEOUT_CEILING_KEYS = TIMEOUT_CEILING_CONTEXT_KEYS
-_ROLE_CALL_TIMEOUT_KEYS = (
-    *TIMEOUT_CEILING_CONTEXT_KEYS,
-    *TIMEOUT_OVERRIDE_CONTEXT_KEYS,
-)
+_ROLE_CALL_TIMEOUT_KEYS = TIMEOUT_OVERRIDE_CONTEXT_KEYS
 _FORCED_WRITE_STAGE_MARKERS = FORCED_WRITE_STAGE_MARKERS
 _FORCED_WRITE_CONTEXT_KEYS = FORCED_WRITE_CONTEXT_KEYS
 _OUTPUT_BUDGET_CONTEXT_KEYS = OUTPUT_BUDGET_CONTEXT_KEYS
@@ -148,6 +145,14 @@ def _role_call_timeout_from_context(context: dict[str, Any]) -> float | None:
     return None
 
 
+def _role_call_timeout_ceiling_from_context(context: dict[str, Any]) -> float | None:
+    for key in _ROLE_CALL_TIMEOUT_CEILING_KEYS:
+        parsed = _coerce_positive_float(context.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def _resolve_role_call_timeout(
     *,
     context: dict[str, Any],
@@ -158,6 +163,9 @@ def _resolve_role_call_timeout(
     context_timeout = _role_call_timeout_from_context(context)
     if context_timeout is not None:
         timeout = min(timeout, context_timeout)
+    context_timeout_ceiling = _role_call_timeout_ceiling_from_context(context)
+    if context_timeout_ceiling is not None:
+        timeout = min(timeout, context_timeout_ceiling)
     normalized_stage = str(stage_label or "").strip().lower()
     if any(marker in normalized_stage for marker in _FORCED_WRITE_STAGE_MARKERS):
         retry_timeout = forced_write_retry_timeout_seconds(upper=timeout)
@@ -183,6 +191,31 @@ def _forced_write_effective_output_budget(context: dict[str, Any]) -> tuple[int,
     return ceiling, existing_values
 
 
+def _current_task_write_boundary_context(context: dict[str, Any]) -> dict[str, Any] | None:
+    target_files = _string_list_payload(context.get("target_files"), limit=64)
+    if not target_files:
+        return None
+    target_set = set(target_files)
+    project_targets = _string_list_payload(context.get("project_declared_target_files"), limit=96)
+    downstream_or_read_only = [path for path in project_targets if path not in target_set]
+    non_test_targets = [path for path in target_files if not _path_looks_like_test_target(path)]
+    test_targets = [path for path in target_files if _path_looks_like_test_target(path)]
+    return {
+        "schema_version": "director.current_task_write_boundary.v1",
+        "source": "director_adapter_context_boundary",
+        "current_target_files": target_files,
+        "project_declared_target_files_are_inventory_only": True,
+        "project_files_absent_from_current_target_are_downstream_or_read_only": downstream_or_read_only,
+        "non_test_current_targets": non_test_targets,
+        "test_current_targets": test_targets,
+        "rules": [
+            "Write only current_target_files for this Director task.",
+            "Do not write project-declared files that are absent from current_target_files; they are downstream or read-only context.",
+            "Do not embed tests/spec content into non-test source files to satisfy project-level test requirements.",
+        ],
+    }
+
+
 def _prepare_role_dialogue_context(
     context: dict[str, Any] | None,
     *,
@@ -203,6 +236,9 @@ def _prepare_role_dialogue_context(
         "timeout_seconds": timeout,
         "source": "director_adapter_role_dialogue_boundary",
     }
+    write_boundary = _current_task_write_boundary_context(context_payload)
+    if write_boundary:
+        context_payload["current_task_write_boundary"] = write_boundary
     if _context_has_forced_write_retry(context_payload, stage_label=stage_label):
         output_tokens, previous_budget_values = _forced_write_effective_output_budget(context_payload)
         context_payload["llm_max_tokens"] = output_tokens
@@ -311,6 +347,17 @@ _TASK_CONTRACT_SCALAR_KEYS = (
     "ce_handoff_decision_ref",
     "handoff_source",
 )
+_STRUCTURED_TASK_CONTRACT_SLOT_KEYS = frozenset(
+    {
+        "pm_contract",
+        "task_contract",
+        "ce_blueprint",
+        "chief_engineer_blueprint",
+        "blueprint",
+        "task_blueprint",
+        "module_interface_contract",
+    }
+)
 
 
 def _task_contract_sources(task: dict[str, Any]) -> list[dict[str, Any]]:
@@ -335,6 +382,20 @@ def _has_contract_value(payload: dict[str, Any], key: str) -> bool:
     if isinstance(value, (list, tuple, set, dict)):
         return bool(value)
     return True
+
+
+def _set_structured_task_contract_slot(payload: dict[str, Any], key: str, value: Any) -> None:
+    """Install structured evidence unless a structured value already exists."""
+
+    if key not in _STRUCTURED_TASK_CONTRACT_SLOT_KEYS:
+        return
+    copied = _copy_mapping_payload(value)
+    if not copied:
+        return
+    existing = payload.get(key)
+    if isinstance(existing, dict) and existing:
+        return
+    payload[key] = copied
 
 
 def _first_contract_value(sources: list[dict[str, Any]], key: str) -> Any:
@@ -1514,6 +1575,10 @@ class DirectorAdapter(BaseRoleAdapter):
             value = contract_payload.get(key)
             if not isinstance(value, dict) or not value:
                 continue
+            _set_structured_task_contract_slot(context, key, value)
+            _set_structured_task_contract_slot(metadata, key, value)
+            _set_structured_task_contract_slot(task, key, value)
+            _set_structured_task_contract_slot(task_metadata, key, value)
             if not _has_contract_value(context, key):
                 context[key] = dict(value)
             if not _has_contract_value(metadata, key):
@@ -1543,11 +1608,31 @@ class DirectorAdapter(BaseRoleAdapter):
         if workspace and not _has_contract_value(task_metadata, "workspace"):
             task_metadata["workspace"] = str(workspace)
 
-        if not _has_contract_value(metadata, "task"):
+        _set_structured_task_contract_slot(context, "pm_contract", contract_payload)
+        _set_structured_task_contract_slot(metadata, "pm_contract", contract_payload)
+        _set_structured_task_contract_slot(task, "pm_contract", contract_payload)
+        _set_structured_task_contract_slot(task_metadata, "pm_contract", contract_payload)
+        _set_structured_task_contract_slot(context, "task_contract", contract_payload)
+        _set_structured_task_contract_slot(metadata, "task_contract", contract_payload)
+        _set_structured_task_contract_slot(task_metadata, "task_contract", contract_payload)
+        if blueprint_payload:
+            for blueprint_key in ("ce_blueprint", "chief_engineer_blueprint", "blueprint", "task_blueprint"):
+                _set_structured_task_contract_slot(context, blueprint_key, blueprint_payload)
+                _set_structured_task_contract_slot(metadata, blueprint_key, blueprint_payload)
+                _set_structured_task_contract_slot(task, blueprint_key, blueprint_payload)
+                _set_structured_task_contract_slot(task_metadata, blueprint_key, blueprint_payload)
+        if isinstance(contract_payload.get("module_interface_contract"), dict):
+            module_contract = contract_payload["module_interface_contract"]
+            _set_structured_task_contract_slot(context, "module_interface_contract", module_contract)
+            _set_structured_task_contract_slot(metadata, "module_interface_contract", module_contract)
+            _set_structured_task_contract_slot(task, "module_interface_contract", module_contract)
+            _set_structured_task_contract_slot(task_metadata, "module_interface_contract", module_contract)
+
+        if not isinstance(metadata.get("task"), dict):
             metadata["task"] = dict(contract_payload)
-        if not _has_contract_value(context, "task_contract"):
+        if not isinstance(context.get("task_contract"), dict):
             context["task_contract"] = dict(contract_payload)
-        if not _has_contract_value(task_metadata, "task_contract"):
+        if not isinstance(task_metadata.get("task_contract"), dict):
             task_metadata["task_contract"] = dict(contract_payload)
         task["metadata"] = task_metadata
         context["metadata"] = metadata

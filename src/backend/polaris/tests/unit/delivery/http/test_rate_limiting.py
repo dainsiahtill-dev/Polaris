@@ -101,6 +101,10 @@ def rate_limit_app() -> FastAPI:
     async def status() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/v2/instances")
+    async def instances() -> dict[str, list[str]]:
+        return {"instances": []}
+
     @app.get("/metrics")
     async def metrics() -> dict[str, str]:
         return {"status": "metrics"}
@@ -409,6 +413,45 @@ async def test_middleware_loopback_exemption(rate_limit_app: FastAPI) -> None:
         for _ in range(10):
             response = await ac.get("/v2/chat")
             assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_middleware_loopback_control_plane_paths_do_not_consume_normal_bucket(
+    rate_limit_app: FastAPI,
+) -> None:
+    """Loopback control-plane observability paths should not exhaust the normal bucket."""
+    middleware = RateLimitMiddleware(rate_limit_app, requests_per_second=1.0, burst_size=1)
+
+    async with AsyncClient(transport=ASGITransport(middleware), base_url="http://test") as ac:
+        for _ in range(10):
+            response = await ac.get("/v2/instances")
+            assert response.status_code == 200
+            assert "x-ratelimit-limit" not in response.headers
+
+        first_action = await ac.get("/v2/chat")
+        second_action = await ac.get("/v2/chat")
+
+    assert first_action.status_code == 200
+    assert second_action.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_middleware_non_loopback_control_plane_paths_are_still_rate_limited(
+    rate_limit_app: FastAPI,
+) -> None:
+    """Control-plane exemptions are local-observability only, not public bypasses."""
+    middleware = RateLimitMiddleware(rate_limit_app, requests_per_second=1.0, burst_size=1)
+
+    async with AsyncClient(
+        transport=ASGITransport(middleware, client=("203.0.113.9", 50000)),
+        base_url="http://test",
+    ) as ac:
+        first = await ac.get("/v2/instances")
+        second = await ac.get("/v2/instances")
+
+    assert first.status_code == 200
+    assert first.headers["x-ratelimit-limit"] == "1"
+    assert second.status_code == 429
 
 
 @pytest.mark.asyncio

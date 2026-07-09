@@ -763,6 +763,9 @@ def build_default_config(settings: Any | None = None) -> dict[str, Any]:
 
 def llm_config_path(workspace: str, cache_root: str) -> str:
     del workspace, cache_root  # Kept for API compatibility; LLM config is global app data.
+    env_path = str(os.environ.get("KERNELONE_LLM_CONFIG") or "").strip()
+    if env_path:
+        return os.path.abspath(os.path.expanduser(os.path.expandvars(env_path)))
     return resolve_global_path("config/llm/llm_config.json")
 
 
@@ -859,8 +862,8 @@ def _normalize_role_config(raw: Any) -> dict[str, Any]:
         if legacy_binding is not None:
             bindings.append(legacy_binding)
 
-    normalized["bindings"] = bindings
     if bindings:
+        normalized["bindings"] = bindings
         primary = bindings[0]
         normalized["provider_id"] = primary["provider_id"]
         normalized["model"] = primary["model"]
@@ -869,6 +872,7 @@ def _normalize_role_config(raw: Any) -> dict[str, Any]:
         elif "profile" in normalized and not str(normalized.get("profile") or "").strip():
             normalized.pop("profile", None)
     else:
+        normalized.pop("bindings", None)
         provider_id = str(normalized.get("provider_id") or "").strip()
         model = str(normalized.get("model") or "").strip()
         if provider_id:

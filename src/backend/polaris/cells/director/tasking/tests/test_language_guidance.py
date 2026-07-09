@@ -242,6 +242,56 @@ def test_javascript_metadata_overrides_python_validation_terms() -> None:
     assert profile.signal_evidence["language_source"] == "guidance_selection"
 
 
+def test_config_manifest_boundary_is_not_reclassified_as_tests_by_verification_text() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Implement TypeScript project manifest and build contract",
+        description=(
+            "Task-boundary split: implement only package.json and tsconfig.json. "
+            "Acceptance: verify package.json exists, verify tsconfig.json exists, "
+            "and keep package test/build/start scripts internally consistent."
+        ),
+        metadata={"phase": "requirements", "project_type": "simulation_toy", "language": "typescript"},
+        target_files=["package.json", "tsconfig.json"],
+        scope_paths=["package.json", "tsconfig.json"],
+    )
+    strategy = resolve_director_execution_strategy(profile)
+
+    assert profile.task_type == "config"
+    assert profile.signal_evidence["task_type_source"] == "target_files_config_boundary"
+    assert profile.temperature_phase == "file_write"
+    assert "failed_gate_or_verification_evidence" not in strategy.evidence_requirements
+    assert strategy.context_underutilized_policy == "warn"
+
+
+def test_fresh_source_materialization_is_not_reclassified_as_tests_by_acceptance_text() -> None:
+    profile = resolve_director_execution_profile(
+        subject="实现 发光昆虫花园模拟器 TypeScript 项目骨架与核心模块",
+        description=(
+            "创建 package.json、tsconfig.json、src/index.ts、src/main.ts 与需求派生领域模块。 "
+            "Acceptance: npm run build, npm run test, npm start, verify firefly, flower, moon, humidity."
+        ),
+        metadata={"phase": "requirements", "project_type": "simulation_toy", "language": "typescript"},
+        target_files=[
+            "package.json",
+            "tsconfig.json",
+            "src/index.ts",
+            "src/main.ts",
+            "src/models/Firefly.ts",
+            "src/models/Flower.ts",
+            "src/models/MoonPhase.ts",
+            "src/models/Humidity.ts",
+        ],
+        scope_paths=["package.json", "tsconfig.json", "src/index.ts", "src/main.ts"],
+    )
+    strategy = resolve_director_execution_strategy(profile)
+
+    assert profile.task_type == "write_code"
+    assert profile.signal_evidence["task_type_source"] == "target_files_source_materialization_boundary"
+    assert profile.temperature_phase == "code_generation"
+    assert "failed_gate_or_verification_evidence" not in strategy.evidence_requirements
+    assert strategy.context_underutilized_policy == "warn"
+
+
 def test_execution_strategy_derives_large_budget_from_profile() -> None:
     profile = resolve_director_execution_profile(
         subject="Implement TypeScript dashboard feature",

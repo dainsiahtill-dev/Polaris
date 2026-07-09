@@ -37,6 +37,8 @@ _TYPESCRIPT_SOURCE_SIBLINGS_BY_EMITTED_SUFFIX: dict[str, tuple[str, ...]] = {
     ".mjs": (".mts",),
     ".cjs": (".cts",),
 }
+
+
 class TaskBoundaryFailureClassV1(str, Enum):
     """Task-boundary failure classes owned by the run-ledger public contract."""
 
@@ -61,6 +63,15 @@ _CJS_LOCAL_REQUIRE_RE = re.compile(
     r"(?m)^\s*(?:(?:const|let|var)\s+[^=\n]+=\s*)?require\(\s*['\"]"
     r"(?P<specifier>\.{1,2}/[^'\"\n]+)['\"]\s*\)"
 )
+_TEST_FRAMEWORK_IMPORT_RE = re.compile(
+    r"""(?mx)
+    (?:from\s+['"](?:vitest|jest|@jest/globals|node:test)['"])
+    |
+    (?:require\(\s*['"](?:vitest|jest|@jest/globals|node:test)['"]\s*\))
+    """
+)
+_TEST_STRUCTURE_RE = re.compile(r"(?m)\b(?:describe|it|test|expect)\s*\(")
+_TEST_LIKE_PATH_RE = re.compile(r"(^|/)(?:tests?|specs?|__tests__)/|(?:\.test|\.spec)(?:\.|$)|(?:^|/)test_")
 _TASK_BOUNDARY_FAILURE_CLASS_ALIASES = {
     "passed": TaskBoundaryFailureClassV1.PASSED.value,
     "incomplete_materialization": TaskBoundaryFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
@@ -271,6 +282,35 @@ def _is_local_source_file(path: str) -> bool:
     return _clean_path(path).endswith(_LOCAL_SOURCE_IMPORT_SUFFIXES)
 
 
+def _is_test_like_source_path(path: str) -> bool:
+    return bool(_TEST_LIKE_PATH_RE.search(_clean_path(path).lower()))
+
+
+def _artifact_semantic_mismatches(*, workspace: Path, source_paths: tuple[str, ...]) -> tuple[str, ...]:
+    findings: list[str] = []
+    for source_path in source_paths:
+        normalized_source = _clean_path(source_path)
+        if (
+            not _is_local_source_file(normalized_source)
+            or _is_test_like_source_path(normalized_source)
+            or not _path_exists(workspace, normalized_source)
+        ):
+            continue
+        try:
+            text = (workspace / normalized_source).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if not _TEST_FRAMEWORK_IMPORT_RE.search(text):
+            continue
+        test_call_count = len(_TEST_STRUCTURE_RE.findall(text))
+        if test_call_count < 2:
+            continue
+        finding = f"{normalized_source}: non-test source contains test framework structure"
+        if finding not in findings:
+            findings.append(finding)
+    return tuple(findings)
+
+
 def _local_import_specifiers(text: str) -> list[str]:
     specifiers: list[str] = []
     for pattern in (_ESM_LOCAL_IMPORT_RE, _CJS_LOCAL_REQUIRE_RE):
@@ -368,6 +408,7 @@ class TaskBoundaryVerdictV1:
     missing_target_files: tuple[str, ...] = field(default_factory=tuple)
     missing_entrypoint_targets: tuple[str, ...] = field(default_factory=tuple)
     unresolved_local_imports: tuple[str, ...] = field(default_factory=tuple)
+    artifact_semantic_mismatches: tuple[str, ...] = field(default_factory=tuple)
     downstream_pending_artifacts: tuple[str, ...] = field(default_factory=tuple)
     completed_artifacts: tuple[str, ...] = field(default_factory=tuple)
     blocked_dependencies: tuple[str, ...] = field(default_factory=tuple)
@@ -397,6 +438,7 @@ class TaskBoundaryVerdictV1:
             "missing_target_files": list(self.missing_target_files),
             "missing_entrypoint_targets": list(self.missing_entrypoint_targets),
             "unresolved_local_imports": list(self.unresolved_local_imports),
+            "artifact_semantic_mismatches": list(self.artifact_semantic_mismatches),
             "downstream_pending_artifacts": list(self.downstream_pending_artifacts),
             "completed_artifacts": list(self.completed_artifacts),
             "blocked_dependencies": list(self.blocked_dependencies),
@@ -572,9 +614,25 @@ def evaluate_task_boundary_verdict(
             **base_kwargs,
         )
 
+    scoped_source_paths = tuple(_dedupe_paths([*targets, *completed]))
+    semantic_mismatches = _artifact_semantic_mismatches(
+        workspace=workspace_path,
+        source_paths=scoped_source_paths,
+    )
+    if semantic_mismatches:
+        return TaskBoundaryVerdictV1(
+            status="artifact_semantic_mismatch",
+            ok=False,
+            failure_class=TaskBoundaryFailureClassV1.IMPLEMENTATION_DEFECT.value,
+            responsible_layer="director",
+            reason="Source files contain content that does not match their task-boundary file role",
+            artifact_semantic_mismatches=semantic_mismatches,
+            **base_kwargs,
+        )
+
     unresolved_imports = _unresolved_local_imports(
         workspace=workspace_path,
-        source_paths=tuple(_dedupe_paths([*targets, *completed])),
+        source_paths=scoped_source_paths,
         known_artifacts=known_artifacts,
     )
     if unresolved_imports:

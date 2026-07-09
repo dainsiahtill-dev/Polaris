@@ -13,6 +13,8 @@ Covers:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
@@ -41,6 +43,11 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
     resolve_timeout_seconds,
     resolve_tool_call_provider,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.invoker import (
+    _recover_text_tool_calls_from_response_text,
+    _required_tool_not_called_error,
+    _store_active_request_context_snapshot,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
     LLMRequestPreparer,
     _tool_contract_context_fields,
@@ -61,6 +68,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
 )
 from polaris.cells.roles.profile.public.service import load_core_roles
 from polaris.kernelone.context.contracts import TurnEngineContextResult
+from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
 
 class MockProfile:
@@ -229,6 +237,168 @@ def test_required_tool_retry_request_handles_non_numeric_temperature_and_tool_co
     assert retry_request.context["required_tool_retry_budget"]["timeout_seconds"] == 120.0
     assert "write_file" in retry_request.input
     assert "必须立即发出真实工具调用" in retry_request.input
+
+
+def test_required_tool_text_fallback_request_disables_native_tools_and_requests_json() -> None:
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json"}]
+    ai_request = SimpleNamespace(
+        task_type="dialogue",
+        context={
+            "workspace": "/tmp/example",
+            "tool_contract": {"required_tools": ["write_file"]},
+            "chat_messages": messages,
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="TASK-1 target_files package.json",
+        context_result=_turn_context_result("TASK-1 target_files package.json"),
+        context_summary="summary",
+        request_options={
+            "temperature": 0.8,
+            "max_tokens": 128000,
+            "timeout": 660,
+            "tools": [{"type": "function", "function": {"name": "write_file"}}],
+            "tool_choice": {"type": "function", "function": {"name": "write_file"}},
+        },
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    fallback_request = LLMRequestPreparer(workspace="/tmp/example")._build_required_tool_text_fallback_request(
+        prepared=prepared,
+        profile=cast("RoleProfile", MockProfile(role_id="director", provider_id="kimi")),
+        error_message="required_tool_not_called: required_tools=write_file",
+    )
+
+    assert "tools" not in fallback_request.options
+    assert fallback_request.options["tool_choice"] == "none"
+    assert fallback_request.options["temperature"] == 0.0
+    assert fallback_request.options["max_tokens"] == 7000
+    assert fallback_request.options["timeout"] == 120.0
+    assert fallback_request.context["required_tool_text_fallback"] is True
+    assert fallback_request.context["required_tool_text_fallback_budget"]["required_tools"] == ["write_file"]
+    assert "UTF-8 JSON 数组" in fallback_request.input
+    assert '"name":"write_file"' in fallback_request.input
+
+
+def test_recover_text_tool_calls_from_response_text_uses_allowed_tools() -> None:
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json"}]
+    ai_request = SimpleNamespace(task_type="dialogue", context={"workspace": "/tmp/example"})
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="TASK-1 target_files package.json",
+        context_result=_turn_context_result("TASK-1 target_files package.json"),
+        context_summary="summary",
+        request_options={},
+        ai_request=ai_request,
+        native_tool_schemas=[{"type": "function", "function": {"name": "write_file"}}],
+    )
+
+    recovered = _recover_text_tool_calls_from_response_text(
+        response_text='[{"name":"write_file","arguments":{"path":"package.json","content":"{\\"scripts\\":{}}"}}]',
+        raw_payload={},
+        prepared=prepared,
+        provider_hint="auto",
+    )
+
+    assert len(recovered) == 1
+    assert recovered[0]["type"] == "function"
+    assert recovered[0]["function"]["name"] == "write_file"
+    arguments = json.loads(str(recovered[0]["function"]["arguments"]))
+    assert arguments["file"] == "package.json"
+    assert arguments["content"] == '{"scripts":{}}'
+
+
+def test_required_tool_not_called_error_accepts_text_tool_envelope() -> None:
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json"}]
+    ai_request = SimpleNamespace(
+        task_type="dialogue",
+        context={
+            "workspace": "/tmp/example",
+            "required_tools": ["write_file"],
+            "tool_contract": {"required_tools": ["write_file"]},
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="TASK-1 target_files package.json",
+        context_result=_turn_context_result("TASK-1 target_files package.json"),
+        context_summary="summary",
+        request_options={
+            "tools": [{"type": "function", "function": {"name": "write_file"}}],
+            "tool_choice": {"type": "function", "function": {"name": "write_file"}},
+        },
+        ai_request=ai_request,
+        native_tool_schemas=[{"type": "function", "function": {"name": "write_file"}}],
+    )
+    response = SimpleNamespace(
+        output='[{"name":"write_file","arguments":{"path":"package.json","content":"{\\"scripts\\":{}}"}}]',
+        raw={},
+        model="kimi-for-coding",
+        provider_id="anthropic_compat-kimi",
+    )
+
+    error = _required_tool_not_called_error(
+        prepared=prepared,
+        active_request=ai_request,
+        response=response,
+        profile=MockProfile(role_id="director", provider_id="kimi", model="kimi-for-coding"),
+    )
+
+    assert error == ""
+
+
+@pytest.mark.asyncio
+async def test_store_active_request_context_snapshot_uses_fallback_request(tmp_path) -> None:
+    messages = [{"role": "user", "content": "TASK-1 target_files package.json"}]
+    ai_request = SimpleNamespace(
+        task_type="dialogue",
+        context={
+            "workspace": str(tmp_path),
+            "context_snapshot_ref": "stale-original-ref",
+            "tool_contract": {"required_tools": ["write_file"]},
+            "chat_messages": messages,
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="TASK-1 target_files package.json",
+        context_result=_turn_context_result("TASK-1 target_files package.json"),
+        context_summary="summary",
+        request_options={
+            "tools": [{"type": "function", "function": {"name": "write_file"}}],
+            "tool_choice": {"type": "function", "function": {"name": "write_file"}},
+        },
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+    fallback_request = LLMRequestPreparer(workspace=str(tmp_path))._build_required_tool_text_fallback_request(
+        prepared=prepared,
+        profile=cast("RoleProfile", MockProfile(role_id="director", provider_id="kimi")),
+        error_message="required_tool_not_called: required_tools=write_file",
+    )
+
+    context_ref = await _store_active_request_context_snapshot(
+        workspace=str(tmp_path),
+        active_request=fallback_request,
+        prepared=prepared,
+        profile=cast("RoleProfile", MockProfile(role_id="director", provider_id="kimi")),
+        run_id="run-1",
+        call_id="call-1-required-tool-text-fallback",
+    )
+
+    assert context_ref
+    assert fallback_request.context["context_snapshot_ref"] == context_ref
+    assert context_ref != "stale-original-ref"
+    roots = resolve_storage_roots(str(tmp_path))
+    snapshot_path = Path(roots.runtime_root) / "contexts" / context_ref[:2] / context_ref
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    provider_request = snapshot["provider_request"]
+    assert provider_request["tool_schema_count"] == 0
+    assert provider_request["tool_choice"] == "none"
+    assert provider_request["tools"] == []
+    assert "UTF-8 JSON 数组" in json.dumps(snapshot["messages"], ensure_ascii=False)
 
 
 def _turn_context_result(content: str, token_estimate: int = 12) -> TurnEngineContextResult:

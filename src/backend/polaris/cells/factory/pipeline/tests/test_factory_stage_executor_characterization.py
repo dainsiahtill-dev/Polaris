@@ -4701,6 +4701,32 @@ class TestDirectorEvidenceStatics:
         result = CommandResult(run_id="r", status="completed", message="director_no_materialized_changes")
         assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is False
 
+    def test_director_provider_rate_limit_signal_from_llm_error_event(self) -> None:
+        signal = OrchestrationStageExecutor._director_provider_health_failure_signal_from_events(
+            [
+                {
+                    "event": "llm_error",
+                    "role": "director",
+                    "terminal": True,
+                    "provider_id": "minimax",
+                    "model": "MiniMax-M3",
+                    "source_path": "runtime/events/director.llm.events.jsonl",
+                    "raw": {
+                        "data": {
+                            "error_category": "rate_limit",
+                            "error_message": "429 Rate limited: Token Plan 用量上限",
+                        }
+                    },
+                }
+            ]
+        )
+
+        assert signal is not None
+        assert signal["code"] == "director.provider_rate_limit"
+        assert signal["failure_class"] == "RESOURCE_BUDGET_EXHAUSTED"
+        assert signal["responsible_layer"] == "model_provider"
+        assert signal["repairable_by_director"] is False
+
     def test_qa_report_has_warning(self) -> None:
         assert OrchestrationStageExecutor._qa_report_has_warning({"warnings": ["w1", "w2"]}, "w2") is True
         assert OrchestrationStageExecutor._qa_report_has_warning({"warnings": "w1,w2"}, "w2") is True

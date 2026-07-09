@@ -24,6 +24,18 @@ from unittest.mock import patch
 import pytest
 
 
+def test_llm_config_path_honors_kernelone_llm_config_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from polaris.kernelone.llm import config_store
+
+    override = tmp_path / "override-llm-config.json"
+    monkeypatch.setenv("KERNELONE_LLM_CONFIG", str(override))
+
+    assert config_store.llm_config_path(".", ".") == str(override)
+
+
 class TestSensitiveValueRestoration:
     """Tests for _restore_masked_sensitive_values function."""
 

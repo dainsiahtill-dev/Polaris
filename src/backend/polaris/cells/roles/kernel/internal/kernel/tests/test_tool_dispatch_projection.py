@@ -19,6 +19,12 @@ def test_llm_metadata_from_ledger_on_error_projects_audit_and_dropped_flag() -> 
         llm_calls=[
             {
                 "metadata": {
+                    "provider": "openai_compat-local",
+                    "provider_id": "openai_compat-local",
+                    "model": "gemma-local",
+                    "error_category": "rate_limit",
+                    "error_message": "rate limited",
+                    "llm_call_failed": True,
                     "context_snapshot_ref": "runtime/contexts/aa/context.json",
                     "usage": {"prompt_tokens": 10},
                 }
@@ -36,6 +42,10 @@ def test_llm_metadata_from_ledger_on_error_projects_audit_and_dropped_flag() -> 
     metadata = llm_metadata_from_ledger_on_error(ledger, messages=[], tool_definitions=[])
 
     assert metadata["context_snapshot_ref"] == "runtime/contexts/aa/context.json"
+    assert metadata["provider_id"] == "openai_compat-local"
+    assert metadata["model"] == "gemma-local"
+    assert metadata["error_category"] == "rate_limit"
+    assert metadata["llm_call_failed"] is True
     assert metadata["usage"] == {"prompt_tokens": 10}
     assert metadata["tool_dispatch_dropped"] is True
     assert metadata["transaction_kernel_error_audit_available"] is True
@@ -267,9 +277,7 @@ def test_append_tool_dispatch_dropped_events_prefers_lifecycle_receipt_over_lega
                             "invalid-ref",
                             dict(envelope),
                         ),
-                        "dropped_tool_calls": [
-                            {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
-                        ],
+                        "dropped_tool_calls": [{"tool_name": "write_file", "reason": "tool_dispatch_dropped"}],
                         "dispatch_status": "dropped",
                         "failure_class": "TOOL_DISPATCH_DROPPED",
                     },
@@ -284,9 +292,7 @@ def test_append_tool_dispatch_dropped_events_prefers_lifecycle_receipt_over_lega
     assert lifecycle["native_tool_calls_count"] == 1
     assert lifecycle["decoded_tool_calls_count"] == 1
     assert lifecycle["native_tool_call_envelope_refs"] == [envelope]
-    assert lifecycle["dropped_tool_calls"] == [
-        {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
-    ]
+    assert lifecycle["dropped_tool_calls"] == [{"tool_name": "write_file", "reason": "tool_dispatch_dropped"}]
     assert captured["task_boundary"]["tool_dispatch"]["native_tool_calls_count"] == 1
     assert captured["task_boundary"]["tool_dispatch"]["decoded_tool_calls_count"] == 1
     assert captured["task_boundary"]["tool_dispatch"]["native_tool_call_names"] == ["write_file"]

@@ -1143,6 +1143,57 @@ class LLMRequestPreparer:
             context=fallback_context,
         )
 
+    def _build_required_tool_text_fallback_request(
+        self,
+        *,
+        prepared: PreparedLLMRequest,
+        profile: RoleProfile,
+        error_message: str,
+    ) -> AIRequest:
+        """Ask for strict textual tool-call envelopes when forced native choice is unsupported."""
+
+        fallback_options = dict(prepared.request_options)
+        fallback_options["temperature"] = 0.0
+        retry_max_tokens = _bounded_required_tool_retry_max_tokens(fallback_options.get("max_tokens"))
+        retry_timeout = _bounded_required_tool_retry_timeout(fallback_options.get("timeout"))
+        fallback_options["max_tokens"] = retry_max_tokens
+        fallback_options["timeout"] = retry_timeout
+        fallback_options.pop("tools", None)
+        fallback_options["tool_choice"] = "none"
+
+        fallback_context = dict(prepared.ai_request.context if isinstance(prepared.ai_request.context, dict) else {})
+        tool_contract = _mapping(fallback_context.get("tool_contract"))
+        required_tools = _string_list(fallback_context.get("required_tools")) or _string_list(
+            tool_contract.get("required_tools")
+        )
+        tool_text = ", ".join(required_tools) if required_tools else "the required tool"
+        fallback_instruction = (
+            "【必需工具文本封装回退】\n"
+            f"当前 provider 未能可靠发出 native tool call: {tool_text}。\n"
+            "这次不要解释、不要输出 Markdown、不要输出代码块,只输出一个 UTF-8 JSON 数组。\n"
+            '数组每一项必须是: {"name":"write_file","arguments":{"path":"相对路径","content":"完整文件内容"}}。\n'
+            "如果需要写多个文件,数组中必须包含多个 write_file 项; content 必须是完整文件内容,不能省略。\n"
+            f"上次错误: {str(error_message or '').strip()}"
+        ).strip()
+        fallback_input = append_runtime_fallback_instruction(str(prepared.input_text or ""), fallback_instruction)
+        fallback_context["workspace"] = self.workspace
+        fallback_context["required_tool_text_fallback"] = True
+        fallback_context["required_tool_text_fallback_budget"] = {
+            "schema_version": "llm.required_tool_text_fallback_budget.v1",
+            "max_tokens": retry_max_tokens,
+            "timeout_seconds": retry_timeout,
+            "reason": "required_tool_retry_must_emit_text_tool_envelope",
+            "required_tools": required_tools,
+        }
+        self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
+        return AIRequest(
+            task_type=prepared.ai_request.task_type,
+            role=profile.role_id,
+            input=fallback_input,
+            options=fallback_options,
+            context=fallback_context,
+        )
+
     @staticmethod
     def _append_fallback_instruction_to_chat_messages(context: dict[str, Any], instruction: str) -> None:
         raw_messages = context.get("chat_messages")

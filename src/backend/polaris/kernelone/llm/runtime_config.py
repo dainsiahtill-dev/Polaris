@@ -711,6 +711,105 @@ class RuntimeConfigManager:
             role_remaining -= allocatable
         return tuple(binding_slots)
 
+    def get_role_binding_candidates(self, role_id: str) -> tuple[RoleBindingSlot, ...]:
+        """Return failover candidates for a role without applying the role worker cap.
+
+        ``get_role_binding_slots`` is a worker-plan primitive: it intentionally
+        respects ``concurrency`` so a role configured with one worker gets one
+        schedulable worker slot. Provider failover needs a different view. When
+        explicit bindings are configured, every binding is a legal fallback
+        candidate even if only one worker should run concurrently.
+        """
+
+        normalized_role_id = _normalize_runtime_role_id(role_id)
+        resolved = self.get_role_config(normalized_role_id)
+        if resolved is None:
+            return ()
+
+        candidates: list[RoleBindingSlot] = []
+        seen: set[tuple[str, str]] = set()
+
+        def append_candidate(
+            *,
+            provider_id: str,
+            model: str,
+            profile: str | None,
+            binding_id: str | None,
+            binding_index: int,
+            binding_cap: int | None,
+        ) -> None:
+            provider = str(provider_id or "").strip()
+            model_name = str(model or "").strip()
+            if not provider or not model_name:
+                return
+            key = (provider, model_name)
+            if key in seen:
+                return
+            provider_cap = self.get_provider_max_concurrency(provider)
+            if provider_cap <= 0:
+                return
+            effective_binding_cap = binding_cap if binding_cap is not None else provider_cap
+            seen.add(key)
+            candidates.append(
+                RoleBindingSlot(
+                    role_id=normalized_role_id,
+                    provider_id=provider,
+                    model=model_name,
+                    profile=profile,
+                    binding_id=str(binding_id or ""),
+                    binding_index=binding_index,
+                    slot_index=0,
+                    max_concurrency=max(1, min(provider_cap, max(1, effective_binding_cap))),
+                )
+            )
+
+        if not resolved.bindings:
+            for slot in self.get_role_binding_slots(normalized_role_id):
+                append_candidate(
+                    provider_id=slot.provider_id,
+                    model=slot.model,
+                    profile=slot.profile,
+                    binding_id=slot.binding_id,
+                    binding_index=slot.binding_index,
+                    binding_cap=slot.max_concurrency,
+                )
+        else:
+            for binding in resolved.bindings:
+                append_candidate(
+                    provider_id=binding.provider_id,
+                    model=binding.model,
+                    profile=binding.profile,
+                    binding_id=binding.binding_id,
+                    binding_index=binding.binding_index,
+                    binding_cap=binding.max_concurrency,
+                )
+
+        for backup_role_id in (f"_{normalized_role_id}_backup", f"{normalized_role_id}_backup"):
+            backup = self.get_role_config(backup_role_id)
+            if backup is None:
+                continue
+            backup_bindings = backup.bindings or (
+                ResolvedRoleBinding(
+                    role_id=backup_role_id,
+                    provider_id=backup.provider_id,
+                    model=backup.model,
+                    profile=backup.profile,
+                    max_concurrency=None,
+                    binding_id=f"{backup_role_id}:0:{backup.provider_id}:{backup.model}",
+                    binding_index=0,
+                ),
+            )
+            for binding in backup_bindings:
+                append_candidate(
+                    provider_id=binding.provider_id,
+                    model=binding.model,
+                    profile=binding.profile,
+                    binding_id=f"{normalized_role_id}:backup:{binding.binding_id or binding.provider_id}",
+                    binding_index=len(candidates),
+                    binding_cap=binding.max_concurrency,
+                )
+        return tuple(candidates)
+
     def get_role_model(self, role_id: str) -> tuple[str, str]:
         normalized_role_id = _normalize_runtime_role_id(role_id)
         resolved = self.get_role_config(normalized_role_id)
@@ -726,6 +825,21 @@ class RuntimeConfigManager:
                     if same_provider_model or same_binding_id:
                         logger.debug(
                             "[RuntimeConfig] %s: binding override %s/%s",
+                            normalized_role_id,
+                            override_pid,
+                            override_model,
+                        )
+                        return override_pid, override_model
+                try:
+                    override_candidates = self.get_role_binding_candidates(normalized_role_id)
+                except (RuntimeError, ValueError, TypeError):
+                    override_candidates = ()
+                for candidate in override_candidates:
+                    same_provider_model = candidate.provider_id == override_pid and candidate.model == override_model
+                    same_binding_id = bool(override_bid and candidate.binding_id == override_bid)
+                    if same_provider_model or same_binding_id:
+                        logger.debug(
+                            "[RuntimeConfig] %s: candidate binding override %s/%s",
                             normalized_role_id,
                             override_pid,
                             override_model,
@@ -810,7 +924,7 @@ def get_role_model(role_id: str) -> tuple[str, str]:
     if is_role_binding_healthy(role_id, provider_id=provider_id, model=model):
         return provider_id, model
     try:
-        slots = manager.get_role_binding_slots(role_id)
+        slots = manager.get_role_binding_candidates(role_id)
     except (RuntimeError, ValueError, TypeError):
         return provider_id, model
     for slot in slots:
@@ -860,6 +974,11 @@ def get_provider_max_concurrency(provider_id: str) -> int:
 def get_role_binding_slots(role_id: str) -> tuple[RoleBindingSlot, ...]:
     """Concrete role binding slots after role/provider/binding caps are applied."""
     return _filter_healthy_slots(get_runtime_config_manager().get_role_binding_slots(role_id))
+
+
+def get_role_binding_candidates(role_id: str) -> tuple[RoleBindingSlot, ...]:
+    """Concrete failover candidates for a role, independent of worker concurrency."""
+    return _filter_healthy_slots(get_runtime_config_manager().get_role_binding_candidates(role_id))
 
 
 def resolve_role_worker_plan(role_id: str) -> list[RoleBindingSlot]:

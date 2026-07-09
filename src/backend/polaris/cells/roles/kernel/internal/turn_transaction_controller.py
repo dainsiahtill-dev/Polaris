@@ -138,6 +138,14 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["TurnTransactionController"]
 
+
+def _llm_error_metadata_from_exception(exc: BaseException) -> dict[str, Any]:
+    """Extract response metadata attached by the semantic LLM caller."""
+
+    metadata = getattr(exc, "llm_response_metadata", None)
+    return dict(metadata) if isinstance(metadata, dict) else {}
+
+
 _MONITORING_METRIC_KEYS: tuple[str, ...] = (
     "transaction_kernel.violation_count",
     "turn.single_batch_ratio",
@@ -1031,15 +1039,6 @@ class TurnTransactionController:
                 budget_status.get("cost_exceeded"),
             )
 
-        response = await self.llm_provider(request_payload)
-        response_usage = response.get("usage", {}) if isinstance(response.get("usage", {}), dict) else {}
-        response_context_os_audit = response_usage.get("context_os_audit") if isinstance(response_usage, dict) else None
-        response_llm_metadata = llm_response_metadata_from_usage(response_usage)
-
-        # Phase 3.3: Track usage
-        raw_provider_usage = response_usage.get("usage")
-        provider_usage: dict[str, Any] = dict(raw_provider_usage) if isinstance(raw_provider_usage, dict) else {}
-
         def _safe_token_count(value: Any) -> int:
             if isinstance(value, bool) or value is None:
                 return 0
@@ -1047,6 +1046,44 @@ class TurnTransactionController:
                 return max(0, int(value))
             except (TypeError, ValueError):
                 return 0
+
+        try:
+            response = await self.llm_provider(request_payload)
+        except Exception as exc:
+            error_metadata = _llm_error_metadata_from_exception(exc)
+            if error_metadata:
+                raw_error_usage = error_metadata.get("usage")
+                error_usage = dict(raw_error_usage) if isinstance(raw_error_usage, dict) else {}
+                audit = error_metadata.get("final_request_context_audit")
+                audit_payload = audit if isinstance(audit, dict) else {}
+                prompt_tokens = _safe_token_count(
+                    error_metadata.get("prompt_tokens")
+                    or error_usage.get("prompt_tokens")
+                    or audit_payload.get("final_request_token_estimate")
+                    or error_metadata.get("contextTokens")
+                )
+                completion_tokens = _safe_token_count(
+                    error_metadata.get("completion_tokens") or error_usage.get("completion_tokens")
+                )
+                error_metadata.setdefault("llm_call_failed", True)
+                error_metadata.setdefault("error_type", type(exc).__name__)
+                error_metadata.setdefault("error_message", str(exc))
+                ledger.record_llm_call(
+                    phase="decision_error",
+                    model=str(error_metadata.get("model") or getattr(exc, "llm_response_model", None) or "unknown"),
+                    tokens_in=prompt_tokens,
+                    tokens_out=completion_tokens,
+                    metadata=error_metadata,
+                )
+            raise
+
+        response_usage = response.get("usage", {}) if isinstance(response.get("usage", {}), dict) else {}
+        response_context_os_audit = response_usage.get("context_os_audit") if isinstance(response_usage, dict) else None
+        response_llm_metadata = llm_response_metadata_from_usage(response_usage)
+
+        # Phase 3.3: Track usage
+        raw_provider_usage = response_usage.get("usage")
+        provider_usage: dict[str, Any] = dict(raw_provider_usage) if isinstance(raw_provider_usage, dict) else {}
 
         prompt_tokens = _safe_token_count(response_usage.get("prompt_tokens") or provider_usage.get("prompt_tokens"))
         completion_tokens = _safe_token_count(

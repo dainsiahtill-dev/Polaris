@@ -214,6 +214,15 @@ def validate_tool_write_policy(
             package_diff = diff_package_manifest(package_before, package_after)
             if package_diff.parse_error:
                 reasons.append(f"package.json structured diff failed: {package_diff.parse_error}")
+            else:
+                scripts_diff = package_diff.sections.get("scripts")
+                if (
+                    scripts_diff is not None
+                    and scripts_diff.removed
+                    and not scripts_diff.added
+                    and not scripts_diff.changed
+                ):
+                    reasons.append("package.json writes may not remove all existing scripts")
 
     return ToolWritePolicyVerdict(
         allowed=not reasons,
