@@ -27,7 +27,10 @@ from polaris.cells.director.runtime.public.repair_kernel_contracts import (
     remove_patch_residue_lines as _remove_patch_residue_lines,
 )
 from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
-from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
+from polaris.cells.roles.adapters.internal.director import (
+    execute_method as execute_method_module,
+    quality_gate as quality_gate_module,
+)
 from polaris.cells.roles.adapters.internal.director.adapter import (
     DirectorAdapter,
     _build_director_actual_sibling_exports_payload,
@@ -83,6 +86,7 @@ from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _go_runtime_smoke_repair_target_files,
     _materialization_interface_discrepancy_evidence,
     _materialization_interface_discrepancy_retry_authorized,
+    _materialization_plan_probe_requires_task_boundary_triage,
     _quality_repair_edit_file_tool_definition,
     _quality_repair_write_file_tool_definition,
 )
@@ -401,6 +405,55 @@ def test_materialization_task_boundary_triage_summary_preserves_director_retry_e
     assert receipt["interface_delta"]["requested_symbols"] == ["WeatherKind"]
     assert receipt["triage_summary"]["reason"] == "director_local_retry_with_interface_delta"
     assert receipt["metadata"]["repair_attempt"] == 2
+
+
+def test_materialization_plan_probe_triage_allows_current_task_missing_target_continuation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_runtime_boundary(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        del args, kwargs
+        return [], {
+            "plan_probe_preaudit": {
+                "status": "coverage_matched_but_unplannable",
+                "covered_unplannable_source_tools": ["deterministic_typescript_relative_import_case_repair"],
+                "covered_unplannable_diagnostic_count": 1,
+            }
+        }
+
+    monkeypatch.setattr(
+        quality_gate_module,
+        "run_materialization_quality_public_boundary",
+        _fake_runtime_boundary,
+    )
+
+    _tool_results, summary = quality_gate_module._run_materialization_quality_public_boundary(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task={"target_files": ["src/main.ts"]},
+        task_id="TASK-1",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: declared target file missing 'src/main.ts'",
+            "Artifact quality scan failed: unresolved relative import './main' in src/index.ts",
+        ],
+    )
+
+    assert summary["task_boundary_director_continuation_allowed"] is True
+    assert summary["task_boundary_continuation_reason"] == "current_task_missing_targets"
+    assert summary["task_boundary_continuation_route"] == "director_retry_with_missing_target_context"
+    assert summary["task_boundary_continuation_target_files"] == ["src/main.ts"]
+    assert _materialization_plan_probe_requires_task_boundary_triage(summary) is False
+
+
+def test_materialization_plan_probe_triage_stays_fail_closed_without_current_missing_targets() -> None:
+    summary = {
+        "plan_probe_preaudit": {
+            "status": "coverage_matched_but_unplannable",
+            "covered_unplannable_source_tools": ["deterministic_typescript_missing_export_repair"],
+            "covered_unplannable_diagnostic_count": 1,
+        }
+    }
+
+    assert _materialization_plan_probe_requires_task_boundary_triage(summary) is True
 
 
 def test_director_actual_interface_injection_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:

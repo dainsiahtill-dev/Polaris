@@ -74,13 +74,20 @@ def _run_materialization_quality_public_boundary(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute materialization-quality repair via the typed roles public boundary."""
 
-    return run_materialization_quality_public_boundary(
+    tool_results, summary = run_materialization_quality_public_boundary(
         adapter,
         task=task,
         task_id=task_id,
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=artifact_quality_issues,
         convergence_verifier=convergence_verifier,
+    )
+    return tool_results, _annotate_current_task_missing_target_continuation(
+        summary,
+        task=task,
+        workspace_full=str(getattr(adapter, "workspace", "") or ""),
+        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
     )
 
 
@@ -2969,6 +2976,8 @@ def _quality_repair_deadline_decision(context: dict[str, Any], requested_timeout
 
 
 def _materialization_plan_probe_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:
+    if bool(summary.get("task_boundary_director_continuation_allowed")):
+        return False
     plan_probe = summary.get("plan_probe_preaudit")
     if not isinstance(plan_probe, dict):
         return False
@@ -2980,6 +2989,48 @@ def _materialization_plan_probe_requires_task_boundary_triage(summary: dict[str,
         str(item or "") for item in plan_probe.get("covered_unplannable_source_tools") or []
     ]
     return bool(covered_unplannable_source_tools or plan_probe.get("covered_unplannable_diagnostic_count"))
+
+
+def _annotate_current_task_missing_target_continuation(
+    summary: dict[str, Any],
+    *,
+    task: dict[str, Any],
+    workspace_full: str,
+    artifact_quality_errors: list[str],
+    artifact_quality_issues: tuple[dict[str, Any], ...] = (),
+) -> dict[str, Any]:
+    """Allow Director continuation for missing files owned by the current task.
+
+    ``coverage_matched_but_unplannable`` is still a hard triage signal for
+    interface discrepancies. Missing declared target files are different: they
+    are incomplete materialization within the current task boundary, so the
+    adapter should continue through the governed Director repair turn rather
+    than treat the probe as a CE contract amendment.
+    """
+
+    if not _materialization_plan_probe_requires_task_boundary_triage(summary):
+        return summary
+    workspace = str(workspace_full or "").strip()
+    if not workspace:
+        return summary
+    missing_targets = _missing_materialization_quality_repair_target_files(
+        task,
+        workspace,
+        artifact_quality_errors,
+        artifact_quality_issues,
+    )
+    in_scope_missing, out_of_scope_missing = _partition_paths_by_task_write_scope(missing_targets, task=task)
+    if not in_scope_missing:
+        return summary
+
+    updated = dict(summary)
+    updated["task_boundary_director_continuation_allowed"] = True
+    updated["task_boundary_continuation_reason"] = "current_task_missing_targets"
+    updated["task_boundary_continuation_route"] = "director_retry_with_missing_target_context"
+    updated["task_boundary_continuation_target_files"] = in_scope_missing[:12]
+    if out_of_scope_missing:
+        updated["task_boundary_continuation_deferred_target_files"] = out_of_scope_missing[:12]
+    return updated
 
 
 def _materialization_interface_discrepancy_evidence(
