@@ -3461,6 +3461,9 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     elif (control_plane_attribution := _record_execution_control_plane_attribution(record)) is not None:
         category, reason, detail = control_plane_attribution
         evidence.append(detail)
+    elif (task_boundary_attribution := _record_task_boundary_attribution(record)) is not None:
+        category, reason, detail = task_boundary_attribution
+        evidence.append(detail)
     elif _record_has_runtime_environment_failure(record):
         category, reason = "runtime_environment", _runtime_environment_failure_reason(record)
         evidence.append(_runtime_environment_failure_evidence(record))
@@ -3483,9 +3486,6 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         evidence.append(str(record["llm_route_audit"].get("summary") or ""))
     elif (repair_attribution := _record_repair_convergence_attribution(record)) is not None:
         category, reason, detail = repair_attribution
-        evidence.append(detail)
-    elif (task_boundary_attribution := _record_task_boundary_attribution(record)) is not None:
-        category, reason, detail = task_boundary_attribution
         evidence.append(detail)
     elif _record_has_qa_artifact_quality_failure(record):
         real_run_gate = record["real_run_gate"]

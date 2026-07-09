@@ -307,6 +307,64 @@ def test_failure_taxonomy_reads_runtime_director_blocked_dependency(
     ]
 
 
+def test_failure_taxonomy_prefers_task_boundary_dependency_over_event_wait_timeout(
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    results_dir = runtime_dir / "results"
+    results_dir.mkdir(parents=True)
+    (results_dir / "director.result.json").write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "task_results": [
+                    {
+                        "task_id": "3",
+                        "status": "blocked",
+                        "error": "blocked_by_failed_dependency",
+                        "blocked_by": "2",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "runtime_dir": str(runtime_dir),
+        "checks": [],
+        "real_run_gate": {
+            "ok": False,
+            "requirements": {
+                "chain_terminal": {
+                    "ok": False,
+                    "detail": "chain_terminal=false; phase=event_wait_timeout; status=unknown",
+                },
+                "artifact_landed": {
+                    "ok": False,
+                    "detail": "not evaluated because the Polaris chain was non-terminal",
+                },
+            },
+        },
+        "factory_gates": [
+            {
+                "gate": "integration_qa_passed",
+                "ok": False,
+                "detail": "qa_ran=False qa_passed=False",
+            }
+        ],
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "task_boundary"
+    assert taxonomy["root_cause_signature"] == "task_boundary:dependency_not_unlocked"
+    assert taxonomy["evidence"] == [
+        "failure_class=DEPENDENCY_NOT_UNLOCKED;responsible_layer=task_boundary;Blocked by failed dependency: 2"
+    ]
+
+
 def test_failure_taxonomy_classifies_director_rate_limit_as_runtime_environment() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,
