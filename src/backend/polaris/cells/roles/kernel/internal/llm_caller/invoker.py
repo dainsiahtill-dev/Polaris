@@ -189,7 +189,7 @@ def _profile_lacks_forced_tool_choice(profile: Any) -> bool:
             str(getattr(profile, "name", "") or ""),
         ]
     ).lower()
-    return "kimi" in token or "deepseek" in token
+    return "kimi" in token or "deepseek" in token or "minimax" in token
 
 
 def _allowed_tool_names_from_prepared(prepared: PreparedLLMRequest) -> list[str]:

@@ -42,7 +42,11 @@ from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.event_emitter import LLMEventEmitter
 from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
-from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker, _required_tool_not_called_error
+from polaris.cells.roles.kernel.internal.llm_caller.invoker import (
+    LLMInvoker,
+    _profile_lacks_forced_tool_choice,
+    _required_tool_not_called_error,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
     AnnotatedProviderFormatter,
     NativeProviderFormatter,
@@ -477,6 +481,24 @@ def test_required_tool_not_called_error_when_final_request_requires_tool_and_res
     )
 
     assert error == "required_tool_not_called: required_tools=write_file"
+
+
+def test_minimax_uses_required_tool_text_fallback_after_missing_tool_call() -> None:
+    minimax_profile = SimpleNamespace(
+        provider_id="anthropic_compat-1782212251463",
+        model="MiniMax-M3",
+        provider_type="anthropic_compat",
+        name="Director MiniMax",
+    )
+    openai_profile = SimpleNamespace(
+        provider_id="openai-main",
+        model="gpt-4.1",
+        provider_type="openai",
+        name="Director OpenAI",
+    )
+
+    assert _profile_lacks_forced_tool_choice(minimax_profile) is True
+    assert _profile_lacks_forced_tool_choice(openai_profile) is False
 
 
 def test_required_tool_not_called_error_allows_native_tool_call() -> None:
