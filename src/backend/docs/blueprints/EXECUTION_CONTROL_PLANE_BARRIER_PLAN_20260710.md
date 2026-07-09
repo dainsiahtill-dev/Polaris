@@ -58,6 +58,10 @@ WS2 read-model work, or legacy Director helpers.
 3. Bench taxonomy now recognizes `session_not_active` and
    all-failed tool batches as `control_plane` failures before generic runtime or
    LLM-output classification.
+4. Follow-up blind-spot scan found the Director binding fanout waiter still had
+   a direct cancel-event path. It now follows the same ordering as timeout
+   settlement: terminal run status first, active TaskRuntime barrier second,
+   ordinary cancellation last.
 
 ## Verification Notes
 
@@ -73,3 +77,11 @@ WS2 read-model work, or legacy Director helpers.
   holographic import chain. That is an environment/dependency isolation debt,
   not an execution-control-plane code failure, and should be handled in a
   separate bucket.
+
+## Follow-Up Blind-Spot Scan
+
+The second scan explicitly checked for duplicate generated-entrypoint filters,
+remaining `session_not_active` producers, and fanout/direct wait divergence.
+Only fanout had a remaining bypass: it cancelled submitted Director runs before
+checking terminal status or active TaskRuntime execution. This is now closed
+without changing global factory cancellation semantics.

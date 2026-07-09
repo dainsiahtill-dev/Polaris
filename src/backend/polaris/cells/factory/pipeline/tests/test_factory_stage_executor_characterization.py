@@ -5280,6 +5280,157 @@ class TestDirectorDispatchLoop:
         assert [item["status"] for item in per_binding] == ["completed", "completed"]
 
     @pytest.mark.asyncio
+    async def test_director_binding_fanout_cancel_event_preserves_active_task_runtime_barrier(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _FanoutService:
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="run-active", status="running", message="submitted")
+
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="running", message="still running")
+
+        class _ActiveExecutor(OrchestrationStageExecutor):
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
+            ) -> CommandResult:
+                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                await asyncio.sleep(60)
+                return CommandResult(run_id="run-active", status="completed", message="late")
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return {
+                    "total": 1,
+                    "pending": 0,
+                    "ready": 0,
+                    "in_progress": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+
+        executor = _ActiveExecutor(tmp_path)
+        executor._binding_status_probe_seconds = 0.01
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        result = await asyncio.wait_for(
+            executor._execute_director_binding_fanout(
+                service=_FanoutService(),
+                workspace=str(tmp_path),
+                tasks=["TASK-1"],
+                base_options={"execution_mode": "parallel", "max_workers": 1},
+                bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
+                timeout_seconds=10,
+                cancel_event=cancel_event,
+            ),
+            timeout=0.5,
+        )
+
+        assert result.status == "failed"
+        per_binding = (result.metadata or {}).get("per_binding")
+        assert isinstance(per_binding, list)
+        assert per_binding == [
+            {
+                "provider_id": "p1",
+                "model": "m1",
+                "binding_id": "b1",
+                "run_id": "run-active",
+                "status": "cancelled",
+                "message": "Director run left active for execution-control-plane barrier: factory_cancelled",
+                "assigned_tasks": ["TASK-1"],
+                "assigned_task_count": 1,
+                "cancel_signal_sent": False,
+                "cancel_reason": "factory_cancelled",
+                "inflight_run_continues": True,
+                "terminal_source": "active_director_task_barrier",
+                "timeout_settle_grace_seconds": 0,
+                "task_status_counts": {
+                    "total": 1,
+                    "pending": 0,
+                    "ready": 0,
+                    "in_progress": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                },
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_director_binding_fanout_cancel_event_prefers_terminal_run_status(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _FanoutService:
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="run-done", status="running", message="submitted")
+
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="completed", message="done")
+
+        class _ActiveExecutor(OrchestrationStageExecutor):
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
+            ) -> CommandResult:
+                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                await asyncio.sleep(60)
+                return CommandResult(run_id="run-done", status="completed", message="late")
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return {
+                    "total": 1,
+                    "pending": 0,
+                    "ready": 0,
+                    "in_progress": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+
+        executor = _ActiveExecutor(tmp_path)
+        executor._binding_status_probe_seconds = 0.01
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        result = await asyncio.wait_for(
+            executor._execute_director_binding_fanout(
+                service=_FanoutService(),
+                workspace=str(tmp_path),
+                tasks=["TASK-1"],
+                base_options={"execution_mode": "parallel", "max_workers": 1},
+                bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
+                timeout_seconds=10,
+                cancel_event=cancel_event,
+            ),
+            timeout=0.5,
+        )
+
+        assert result.status == "completed"
+        per_binding = (result.metadata or {}).get("per_binding")
+        assert isinstance(per_binding, list)
+        assert per_binding[0]["status"] == "completed"
+        assert per_binding[0]["message"] == "done"
+        assert "inflight_run_continues" not in per_binding[0]
+
+    @pytest.mark.asyncio
     async def test_director_binding_fanout_terminal_counts_end_wait_even_when_run_status_running(
         self,
         tmp_path: Path,

@@ -2634,6 +2634,22 @@ class OrchestrationStageExecutor:
                         return binding, wait_task.result()
 
                     if cancel_event is not None and cancel_event.is_set():
+                        status_probe: CommandResult | None = None
+                        with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                            status_probe = await service.query_run_status(run_id)
+                        if status_probe is not None:
+                            probed_status = str(status_probe.status or "").strip().lower()
+                            if probed_status in terminal_statuses:
+                                wait_task.cancel()
+                                return binding, status_probe
+                        barrier_result = self._active_director_task_barrier_result(
+                            run_id=run_id,
+                            reason="factory_cancelled",
+                            grace_seconds=0,
+                        )
+                        if barrier_result is not None:
+                            wait_task.cancel()
+                            return binding, barrier_result
                         wait_task.cancel()
                         return binding, CommandResult(
                             run_id=run_id,
@@ -2745,9 +2761,11 @@ class OrchestrationStageExecutor:
                 entry["assigned_task_count"] = len(entry_assigned_tasks)
             for evidence_key in (
                 "cancel_signal_sent",
+                "cancel_reason",
                 "inflight_run_continues",
                 "terminal_source",
                 "queried_status",
+                "timeout_settle_grace_seconds",
                 "task_status_counts",
             ):
                 if evidence_key in result_metadata:
