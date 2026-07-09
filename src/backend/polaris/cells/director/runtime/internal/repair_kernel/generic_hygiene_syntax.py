@@ -46,6 +46,7 @@ _TS_NODE_BUILTIN_TYPES_ERROR_RE = re.compile(
 )
 _TS_NODE_GLOBAL_TYPES_ERROR_RE = re.compile(
     r"(?:TS2580:.*(?:type definitions for node|@types/node)|"
+    r"TS2688:\s*Cannot find type definition file for ['\"]node['\"]|"
     r"Cannot find name ['\"](?:process|Buffer|__dirname|__filename|require|module)['\"])",
     re.IGNORECASE,
 )

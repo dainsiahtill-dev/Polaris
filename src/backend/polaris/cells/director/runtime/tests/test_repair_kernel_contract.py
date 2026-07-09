@@ -5810,6 +5810,36 @@ def test_public_runtime_dependency_repair_covers_node_scheme_ts2307() -> None:
     assert '"@types/node"' in planning_payload["composition_summary"]["patches"][0]["content_after"]
 
 
+def test_public_runtime_dependency_repair_covers_missing_node_type_definition_file() -> None:
+    source_tool = "deterministic_runtime_dependency_repair"
+    diagnostic = "error TS2688: Cannot find type definition file for 'node'."
+
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=(diagnostic,),
+        )
+    )
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={"package.json": '{"name":"node-ts-app","private":true,"devDependencies":{}}\n'},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    coverage_payload = coverage.to_dict()
+    planning_payload = planning_result.to_dict()
+
+    assert coverage_payload["covered_diagnostic_count"] == 1
+    assert coverage_payload["uncovered_diagnostic_count"] == 0
+    assert coverage_payload["items"][0]["matched_source_tools"] == [source_tool]
+    assert planning_payload["ok"] is True
+    assert planning_payload["planned"] is True
+    assert planning_payload["plan_summary"]["rule_id"] == "generic.runtime_dependency"
+    assert planning_payload["plan_summary"]["operation_count"] == 1
+    assert '"@types/node"' in planning_payload["composition_summary"]["patches"][0]["content_after"]
+
+
 def test_public_javascript_missing_test_target_covers_npm_module_not_found() -> None:
     source_tool = js_syntax.JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL
     diagnostic = (

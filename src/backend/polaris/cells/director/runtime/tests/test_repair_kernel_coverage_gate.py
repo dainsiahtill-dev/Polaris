@@ -95,10 +95,11 @@ def test_public_coverage_routes_node_typescript_configuration_diagnostics_to_run
             artifact_quality_errors=(
                 "Artifact quality scan failed: TypeScript node builtin import 'node:url' "
                 "requires '@types/node' in src/main.ts",
-                "src/main.ts(43,5): error TS2580: Cannot find name 'process'. "
-                "Do you need to install type definitions for node? Try npm i --save-dev @types/node.",
-                "src/main.ts(152,16): error TS1343: The 'import.meta' meta-property is only "
-                "allowed when '--module' is es2020/es2022/esnext/system/node16/nodenext.",
+            "src/main.ts(43,5): error TS2580: Cannot find name 'process'. "
+            "Do you need to install type definitions for node? Try npm i --save-dev @types/node.",
+            "error TS2688: Cannot find type definition file for 'node'.",
+            "src/main.ts(152,16): error TS1343: The 'import.meta' meta-property is only "
+            "allowed when '--module' is es2020/es2022/esnext/system/node16/nodenext.",
                 "src/verify.ts(201,40): error TS2550: Property 'replaceAll' does not exist "
                 "on type 'string'. Do you need to change your target library? Try changing "
                 "the 'lib' compiler option to 'es2021' or later.",
@@ -109,8 +110,8 @@ def test_public_coverage_routes_node_typescript_configuration_diagnostics_to_run
     ).to_dict()
 
     assert payload["coverage_gap_count"] == 0
-    assert payload["covered_diagnostic_count"] == 5
-    assert payload["executable_runtime_plan_diagnostic_count"] == 5
+    assert payload["covered_diagnostic_count"] == 6
+    assert payload["executable_runtime_plan_diagnostic_count"] == 6
 
     matched_tools = [tuple(item["matched_source_tools"]) for item in payload["items"]]
     assert ("deterministic_runtime_dependency_repair",) in matched_tools
