@@ -67,6 +67,8 @@ _FAILURE_CATEGORIES = {
     "pm_contract",
     "chief_engineer_blueprint",
     "director_tool_execution",
+    "repair_convergence",
+    "task_boundary",
     "llm_output",
     "context_budget",
     "control_plane",
@@ -2584,6 +2586,165 @@ def _category_signature(category: str, reason: str) -> str:
     return f"{stable_category}:{stable_reason}"
 
 
+def _iter_mapping_payloads(value: Any, *, limit: int = 600) -> Iterable[dict[str, Any]]:
+    """Yield nested dict payloads without treating text projections as facts."""
+
+    stack: list[Any] = [value]
+    seen = 0
+    while stack and seen < limit:
+        current = stack.pop()
+        if isinstance(current, dict):
+            seen += 1
+            yield current
+            stack.extend(current.values())
+        elif isinstance(current, list | tuple):
+            stack.extend(current)
+
+
+_TASK_BOUNDARY_FAILURE_STATUSES = frozenset(
+    {
+        "artifact_semantic_mismatch",
+        "dependency_not_unlocked",
+        "execution_evidence_missing",
+        "incomplete_materialization",
+        "missing_entrypoint_target",
+        "required_evidence_failed",
+        "required_verifier_failed",
+        "required_verifier_missing",
+        "tool_dispatch_dropped",
+        "unresolved_local_import",
+    }
+)
+_TASK_BOUNDARY_FAILURE_CLASSES = frozenset(
+    {
+        "blueprint_scope_mismatch",
+        "dependency_not_unlocked",
+        "execution_evidence_missing",
+        "implementation_defect",
+        "incomplete_materialization",
+        "missing_entrypoint_target",
+        "tool_dispatch_dropped",
+        "unresolved_local_import",
+    }
+)
+
+
+def _first_repair_plan_probe(record: dict[str, Any]) -> dict[str, Any]:
+    """Return the first nested repair plan-probe payload with stable structure."""
+
+    for payload in _iter_mapping_payloads(record):
+        for key in (
+            "plan_probe_preaudit",
+            "repair_plan_probe",
+            "workspace_quality_repair_plan_probe",
+            "workspace_quality_repair_plan_probe_report",
+        ):
+            nested = payload.get(key)
+            if isinstance(nested, dict) and _is_repair_plan_probe_payload(nested):
+                return nested
+        if _is_repair_plan_probe_payload(payload):
+            return payload
+    return {}
+
+
+def _is_repair_plan_probe_payload(payload: dict[str, Any]) -> bool:
+    schema = str(payload.get("schema_version") or "")
+    status = str(payload.get("status") or "")
+    if schema.startswith("director.repair_plan_probe_result"):
+        return True
+    return bool(
+        status
+        and (
+            "plannable_source_tools" in payload
+            or "covered_unplannable_source_tools" in payload
+            or "covered_unplannable_diagnostics" in payload
+            or "uncovered_diagnostics" in payload
+        )
+    )
+
+
+def _record_repair_convergence_attribution(record: dict[str, Any]) -> tuple[str, str, str] | None:
+    """Classify failures where runtime repair knows a concrete plan but convergence still failed."""
+
+    plan_probe = _first_repair_plan_probe(record)
+    if not plan_probe:
+        return None
+
+    status = str(plan_probe.get("status") or "").strip()
+    plannable_source_tools = [
+        str(item).strip() for item in plan_probe.get("plannable_source_tools") or [] if str(item or "").strip()
+    ]
+    covered_unplannable_source_tools = [
+        str(item).strip()
+        for item in plan_probe.get("covered_unplannable_source_tools") or []
+        if str(item or "").strip()
+    ]
+    if status == "covered_plannable" and plannable_source_tools:
+        return (
+            "repair_convergence",
+            "covered_plannable_not_converged",
+            f"plan_probe:covered_plannable;plannable_source_tools={','.join(plannable_source_tools[:8])}",
+        )
+    if status == "coverage_matched_but_unplannable" or covered_unplannable_source_tools:
+        return (
+            "task_boundary",
+            "repair_plan_probe_unplannable",
+            "plan_probe:coverage_matched_but_unplannable;"
+            f"covered_unplannable_source_tools={','.join(covered_unplannable_source_tools[:8])}",
+        )
+    return None
+
+
+def _first_task_boundary_verdict(record: dict[str, Any]) -> dict[str, Any]:
+    """Find a failed TaskBoundary verdict projected anywhere in a bench record."""
+
+    for payload in _iter_mapping_payloads(record):
+        schema = str(payload.get("schema_version") or "").strip()
+        status = str(payload.get("status") or payload.get("verdict_status") or "").strip()
+        failure_class = str(payload.get("failure_class") or "").strip()
+        if status in {"completed_verified", "passed"} or failure_class.lower() == "passed":
+            continue
+        if bool(payload.get("ok")) is True:
+            continue
+        if (
+            schema.startswith("task_boundary.")
+            or status in _TASK_BOUNDARY_FAILURE_STATUSES
+            or failure_class.lower() in _TASK_BOUNDARY_FAILURE_CLASSES
+        ):
+            return payload
+    return {}
+
+
+def _record_task_boundary_attribution(record: dict[str, Any]) -> tuple[str, str, str] | None:
+    verdict = _first_task_boundary_verdict(record)
+    if not verdict:
+        return None
+
+    status = str(verdict.get("status") or verdict.get("verdict_status") or "").strip() or "task_boundary_failed"
+    failure_class = str(verdict.get("failure_class") or "").strip()
+    responsible_layer = str(verdict.get("responsible_layer") or "").strip()
+    reason = str(verdict.get("reason") or "").strip()
+    if status == "tool_dispatch_dropped" or failure_class.lower() == "tool_dispatch_dropped":
+        return (
+            "control_plane",
+            "tool_dispatch_dropped",
+            reason or "TaskBoundary verdict: tool dispatch dropped",
+        )
+    return (
+        "task_boundary",
+        status,
+        ";".join(
+            item
+            for item in (
+                f"failure_class={failure_class}" if failure_class else "",
+                f"responsible_layer={responsible_layer}" if responsible_layer else "",
+                reason,
+            )
+            if item
+        ),
+    )
+
+
 def _check_failure_is_runtime_environment(check: dict[str, Any]) -> bool:
     text = json.dumps(check, ensure_ascii=False, default=str)
     return bool(re.search(r"\bunavailable\b|not found|toolchain unavailable|compiler unavailable", text, re.IGNORECASE))
@@ -3145,6 +3306,12 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(record.get("llm_route_audit"), dict) and not record["llm_route_audit"].get("ok"):
         category, reason = "llm_output", "llm_route_audit"
         evidence.append(str(record["llm_route_audit"].get("summary") or ""))
+    elif (repair_attribution := _record_repair_convergence_attribution(record)) is not None:
+        category, reason, detail = repair_attribution
+        evidence.append(detail)
+    elif (task_boundary_attribution := _record_task_boundary_attribution(record)) is not None:
+        category, reason, detail = task_boundary_attribution
+        evidence.append(detail)
     elif _record_has_qa_artifact_quality_failure(record):
         real_run_gate = record["real_run_gate"]
         failed_requirement = _first_real_run_failure(real_run_gate)

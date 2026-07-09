@@ -2605,6 +2605,122 @@ def test_failure_taxonomy_classifies_integration_qa_before_generic_chain_failure
     assert taxonomy["evidence"] == ["qa_passed=False; qa_score=34"]
 
 
+def test_failure_taxonomy_prefers_plannable_repair_convergence_before_integration_qa() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [
+            {"gate": "chain_clean", "ok": False, "detail": "chain_state=partial exit_code=1"},
+            {"gate": "integration_qa_passed", "ok": False, "detail": "qa_ran=False qa_passed=False"},
+            {"gate": "real_run_gate", "ok": False, "detail": "real run gate failed: build_test_lint_ran"},
+            {"gate": "llm_route_audit", "ok": True, "detail": "LLM route audit passed"},
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "npm run build failed: TS2304 Cannot find name 'dayOfYear'",
+            "requirements": {
+                "artifact_landed": {"ok": True, "detail": "11 generated file(s)"},
+                "build_test_lint_ran": {"ok": False, "detail": "TS2304 Cannot find name 'dayOfYear'"},
+            },
+        },
+        "chain_results": {"qa_reason": "qa did not run because upstream task did not compile"},
+        "workspace_quality": {
+            "repair": {
+                "plan_probe_preaudit": {
+                    "schema_version": "director.repair_plan_probe_result.v1",
+                    "status": "covered_plannable",
+                    "plannable_source_tools": ["deterministic_typescript_unresolved_identifier_repair"],
+                },
+            },
+        },
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain_state": "partial",
+        "checks": [],
+        "has_plan_doc": True,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "repair_convergence"
+    assert taxonomy["root_cause_signature"] == "repair_convergence:covered_plannable_not_converged"
+    assert taxonomy["evidence"] == [
+        "plan_probe:covered_plannable;plannable_source_tools=deterministic_typescript_unresolved_identifier_repair"
+    ]
+
+
+def test_failure_taxonomy_routes_unplannable_probe_to_task_boundary() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [
+            {"gate": "integration_qa_passed", "ok": False, "detail": "qa_ran=False qa_passed=False"},
+            {"gate": "llm_route_audit", "ok": True, "detail": "LLM route audit passed"},
+        ],
+        "workspace_quality": {
+            "repair": {
+                "plan_probe_preaudit": {
+                    "schema_version": "director.repair_plan_probe_result.v1",
+                    "status": "coverage_matched_but_unplannable",
+                    "plannable_source_tools": [],
+                    "covered_unplannable_source_tools": ["deterministic_typescript_missing_export_repair"],
+                },
+            },
+        },
+        "real_run_gate": {"ok": False, "summary": "build failed"},
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain_state": "partial",
+        "checks": [],
+        "has_plan_doc": True,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "task_boundary"
+    assert taxonomy["root_cause_signature"] == "task_boundary:repair_plan_probe_unplannable"
+    assert taxonomy["evidence"] == [
+        "plan_probe:coverage_matched_but_unplannable;"
+        "covered_unplannable_source_tools=deterministic_typescript_missing_export_repair"
+    ]
+
+
+def test_failure_taxonomy_prefers_task_boundary_dependency_before_integration_qa() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [
+            {"gate": "chain_clean", "ok": False, "detail": "chain_state=partial exit_code=1"},
+            {"gate": "integration_qa_passed", "ok": False, "detail": "qa_ran=False qa_passed=False"},
+            {"gate": "llm_route_audit", "ok": True, "detail": "LLM route audit passed"},
+        ],
+        "run_ledger_projection": {
+            "task_boundary_verdict": {
+                "schema_version": "task_boundary.verdict.v1",
+                "ok": False,
+                "status": "dependency_not_unlocked",
+                "failure_class": "dependency_not_unlocked",
+                "responsible_layer": "execution_control_plane",
+                "reason": "TASK-1 did not reach completed_verified",
+            }
+        },
+        "real_run_gate": {"ok": True, "summary": "real run gate passed"},
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain_results": {"qa_reason": "qa did not run"},
+        "chain_state": "partial",
+        "checks": [],
+        "has_plan_doc": True,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "task_boundary"
+    assert taxonomy["root_cause_signature"] == "task_boundary:dependency_not_unlocked"
+    assert taxonomy["evidence"] == [
+        "failure_class=dependency_not_unlocked;"
+        "responsible_layer=execution_control_plane;"
+        "TASK-1 did not reach completed_verified"
+    ]
+
+
 def test_failure_taxonomy_classifies_missing_toolchain_check_as_runtime_environment() -> None:
     record = {
         "all_checks_passed": False,
