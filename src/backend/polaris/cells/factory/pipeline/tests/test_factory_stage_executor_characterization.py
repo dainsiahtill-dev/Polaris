@@ -4974,7 +4974,66 @@ class TestDirectorDispatchLoop:
             await fake_orchestration.active_task
 
     @pytest.mark.asyncio
-    async def test_director_timeout_settle_cancel_event_propagates_to_active_orchestration_run(
+    async def test_run_completion_waiter_run_not_found_abort_preserves_child_director_session(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeOrchestrationService:
+            def __init__(self) -> None:
+                self.active_task = asyncio.create_task(asyncio.sleep(0))
+                self._active_runs = {"run-1": self.active_task}
+                self.cancelled: list[tuple[str, bool]] = []
+
+            async def cancel_run(self, run_id: str, force: bool = False) -> object:
+                self.cancelled.append((run_id, force))
+                self.active_task.cancel()
+                return object()
+
+        class _FakeCommandService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="completed", message="done")
+
+        fake_orchestration = _FakeOrchestrationService()
+
+        async def _fake_get_orchestration_service() -> _FakeOrchestrationService:
+            return fake_orchestration
+
+        async def _run_not_found_abort_checker() -> str:
+            return "run_not_found"
+
+        monkeypatch.setattr(
+            "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+            _fake_get_orchestration_service,
+        )
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.create_task_row(subject="director child run task")
+        claim = task_runtime.claim_execution(
+            task["id"],
+            worker_id="director",
+            role_id="director",
+            run_id="run-1",
+            selection_source="unit",
+        )
+        assert claim["success"] is True
+
+        result = await RunCompletionWaiter(tmp_path).wait(
+            _FakeCommandService(),
+            CommandResult(run_id="run-1", status="running", message="submitted"),
+            timeout_seconds=30,
+            abort_checker=_run_not_found_abort_checker,
+        )
+
+        assert result.status == "completed"
+        assert fake_orchestration.cancelled == []
+        guarded_heartbeat = task_runtime.heartbeat_execution(
+            task["id"],
+            session_id=str(claim["session"]["session_id"]),
+        )
+        assert guarded_heartbeat["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_director_timeout_settle_cancel_event_without_active_task_still_cancels_run(
         self,
         tmp_path: Path,
     ) -> None:
@@ -5004,7 +5063,110 @@ class TestDirectorDispatchLoop:
         assert fake_waiter.cancelled == [("run-2", "factory_cancelled")]
 
     @pytest.mark.asyncio
-    async def test_director_timeout_settle_grace_expiry_cancels_active_run(
+    async def test_director_timeout_settle_cancel_event_prefers_terminal_run_status(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeRunCompletionWaiter:
+            def __init__(self) -> None:
+                self.cancelled: list[tuple[str, str]] = []
+
+            async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
+                self.cancelled.append((run_id, reason))
+
+        class _FakeService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="completed", message="done")
+
+        class _ActiveExecutor(OrchestrationStageExecutor):
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return {
+                    "total": 1,
+                    "pending": 0,
+                    "ready": 0,
+                    "in_progress": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+
+        fake_waiter = _FakeRunCompletionWaiter()
+        executor = _ActiveExecutor(tmp_path)
+        executor._run_completion_waiter = fake_waiter  # type: ignore[assignment]
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        result = await executor._settle_inflight_director_run_after_timeout(
+            service=_FakeService(),  # type: ignore[arg-type]
+            run_id="run-2",
+            grace_seconds=30,
+            cancel_event=cancel_event,
+        )
+
+        assert result is not None
+        assert result.status == "completed"
+        assert result.message == "done"
+        assert fake_waiter.cancelled == []
+
+    @pytest.mark.asyncio
+    async def test_director_timeout_settle_cancel_event_preserves_active_task_runtime_barrier(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeRunCompletionWaiter:
+            def __init__(self) -> None:
+                self.cancelled: list[tuple[str, str]] = []
+
+            async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
+                self.cancelled.append((run_id, reason))
+
+        class _ActiveExecutor(OrchestrationStageExecutor):
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return {
+                    "total": 1,
+                    "pending": 0,
+                    "ready": 0,
+                    "in_progress": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+
+        fake_waiter = _FakeRunCompletionWaiter()
+        executor = _ActiveExecutor(tmp_path)
+        executor._run_completion_waiter = fake_waiter  # type: ignore[assignment]
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        result = await executor._settle_inflight_director_run_after_timeout(
+            service=object(),  # type: ignore[arg-type]
+            run_id="run-2",
+            grace_seconds=30,
+            cancel_event=cancel_event,
+        )
+
+        assert result is not None
+        assert result.status == "cancelled"
+        assert result.metadata == {
+            "cancel_signal_sent": False,
+            "cancel_reason": "factory_cancelled",
+            "inflight_run_continues": True,
+            "timeout_settle_grace_seconds": 30,
+            "terminal_source": "active_director_task_barrier",
+            "task_status_counts": {
+                "total": 1,
+                "pending": 0,
+                "ready": 0,
+                "in_progress": 1,
+                "completed": 0,
+                "failed": 0,
+                "blocked": 0,
+            },
+        }
+        assert fake_waiter.cancelled == []
+
+    @pytest.mark.asyncio
+    async def test_director_timeout_settle_grace_expiry_preserves_active_task_runtime_barrier(
         self,
         tmp_path: Path,
     ) -> None:
@@ -5044,11 +5206,22 @@ class TestDirectorDispatchLoop:
         assert result is not None
         assert result.status == "timeout"
         assert result.metadata == {
-            "cancel_signal_sent": True,
+            "cancel_signal_sent": False,
             "cancel_reason": "factory_stage_timeout",
+            "inflight_run_continues": True,
             "timeout_settle_grace_seconds": 1,
+            "terminal_source": "active_director_task_barrier",
+            "task_status_counts": {
+                "total": 1,
+                "pending": 0,
+                "ready": 0,
+                "in_progress": 1,
+                "completed": 0,
+                "failed": 0,
+                "blocked": 0,
+            },
         }
-        assert fake_waiter.cancelled == [("run-3", "factory_stage_timeout")]
+        assert fake_waiter.cancelled == []
 
     @pytest.mark.asyncio
     async def test_director_binding_fanout_waits_submitted_runs_concurrently(self, tmp_path: Path) -> None:

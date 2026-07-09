@@ -128,12 +128,20 @@ class RunCompletionWaiter:
                 logger.debug("Factory abort checker failed for run %s: %s", run_id, exc)
                 abort_reason = None
             if abort_reason:
-                await self.cancel_active_run(run_id, reason=abort_reason)
-                return CommandResult(
-                    run_id=run_id,
-                    status="cancelled",
-                    message=f"Run cancelled: {abort_reason}",
-                )
+                if abort_reason == "run_not_found":
+                    logger.warning(
+                        "Factory abort checker returned run_not_found while waiting orchestration run %s; "
+                        "continuing instead of cancelling a child Director run from an ambiguous factory-run "
+                        "store projection",
+                        run_id,
+                    )
+                else:
+                    await self.cancel_active_run(run_id, reason=abort_reason)
+                    return CommandResult(
+                        run_id=run_id,
+                        status="cancelled",
+                        message=f"Run cancelled: {abort_reason}",
+                    )
 
         from polaris.cells.orchestration.workflow_runtime.public import (
             get_orchestration_service,

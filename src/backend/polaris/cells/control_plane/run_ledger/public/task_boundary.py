@@ -27,6 +27,14 @@ _LOCAL_ENTRYPOINT_SUFFIXES = (
     ".html",
 )
 _ENTRYPOINT_PATTERN_CHARS = frozenset("*?[]{}")
+_GENERATED_ENTRYPOINT_PREFIXES = (
+    ".next/",
+    ".nuxt/",
+    "build/",
+    "coverage/",
+    "dist/",
+    "out/",
+)
 _LOCAL_SOURCE_IMPORT_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")
 # NodeNext/ESM TypeScript requires importing the emitted ".js" specifier even
 # when the on-disk source is ".ts"; accept the TypeScript sibling sources that
@@ -114,7 +122,16 @@ def _is_concrete_local_entrypoint_target(value: Any) -> bool:
     token = _clean_path(value)
     if not token or token.startswith("node_modules/"):
         return False
+    if _is_generated_entrypoint_artifact(token):
+        return False
     return not any(char in token for char in _ENTRYPOINT_PATTERN_CHARS)
+
+
+def _is_generated_entrypoint_artifact(value: Any) -> bool:
+    """Return true for build/verifier outputs that are not source obligations."""
+
+    token = _clean_path(value).lower()
+    return bool(token and token.startswith(_GENERATED_ENTRYPOINT_PREFIXES))
 
 
 def _string_list(value: Any) -> list[str]:

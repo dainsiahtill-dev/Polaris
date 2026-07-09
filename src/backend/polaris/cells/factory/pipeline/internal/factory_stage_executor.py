@@ -7133,6 +7133,13 @@ class OrchestrationStageExecutor:
         if not normalized_run_id:
             return None
         if grace_seconds <= 0:
+            barrier_result = self._active_director_task_barrier_result(
+                run_id=normalized_run_id,
+                reason="factory_stage_timeout",
+                grace_seconds=0,
+            )
+            if barrier_result is not None:
+                return barrier_result
             await self._run_completion_waiter.cancel_active_run(
                 normalized_run_id,
                 reason="factory_stage_timeout",
@@ -7152,6 +7159,19 @@ class OrchestrationStageExecutor:
         terminal_statuses = {"completed", "success", "failed", "cancelled", "blocked"}
         while True:
             if cancel_event is not None and cancel_event.is_set():
+                status_probe: CommandResult | None = None
+                with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                    status_probe = await service.query_run_status(normalized_run_id)
+                if status_probe is not None and str(status_probe.status or "").strip().lower() in terminal_statuses:
+                    return status_probe
+
+                barrier_result = self._active_director_task_barrier_result(
+                    run_id=normalized_run_id,
+                    reason="factory_cancelled",
+                    grace_seconds=grace_seconds,
+                )
+                if barrier_result is not None:
+                    return barrier_result
                 await self._run_completion_waiter.cancel_active_run(
                     normalized_run_id,
                     reason="factory_cancelled",
@@ -7218,6 +7238,13 @@ class OrchestrationStageExecutor:
 
             remaining = deadline - loop.time()
             if remaining <= 0:
+                barrier_result = self._active_director_task_barrier_result(
+                    run_id=normalized_run_id,
+                    reason="factory_stage_timeout",
+                    grace_seconds=grace_seconds,
+                )
+                if barrier_result is not None:
+                    return barrier_result
                 await self._run_completion_waiter.cancel_active_run(
                     normalized_run_id,
                     reason="factory_stage_timeout",
@@ -7233,6 +7260,65 @@ class OrchestrationStageExecutor:
                     },
                 )
             await asyncio.sleep(min(2.0, remaining))
+
+    def _active_director_task_barrier_result(
+        self,
+        *,
+        run_id: str,
+        reason: str,
+        grace_seconds: int,
+    ) -> CommandResult | None:
+        """Leave an active Director lease intact while external cancellation settles.
+
+        Factory deadlines are outside the Director tool-dispatch transaction. If
+        TaskRuntime still reports active work, suspending the child lease creates
+        a secondary ``session_not_active`` failure and hides the actual
+        execution-control-plane condition. The factory stage may stop waiting,
+        but the child execution remains valid so tool/effect receipts can settle
+        into the ledger.
+        """
+
+        with contextlib.suppress(RuntimeError, OSError, TypeError, ValueError):
+            taskboard_stats = self._read_taskboard_stats()
+            if self._task_counts_have_active_execution(taskboard_stats):
+                return CommandResult(
+                    run_id=run_id,
+                    status="cancelled" if reason == "factory_cancelled" else "timeout",
+                    message=(f"Director run left active for execution-control-plane barrier: {reason}"),
+                    metadata={
+                        "cancel_signal_sent": False,
+                        "cancel_reason": reason,
+                        "inflight_run_continues": True,
+                        "timeout_settle_grace_seconds": grace_seconds,
+                        "terminal_source": "active_director_task_barrier",
+                        "task_status_counts": dict(taskboard_stats),
+                    },
+                )
+        return None
+
+    @staticmethod
+    def _task_counts_have_active_execution(counts: Any) -> bool:
+        if not isinstance(counts, dict):
+            return False
+
+        def _count(key: str) -> int:
+            try:
+                return int(counts.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        active_keys = (
+            "claimed",
+            "in_progress",
+            "in_design",
+            "in_execution",
+            "in_qa",
+            "running",
+            "processing",
+            "executing",
+            "waiting_human",
+        )
+        return any(_count(key) > 0 for key in active_keys)
 
     @staticmethod
     def _resolve_cancel_event(context: dict[str, Any]) -> asyncio.Event | None:

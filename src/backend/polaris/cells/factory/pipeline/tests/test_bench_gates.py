@@ -121,6 +121,192 @@ def test_failure_taxonomy_classifies_missing_run_ledger_gate_as_control_plane() 
     assert taxonomy["evidence"] == ["run ledger projection missing"]
 
 
+def test_failure_taxonomy_classifies_session_not_active_as_control_plane() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "chain_diagnostics": {
+            "director": {
+                "error": "session_not_active",
+                "detail": "TaskRuntime heartbeat failed: session_not_active after factory cancellation",
+            }
+        },
+        "factory_gates": [
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            }
+        ],
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "control_plane"
+    assert taxonomy["root_cause_signature"] == "control_plane:session_not_active"
+    assert taxonomy["evidence"] == ["TaskRuntime heartbeat failed: session_not_active after factory cancellation"]
+
+
+def test_failure_taxonomy_classifies_all_failed_tool_batch_as_control_plane() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "chain": {
+            "audit_bundle": {
+                "failure": {
+                    "code": "tool_dispatch_failed",
+                    "detail": (
+                        "tool_dispatch_failed: decoded tool batch produced only failed tool results; "
+                        "no effect receipts were committed"
+                    ),
+                    "responsible_layer": "execution_control_plane",
+                }
+            }
+        },
+        "factory_gates": [
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            }
+        ],
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "control_plane"
+    assert taxonomy["root_cause_signature"] == "control_plane:tool_dispatch_failed"
+    assert taxonomy["evidence"] == [
+        (
+            "tool_dispatch_failed: decoded tool batch produced only failed tool results; "
+            "no effect receipts were committed"
+        )
+    ]
+
+
+def test_failure_taxonomy_prefers_runtime_director_incomplete_materialization(
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    results_dir = runtime_dir / "results"
+    results_dir.mkdir(parents=True)
+    (results_dir / "director.result.json").write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "summary": "Director completed with failures=1, blocked=1, successes=1/3",
+                "task_results": [
+                    {"task_id": "1", "status": "completed", "changed_files": ["package.json"]},
+                    {
+                        "task_id": "2",
+                        "status": "failed",
+                        "error": "director_no_materialized_changes",
+                        "adapter_result": {
+                            "failure_class": "INCOMPLETE_MATERIALIZATION",
+                            "responsible_layer": "director",
+                            "materialization_error": "director_no_materialized_changes",
+                        },
+                    },
+                    {
+                        "task_id": "3",
+                        "status": "blocked",
+                        "error": "blocked_by_failed_dependency",
+                        "blocked_by": "2",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "runtime_dir": str(runtime_dir),
+        "checks": [
+            {
+                "check": "implementation_depth",
+                "ok": False,
+                "detail": "test_source_files=0 < 1",
+            }
+        ],
+        "factory_gates": [
+            {
+                "gate": "integration_qa_passed",
+                "ok": False,
+                "detail": "qa_ran=False qa_passed=False",
+            },
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            },
+        ],
+        "chain": {
+            "audit_bundle": {
+                "failure": {
+                    "code": "director.inflight_timeout_settled",
+                    "detail": "Director dispatch failed",
+                }
+            }
+        },
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "task_boundary"
+    assert taxonomy["root_cause_signature"] == "task_boundary:incomplete_materialization"
+    assert taxonomy["evidence"] == [
+        "failure_class=INCOMPLETE_MATERIALIZATION;"
+        "responsible_layer=director;"
+        "Director task produced no materialized workspace changes before timeout or completion"
+    ]
+
+
+def test_failure_taxonomy_reads_runtime_director_blocked_dependency(
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    results_dir = runtime_dir / "results"
+    results_dir.mkdir(parents=True)
+    (results_dir / "director.result.json").write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "task_results": [
+                    {
+                        "task_id": "3",
+                        "status": "blocked",
+                        "error": "blocked_by_failed_dependency",
+                        "blocked_by": "2",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "runtime_dir": str(runtime_dir),
+        "checks": [],
+        "factory_gates": [
+            {
+                "gate": "integration_qa_passed",
+                "ok": False,
+                "detail": "qa_ran=False qa_passed=False",
+            }
+        ],
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "task_boundary"
+    assert taxonomy["root_cause_signature"] == "task_boundary:dependency_not_unlocked"
+    assert taxonomy["evidence"] == [
+        "failure_class=DEPENDENCY_NOT_UNLOCKED;responsible_layer=task_boundary;Blocked by failed dependency: 2"
+    ]
+
+
 def test_failure_taxonomy_classifies_director_rate_limit_as_runtime_environment() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,

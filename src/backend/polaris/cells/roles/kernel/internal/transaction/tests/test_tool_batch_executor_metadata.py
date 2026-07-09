@@ -5,6 +5,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_envelope_refs_from_metadata,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
+    _batch_has_authoritative_success,
     _effect_receipts_from_batch_receipts,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
@@ -110,6 +111,35 @@ def test_effect_receipts_from_batch_receipts_copies_reused_dict_objects() -> Non
     assert receipts == [shared_receipt, shared_receipt, shared_receipt]
     assert all(receipt is not shared_receipt for receipt in receipts)
     assert len({id(receipt) for receipt in receipts}) == len(receipts)
+
+
+def test_batch_authoritative_success_requires_success_pending_or_effect_receipt() -> None:
+    all_failed_receipts = [
+        {
+            "results": [
+                {
+                    "tool_name": "write_file",
+                    "status": "error",
+                    "error": "director_tool_execution_cancelled: session_not_active",
+                }
+            ],
+            "raw_results": [
+                {
+                    "tool_name": "write_file",
+                    "status": "error",
+                    "error": "director_tool_execution_cancelled: session_not_active",
+                }
+            ],
+            "effect_receipts": [],
+            "pending_async_count": 0,
+            "has_pending_async": False,
+        }
+    ]
+
+    assert _batch_has_authoritative_success(all_failed_receipts) is False
+    assert _batch_has_authoritative_success([{"results": [{"status": "success"}]}]) is True
+    assert _batch_has_authoritative_success([{"effect_receipts": [{"file": "src/app.ts"}]}]) is True
+    assert _batch_has_authoritative_success([{"pending_async_count": 1}]) is True
 
 
 def test_metadata_native_tool_call_count_accepts_lifecycle_envelope_refs() -> None:

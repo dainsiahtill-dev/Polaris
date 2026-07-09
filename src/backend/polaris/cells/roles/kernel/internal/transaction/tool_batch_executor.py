@@ -907,6 +907,38 @@ def _batch_result_count(receipts: list[Any]) -> int:
     return count
 
 
+def _batch_has_authoritative_success(receipts: list[Any]) -> bool:
+    """Return true when a batch contains at least one successful or pending effect.
+
+    A decoded tool batch whose every result is ``status=error`` is not an
+    executed turn, even though a batch receipt object exists. Treating that
+    shape as success hides platform failures such as a cancelled TaskRuntime
+    session rejecting all writes.
+    """
+
+    if _effect_receipts_from_batch_receipts(receipts):
+        return True
+    for receipt in normalize_batch_receipts(receipts):
+        if int(receipt.get("pending_async_count") or 0) > 0 or bool(receipt.get("has_pending_async")):
+            return True
+        for key in ("results", "raw_results"):
+            rows = receipt.get(key)
+            if not isinstance(rows, list):
+                continue
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("status") or "").strip().lower() == "success":
+                    return True
+                effect_receipt = item.get("effect_receipt")
+                if isinstance(effect_receipt, dict):
+                    return True
+                result = item.get("result")
+                if isinstance(result, dict) and isinstance(result.get("effect_receipt"), dict):
+                    return True
+    return False
+
+
 def _job_token_from_capability_token(token: dict[str, Any], *, run_id: str, stage: str) -> dict[str, Any]:
     audit_ok = token.get("capability_audit_ok")
     return {
@@ -2107,6 +2139,26 @@ class ToolBatchExecutor:
             provider_response_hash=str(metadata.get("provider_response_hash") or ""),
             metadata=metadata,
         )
+        if invocations and receipts_as_dicts and not _batch_has_authoritative_success(receipts_as_dicts):
+            failed_tool_names = [
+                str(result.get("tool_name") or "").strip()
+                for receipt in normalize_batch_receipts(receipts_as_dicts)
+                for result in receipt.get("raw_results", []) or receipt.get("results", []) or []
+                if isinstance(result, dict) and str(result.get("status") or "").strip().lower() != "success"
+            ]
+            ledger.anomaly_flags.append(
+                {
+                    "type": "TOOL_BATCH_ALL_RESULTS_FAILED",
+                    "turn_id": turn_id,
+                    "reason": "decoded_tool_batch_produced_only_failed_results",
+                    "decoded_tool_calls_count": len(invocations),
+                    "failed_tool_names": [name for name in failed_tool_names if name],
+                }
+            )
+            raise RuntimeError(
+                "tool_dispatch_failed: decoded tool batch produced only failed tool results; "
+                f"decoded_tool_calls={len(invocations)}"
+            )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此
         # 发射 per-turn 推测执行汇总，确保它包含全部裁决指标（drain 阶段过早，

@@ -86,6 +86,31 @@ def test_task_boundary_allows_package_entrypoint_declared_downstream(tmp_path: P
     assert verdict["status"] == "completed_verified"
 
 
+def test_task_boundary_ignores_missing_package_build_artifact_entrypoint(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "main": "dist/main.js",
+                "module": "build/main.mjs",
+                "scripts": {"start": "node dist/main.js"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1",
+        run_id="run-1",
+        target_files=["package.json"],
+    ).to_dict()
+
+    assert verdict["ok"] is True
+    assert verdict["status"] == "completed_verified"
+    assert verdict["missing_entrypoint_targets"] == []
+
+
 def test_task_boundary_reports_unresolved_local_import_in_current_source(tmp_path: Path) -> None:
     src_dir = tmp_path / "src"
     src_dir.mkdir()
