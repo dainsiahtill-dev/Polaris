@@ -103,6 +103,51 @@ def test_check_package_scripts_accepts_existing_local_node_dependency(tmp_path: 
     assert result.ok is True
 
 
+def test_check_package_scripts_accepts_typescript_entrypoint_local_ts_import(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text(
+        "import { run } from './index';\nrun();\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "index.ts").write_text(
+        "export function run() { return true; }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"start:src":"node --import tsx ./src/main.ts"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is True
+
+
+def test_check_package_scripts_plain_js_entrypoint_does_not_accept_ts_only_import(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.js").write_text(
+        "import { run } from './index';\nrun();\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "index.ts").write_text(
+        "export function run() { return true; }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"start":"node ./src/main.js"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is False
+    assert "requires missing local module: ./index" in result.detail
+
+
 def test_check_package_scripts_accepts_build_script_before_dist_entrypoint(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         '{"scripts":{"build":"tsc","start":"npm run build && node dist/index.js"}}\n',

@@ -33,6 +33,7 @@ _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
     re.IGNORECASE,
 )
 _NODE_MODULE_EXTENSIONS = (".js", ".cjs", ".mjs", ".json", ".node")
+_TYPESCRIPT_MODULE_EXTENSIONS = (".ts", ".tsx", ".mts", ".cts")
 _LOCAL_REQUIRE_RE = re.compile(r"""require\(\s*["'](?P<ref>\.{1,2}/[^"']+|/[^"']+)["']\s*\)""")
 _LOCAL_DYNAMIC_IMPORT_RE = re.compile(r"""import\(\s*["'](?P<ref>\.{1,2}/[^"']+|/[^"']+)["']\s*\)""")
 _LOCAL_STATIC_IMPORT_RE = re.compile(
@@ -139,7 +140,19 @@ def _script_reference_exists(workspace: str, token: str) -> bool:
     return _resolve_script_reference(workspace, token) is not None
 
 
-def _resolve_node_module_reference(importer_dir: str, module_ref: str) -> str | None:
+def _node_module_extensions_for_entrypoint(entrypoint_path: str) -> tuple[str, ...]:
+    _, ext = os.path.splitext(entrypoint_path)
+    if ext.lower() in _TYPESCRIPT_MODULE_EXTENSIONS:
+        return _NODE_MODULE_EXTENSIONS + _TYPESCRIPT_MODULE_EXTENSIONS
+    return _NODE_MODULE_EXTENSIONS
+
+
+def _resolve_node_module_reference(
+    importer_dir: str,
+    module_ref: str,
+    *,
+    importer_path: str = "",
+) -> str | None:
     normalized = module_ref.replace("\\", "/")
     exact = normalized if os.path.isabs(normalized) else os.path.join(importer_dir, normalized)
     if os.path.isfile(exact):
@@ -147,12 +160,13 @@ def _resolve_node_module_reference(importer_dir: str, module_ref: str) -> str | 
     base, ext = os.path.splitext(exact)
     if ext:
         return None
-    for suffix in _NODE_MODULE_EXTENSIONS:
+    suffixes = _node_module_extensions_for_entrypoint(importer_path)
+    for suffix in suffixes:
         candidate = base + suffix
         if os.path.isfile(candidate):
             return candidate
     if os.path.isdir(exact):
-        for suffix in _NODE_MODULE_EXTENSIONS:
+        for suffix in suffixes:
             candidate = os.path.join(exact, "index" + suffix)
             if os.path.isfile(candidate):
                 return candidate
@@ -194,7 +208,7 @@ def _missing_local_node_module_reference_issues(
     rel_entrypoint = os.path.relpath(entrypoint_path, workspace)
     missing: list[PackageScriptIssue] = []
     for module_ref in _local_node_module_references(source):
-        if _resolve_node_module_reference(importer_dir, module_ref) is None:
+        if _resolve_node_module_reference(importer_dir, module_ref, importer_path=entrypoint_path) is None:
             message = (
                 f"script {script_name!r} local entrypoint {rel_entrypoint!r} "
                 f"requires missing local module: {module_ref}"
@@ -213,7 +227,9 @@ def _missing_local_node_module_reference_issues(
 
 
 def _missing_local_node_module_references(workspace: str, script_name: str, entrypoint_path: str) -> list[str]:
-    return [issue.message for issue in _missing_local_node_module_reference_issues(workspace, script_name, entrypoint_path)]
+    return [
+        issue.message for issue in _missing_local_node_module_reference_issues(workspace, script_name, entrypoint_path)
+    ]
 
 
 def _script_builds_before_interpreter(tokens: list[str], interpreter_index: int) -> bool:
@@ -322,7 +338,9 @@ def _missing_package_script_entrypoint_issues(
                         )
                     )
                 elif token == "node":
-                    missing.extend(_missing_local_node_module_reference_issues(workspace, script_name, resolved_candidate))
+                    missing.extend(
+                        _missing_local_node_module_reference_issues(workspace, script_name, resolved_candidate)
+                    )
             break
     return tuple(missing)
 
