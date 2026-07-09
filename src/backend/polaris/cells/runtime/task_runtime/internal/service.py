@@ -3150,6 +3150,8 @@ class TaskRuntimeService:
         if fact_session is not None:
             return fact_session
 
+        if not self._projected_runtime_execution_session_file_fallback_allowed():
+            return None
         return self._find_projected_runtime_execution_session_from_file_rows(
             task_id,
             augment_runtime_state=True,
@@ -3159,7 +3161,13 @@ class TaskRuntimeService:
         self,
         task_id: int,
     ) -> TaskExecutionSession | None:
-        """Return projected runtime metadata without session row augmentation."""
+        """Return projected runtime metadata without session row augmentation.
+
+        This locked path is used while session writes are evaluating terminal
+        snapshots. It intentionally preserves the non-augmenting file fallback
+        without consulting cutover readiness because readiness may scan
+        file-backed rows and re-enter session state projection.
+        """
 
         fact_row = self._find_latest_execution_fact_row_for_task(task_id)
         fact_session = self._runtime_execution_session_from_projected_row(fact_row)
@@ -3170,6 +3178,22 @@ class TaskRuntimeService:
             task_id,
             augment_runtime_state=False,
         )
+
+    def _projected_runtime_execution_session_file_fallback_allowed(self) -> bool:
+        """Gate the migration-period file fallback without reading file rows directly.
+
+        The readiness projection owns the compatibility signal. During migration,
+        malformed or older readiness payloads fail open so existing deployments do
+        not lose projected runtime-execution sessions before the read model is
+        fully cut over.
+        """
+
+        readiness = self.task_row_read_model_cutover_readiness()
+        if not isinstance(readiness, dict):
+            return True
+        if "projected_session_file_fallback_required" not in readiness:
+            return True
+        return readiness["projected_session_file_fallback_required"] is True
 
     def _find_projected_runtime_execution_session_from_file_rows(
         self,

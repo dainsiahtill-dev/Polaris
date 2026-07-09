@@ -3412,6 +3412,7 @@ def test_raw_task_entity_owner_consumers_keep_required_mutation_and_event_bounda
 PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER = "_find_projected_runtime_execution_session"
 PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER = "_find_projected_runtime_execution_session_locked"
 PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE = "_find_projected_runtime_execution_session_from_file_rows"
+PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE = "_projected_runtime_execution_session_file_fallback_allowed"
 PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE = "_list_file_task_rows"
 PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD = "projected_runtime_execution_session_fallback_coverage"
 PROJECTED_RUNTIME_EXECUTION_SESSION_PROJECTED_ROW_READER = "_runtime_execution_session_from_projected_row"
@@ -3566,6 +3567,25 @@ PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_FORBIDDEN_CALLS: frozenset
         "self.refresh_dependency_unblocks",
     }
 )
+PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE_FORBIDDEN_CALLS: dict[str, str] = {
+    f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}": "file-row reads must stay inside the compat fallback bridge",
+    f"self.{TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER}": "raw Task entity reads are outside the fallback gate",
+    f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}": "the gate decides whether fallback may run; it must not run fallback itself",
+    "self._append_execution_event": "execution event append is a mutation path",
+    "self._write_session": "session writes are a mutation path",
+    "self.append_execution_event": "execution event append is a mutation path",
+    "self.cancel_task_row_for_deduplication": "task-row cancellation is a mutation path",
+    "self.claim_execution": "claim_execution() mutates execution ownership",
+    "self.claim_next_execution": "claim_next_execution() mutates execution ownership",
+    "self.complete_execution": "complete_execution() mutates execution state",
+    "self.create_task_row": "create_task_row() mutates row projection state",
+    "self.fail_execution": "fail_execution() mutates execution state",
+    "self.heartbeat_execution": "heartbeat_execution() mutates execution state",
+    "self.refresh_dependency_unblocks": "dependency refresh mutates runtime task state",
+    "self.reopen_task_row": "reopen_task_row() mutates row projection state",
+    "self.suspend_execution": "suspend_execution() mutates execution state",
+    "self.update_task_row": "update_task_row() mutates row projection state",
+}
 TASK_ROW_READ_MODEL_CUTOVER_READINESS_ALLOWED_SELF_CALLS: frozenset[str] = frozenset(
     {
         TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD,
@@ -3632,6 +3652,12 @@ def _projected_runtime_execution_session_method_defs() -> dict[str, ast.Function
     return {helper_name: _task_runtime_service_method_def(helper_name) for helper_name in helper_names}
 
 
+def _projected_runtime_execution_session_fallback_gate_function_def() -> ast.FunctionDef | None:
+    """Return the projected runtime execution-session file-fallback gate AST node."""
+
+    return _task_runtime_service_method_defs().get(PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE)
+
+
 def _call_keyword(call_node: ast.Call, keyword_name: str) -> ast.expr | None:
     """Return a call keyword value by name."""
 
@@ -3671,8 +3697,111 @@ def _list_file_task_rows_call_keeps_terminal_rows(call_node: ast.Call) -> bool:
     return True
 
 
-def _check_projected_runtime_execution_session_uses_legacy_bridge() -> list[str]:
-    """Emit offenders if projected session lookup bypasses the legacy bridge."""
+def _is_projected_runtime_execution_session_negative_fallback_gate(node: ast.AST) -> bool:
+    """Return whether ``node`` is ``not self.<fallback_gate>()``."""
+
+    return (
+        isinstance(node, ast.UnaryOp)
+        and isinstance(node.op, ast.Not)
+        and isinstance(node.operand, ast.Call)
+        and _call_is_self_method(node.operand, PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE)
+    )
+
+
+def _statement_contains_node(statement: ast.stmt, target: ast.AST) -> bool:
+    """Return whether ``target`` is contained in ``statement`` by object identity."""
+
+    return any(node is target for node in ast.walk(statement))
+
+
+def _statement_returns_none(statement: ast.stmt) -> bool:
+    """Return whether a statement subtree contains ``return None``."""
+
+    return any(
+        isinstance(node, ast.Return)
+        and (node.value is None or (isinstance(node.value, ast.Constant) and node.value.value is None))
+        for node in ast.walk(statement)
+    )
+
+
+def _top_level_statement_index_for_node(method_def: ast.FunctionDef, target: ast.AST) -> int | None:
+    """Return the method-body statement index containing ``target``."""
+
+    for index, statement in enumerate(method_def.body):
+        if _statement_contains_node(statement, target):
+            return index
+    return None
+
+
+def _bridge_call_has_prior_negative_fallback_gate(method_def: ast.FunctionDef, bridge_call: ast.Call) -> bool:
+    """Return whether a bridge call is preceded by a fail-closed fallback gate."""
+
+    bridge_statement_index = _top_level_statement_index_for_node(method_def, bridge_call)
+    if bridge_statement_index is None:
+        return False
+
+    for statement in method_def.body[:bridge_statement_index]:
+        if not isinstance(statement, ast.If):
+            continue
+        if not _is_projected_runtime_execution_session_negative_fallback_gate(statement.test):
+            continue
+        if _statement_returns_none(statement):
+            return True
+    return False
+
+
+def _check_projected_runtime_execution_session_fallback_gate_helper_boundary() -> list[str]:
+    """Emit offenders if the projected session file-fallback gate is not read-only."""
+
+    method_def = _projected_runtime_execution_session_fallback_gate_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    if method_def is None:
+        return [
+            f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}() "
+            "must exist as the WS2 projected runtime execution session fallback gate."
+        ]
+
+    offenders: list[str] = []
+    if not _direct_self_method_calls(method_def, TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD):
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}() "
+            f"does not call self.{TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD}(); "
+            "fallback eligibility must be derived from the task-row read-model "
+            "cutover readiness projection."
+        )
+
+    allowed_self_call = f"self.{TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD}"
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        forbidden_reason = PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE_FORBIDDEN_CALLS.get(callee)
+        if forbidden_reason is not None:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}():"
+                f"{node.lineno} calls {callee}(); {forbidden_reason}. "
+                "The fallback gate must remain a pure readiness-policy helper."
+            )
+            continue
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}():"
+                f"{node.lineno} calls {callee}(); fallback eligibility must not "
+                "read or mutate raw TaskBoard state."
+            )
+            continue
+        if callee.startswith("self.") and callee != allowed_self_call:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}():"
+                f"{node.lineno} calls {callee}(); fallback eligibility may only "
+                f"call self.{TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD}()."
+            )
+
+    return offenders
+
+
+def _check_projected_runtime_execution_session_fallback_gate_wraps_legacy_bridge() -> list[str]:
+    """Emit offenders if projected session lookup reaches file fallback outside its boundary."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     methods = _projected_runtime_execution_session_method_defs()
@@ -3684,6 +3813,25 @@ def _check_projected_runtime_execution_session_uses_legacy_bridge() -> list[str]
 
     for method_name, expected_augment in expected_bridge_call_modes.items():
         method_def = methods[method_name]
+        gate_calls = _direct_self_method_calls(
+            method_def,
+            PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE,
+        )
+        if method_name == PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER and not gate_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{method_name}() does not call "
+                f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}(); "
+                "metadata.runtime_execution file-row fallback must be gated by "
+                "task-row read-model cutover readiness."
+            )
+        if method_name == PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER and gate_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{method_name}() calls "
+                f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}(); "
+                "the locked terminal-session snapshot path must not evaluate "
+                "cutover readiness because readiness can scan file-backed rows "
+                "and re-enter session projection while locks are held."
+            )
         bridge_calls = _direct_self_method_calls(
             method_def,
             PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE,
@@ -3702,6 +3850,16 @@ def _check_projected_runtime_execution_session_uses_legacy_bridge() -> list[str]
                     f"must call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}"
                     f"(..., augment_runtime_state={expected_augment!r}) so locked "
                     "and unlocked projections remain distinct."
+                )
+            if (
+                method_name == PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER
+                and not _bridge_call_has_prior_negative_fallback_gate(method_def, call_node)
+            ):
+                offenders.append(
+                    f"{rel}:TaskRuntimeService.{method_name}():{call_node.lineno} "
+                    f"calls self.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}() "
+                    f"without a prior `if not self.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}(): "
+                    "return None` guard in the method body."
                 )
         for call_node in _direct_self_method_calls(method_def, PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE):
             offenders.append(
@@ -3784,20 +3942,40 @@ def _check_projected_runtime_execution_session_forbidden_raw_reads() -> list[str
     return offenders
 
 
-def test_projected_runtime_execution_session_uses_legacy_file_rows_bridge() -> None:
-    """WS2 projected runtime execution-session fence (positive invariant)."""
+def test_ws2_projected_runtime_execution_session_fallback_gate_helper_is_read_only() -> None:
+    """WS2 projected runtime execution session fallback gate helper fence."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
-    offenders = _check_projected_runtime_execution_session_uses_legacy_bridge()
+    offenders = _check_projected_runtime_execution_session_fallback_gate_helper_boundary()
 
     assert not offenders, (
-        "WS2 projected runtime execution-session fence: "
+        "WS2 projected runtime execution session fallback gate helper fence: "
+        f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}() "
+        f"must exist, call self.{TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD}(), "
+        "and remain pure readiness policy. It must not read file rows, raw Task "
+        "entities, run the fallback bridge, refresh dependencies, mutate runtime "
+        "state, or call self._board.*. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_ws2_projected_runtime_execution_session_fallback_gate_wraps_file_rows_bridge() -> None:
+    """WS2 projected runtime execution session fallback gate routing fence."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_projected_runtime_execution_session_fallback_gate_wraps_legacy_bridge()
+
+    assert not offenders, (
+        "WS2 projected runtime execution session fallback gate routing fence: "
         f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER}() "
         f"and {PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER}() must not "
         f"call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}() directly. "
-        f"They must delegate metadata.runtime_execution file-row fallback to "
-        f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}() with explicit "
-        "augment_runtime_state values. Offenders:\n" + "\n".join(offenders)
+        "After fact projection misses, the unlocked helper must call "
+        f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_GATE}() before "
+        "delegating allowed metadata.runtime_execution file-row fallback to "
+        f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE}() with "
+        "augment_runtime_state=True. The locked helper must preserve the "
+        "non-augmenting file-row fallback with augment_runtime_state=False "
+        "without evaluating readiness while locks are held. Offenders:\n" + "\n".join(offenders)
     )
 
 

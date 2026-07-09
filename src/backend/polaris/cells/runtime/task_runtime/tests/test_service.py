@@ -1762,6 +1762,16 @@ def _assert_task_row_read_model_cutover_readiness(
     assert readiness["blocking_reasons"] == blocking_reasons
 
 
+def _projected_session_file_fallback_readiness(*, required: bool) -> dict[str, Any]:
+    return {
+        "ready": not required,
+        "blocking_reasons": ["projected_session_file_fallback_required"] if required else [],
+        "task_row_file_fallback_required": False,
+        "projected_session_file_fallback_required": required,
+        "observable_projection_parity_ready": True,
+    }
+
+
 def test_task_row_read_model_fallback_coverage_reports_full_file_coverage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2370,6 +2380,185 @@ def test_projected_runtime_execution_session_fallback_coverage_does_not_refresh_
         file_projected_session_task_ids_without_execution_fact=[],
         fact_projected_session_task_ids_without_file_row=[],
     )
+
+
+def test_find_projected_runtime_execution_session_returns_fact_session_without_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    fact_row = _runtime_execution_projected_row(244, subject="fact session wins")
+    fact_lookup_calls: list[int] = []
+
+    def latest_fact_row(
+        task_id: int,
+        *,
+        page_size: int = 500,
+    ) -> dict[str, Any]:
+        assert page_size == 500
+        fact_lookup_calls.append(task_id)
+        return fact_row
+
+    def reject_fallback_gate() -> NoReturn:
+        raise AssertionError("fact-projected session must bypass the file fallback gate")
+
+    def reject_file_fallback(
+        task_id: int,
+        *,
+        augment_runtime_state: bool = True,
+    ) -> NoReturn:
+        raise AssertionError(
+            f"fact-projected session must bypass file fallback for task_id={task_id} "
+            f"augment_runtime_state={augment_runtime_state}"
+        )
+
+    monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", latest_fact_row)
+    monkeypatch.setattr(service, "_projected_runtime_execution_session_file_fallback_allowed", reject_fallback_gate)
+    monkeypatch.setattr(service, "_find_projected_runtime_execution_session_from_file_rows", reject_file_fallback)
+
+    session = service._find_projected_runtime_execution_session(244)
+
+    assert session is not None
+    assert session.task_id == 244
+    assert session.run_id == "run-projected-runtime-execution-244"
+    assert fact_lookup_calls == [244]
+
+
+def test_find_projected_runtime_execution_session_uses_file_fallback_when_readiness_requires_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    fallback_row = _runtime_execution_projected_row(245, subject="allowed fallback session")
+    fallback_session = service._runtime_execution_session_from_projected_row(fallback_row)
+    assert fallback_session is not None
+    fallback_calls: list[tuple[int, bool]] = []
+    readiness_calls: list[str] = []
+
+    def file_fallback(
+        task_id: int,
+        *,
+        augment_runtime_state: bool = True,
+    ) -> TaskExecutionSession | None:
+        fallback_calls.append((task_id, augment_runtime_state))
+        return fallback_session
+
+    def readiness() -> dict[str, Any]:
+        readiness_calls.append("task_row_read_model_cutover_readiness")
+        return _projected_session_file_fallback_readiness(required=True)
+
+    monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda task_id: None)
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", readiness)
+    monkeypatch.setattr(service, "_find_projected_runtime_execution_session_from_file_rows", file_fallback)
+
+    session = service._find_projected_runtime_execution_session(245)
+
+    assert session is fallback_session
+    assert fallback_calls == [(245, True)]
+    assert readiness_calls == ["task_row_read_model_cutover_readiness"]
+
+
+def test_find_projected_runtime_execution_session_skips_file_fallback_when_readiness_disallows_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    readiness_calls: list[str] = []
+
+    def readiness() -> dict[str, Any]:
+        readiness_calls.append("task_row_read_model_cutover_readiness")
+        return _projected_session_file_fallback_readiness(required=False)
+
+    def reject_file_fallback(
+        task_id: int,
+        *,
+        augment_runtime_state: bool = True,
+    ) -> NoReturn:
+        raise AssertionError(
+            f"file fallback must stay disabled for task_id={task_id} augment_runtime_state={augment_runtime_state}"
+        )
+
+    monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda task_id: None)
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", readiness)
+    monkeypatch.setattr(service, "_find_projected_runtime_execution_session_from_file_rows", reject_file_fallback)
+
+    session = service._find_projected_runtime_execution_session(246)
+
+    assert session is None
+    assert readiness_calls == ["task_row_read_model_cutover_readiness"]
+
+
+def test_find_projected_runtime_execution_session_locked_uses_file_fallback_without_runtime_augmentation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    fallback_row = _runtime_execution_projected_row(247, subject="locked fallback session")
+    fallback_session = service._runtime_execution_session_from_projected_row(fallback_row)
+    assert fallback_session is not None
+    fallback_calls: list[tuple[int, bool]] = []
+
+    def file_fallback(
+        task_id: int,
+        *,
+        augment_runtime_state: bool = True,
+    ) -> TaskExecutionSession | None:
+        fallback_calls.append((task_id, augment_runtime_state))
+        return fallback_session
+
+    monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda task_id: None)
+    monkeypatch.setattr(
+        service,
+        "task_row_read_model_cutover_readiness",
+        lambda: pytest.fail("locked projected-session lookup must not evaluate cutover readiness"),
+    )
+    monkeypatch.setattr(service, "_find_projected_runtime_execution_session_from_file_rows", file_fallback)
+
+    session = service._find_projected_runtime_execution_session_locked(247)
+
+    assert session is fallback_session
+    assert fallback_calls == [(247, False)]
+
+
+def test_find_projected_runtime_execution_session_locked_preserves_file_fallback_without_readiness_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    fallback_row = _runtime_execution_projected_row(248, subject="locked fallback ignores readiness gate")
+    fallback_session = service._runtime_execution_session_from_projected_row(fallback_row)
+    assert fallback_session is not None
+    fallback_calls: list[tuple[int, bool]] = []
+
+    def reject_readiness() -> NoReturn:
+        raise AssertionError("locked projected-session lookup must not evaluate cutover readiness")
+
+    def file_fallback(
+        task_id: int,
+        *,
+        augment_runtime_state: bool = True,
+    ) -> TaskExecutionSession | None:
+        fallback_calls.append((task_id, augment_runtime_state))
+        return fallback_session
+
+    monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda task_id: None)
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", reject_readiness)
+    monkeypatch.setattr(service, "_find_projected_runtime_execution_session_from_file_rows", file_fallback)
+
+    session = service._find_projected_runtime_execution_session_locked(248)
+
+    assert session is fallback_session
+    assert fallback_calls == [(248, False)]
 
 
 def test_task_row_read_model_cutover_readiness_ready_when_file_rows_and_projected_sessions_have_facts(
@@ -4681,6 +4870,11 @@ def test_find_projected_runtime_execution_session_delegates_file_row_fallback_af
     monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda _task_id: None)
     monkeypatch.setattr(
         service,
+        "task_row_read_model_cutover_readiness",
+        lambda: _projected_session_file_fallback_readiness(required=True),
+    )
+    monkeypatch.setattr(
+        service,
         "_find_projected_runtime_execution_session_from_file_rows",
         file_row_bridge_helper,
     )
@@ -4728,6 +4922,11 @@ def test_find_projected_runtime_execution_session_locked_delegates_file_row_fall
         raise AssertionError("locked file-row fallback must be isolated behind the legacy bridge helper")
 
     monkeypatch.setattr(service, "_find_latest_execution_fact_row_for_task", lambda _task_id: None)
+    monkeypatch.setattr(
+        service,
+        "task_row_read_model_cutover_readiness",
+        lambda: _projected_session_file_fallback_readiness(required=True),
+    )
     monkeypatch.setattr(
         service,
         "_find_projected_runtime_execution_session_from_file_rows",
