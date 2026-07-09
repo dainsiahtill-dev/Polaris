@@ -1266,6 +1266,22 @@ class TaskRuntimeService:
         fact_rows = self.list_task_rows_from_execution_facts()
         return self._project_observable_task_rows(file_rows, fact_rows)
 
+    def _fact_only_task_row_read_model_rows(self) -> list[dict[str, Any]]:
+        """Load fact-only task-row read-model rows.
+
+        Boundary:
+            This helper reads only append-only ``task_runtime.execution`` fact
+            rows and projects them through the shared observable row projector.
+            It must not call file row/entity loaders, dependency refresh APIs,
+            mutation APIs, claim/selection APIs, or session writers.
+
+        Complexity:
+            O(f) time and memory over latest fact rows.
+        """
+
+        fact_rows = self.list_task_rows_from_execution_facts()
+        return self._project_observable_task_rows([], fact_rows)
+
     def task_row_read_model_fallback_coverage(self) -> dict[str, Any]:
         """Return structured read-only coverage for the transitional fallback.
 
@@ -1716,11 +1732,14 @@ class TaskRuntimeService:
 
         Boundary:
             This method is the task-runtime-owned read model for status,
-            snapshot, and UI projection consumers. It combines transitional
-            file-backed rows with the append-only ``task_runtime.execution``
-            fact stream, but it does not authorize claims, writes, dependency
-            transitions, or repair actions. Execution paths that need to select
-            or mutate work must continue to call the explicit row/session APIs.
+            snapshot, and UI projection consumers. It performs a gated
+            fact-only cutover: when ``task_row_read_model_cutover_readiness``
+            reports ready, observable rows are projected only from append-only
+            ``task_runtime.execution`` facts; otherwise the transitional
+            file-backed fallback remains active. This does not change mutation,
+            claim, selection, dependency-transition, or repair APIs. Execution
+            paths that need to select or mutate work must continue to call the
+            explicit row/session APIs.
 
         The implementation intentionally avoids ``refresh_dependency_unblocks``
         and ``list_task_rows`` so read-only observers cannot trigger dependency
@@ -1729,9 +1748,14 @@ class TaskRuntimeService:
         reading rows.
 
         Complexity:
-            O(r + f) time and memory over file-backed rows and latest fact rows.
+            O(c) additional time and memory over cutover readiness selection,
+            excluding delegated readiness checks; selected projection is O(f)
+            when ready and O(r + f) while transitional fallback is required.
         """
 
+        readiness = self.task_row_read_model_cutover_readiness()
+        if readiness.get("ready") is True:
+            return self._fact_only_task_row_read_model_rows()
         return self._transitional_task_row_read_model_rows()
 
     def _project_observable_task_rows(

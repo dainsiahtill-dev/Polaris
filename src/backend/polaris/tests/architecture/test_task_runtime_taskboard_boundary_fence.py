@@ -3416,6 +3416,7 @@ PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE = "_list_file_task_rows"
 PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD = "projected_runtime_execution_session_fallback_coverage"
 PROJECTED_RUNTIME_EXECUTION_SESSION_PROJECTED_ROW_READER = "_runtime_execution_session_from_projected_row"
 TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD = "_transitional_task_row_read_model_rows"
+FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD = "_fact_only_task_row_read_model_rows"
 TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD = "task_row_read_model_fallback_coverage"
 TASK_ROW_READ_MODEL_PROJECTION_PARITY_COVERAGE_METHOD = "task_row_read_model_projection_parity_coverage"
 TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD = "task_row_read_model_cutover_readiness"
@@ -3439,6 +3440,34 @@ TRANSITIONAL_TASK_ROW_READ_MODEL_FORBIDDEN_SELF_CALLS: frozenset[str] = frozense
         TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD,
     }
 )
+FACT_ONLY_TASK_ROW_READ_MODEL_ALLOWED_SELF_CALLS: frozenset[str] = frozenset(
+    {
+        OBSERVABLE_TASK_ROWS_FACT_SOURCE,
+        OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE,
+    }
+)
+FACT_ONLY_TASK_ROW_READ_MODEL_FORBIDDEN_CALLS: dict[str, str] = {
+    "self._list_file_task_rows": "file-backed rows are the transitional fallback source",
+    "self._list_file_task_entities": "raw TaskBoard entities are outside observable fact-only projection",
+    "self.refresh_dependency_unblocks": "dependency refresh mutates runtime task state",
+    "self.list_task_rows": "list_task_rows() is the legacy refreshing compatibility entrypoint",
+    "self.append_execution_event": "execution event append is a mutation path",
+    "self._append_execution_event": "execution event append is a mutation path",
+    "self.claim_execution": "claim_execution() mutates execution ownership",
+    "self.claim_next_execution": "claim_next_execution() mutates execution ownership",
+    "self.update_task_row": "update_task_row() mutates row projection state",
+    "self.create_task_row": "create_task_row() mutates row projection state",
+    "_list_file_task_rows": "file-backed rows are the transitional fallback source",
+    "_list_file_task_entities": "raw TaskBoard entities are outside observable fact-only projection",
+    "refresh_dependency_unblocks": "dependency refresh mutates runtime task state",
+    "list_task_rows": "list_task_rows() is the legacy refreshing compatibility entrypoint",
+    "append_execution_event": "execution event append is a mutation path",
+    "_append_execution_event": "execution event append is a mutation path",
+    "claim_execution": "claim_execution() mutates execution ownership",
+    "claim_next_execution": "claim_next_execution() mutates execution ownership",
+    "update_task_row": "update_task_row() mutates row projection state",
+    "create_task_row": "create_task_row() mutates row projection state",
+}
 TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_REQUIRED_SELF_CALLS: frozenset[str] = frozenset(
     {
         OBSERVABLE_TASK_ROWS_FILE_SOURCE,
@@ -3564,6 +3593,11 @@ TASK_ROW_READ_MODEL_CUTOVER_READINESS_FORBIDDEN_CALLS: dict[str, str] = {
 }
 OBSERVABLE_TASK_ROWS_FORBIDDEN_SELF_CALLS = frozenset(
     {
+        "append_execution_event",
+        "claim_execution",
+        "claim_next_execution",
+        "create_task_row",
+        "_append_execution_event",
         "_list_file_task_entities",
         "_overlay_execution_fact_rows",
         OBSERVABLE_TASK_ROWS_FACT_SOURCE,
@@ -3571,6 +3605,7 @@ OBSERVABLE_TASK_ROWS_FORBIDDEN_SELF_CALLS = frozenset(
         OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE,
         "list_task_rows",
         "refresh_dependency_unblocks",
+        "update_task_row",
     }
 )
 TASK_ROWS_COMPATIBILITY_METHOD = "list_task_rows"
@@ -3810,6 +3845,12 @@ def _transitional_task_row_read_model_rows_function_def() -> ast.FunctionDef:
     return _task_runtime_service_method_def(TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD)
 
 
+def _fact_only_task_row_read_model_rows_function_def() -> ast.FunctionDef:
+    """Return the fact-only task-row read-model helper AST node."""
+
+    return _task_runtime_service_method_def(FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD)
+
+
 def _task_row_read_model_fallback_coverage_function_def() -> ast.FunctionDef:
     """Return the task-row read-model fallback coverage AST node."""
 
@@ -3871,6 +3912,67 @@ def _check_transitional_task_row_read_model_rows_projection_sources() -> list[st
                 f"{node.lineno} calls {callee}(); transitional row assembly "
                 "must consume reviewed row loaders instead of raw TaskBoard "
                 "methods."
+            )
+
+    return offenders
+
+
+def _check_fact_only_task_row_read_model_rows_projection_boundary() -> list[str]:
+    """Emit offenders if fact-only rows stop consuming execution facts only."""
+
+    method_def = _fact_only_task_row_read_model_rows_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for source_method in sorted(FACT_ONLY_TASK_ROW_READ_MODEL_ALLOWED_SELF_CALLS):
+        source_calls = _direct_self_method_calls(method_def, source_method)
+        if not source_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD}() "
+                f"does not call self.{source_method}(); fact-only observable "
+                "rows must load task_runtime.execution fact rows and project "
+                "them through the shared observable row projector."
+            )
+
+    allowed_self_calls = {
+        f"self.{method_name}" for method_name in sorted(FACT_ONLY_TASK_ROW_READ_MODEL_ALLOWED_SELF_CALLS)
+    }
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        forbidden_reason = FACT_ONLY_TASK_ROW_READ_MODEL_FORBIDDEN_CALLS.get(callee)
+        if forbidden_reason is not None:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD}():"
+                f"{node.lineno} calls {callee}(); {forbidden_reason}. "
+                "Fact-only observable rows must not touch file-backed rows, raw "
+                "Task entities, dependency refresh, claim/update/create paths, "
+                "or execution-event append APIs."
+            )
+            continue
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD}():"
+                f"{node.lineno} calls {callee}(); fact-only observable rows "
+                "must consume execution facts and the shared row projector "
+                "instead of raw TaskBoard methods."
+            )
+            continue
+        if callee.startswith("self.") and callee not in allowed_self_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD}():"
+                f"{node.lineno} calls {callee}(); fact-only observable rows may "
+                f"only call self.{OBSERVABLE_TASK_ROWS_FACT_SOURCE}() and "
+                f"self.{OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE}()."
+            )
+            continue
+        if callee and callee not in allowed_self_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD}():"
+                f"{node.lineno} calls {callee}(); fact-only observable rows may "
+                f"only call self.{OBSERVABLE_TASK_ROWS_FACT_SOURCE}() and "
+                f"self.{OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE}()."
             )
 
     return offenders
@@ -4127,19 +4229,28 @@ def _check_task_row_read_model_cutover_readiness_boundary() -> list[str]:
 
 
 def _check_observable_task_rows_projection_sources() -> list[str]:
-    """Emit offenders if observable rows stop delegating to transitional rows."""
+    """Emit offenders if observable rows stop using the gated read-model helpers."""
 
     method_def = _observable_task_rows_function_def()
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     offenders: list[str] = []
 
-    source_calls = _direct_self_method_calls(method_def, TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD)
-    if not source_calls:
+    required_self_calls = {
+        TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD: (
+            "observable rows must evaluate cutover readiness before choosing fact-only or transitional read-model rows."
+        ),
+        FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD: (
+            "observable rows must route ready=True cutover reads through the fact-only task-row read-model helper."
+        ),
+        TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD: (
+            "observable rows must keep transitional fallback behind the dedicated task-row read-model helper."
+        ),
+    }
+    for source_method, reason in sorted(required_self_calls.items()):
+        if _direct_self_method_calls(method_def, source_method):
+            continue
         offenders.append(
-            f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() "
-            f"does not call self.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}(); "
-            "observable rows must delegate transitional read-model assembly "
-            "instead of rebuilding file/fact/projection inputs inline."
+            f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() does not call self.{source_method}(); {reason}"
         )
 
     return offenders
@@ -4291,6 +4402,24 @@ def test_transitional_task_row_read_model_rows_load_file_rows_execution_facts_an
     )
 
 
+def test_ws2_gated_fact_only_observable_rows_fact_only_helper_uses_execution_facts_only() -> None:
+    """WS2 gated fact-only observable rows: helper is fact-only and read-only."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_fact_only_task_row_read_model_rows_projection_boundary()
+
+    assert not offenders, (
+        "WS2 gated fact-only observable rows fence: "
+        f"{rel}:TaskRuntimeService.{FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD}() "
+        "must exist and may only call "
+        f"self.{OBSERVABLE_TASK_ROWS_FACT_SOURCE}() plus "
+        f"self.{OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE}(). It must not call "
+        "file-backed row/entity loaders, dependency refresh, list_task_rows(), "
+        "claim/update/create APIs, execution-event append APIs, or self._board.*. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
+
+
 def test_task_row_read_model_fallback_coverage_is_read_only_projection() -> None:
     """WS2 fallback-coverage fence (existence and read-only boundary)."""
 
@@ -4393,18 +4522,19 @@ def test_transitional_task_row_read_model_rows_not_replaced_by_fallback_coverage
     )
 
 
-def test_observable_task_rows_delegate_to_transitional_task_row_read_model() -> None:
-    """WS2 observable task-row projection fence (positive invariant)."""
+def test_ws2_gated_fact_only_observable_rows_select_fact_only_or_transitional_read_model() -> None:
+    """WS2 gated fact-only observable rows: gate selects read-model helpers."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     offenders = _check_observable_task_rows_projection_sources()
 
     assert not offenders, (
-        "WS2 observable task-row projection fence: "
-        f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() must delegate "
-        f"to self.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}() so file-backed "
-        "rows, task_runtime.execution facts, and observable projection stay "
-        "centralized in one transitional read-model helper. Offenders:\n" + "\n".join(offenders)
+        "WS2 gated fact-only observable rows fence: "
+        f"{rel}:TaskRuntimeService.{OBSERVABLE_TASK_ROWS_METHOD}() must call "
+        f"self.{TASK_ROW_READ_MODEL_CUTOVER_READINESS_METHOD}(), route ready=True "
+        f"through self.{FACT_ONLY_TASK_ROW_READ_MODEL_ROWS_METHOD}(), and route "
+        f"fallback reads through self.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}(). "
+        "It must not rebuild file/fact/projection inputs inline. Offenders:\n" + "\n".join(offenders)
     )
 
 

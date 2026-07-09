@@ -1518,8 +1518,13 @@ def test_list_observable_task_rows_does_not_refresh_dependency_unblocks(
         refresh_calls.append("refresh_dependency_unblocks")
         raise AssertionError("list_observable_task_rows must be a pure read projection")
 
-    def list_file_task_rows(*, include_terminal: bool = True) -> list[dict[str, Any]]:
+    def list_file_task_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = True,
+    ) -> list[dict[str, Any]]:
         assert include_terminal is True
+        assert augment_runtime_state in {False, True}
         return [dict(row) for row in file_rows]
 
     def list_fact_rows() -> list[dict[str, Any]]:
@@ -1533,6 +1538,145 @@ def test_list_observable_task_rows_does_not_refresh_dependency_unblocks(
 
     assert rows == file_rows
     assert refresh_calls == []
+
+
+def test_fact_only_task_row_read_model_rows_reads_execution_facts_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    fact_rows: list[dict[str, Any]] = [
+        {
+            "id": 81,
+            "task_id": "81",
+            "subject": "fact-only observable row",
+            "status": "in_progress",
+            "metadata": {"source": "task_runtime.execution_fact"},
+        }
+    ]
+    projected_rows: list[dict[str, Any]] = [
+        {
+            "id": 81,
+            "task_id": "81",
+            "subject": "fact-only observable row",
+            "status": "in_progress",
+            "metadata": {"source": "task_runtime.execution_fact"},
+            "running": True,
+        }
+    ]
+    calls: list[str] = []
+
+    def reject_file_task_rows(**_: Any) -> NoReturn:
+        calls.append("_list_file_task_rows")
+        raise AssertionError("fact-only read model must not read file-backed task rows")
+
+    def reject_refresh_dependency_unblocks() -> NoReturn:
+        calls.append("refresh_dependency_unblocks")
+        raise AssertionError("fact-only read model must not refresh dependency unblocks")
+
+    def list_fact_rows() -> list[dict[str, Any]]:
+        calls.append("list_task_rows_from_execution_facts")
+        return [dict(row) for row in fact_rows]
+
+    def project_observable_task_rows(
+        file_rows: list[dict[str, Any]],
+        received_fact_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        calls.append("_project_observable_task_rows")
+        assert file_rows == []
+        assert received_fact_rows == fact_rows
+        return [dict(row) for row in projected_rows]
+
+    monkeypatch.setattr(service, "_list_file_task_rows", reject_file_task_rows)
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", reject_refresh_dependency_unblocks)
+    monkeypatch.setattr(service, "list_task_rows_from_execution_facts", list_fact_rows)
+    monkeypatch.setattr(service, "_project_observable_task_rows", project_observable_task_rows)
+
+    rows = service._fact_only_task_row_read_model_rows()
+
+    assert rows == projected_rows
+    assert calls == ["list_task_rows_from_execution_facts", "_project_observable_task_rows"]
+
+
+def test_list_observable_task_rows_uses_fact_only_read_model_when_cutover_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    fact_only_rows: list[dict[str, Any]] = [
+        {
+            "id": 91,
+            "task_id": "91",
+            "subject": "fact-only cutover row",
+            "status": "completed",
+        }
+    ]
+    calls: list[str] = []
+
+    def cutover_readiness() -> dict[str, Any]:
+        calls.append("task_row_read_model_cutover_readiness")
+        return {"ready": True, "blocking_reasons": []}
+
+    def fact_only_rows_helper() -> list[dict[str, Any]]:
+        calls.append("_fact_only_task_row_read_model_rows")
+        return [dict(row) for row in fact_only_rows]
+
+    def reject_transitional_rows_helper() -> NoReturn:
+        calls.append("_transitional_task_row_read_model_rows")
+        raise AssertionError("ready cutover must not call transitional read model helper")
+
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", cutover_readiness)
+    monkeypatch.setattr(service, "_fact_only_task_row_read_model_rows", fact_only_rows_helper)
+    monkeypatch.setattr(service, "_transitional_task_row_read_model_rows", reject_transitional_rows_helper)
+
+    rows = service.list_observable_task_rows()
+
+    assert rows == fact_only_rows
+    assert calls == ["task_row_read_model_cutover_readiness", "_fact_only_task_row_read_model_rows"]
+
+
+def test_list_observable_task_rows_uses_transitional_read_model_when_cutover_not_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    transitional_rows: list[dict[str, Any]] = [
+        {
+            "id": 101,
+            "task_id": "101",
+            "subject": "transitional fallback row",
+            "status": "pending",
+            "metadata": {"source": "file_row"},
+        }
+    ]
+    calls: list[str] = []
+
+    def cutover_readiness() -> dict[str, Any]:
+        calls.append("task_row_read_model_cutover_readiness")
+        return {"ready": False, "blocking_reasons": ["task_row_file_fallback_required"]}
+
+    def reject_fact_only_rows_helper() -> NoReturn:
+        calls.append("_fact_only_task_row_read_model_rows")
+        raise AssertionError("blocked cutover must not call fact-only read model helper")
+
+    def transitional_rows_helper() -> list[dict[str, Any]]:
+        calls.append("_transitional_task_row_read_model_rows")
+        return [dict(row) for row in transitional_rows]
+
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", cutover_readiness)
+    monkeypatch.setattr(service, "_fact_only_task_row_read_model_rows", reject_fact_only_rows_helper)
+    monkeypatch.setattr(service, "_transitional_task_row_read_model_rows", transitional_rows_helper)
+
+    rows = service.list_observable_task_rows()
+
+    assert rows == transitional_rows
+    assert calls == ["task_row_read_model_cutover_readiness", "_transitional_task_row_read_model_rows"]
 
 
 def _assert_task_row_read_model_fallback_coverage(
@@ -2542,6 +2686,10 @@ def test_list_observable_task_rows_delegates_to_transitional_read_model_helper(
     ]
     helper_calls: list[str] = []
 
+    def cutover_readiness() -> dict[str, Any]:
+        helper_calls.append("task_row_read_model_cutover_readiness")
+        return {"ready": False, "blocking_reasons": ["task_row_file_fallback_required"]}
+
     def transitional_task_row_read_model_rows() -> list[dict[str, Any]]:
         helper_calls.append("_transitional_task_row_read_model_rows")
         return sentinel_rows
@@ -2555,6 +2703,7 @@ def test_list_observable_task_rows_delegates_to_transitional_read_model_helper(
     def reject_projection(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("list_observable_task_rows must not project rows outside the transitional helper")
 
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", cutover_readiness)
     monkeypatch.setattr(
         service,
         "_transitional_task_row_read_model_rows",
@@ -2568,7 +2717,7 @@ def test_list_observable_task_rows_delegates_to_transitional_read_model_helper(
     rows = service.list_observable_task_rows()
 
     assert rows is sentinel_rows
-    assert helper_calls == ["_transitional_task_row_read_model_rows"]
+    assert helper_calls == ["task_row_read_model_cutover_readiness", "_transitional_task_row_read_model_rows"]
 
 
 def test_list_task_rows_continues_to_refresh_dependency_unblocks(
