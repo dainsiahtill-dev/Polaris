@@ -44,6 +44,99 @@ class RunCompletionWaiter:
     def __init__(self, workspace: Path) -> None:
         self.workspace = Path(workspace)
 
+    @staticmethod
+    def _row_matches_active_run(row: dict[str, Any], *, run_id: str) -> bool:
+        """Return whether a task row still represents active work for ``run_id``.
+
+        The factory timeout/cancel path must not invalidate a Director lease
+        after the provider response has reached tool dispatch.  TaskRuntime is
+        the execution-owner cell, so this helper only consumes its observable
+        read model and treats ambiguous rows as non-matches.
+
+        Complexity:
+            O(1) time and memory for one already-loaded row.
+        """
+
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return False
+        metadata = row.get("metadata")
+        metadata_map = metadata if isinstance(metadata, dict) else {}
+        runtime_execution = metadata_map.get("runtime_execution")
+        runtime_execution_map = runtime_execution if isinstance(runtime_execution, dict) else {}
+        row_run_ids = {
+            str(row.get("workflow_run_id") or "").strip(),
+            str(row.get("run_id") or "").strip(),
+            str(runtime_execution_map.get("run_id") or "").strip(),
+        }
+        if normalized_run_id not in row_run_ids:
+            return False
+        row_status = str(row.get("status") or row.get("state") or row.get("execution_state") or "").strip().lower()
+        session_status = str(runtime_execution_map.get("status") or "").strip().lower()
+        if bool(row.get("running")):
+            return True
+        return row_status in {
+            "active",
+            "claimed",
+            "in_progress",
+            "in_design",
+            "in_execution",
+            "in_qa",
+            "running",
+            "processing",
+            "executing",
+        } or session_status in {"active", "claimed", "in_progress", "running"}
+
+    def _active_task_runtime_barrier_result(self, *, run_id: str, reason: str) -> CommandResult | None:
+        """Return a non-mutating cancellation result when TaskRuntime is active.
+
+        Boundary:
+            This is the waiter-level counterpart of the Factory stage executor
+            active-task barrier.  It prevents the cancellation owner
+            ``cancel_active_run`` from bulk-suspending an active Director
+            session and creating a secondary ``session_not_active`` failure.
+            The factory stage may stop waiting; the child run remains valid so
+            tool dispatch/effect receipts can settle into the execution ledger.
+        """
+
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return None
+        try:
+            from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+
+            rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug(
+                "TaskRuntime active-run barrier unavailable for run %s: %s",
+                normalized_run_id,
+                exc,
+            )
+            return None
+        active_rows = [
+            row for row in rows if isinstance(row, dict) and self._row_matches_active_run(row, run_id=normalized_run_id)
+        ]
+        if not active_rows:
+            return None
+        status = "cancelled" if reason == "factory_cancelled" else "timeout"
+        return CommandResult(
+            run_id=normalized_run_id,
+            status=status,
+            message=f"Director run left active for execution-control-plane barrier: {reason}",
+            metadata={
+                "cancel_signal_sent": False,
+                "cancel_reason": reason,
+                "inflight_run_continues": True,
+                "terminal_source": "task_runtime_active_execution_barrier",
+                "active_task_count": len(active_rows),
+                "active_task_ids": [
+                    str(row.get("id") or row.get("task_id") or "").strip()
+                    for row in active_rows
+                    if str(row.get("id") or row.get("task_id") or "").strip()
+                ],
+            },
+        )
+
     def build_orchestration_service(self, context: dict[str, Any]) -> Any:
         from polaris.bootstrap.config import Settings
         from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
@@ -174,6 +267,12 @@ class RunCompletionWaiter:
                     break
 
             if completed_reason == "cancel":
+                barrier_result = self._active_task_runtime_barrier_result(
+                    run_id=run_id,
+                    reason="factory_cancelled",
+                )
+                if barrier_result is not None:
+                    return barrier_result
                 await self.cancel_active_run(run_id, reason="factory_cancelled")
                 return CommandResult(
                     run_id=run_id,
@@ -183,6 +282,12 @@ class RunCompletionWaiter:
 
             if completed_reason == "timeout":
                 if cancel_on_timeout:
+                    barrier_result = self._active_task_runtime_barrier_result(
+                        run_id=run_id,
+                        reason="factory_stage_timeout",
+                    )
+                    if barrier_result is not None:
+                        return barrier_result
                     await self.cancel_active_run(run_id, reason="factory_stage_timeout")
                 return CommandResult(
                     run_id=run_id,

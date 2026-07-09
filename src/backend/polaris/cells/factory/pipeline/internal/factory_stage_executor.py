@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -78,6 +79,35 @@ _LANGUAGE_SOURCE_EXTENSIONS: dict[str, frozenset[str]] = {
     "scala": frozenset({".scala"}),
 }
 _WORKSPACE_QUALITY_MUTATION_TOKENS = WRITE_TOOLS | frozenset({"create_file", "text_replace"})
+
+
+def _call_accepts_keyword(callable_obj: Any, keyword: str) -> bool:
+    """Return whether ``callable_obj`` can accept a keyword argument.
+
+    Factory tests and downstream adapters monkeypatch selected executor methods
+    as extension seams.  New control-plane parameters must therefore be added
+    behind signature detection instead of leaking directly into every override.
+
+    Complexity:
+        O(p) time and O(1) extra memory over the callable signature parameter
+        count.
+    """
+
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return False
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+        if parameter.name == keyword and parameter.kind in {
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }:
+            return True
+    return False
+
+
 # Extensions that are language-agnostic and should not trigger a mismatch.
 _LANGUAGE_NEUTRAL_EXTENSIONS: frozenset[str] = frozenset(
     {
@@ -2612,16 +2642,14 @@ class OrchestrationStageExecutor:
                         )
                 return None
 
-            wait_task = asyncio.create_task(
-                self._wait_run_completion(
-                    service,
-                    sub_result,
-                    timeout_seconds=timeout_seconds,
-                    cancel_event=cancel_event,
-                    abort_checker=abort_checker,
-                    cancel_on_timeout=False,
-                )
-            )
+            wait_kwargs: dict[str, Any] = {
+                "timeout_seconds": timeout_seconds,
+                "cancel_event": cancel_event,
+                "abort_checker": abort_checker,
+            }
+            if _call_accepts_keyword(self._wait_run_completion, "cancel_on_timeout"):
+                wait_kwargs["cancel_on_timeout"] = False
+            wait_task = asyncio.create_task(self._wait_run_completion(service, sub_result, **wait_kwargs))
             try:
                 while True:
                     probe_seconds = max(0.01, float(getattr(self, "_binding_status_probe_seconds", 2.0)))

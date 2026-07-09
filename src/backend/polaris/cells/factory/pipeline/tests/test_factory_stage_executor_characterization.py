@@ -4844,7 +4844,78 @@ class TestDirectorDispatchLoop:
         assert fake_orchestration.active_task.cancelled()
 
     @pytest.mark.asyncio
-    async def test_run_completion_waiter_timeout_propagates_to_active_orchestration_run(
+    async def test_run_completion_waiter_cancel_event_preserves_active_director_session(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeOrchestrationService:
+            def __init__(self) -> None:
+                self.active_task = asyncio.create_task(asyncio.sleep(60))
+                self._active_runs = {"run-1": self.active_task}
+                self.cancelled: list[tuple[str, bool]] = []
+
+            async def cancel_run(self, run_id: str, force: bool = False) -> object:
+                self.cancelled.append((run_id, force))
+                self.active_task.cancel()
+                return object()
+
+        class _FakeCommandService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="running", message="still running")
+
+        fake_orchestration = _FakeOrchestrationService()
+
+        async def _fake_get_orchestration_service() -> _FakeOrchestrationService:
+            return fake_orchestration
+
+        monkeypatch.setattr(
+            "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+            _fake_get_orchestration_service,
+        )
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.create_task_row(subject="cancelled active director task")
+        claim = task_runtime.claim_execution(
+            task["id"],
+            worker_id="director",
+            role_id="director",
+            run_id="run-1",
+            selection_source="unit",
+        )
+        assert claim["success"] is True
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        result = await RunCompletionWaiter(tmp_path).wait(
+            _FakeCommandService(),
+            CommandResult(run_id="run-1", status="running", message="submitted"),
+            timeout_seconds=30,
+            cancel_event=cancel_event,
+        )
+
+        assert result.status == "cancelled"
+        assert result.metadata == {
+            "cancel_signal_sent": False,
+            "cancel_reason": "factory_cancelled",
+            "inflight_run_continues": True,
+            "terminal_source": "task_runtime_active_execution_barrier",
+            "active_task_count": 1,
+            "active_task_ids": [str(task["id"])],
+        }
+        assert fake_orchestration.cancelled == []
+        assert fake_orchestration.active_task.cancelled() is False
+        guarded_heartbeat = task_runtime.heartbeat_execution(
+            task["id"],
+            session_id=str(claim["session"]["session_id"]),
+        )
+        assert guarded_heartbeat["success"] is True
+
+        fake_orchestration.active_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await fake_orchestration.active_task
+
+    @pytest.mark.asyncio
+    async def test_run_completion_waiter_timeout_preserves_active_director_session_by_default(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -4891,21 +4962,26 @@ class TestDirectorDispatchLoop:
         )
 
         assert result.status == "timeout"
-        assert result.message == "Run timed out after 0 seconds"
         assert result.metadata == {
-            "cancel_signal_sent": True,
+            "cancel_signal_sent": False,
             "cancel_reason": "factory_stage_timeout",
-            "inflight_run_continues": False,
+            "inflight_run_continues": True,
+            "terminal_source": "task_runtime_active_execution_barrier",
+            "active_task_count": 1,
+            "active_task_ids": [str(task["id"])],
         }
-        assert fake_orchestration.cancelled == [("run-1", True)]
+        assert fake_orchestration.cancelled == []
         await asyncio.sleep(0)
-        assert fake_orchestration.active_task.cancelled()
+        assert fake_orchestration.active_task.cancelled() is False
         guarded_heartbeat = task_runtime.heartbeat_execution(
             task["id"],
             session_id=str(claim["session"]["session_id"]),
         )
-        assert guarded_heartbeat["success"] is False
-        assert guarded_heartbeat["reason"] == "session_not_active"
+        assert guarded_heartbeat["success"] is True
+
+        fake_orchestration.active_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await fake_orchestration.active_task
 
     @pytest.mark.asyncio
     async def test_run_completion_waiter_soft_timeout_preserves_active_director_session(
