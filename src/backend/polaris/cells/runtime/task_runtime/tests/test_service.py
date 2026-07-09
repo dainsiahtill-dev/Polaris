@@ -1514,6 +1514,159 @@ def test_list_observable_task_rows_does_not_refresh_dependency_unblocks(
     assert refresh_calls == []
 
 
+def _assert_task_row_read_model_fallback_coverage(
+    coverage: dict[str, Any],
+    *,
+    coverage_ratio: float,
+    transitional_file_fallback_required: bool,
+    file_row_ids_without_execution_fact: list[str],
+    fact_row_ids_without_file_row: list[str],
+) -> None:
+    assert coverage["coverage_ratio"] == pytest.approx(coverage_ratio)
+    assert coverage["transitional_file_fallback_required"] is transitional_file_fallback_required
+    assert coverage["file_row_ids_without_execution_fact"] == file_row_ids_without_execution_fact
+    assert coverage["fact_row_ids_without_file_row"] == fact_row_ids_without_file_row
+
+
+def test_task_row_read_model_fallback_coverage_reports_full_file_coverage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    monkeypatch.setattr(
+        service,
+        "_list_file_task_rows",
+        lambda: [
+            {"id": 1, "task_id": "1", "subject": "covered file row one"},
+            {"id": 2, "task_id": "2", "subject": "covered file row two"},
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            {"id": 1, "task_id": "1", "subject": "execution fact one"},
+            {"id": 2, "task_id": "2", "subject": "execution fact two"},
+        ],
+    )
+
+    coverage = service.task_row_read_model_fallback_coverage()
+
+    _assert_task_row_read_model_fallback_coverage(
+        coverage,
+        coverage_ratio=1.0,
+        transitional_file_fallback_required=False,
+        file_row_ids_without_execution_fact=[],
+        fact_row_ids_without_file_row=[],
+    )
+
+
+def test_task_row_read_model_fallback_coverage_reports_file_rows_without_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    monkeypatch.setattr(
+        service,
+        "_list_file_task_rows",
+        lambda: [
+            {"id": 1, "task_id": "1", "subject": "covered file row one"},
+            {"id": 2, "task_id": "2", "subject": "missing fact row"},
+            {"id": 3, "task_id": "3", "subject": "covered file row three"},
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            {"id": 1, "task_id": "1", "subject": "execution fact one"},
+            {"id": 3, "task_id": "3", "subject": "execution fact three"},
+        ],
+    )
+
+    coverage = service.task_row_read_model_fallback_coverage()
+
+    _assert_task_row_read_model_fallback_coverage(
+        coverage,
+        coverage_ratio=2 / 3,
+        transitional_file_fallback_required=True,
+        file_row_ids_without_execution_fact=["2"],
+        fact_row_ids_without_file_row=[],
+    )
+
+
+def test_task_row_read_model_fallback_coverage_reports_fact_only_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    monkeypatch.setattr(
+        service,
+        "_list_file_task_rows",
+        lambda: [{"id": 1, "task_id": "1", "subject": "covered file row"}],
+    )
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            {"id": 1, "task_id": "1", "subject": "execution fact one"},
+            {
+                "id": "FACT-ONLY",
+                "task_id": "FACT-ONLY",
+                "subject": "execution fact without file row",
+            },
+        ],
+    )
+
+    coverage = service.task_row_read_model_fallback_coverage()
+
+    _assert_task_row_read_model_fallback_coverage(
+        coverage,
+        coverage_ratio=1.0,
+        transitional_file_fallback_required=False,
+        file_row_ids_without_execution_fact=[],
+        fact_row_ids_without_file_row=["FACT-ONLY"],
+    )
+
+
+def test_task_row_read_model_fallback_coverage_does_not_refresh_dependency_unblocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    refresh_calls: list[str] = []
+
+    def reject_refresh_dependency_unblocks() -> NoReturn:
+        refresh_calls.append("refresh_dependency_unblocks")
+        raise AssertionError("fallback coverage must be a side-effect-free read projection")
+
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", reject_refresh_dependency_unblocks)
+    monkeypatch.setattr(service, "_list_file_task_rows", lambda: [{"id": 1, "task_id": "1"}])
+    monkeypatch.setattr(service, "list_task_rows_from_execution_facts", lambda: [{"id": 1, "task_id": "1"}])
+
+    coverage = service.task_row_read_model_fallback_coverage()
+
+    assert refresh_calls == []
+    _assert_task_row_read_model_fallback_coverage(
+        coverage,
+        coverage_ratio=1.0,
+        transitional_file_fallback_required=False,
+        file_row_ids_without_execution_fact=[],
+        fact_row_ids_without_file_row=[],
+    )
+
+
 def test_list_observable_task_rows_delegates_to_transitional_read_model_helper(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

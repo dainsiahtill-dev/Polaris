@@ -1264,6 +1264,46 @@ class TaskRuntimeService:
         fact_rows = self.list_task_rows_from_execution_facts()
         return self._project_observable_task_rows(file_rows, fact_rows)
 
+    def task_row_read_model_fallback_coverage(self) -> dict[str, Any]:
+        """Return structured read-only coverage for the transitional fallback.
+
+        The projection reuses the same file row loader, execution-fact loader,
+        and observable row overlay used by ``_transitional_task_row_read_model_rows``.
+        It is intentionally side-effect free: it does not claim tasks, mutate
+        sessions, append facts, or refresh dependency unblocks.
+
+        Complexity:
+            O(r + f + p) time and memory over file rows, fact rows, and projected rows.
+        """
+
+        file_rows = self._list_file_task_rows()
+        fact_rows = self.list_task_rows_from_execution_facts()
+        projected_rows = self._project_observable_task_rows(file_rows, fact_rows)
+
+        file_row_ids = self._task_row_read_model_task_id_set(file_rows)
+        fact_row_ids = self._task_row_read_model_task_id_set(fact_rows)
+        file_row_ids_without_execution_fact = sorted(
+            file_row_ids - fact_row_ids,
+            key=self._task_row_read_model_task_id_sort_key,
+        )
+        fact_row_ids_without_file_row = sorted(
+            fact_row_ids - file_row_ids,
+            key=self._task_row_read_model_task_id_sort_key,
+        )
+
+        file_rows_count = len(file_rows)
+        coverage_ratio = 1.0 if file_rows_count == 0 else len(file_row_ids & fact_row_ids) / file_rows_count
+
+        return {
+            "file_rows_count": file_rows_count,
+            "fact_rows_count": len(fact_rows),
+            "projected_rows_count": len(projected_rows),
+            "file_row_ids_without_execution_fact": file_row_ids_without_execution_fact,
+            "fact_row_ids_without_file_row": fact_row_ids_without_file_row,
+            "coverage_ratio": coverage_ratio,
+            "transitional_file_fallback_required": bool(file_row_ids_without_execution_fact),
+        }
+
     def _dependency_status_read_model_rows(self) -> list[dict[str, Any]]:
         """Load transitional dependency-status read-model rows.
 
@@ -1546,6 +1586,24 @@ class TaskRuntimeService:
             or metadata.get("workflow_task_id")
             or ""
         ).strip()
+
+    def _task_row_read_model_task_id(self, row: dict[str, Any]) -> str | None:
+        raw_task_id = self._observable_row_task_id(row)
+        if not raw_task_id:
+            return None
+        normalized_task_id = self.normalize_task_id(raw_task_id)
+        if normalized_task_id is not None:
+            return str(normalized_task_id)
+        return raw_task_id
+
+    def _task_row_read_model_task_id_set(self, rows: list[dict[str, Any]]) -> set[str]:
+        return {task_id for row in rows if (task_id := self._task_row_read_model_task_id(row))}
+
+    def _task_row_read_model_task_id_sort_key(self, task_id: str) -> tuple[int, str]:
+        normalized_task_id = self.normalize_task_id(task_id)
+        if normalized_task_id is not None:
+            return (0, f"{normalized_task_id:010d}")
+        return (1, task_id)
 
     def _overlay_execution_fact_rows(
         self,

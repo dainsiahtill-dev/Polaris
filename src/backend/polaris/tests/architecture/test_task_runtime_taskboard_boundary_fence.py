@@ -3321,6 +3321,7 @@ PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER = "_find_projected_runtime_exe
 PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE = "_find_projected_runtime_execution_session_from_file_rows"
 PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE = "_list_file_task_rows"
 TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD = "_transitional_task_row_read_model_rows"
+TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD = "task_row_read_model_fallback_coverage"
 OBSERVABLE_TASK_ROWS_METHOD = "list_observable_task_rows"
 OBSERVABLE_TASK_ROWS_FILE_SOURCE = "_list_file_task_rows"
 OBSERVABLE_TASK_ROWS_FACT_SOURCE = "list_task_rows_from_execution_facts"
@@ -3338,6 +3339,38 @@ TRANSITIONAL_TASK_ROW_READ_MODEL_FORBIDDEN_SELF_CALLS: frozenset[str] = frozense
         "_overlay_execution_fact_rows",
         "list_task_rows",
         "refresh_dependency_unblocks",
+        TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD,
+    }
+)
+TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_REQUIRED_SELF_CALLS: frozenset[str] = frozenset(
+    {
+        OBSERVABLE_TASK_ROWS_FILE_SOURCE,
+        OBSERVABLE_TASK_ROWS_FACT_SOURCE,
+        OBSERVABLE_TASK_ROWS_PROJECTION_SOURCE,
+    }
+)
+TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_ID_HELPERS: frozenset[str] = frozenset(
+    {
+        "_observable_row_task_id",
+        "_task_row_read_model_task_id",
+        "_task_row_read_model_task_id_set",
+        "_task_row_read_model_task_id_sort_key",
+        "normalize_task_id",
+    }
+)
+TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_ALLOWED_SELF_CALLS: frozenset[str] = (
+    TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_REQUIRED_SELF_CALLS | TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_ID_HELPERS
+)
+TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_FORBIDDEN_CALLS: frozenset[str] = frozenset(
+    {
+        "self._append_execution_event",
+        "self._board.create",
+        "self._board.update",
+        "self._write_session",
+        "self.claim_execution",
+        "self.complete_execution",
+        "self.fail_execution",
+        "self.refresh_dependency_unblocks",
     }
 )
 OBSERVABLE_TASK_ROWS_FORBIDDEN_SELF_CALLS = frozenset(
@@ -3588,6 +3621,12 @@ def _transitional_task_row_read_model_rows_function_def() -> ast.FunctionDef:
     return _task_runtime_service_method_def(TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD)
 
 
+def _task_row_read_model_fallback_coverage_function_def() -> ast.FunctionDef:
+    """Return the task-row read-model fallback coverage AST node."""
+
+    return _task_runtime_service_method_def(TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD)
+
+
 def _check_transitional_task_row_read_model_rows_projection_sources() -> list[str]:
     """Emit offenders if transitional rows stop consuming required row sources."""
 
@@ -3625,6 +3664,57 @@ def _check_transitional_task_row_read_model_rows_projection_sources() -> list[st
                 f"{node.lineno} calls {callee}(); transitional row assembly "
                 "must consume reviewed row loaders instead of raw TaskBoard "
                 "methods."
+            )
+
+    return offenders
+
+
+def _check_task_row_read_model_fallback_coverage_projection_boundary() -> list[str]:
+    """Emit offenders if fallback coverage stops being a read-only projection."""
+
+    method_def = _task_row_read_model_fallback_coverage_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for source_method in sorted(TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_REQUIRED_SELF_CALLS):
+        source_calls = _direct_self_method_calls(method_def, source_method)
+        if not source_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}() "
+                f"does not call self.{source_method}(); fallback coverage must "
+                "measure the same file rows, execution fact rows, and observable "
+                "projection that define the transitional read model."
+            )
+
+    allowed_self_calls = {
+        f"self.{method_name}" for method_name in sorted(TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_ALLOWED_SELF_CALLS)
+    }
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        if callee in TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_FORBIDDEN_CALLS:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}():"
+                f"{node.lineno} calls {callee}(); fallback coverage is a "
+                "read-model projection and must not append events, write sessions, "
+                "refresh dependencies, claim work, complete/fail executions, or "
+                "mutate the raw TaskBoard."
+            )
+            continue
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}():"
+                f"{node.lineno} calls {callee}(); fallback coverage must consume "
+                "reviewed row projection helpers instead of raw TaskBoard methods."
+            )
+            continue
+        if callee.startswith("self.") and callee not in allowed_self_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}():"
+                f"{node.lineno} calls {callee}(); fallback coverage may only call "
+                "the file-row loader, execution-fact loader, observable projection, "
+                "or pure task-id normalization helpers."
             )
 
     return offenders
@@ -3792,6 +3882,51 @@ def test_transitional_task_row_read_model_rows_load_file_rows_execution_facts_an
         "and project them through self._project_observable_task_rows(...). "
         "This helper is the single transitional assembly boundary for observable "
         "rows and dependency-status read-model rows. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_task_row_read_model_fallback_coverage_is_read_only_projection() -> None:
+    """WS2 fallback-coverage fence (existence and read-only boundary)."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_task_row_read_model_fallback_coverage_projection_boundary()
+
+    assert not offenders, (
+        "WS2 task-row read-model fallback coverage fence: "
+        f"{rel}:TaskRuntimeService.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}() "
+        "must exist and remain a read-only coverage/projection method. It may "
+        "load file-backed rows, load task_runtime.execution fact rows, project "
+        "observable rows, and normalize task ids; it must not append execution "
+        "events, write sessions, refresh dependencies, claim/complete/fail "
+        "executions, or mutate the raw TaskBoard. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_transitional_task_row_read_model_rows_not_replaced_by_fallback_coverage() -> None:
+    """WS2 transitional helper remains the row assembly boundary."""
+
+    method_def = _transitional_task_row_read_model_rows_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    coverage_calls = _direct_self_method_calls(method_def, TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD)
+    projection_offenders = _check_transitional_task_row_read_model_rows_projection_sources()
+    offenders = [
+        f"{rel}:TaskRuntimeService.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}():"
+        f"{call.lineno} calls self.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}(); "
+        "the transitional read-model helper must directly load file rows, "
+        "execution fact rows, and projection rows instead of delegating to the "
+        "coverage/reporting method."
+        for call in coverage_calls
+    ]
+    offenders.extend(projection_offenders)
+
+    assert not offenders, (
+        "WS2 transitional task-row read-model ownership fence: "
+        f"{rel}:TaskRuntimeService.{TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD}() "
+        "must stay the direct assembly boundary for file-backed rows, "
+        "task_runtime.execution fact rows, and observable projection. The "
+        f"{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}() method is reporting "
+        "coverage only and must not replace or pollute transitional row assembly. "
+        "Offenders:\n" + "\n".join(offenders)
     )
 
 
