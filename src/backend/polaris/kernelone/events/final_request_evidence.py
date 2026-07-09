@@ -460,9 +460,7 @@ def looks_like_ce_blueprint_payload(value: Any) -> bool:
             return True
     schema_version = _text(value.get("schema_version")).lower()
     has_blueprint_schema = (
-        "chief_engineer" in schema_version
-        or "ce_blueprint" in schema_version
-        or "blueprint" in schema_version
+        "chief_engineer" in schema_version or "ce_blueprint" in schema_version or "blueprint" in schema_version
     )
     has_blueprint_identity = bool(_first_text(value.get("blueprint_id"), value.get("id"), value.get("task_id")))
     has_structured_blueprint = _has_structural_field(
@@ -485,6 +483,12 @@ def looks_like_ce_blueprint_payload(value: Any) -> bool:
             "handoff_evidence",
         ),
     )
+    if not has_blueprint_schema and (
+        looks_like_pm_contract_payload(value)
+        or looks_like_failed_gate_evidence_context_payload(value)
+        or looks_like_workspace_quality_evidence_payload(value)
+    ):
+        return False
     if has_blueprint_schema:
         return has_structured_blueprint
     return has_blueprint_identity and has_structured_blueprint
@@ -506,7 +510,9 @@ def target_scope_evidence_entry(source: str, payload: Any) -> dict[str, Any]:
         authorized = target_scope_evidence_entry(source, authorization)
         if authorized:
             return authorized
-    target_files = _string_sequence(payload.get("target_files") or payload.get("targets") or payload.get("target_paths"))
+    target_files = _string_sequence(
+        payload.get("target_files") or payload.get("targets") or payload.get("target_paths")
+    )
     scope_paths = _string_sequence(payload.get("scope_paths") or payload.get("declared_scopes") or payload.get("scope"))
     allowed_write_paths = _string_sequence(
         payload.get("allowed_write_paths") or payload.get("allowed_paths") or payload.get("write_scope")
@@ -534,8 +540,7 @@ def summarize_target_scope_evidence_payload(value: Any) -> dict[str, Any]:
         entries = [
             entry
             for item in raw_sources
-            if isinstance(item, Mapping)
-            and (entry := target_scope_evidence_entry(_text(item.get("source")), item))
+            if isinstance(item, Mapping) and (entry := target_scope_evidence_entry(_text(item.get("source")), item))
         ]
     else:
         entry = target_scope_evidence_entry(_text(found.get("source") or "target_scope"), found)
@@ -574,6 +579,7 @@ def summarize_target_scope_evidence_payload(value: Any) -> dict[str, Any]:
         "sources": source_summaries,
         "payload_hash": _stable_hash(value),
     }
+
 
 def normalize_context_snapshot_ref(value: Any) -> str:
     """Return the canonical ContextStore snapshot hash for final-request refs.

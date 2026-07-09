@@ -297,6 +297,78 @@ def test_final_request_context_audit_requires_structured_workspace_quality_evide
     assert "has_workspace_quality_evidence" in audit["context_quality"]["missing_coverage"]
 
 
+def test_final_request_context_audit_accepts_metadata_failure_feedback() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    messages = [{"role": "user", "content": "continue after failed gate"}]
+    ai_request = Mock()
+    ai_request.context = {
+        "chat_messages": messages,
+        "target_files": ["src/index.ts"],
+        "scope_paths": ["src/index.ts"],
+    }
+    ai_request.metadata = {
+        "failure_feedback": {
+            "schema_version": "polaris.failure_evidence.context_slot.v1",
+            "failure_class": "DEPENDENCY_NOT_UNLOCKED",
+            "responsible_layer": "execution_control_plane",
+            "evidence_refs": ["task-boundary:run-1:TASK-2"],
+        }
+    }
+    ai_request.options = {"tools": []}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": []},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["coverage"]["has_failure_feedback"] is True
+    assert "has_failure_feedback" not in audit["context_quality"]["missing_coverage"]
+
+
+def test_final_request_context_audit_accepts_metadata_workspace_quality_evidence() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    messages = [{"role": "user", "content": "continue after workspace quality failure"}]
+    ai_request = Mock()
+    ai_request.context = {
+        "chat_messages": messages,
+        "target_files": ["src/index.ts"],
+        "scope_paths": ["src/index.ts"],
+    }
+    ai_request.metadata = {
+        "workspace_quality_evidence": {
+            "schema_version": "polaris.workspace_quality_evidence.v1",
+            "all_checks_passed": False,
+            "quality_errors": ["npm test passed with 0 tests"],
+            "deterministic_checks": ["package_scripts", "source_target_coverage"],
+        }
+    }
+    ai_request.options = {"tools": []}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": []},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["coverage"]["has_workspace_quality_evidence"] is True
+    assert "has_workspace_quality_evidence" not in audit["context_quality"]["missing_coverage"]
+
+
 def test_final_request_context_audit_does_not_count_degraded_blueprint_fallback() -> None:
     profile = Mock()
     profile.max_context_tokens = 32768
