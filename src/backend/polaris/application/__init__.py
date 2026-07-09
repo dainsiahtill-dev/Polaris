@@ -38,16 +38,14 @@ Architecture constraints
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 # ---------------------------------------------------------------------------
 # Application services (lazy-import friendly)
 # ---------------------------------------------------------------------------
 from polaris.application.runtime_admin import (
     RuntimeAdminError,
     RuntimeAdminService,
-)
-from polaris.application.session_admin import (
-    SessionAdminError,
-    SessionAdminService,
 )
 from polaris.application.storage_admin import (
     StorageAdminError,
@@ -57,6 +55,12 @@ from polaris.application.traceability_admin import (
     TraceabilityAdminError,
     TraceabilityAdminService,
 )
+
+if TYPE_CHECKING:
+    from polaris.application.session_admin import (
+        SessionAdminError,
+        SessionAdminService,
+    )
 
 # ---------------------------------------------------------------------------
 # Re-exported domain entities for cross-cutting convenience.
@@ -128,6 +132,26 @@ from polaris.kernelone.contracts.technical import (
     TaggedError,
     TraceContext,
 )
+
+_LAZY_EXPORT_MODULES = {
+    "SessionAdminError": "polaris.application.session_admin",
+    "SessionAdminService": "polaris.application.session_admin",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily expose application facades that depend on optional storage stacks."""
+    module_name = _LAZY_EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    import importlib
+
+    module = importlib.import_module(module_name)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     # -- Domain entities ----------------------------------------------------

@@ -1413,10 +1413,7 @@ async def execute_director_task(
                         lease_ttl_seconds=_DEFAULT_TASK_LEASE_TTL_SECONDS,
                         context_summary=selected_subject,
                     )
-                    if (
-                        isinstance(heartbeat_result, dict)
-                        and heartbeat_result.get("success") is not True
-                    ):
+                    if isinstance(heartbeat_result, dict) and heartbeat_result.get("success") is not True:
                         decision_signals.append(_task_runtime_heartbeat_failed_signal(heartbeat_result))
                         return
                 except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -3893,6 +3890,19 @@ def _materialization_failure_evidence_row(
             if value:
                 evidence_refs.append(value)
                 break
+    if not evidence_refs:
+        evidence_refs.append(
+            ":".join(
+                token
+                for token in (
+                    "director_adapter_failure",
+                    str(run_id or "").strip(),
+                    str(target_task_id or "").strip(),
+                    str(error_code or error or "").strip(),
+                )
+                if token
+            )
+        )
     return FailureEvidenceV1(
         failure_class=failure_class,
         responsible_layer=responsible_layer,

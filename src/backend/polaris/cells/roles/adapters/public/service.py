@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Mapping
 from pathlib import Path
@@ -136,10 +137,9 @@ def _split_materialization_effect_results(
     diagnostic_results: list[dict[str, Any]] = []
     for item in tool_results:
         copied = dict(item)
-        if (
-            str(copied.get("evidence_status") or "").strip() == "missing_evidence"
-            and not _materialization_result_has_effect_payload(copied)
-        ):
+        if str(
+            copied.get("evidence_status") or ""
+        ).strip() == "missing_evidence" and not _materialization_result_has_effect_payload(copied):
             diagnostic_results.append(copied)
             continue
         effect_results.append(copied)
@@ -157,6 +157,37 @@ def _materialization_result_has_effect_payload(item: dict[str, Any]) -> bool:
     if isinstance(result.get("repair_kernel"), Mapping):
         return True
     return result.get("ok") is not None or result.get("success") is not None
+
+
+def _call_materialization_quality_repair_facade(
+    facade: Any,
+    *,
+    artifact_quality_errors: tuple[str, ...],
+    artifact_quality_issues: tuple[dict[str, Any], ...],
+    runner_step_ids: tuple[str, ...],
+    runner: Any,
+    plan_probe_preaudit: dict[str, Any],
+    convergence_verifier_present: bool,
+) -> Any:
+    """Call runtime facade while preserving old mock/facade signatures."""
+    kwargs: dict[str, Any] = {
+        "artifact_quality_errors": artifact_quality_errors,
+        "artifact_quality_issues": artifact_quality_issues,
+        "runner_step_ids": runner_step_ids,
+        "runner": runner,
+        "plan_probe_preaudit": plan_probe_preaudit,
+        "convergence_verifier_present": convergence_verifier_present,
+    }
+    try:
+        signature = inspect.signature(facade)
+    except (TypeError, ValueError):
+        return facade(**kwargs)
+
+    parameters = signature.parameters
+    accepts_var_kwargs = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+    if not accepts_var_kwargs:
+        kwargs = {key: value for key, value in kwargs.items() if key in parameters}
+    return facade(**kwargs)
 
 
 def run_director_materialization_quality_repair_schedule_result(
@@ -188,7 +219,8 @@ def run_director_materialization_quality_repair_schedule_result(
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=artifact_quality_issues,
     )
-    facade_result = run_director_materialization_quality_repair_facade(
+    facade_result = _call_materialization_quality_repair_facade(
+        run_director_materialization_quality_repair_facade,
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=artifact_quality_issues,
         runner_step_ids=tuple(step.step_id for step in schedule.items),
@@ -369,18 +401,14 @@ def build_director_materialization_quality_repair_message(
         original_message=original_message,
         artifact_quality_errors=list(artifact_quality_errors),
         directive_artifact_quality_errors=(
-            list(directive_artifact_quality_errors)
-            if directive_artifact_quality_errors is not None
-            else None
+            list(directive_artifact_quality_errors) if directive_artifact_quality_errors is not None else None
         ),
         changed_files=list(changed_files),
         missing_target_files=list(missing_target_files) if missing_target_files is not None else None,
         repair_target_files=list(repair_target_files) if repair_target_files is not None else None,
         workspace_full=workspace_full,
         interface_discrepancy_evidence=(
-            dict(interface_discrepancy_evidence)
-            if interface_discrepancy_evidence is not None
-            else None
+            dict(interface_discrepancy_evidence) if interface_discrepancy_evidence is not None else None
         ),
     )
 

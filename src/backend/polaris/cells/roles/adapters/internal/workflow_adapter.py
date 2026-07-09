@@ -16,16 +16,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.profile.public.service import (
     RoleProfileRegistry,
     load_core_roles,
     profile_to_dict,
 )
-from polaris.cells.roles.session.public import RoleDataStore
 
 from . import runtime_dialogue
+
+if TYPE_CHECKING:
+    from polaris.cells.roles.session.public import RoleDataStore
 
 logger = logging.getLogger(__name__)
 _RUNTIME_ENTRYPOINT = "roles.runtime.execute_role_session"
@@ -152,6 +154,8 @@ class WorkflowRoleAdapter:
     async def _store_execution_data(self, role: str, task_id: str, result: WorkflowRoleResult) -> None:
         """存储执行数据到角色数据目录"""
         try:
+            from polaris.cells.roles.session.public import RoleDataStore
+
             if role not in self._data_stores:
                 profile = self.registry.get_profile(role)
                 if profile:
@@ -168,7 +172,7 @@ class WorkflowRoleAdapter:
                         "runtime_entrypoint": _RUNTIME_ENTRYPOINT,
                     },
                 )
-        except (RuntimeError, ValueError) as e:
+        except (ImportError, RuntimeError, ValueError) as e:
             logger.debug(f"存储执行数据失败: {e}")
 
     def get_role_profile(self, role: str) -> dict[str, Any] | None:

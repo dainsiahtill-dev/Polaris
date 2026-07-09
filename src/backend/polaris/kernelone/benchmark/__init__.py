@@ -22,6 +22,8 @@ Additional specialized benchmarking for ContextOS reliability:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 # Audit Metrics Benchmark
 from polaris.kernelone.benchmark.audit_metrics import (
     AlertMetrics,
@@ -43,23 +45,25 @@ from polaris.kernelone.benchmark.fixtures import (
     memory_benchmark,
     throughput_benchmark,
 )
-from polaris.kernelone.benchmark.holographic import (
-    HolographicRunResult,
-    HolographicSuiteResult,
-    RunStatus,
-    run_case,
-    run_holographic_suite,
-)
-from polaris.kernelone.benchmark.holographic_models import (
-    CaseReadiness,
-    HolographicCase,
-)
-from polaris.kernelone.benchmark.holographic_registry import (
-    HOLOGRAPHIC_CASES,
-    case_ids,
-    list_holographic_cases,
-    ready_case_ids,
-)
+
+if TYPE_CHECKING:
+    from polaris.kernelone.benchmark.holographic import (
+        HolographicRunResult,
+        HolographicSuiteResult,
+        RunStatus,
+        run_case,
+        run_holographic_suite,
+    )
+    from polaris.kernelone.benchmark.holographic_models import (
+        CaseReadiness,
+        HolographicCase,
+    )
+    from polaris.kernelone.benchmark.holographic_registry import (
+        HOLOGRAPHIC_CASES,
+        case_ids,
+        list_holographic_cases,
+        ready_case_ids,
+    )
 from polaris.kernelone.benchmark.latency import (
     LatencyBenchmarker,
     LatencyMeasurement,
@@ -112,6 +116,35 @@ from polaris.kernelone.benchmark.unified_runner import (
     BenchmarkSuiteResult,
     UnifiedBenchmarkRunner,
 )
+
+_LAZY_EXPORT_MODULES = {
+    "HolographicRunResult": "polaris.kernelone.benchmark.holographic",
+    "HolographicSuiteResult": "polaris.kernelone.benchmark.holographic",
+    "RunStatus": "polaris.kernelone.benchmark.holographic",
+    "run_case": "polaris.kernelone.benchmark.holographic",
+    "run_holographic_suite": "polaris.kernelone.benchmark.holographic",
+    "CaseReadiness": "polaris.kernelone.benchmark.holographic_models",
+    "HolographicCase": "polaris.kernelone.benchmark.holographic_models",
+    "HOLOGRAPHIC_CASES": "polaris.kernelone.benchmark.holographic_registry",
+    "case_ids": "polaris.kernelone.benchmark.holographic_registry",
+    "list_holographic_cases": "polaris.kernelone.benchmark.holographic_registry",
+    "ready_case_ids": "polaris.kernelone.benchmark.holographic_registry",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily expose optional benchmark suites without importing their deps."""
+    module_name = _LAZY_EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    import importlib
+
+    module = importlib.import_module(module_name)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     "HOLOGRAPHIC_CASES",

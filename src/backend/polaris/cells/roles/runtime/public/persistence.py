@@ -23,7 +23,14 @@ from polaris.kernelone.context.session_continuity import (
     history_pairs_to_messages,
     messages_to_history_pairs,
 )
-from sqlalchemy.exc import SQLAlchemyError
+
+try:
+    from sqlalchemy.exc import SQLAlchemyError
+except ImportError:
+
+    class SQLAlchemyError(Exception):
+        """Fallback marker when optional SQLAlchemy runtime support is absent."""
+
 
 if TYPE_CHECKING:
     from pathlib import Path

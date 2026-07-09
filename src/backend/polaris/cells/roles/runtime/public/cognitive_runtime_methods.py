@@ -41,7 +41,14 @@ from polaris.kernelone.context.runtime_feature_flags import (
     CognitiveRuntimeMode,
     resolve_cognitive_runtime_mode,
 )
-from sqlalchemy.exc import SQLAlchemyError
+
+try:
+    from sqlalchemy.exc import SQLAlchemyError
+except ImportError:
+
+    class SQLAlchemyError(Exception):
+        """Fallback marker when optional SQLAlchemy runtime support is absent."""
+
 
 logger = logging.getLogger(__name__)
 

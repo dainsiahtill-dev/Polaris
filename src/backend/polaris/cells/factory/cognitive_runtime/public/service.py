@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from polaris.application.cognitive_runtime import CognitiveRuntimeService
+from typing import TYPE_CHECKING, Any
+
 from polaris.cells.factory.cognitive_runtime.public.contracts import (
     DiffCellMappingResultV1,
     ExportHandoffPackCommandV1,
@@ -30,12 +31,21 @@ from polaris.kernelone.context.runtime_feature_flags import (
     resolve_cognitive_runtime_mode,
 )
 
+if TYPE_CHECKING:
+    from polaris.application.cognitive_runtime import CognitiveRuntimeService
+
+
+def _create_cognitive_runtime_service() -> Any:
+    from polaris.application.cognitive_runtime import CognitiveRuntimeService
+
+    return CognitiveRuntimeService()
+
 
 class CognitiveRuntimePublicService:
     """Public cell facade for cross-role runtime authority operations."""
 
     def __init__(self, runtime: CognitiveRuntimeService | None = None) -> None:
-        self._runtime = runtime or CognitiveRuntimeService()
+        self._runtime = runtime or _create_cognitive_runtime_service()
 
     def close(self) -> None:
         self._runtime.close()
@@ -337,4 +347,4 @@ class CognitiveRuntimePublicService:
 
 
 def get_cognitive_runtime_public_service() -> CognitiveRuntimePublicService:
-    return CognitiveRuntimePublicService(runtime=CognitiveRuntimeService())
+    return CognitiveRuntimePublicService(runtime=_create_cognitive_runtime_service())

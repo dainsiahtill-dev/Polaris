@@ -18,15 +18,11 @@ from polaris.kernelone.llm.providers.registry import (
 )
 
 from .anthropic_provider import AnthropicProvider
-from .async_ollama_provider import AsyncOllamaProvider
 from .async_provider_adapter import AsyncProviderClassAdapter
 from .codex_cli_provider import CodexCLIProvider
 from .codex_sdk_provider import CodexSDKProvider
 from .gemini_api_provider import GeminiAPIProvider
 from .gemini_cli_provider import GeminiCLIProvider
-from .kimi_provider import KimiProvider
-from .minimax_provider import MiniMaxProvider
-from .openai_provider import OpenAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -58,18 +54,41 @@ class ProviderManager:
         self.register_provider("codex_sdk", CodexSDKProvider)
         self.register_provider("codex_cli", CodexCLIProvider)  # Use proper Codex CLI provider
         self.register_provider("gemini_cli", GeminiCLIProvider)
-        self.register_provider("minimax", MiniMaxProvider)
-        self.register_provider("kimi", KimiProvider)
+        self._register_optional_provider("minimax", "minimax_provider", "MiniMaxProvider")
+        self._register_optional_provider("kimi", "kimi_provider", "KimiProvider")
         self.register_provider("gemini_api", GeminiAPIProvider)
 
         # Register async Ollama provider (with sync adapter)
-        ollama_async_adapter = AsyncProviderClassAdapter.create(AsyncOllamaProvider)
-        self.register_provider("ollama", ollama_async_adapter)
+        self._register_optional_provider(
+            "ollama",
+            "async_ollama_provider",
+            "AsyncOllamaProvider",
+            async_adapter=True,
+        )
 
         # The provider type strings are stable user configuration identifiers.
         # The implementation classes and modules use canonical provider names.
-        self.register_provider("openai_compat", OpenAIProvider)
+        self._register_optional_provider("openai_compat", "openai_provider", "OpenAIProvider")
         self.register_provider("anthropic_compat", AnthropicProvider)
+
+    def _register_optional_provider(
+        self,
+        provider_type: str,
+        module_name: str,
+        class_name: str,
+        *,
+        async_adapter: bool = False,
+    ) -> None:
+        """Register a provider only when its optional transport dependencies exist."""
+        try:
+            module = importlib.import_module(f".{module_name}", package=__package__)
+            provider_class = getattr(module, class_name)
+            if async_adapter:
+                provider_class = AsyncProviderClassAdapter.create(provider_class)
+        except (AttributeError, ImportError) as exc:
+            logger.info("%s provider unavailable: %s", provider_type, exc)
+            return
+        self.register_provider(provider_type, provider_class)
 
     def register_provider(self, provider_type: str, provider_class: type[BaseProvider]) -> None:
         """Register a provider class"""

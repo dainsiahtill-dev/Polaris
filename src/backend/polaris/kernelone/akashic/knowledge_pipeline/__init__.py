@@ -22,6 +22,8 @@ Usage::
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from polaris.kernelone.akashic.knowledge_pipeline.embedding_computer import (
     EmbeddingComputer,
 )
@@ -45,13 +47,6 @@ from polaris.kernelone.akashic.knowledge_pipeline.idempotent_vector_store import
 from polaris.kernelone.akashic.knowledge_pipeline.knowledge_sync import (
     KnowledgeSync,
     SyncStats,
-)
-from polaris.kernelone.akashic.knowledge_pipeline.lancedb_adapter import (
-    KnowledgeChunkRecord,
-    KnowledgeLanceDB,
-    SearchResult,
-    UpsertResult,
-    VectorRecord,
 )
 from polaris.kernelone.akashic.knowledge_pipeline.lancedb_vector_adapter import (
     LanceDBVectorAdapter,
@@ -77,7 +72,38 @@ from polaris.kernelone.akashic.knowledge_pipeline.semantic_chunker import (
     SemanticChunker,
 )
 
+if TYPE_CHECKING:
+    from polaris.kernelone.akashic.knowledge_pipeline.lancedb_adapter import (
+        KnowledgeChunkRecord,
+        KnowledgeLanceDB,
+        SearchResult,
+        UpsertResult,
+        VectorRecord,
+    )
+
 __version__ = "0.1.0"
+
+_LANCEDB_EXPORTS = frozenset(
+    {
+        "KnowledgeChunkRecord",
+        "KnowledgeLanceDB",
+        "SearchResult",
+        "UpsertResult",
+        "VectorRecord",
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily expose LanceDB symbols without making optional vector deps mandatory."""
+    if name in _LANCEDB_EXPORTS:
+        from polaris.kernelone.akashic.knowledge_pipeline import lancedb_adapter
+
+        value = getattr(lancedb_adapter, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Extractors

@@ -3231,7 +3231,8 @@ def _assert_retry_text_fallback_is_non_authoritative(
     retry_summary = adapter_result.get(summary_key)
     assert isinstance(retry_summary, dict)
     assert retry_summary.get("attempted") is True
-    assert ("patch_apply", 0) in retry_summary.get("write_args", [])
+    write_args = {tuple(item) for item in retry_summary.get("write_args", []) if isinstance(item, (list, tuple))}
+    assert ("patch_apply", 0) in write_args
     return adapter_result
 
 
