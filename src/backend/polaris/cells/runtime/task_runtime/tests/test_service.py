@@ -1528,6 +1528,49 @@ def _assert_task_row_read_model_fallback_coverage(
     assert coverage["fact_row_ids_without_file_row"] == fact_row_ids_without_file_row
 
 
+def _runtime_execution_projected_row(task_id: int, *, subject: str | None = None) -> dict[str, Any]:
+    session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id=f"run-projected-runtime-execution-{task_id}",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="unit",
+        selection_source="task_id_lookup",
+    )
+    return {
+        "id": task_id,
+        "task_id": str(task_id),
+        "subject": subject or f"projected runtime execution {task_id}",
+        "metadata": {"runtime_execution": session.to_dict()},
+    }
+
+
+def _assert_projected_runtime_execution_session_fallback_coverage(
+    coverage: dict[str, Any],
+    *,
+    file_projected_session_rows_count: int,
+    fact_projected_session_rows_count: int,
+    coverage_ratio: float,
+    projected_session_file_fallback_required: bool,
+    file_projected_session_task_ids_without_execution_fact: list[str],
+    fact_projected_session_task_ids_without_file_row: list[str],
+) -> None:
+    assert coverage["file_projected_session_rows_count"] == file_projected_session_rows_count
+    assert coverage["fact_projected_session_rows_count"] == fact_projected_session_rows_count
+    assert coverage["coverage_ratio"] == pytest.approx(coverage_ratio)
+    assert coverage["projected_session_file_fallback_required"] is projected_session_file_fallback_required
+    assert (
+        coverage["file_projected_session_task_ids_without_execution_fact"]
+        == file_projected_session_task_ids_without_execution_fact
+    )
+    assert (
+        coverage["fact_projected_session_task_ids_without_file_row"] == fact_projected_session_task_ids_without_file_row
+    )
+
+
 def test_task_row_read_model_fallback_coverage_reports_full_file_coverage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1743,6 +1786,222 @@ def test_get_task_row_stats_delegates_to_observable_stats_without_rebuilding_cov
 
     assert stats is sentinel_stats
     assert observable_stats_calls == ["get_observable_task_row_stats"]
+
+
+def test_projected_runtime_execution_session_fallback_coverage_reports_full_coverage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    def file_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = True,
+    ) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        assert augment_runtime_state is True
+        return [
+            _runtime_execution_projected_row(1, subject="file projected session one"),
+            _runtime_execution_projected_row(2, subject="file projected session two"),
+        ]
+
+    monkeypatch.setattr(service, "_list_file_task_rows", file_rows)
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            _runtime_execution_projected_row(1, subject="fact projected session one"),
+            _runtime_execution_projected_row(2, subject="fact projected session two"),
+        ],
+    )
+
+    coverage = service.projected_runtime_execution_session_fallback_coverage()
+
+    _assert_projected_runtime_execution_session_fallback_coverage(
+        coverage,
+        file_projected_session_rows_count=2,
+        fact_projected_session_rows_count=2,
+        coverage_ratio=1.0,
+        projected_session_file_fallback_required=False,
+        file_projected_session_task_ids_without_execution_fact=[],
+        fact_projected_session_task_ids_without_file_row=[],
+    )
+
+
+def test_projected_runtime_execution_session_fallback_coverage_reports_file_session_without_fact_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    def file_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = True,
+    ) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        assert augment_runtime_state is True
+        return [
+            _runtime_execution_projected_row(1, subject="covered file projected session"),
+            _runtime_execution_projected_row(2, subject="file projected session without fact"),
+        ]
+
+    monkeypatch.setattr(service, "_list_file_task_rows", file_rows)
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            _runtime_execution_projected_row(1, subject="covered fact projected session"),
+            {"id": 2, "task_id": "2", "subject": "fact row without projected runtime execution"},
+        ],
+    )
+
+    coverage = service.projected_runtime_execution_session_fallback_coverage()
+
+    _assert_projected_runtime_execution_session_fallback_coverage(
+        coverage,
+        file_projected_session_rows_count=2,
+        fact_projected_session_rows_count=1,
+        coverage_ratio=0.5,
+        projected_session_file_fallback_required=True,
+        file_projected_session_task_ids_without_execution_fact=["2"],
+        fact_projected_session_task_ids_without_file_row=[],
+    )
+
+
+def test_projected_runtime_execution_session_fallback_coverage_reports_fact_only_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    def file_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = True,
+    ) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        assert augment_runtime_state is True
+        return [_runtime_execution_projected_row(1, subject="covered file projected session")]
+
+    monkeypatch.setattr(service, "_list_file_task_rows", file_rows)
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [
+            _runtime_execution_projected_row(1, subject="covered fact projected session"),
+            _runtime_execution_projected_row(3, subject="fact-only projected session"),
+        ],
+    )
+
+    coverage = service.projected_runtime_execution_session_fallback_coverage()
+
+    _assert_projected_runtime_execution_session_fallback_coverage(
+        coverage,
+        file_projected_session_rows_count=1,
+        fact_projected_session_rows_count=2,
+        coverage_ratio=1.0,
+        projected_session_file_fallback_required=False,
+        file_projected_session_task_ids_without_execution_fact=[],
+        fact_projected_session_task_ids_without_file_row=["3"],
+    )
+
+
+def test_observable_task_row_stats_include_delegated_projected_runtime_execution_session_fallback_coverage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    sentinel_coverage: dict[str, Any] = {
+        "file_projected_session_rows_count": 1,
+        "fact_projected_session_rows_count": 1,
+        "file_projected_session_task_ids_without_execution_fact": [],
+        "fact_projected_session_task_ids_without_file_row": [],
+        "coverage_ratio": 1.0,
+        "projected_session_file_fallback_required": False,
+        "sentinel": "projected-runtime-execution-session-coverage",
+    }
+    coverage_calls: list[str] = []
+
+    def projected_session_fallback_coverage() -> dict[str, Any]:
+        coverage_calls.append("projected_runtime_execution_session_fallback_coverage")
+        return sentinel_coverage
+
+    monkeypatch.setattr(
+        service,
+        "list_observable_task_rows",
+        lambda: [{"id": 1, "task_id": "1", "status": "pending", "blocked_by": []}],
+    )
+    monkeypatch.setattr(
+        service,
+        "task_row_read_model_fallback_coverage",
+        lambda: {"sentinel": "read-model-fallback-coverage"},
+    )
+    monkeypatch.setattr(
+        service,
+        "projected_runtime_execution_session_fallback_coverage",
+        projected_session_fallback_coverage,
+    )
+
+    stats = service.get_observable_task_row_stats()
+
+    assert stats["total"] == 1
+    assert stats["pending"] == 1
+    assert stats["projected_runtime_execution_session_fallback_coverage"] is sentinel_coverage
+    assert coverage_calls == ["projected_runtime_execution_session_fallback_coverage"]
+
+
+def test_projected_runtime_execution_session_fallback_coverage_does_not_refresh_dependency_unblocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    refresh_calls: list[str] = []
+
+    def reject_refresh_dependency_unblocks() -> NoReturn:
+        refresh_calls.append("refresh_dependency_unblocks")
+        raise AssertionError("projected runtime-execution session coverage must be a read-only projection")
+
+    def file_rows(
+        *,
+        include_terminal: bool = True,
+        augment_runtime_state: bool = True,
+    ) -> list[dict[str, Any]]:
+        assert include_terminal is True
+        assert augment_runtime_state is True
+        return [_runtime_execution_projected_row(1)]
+
+    monkeypatch.setattr(service, "refresh_dependency_unblocks", reject_refresh_dependency_unblocks)
+    monkeypatch.setattr(service, "_list_file_task_rows", file_rows)
+    monkeypatch.setattr(
+        service,
+        "list_task_rows_from_execution_facts",
+        lambda: [_runtime_execution_projected_row(1)],
+    )
+
+    coverage = service.projected_runtime_execution_session_fallback_coverage()
+
+    assert refresh_calls == []
+    _assert_projected_runtime_execution_session_fallback_coverage(
+        coverage,
+        file_projected_session_rows_count=1,
+        fact_projected_session_rows_count=1,
+        coverage_ratio=1.0,
+        projected_session_file_fallback_required=False,
+        file_projected_session_task_ids_without_execution_fact=[],
+        fact_projected_session_task_ids_without_file_row=[],
+    )
 
 
 def test_task_row_stats_outlets_do_not_refresh_dependency_unblocks(

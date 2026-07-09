@@ -1304,6 +1304,62 @@ class TaskRuntimeService:
             "transitional_file_fallback_required": bool(file_row_ids_without_execution_fact),
         }
 
+    def projected_runtime_execution_session_fallback_coverage(self) -> dict[str, Any]:
+        """Return structured coverage for projected runtime-execution sessions.
+
+        This read model compares file-backed ``metadata.runtime_execution``
+        projections with append-only execution-fact projections. It is strictly
+        observational and must not refresh dependencies, append events, mutate
+        task rows, claim work, or write execution sessions.
+
+        Complexity:
+            O(r + f) time and memory over file-backed and execution-fact rows.
+        """
+
+        file_rows = self._list_file_task_rows(
+            include_terminal=True,
+            augment_runtime_state=True,
+        )
+        fact_rows = self.list_task_rows_from_execution_facts()
+
+        file_projected_session_rows = [
+            row for row in file_rows if self._runtime_execution_session_from_projected_row(row) is not None
+        ]
+        fact_projected_session_rows = [
+            row for row in fact_rows if self._runtime_execution_session_from_projected_row(row) is not None
+        ]
+
+        file_projected_session_task_ids = self._task_row_read_model_task_id_set(file_projected_session_rows)
+        fact_projected_session_task_ids = self._task_row_read_model_task_id_set(fact_projected_session_rows)
+        file_projected_session_task_ids_without_execution_fact = sorted(
+            file_projected_session_task_ids - fact_projected_session_task_ids,
+            key=self._task_row_read_model_task_id_sort_key,
+        )
+        fact_projected_session_task_ids_without_file_row = sorted(
+            fact_projected_session_task_ids - file_projected_session_task_ids,
+            key=self._task_row_read_model_task_id_sort_key,
+        )
+
+        file_projected_session_rows_count = len(file_projected_session_rows)
+        if file_projected_session_rows_count == 0:
+            coverage_ratio = 1.0
+        else:
+            coverage_ratio = (
+                len(file_projected_session_task_ids & fact_projected_session_task_ids)
+                / file_projected_session_rows_count
+            )
+
+        return {
+            "file_projected_session_rows_count": file_projected_session_rows_count,
+            "fact_projected_session_rows_count": len(fact_projected_session_rows),
+            "file_projected_session_task_ids_without_execution_fact": (
+                file_projected_session_task_ids_without_execution_fact
+            ),
+            "fact_projected_session_task_ids_without_file_row": (fact_projected_session_task_ids_without_file_row),
+            "coverage_ratio": coverage_ratio,
+            "projected_session_file_fallback_required": bool(file_projected_session_task_ids_without_execution_fact),
+        }
+
     def _dependency_status_read_model_rows(self) -> list[dict[str, Any]]:
         """Load transitional dependency-status read-model rows.
 
@@ -2407,6 +2463,9 @@ class TaskRuntimeService:
 
         stats = task_row_status_counts(self.list_observable_task_rows())
         stats["read_model_fallback_coverage"] = self.task_row_read_model_fallback_coverage()
+        stats["projected_runtime_execution_session_fallback_coverage"] = (
+            self.projected_runtime_execution_session_fallback_coverage()
+        )
         return stats
 
     def get_task_row_stats(self) -> dict[str, Any]:

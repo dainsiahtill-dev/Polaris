@@ -3320,6 +3320,8 @@ PROJECTED_RUNTIME_EXECUTION_SESSION_HELPER = "_find_projected_runtime_execution_
 PROJECTED_RUNTIME_EXECUTION_SESSION_LOCKED_HELPER = "_find_projected_runtime_execution_session_locked"
 PROJECTED_RUNTIME_EXECUTION_SESSION_LEGACY_BRIDGE = "_find_projected_runtime_execution_session_from_file_rows"
 PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE = "_list_file_task_rows"
+PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD = "projected_runtime_execution_session_fallback_coverage"
+PROJECTED_RUNTIME_EXECUTION_SESSION_PROJECTED_ROW_READER = "_runtime_execution_session_from_projected_row"
 TRANSITIONAL_TASK_ROW_READ_MODEL_ROWS_METHOD = "_transitional_task_row_read_model_rows"
 TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD = "task_row_read_model_fallback_coverage"
 OBSERVABLE_TASK_ROWS_METHOD = "list_observable_task_rows"
@@ -3362,6 +3364,37 @@ TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_ALLOWED_SELF_CALLS: frozenset[str] = (
     TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_REQUIRED_SELF_CALLS | TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_ID_HELPERS
 )
 TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_FORBIDDEN_CALLS: frozenset[str] = frozenset(
+    {
+        "self._append_execution_event",
+        "self._board.create",
+        "self._board.update",
+        "self._write_session",
+        "self.claim_execution",
+        "self.complete_execution",
+        "self.fail_execution",
+        "self.refresh_dependency_unblocks",
+    }
+)
+PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_REQUIRED_SELF_CALLS: frozenset[str] = frozenset(
+    {
+        OBSERVABLE_TASK_ROWS_FACT_SOURCE,
+        PROJECTED_RUNTIME_EXECUTION_SESSION_PROJECTED_ROW_READER,
+        PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE,
+    }
+)
+PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_ID_HELPERS: frozenset[str] = frozenset(
+    {
+        "_task_row_read_model_task_id",
+        "_task_row_read_model_task_id_set",
+        "_task_row_read_model_task_id_sort_key",
+        "normalize_task_id",
+    }
+)
+PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_ALLOWED_SELF_CALLS: frozenset[str] = (
+    PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_REQUIRED_SELF_CALLS
+    | PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_ID_HELPERS
+)
+PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_FORBIDDEN_CALLS: frozenset[str] = frozenset(
     {
         "self._append_execution_event",
         "self._board.create",
@@ -3627,6 +3660,12 @@ def _task_row_read_model_fallback_coverage_function_def() -> ast.FunctionDef:
     return _task_runtime_service_method_def(TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD)
 
 
+def _projected_runtime_execution_session_fallback_coverage_function_def() -> ast.FunctionDef:
+    """Return the projected runtime-execution session fallback coverage AST node."""
+
+    return _task_runtime_service_method_def(PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD)
+
+
 def _check_transitional_task_row_read_model_rows_projection_sources() -> list[str]:
     """Emit offenders if transitional rows stop consuming required row sources."""
 
@@ -3715,6 +3754,89 @@ def _check_task_row_read_model_fallback_coverage_projection_boundary() -> list[s
                 f"{node.lineno} calls {callee}(); fallback coverage may only call "
                 "the file-row loader, execution-fact loader, observable projection, "
                 "or pure task-id normalization helpers."
+            )
+
+    return offenders
+
+
+def _check_projected_runtime_execution_session_fallback_coverage_boundary() -> list[str]:
+    """Emit offenders if projected session fallback coverage stops being read-only."""
+
+    method_def = _projected_runtime_execution_session_fallback_coverage_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    for source_method in sorted(PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_REQUIRED_SELF_CALLS):
+        source_calls = _direct_self_method_calls(method_def, source_method)
+        if not source_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}() "
+                f"does not call self.{source_method}(); projected runtime-execution "
+                "session fallback coverage must compare file-backed projected "
+                "sessions with task_runtime.execution fact projected sessions."
+            )
+
+    row_source_calls = _direct_self_method_calls(method_def, PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE)
+    for call_node in row_source_calls:
+        if not _keyword_is_bool(call_node, "include_terminal", True):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}():"
+                f"{call_node.lineno} must call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}"
+                "(..., include_terminal=True, ...) explicitly; legacy "
+                "metadata.runtime_execution can live on terminal file rows."
+            )
+        if not _keyword_is_bool(call_node, "augment_runtime_state", True):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}():"
+                f"{call_node.lineno} must call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_ROW_SOURCE}"
+                "(..., augment_runtime_state=True) explicitly so file-row "
+                "session projection matches observable runtime state."
+            )
+
+    projected_row_reader_calls = _direct_self_method_calls(
+        method_def,
+        PROJECTED_RUNTIME_EXECUTION_SESSION_PROJECTED_ROW_READER,
+    )
+    if len(projected_row_reader_calls) < 2:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}() "
+            f"must call self.{PROJECTED_RUNTIME_EXECUTION_SESSION_PROJECTED_ROW_READER}() "
+            "for both file rows and execution-fact rows before comparing "
+            "projected session task-id coverage."
+        )
+
+    allowed_self_calls = {
+        f"self.{method_name}"
+        for method_name in sorted(PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_ALLOWED_SELF_CALLS)
+    }
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _call_name(node.func)
+        if callee in PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_FORBIDDEN_CALLS:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}():"
+                f"{node.lineno} calls {callee}(); projected runtime-execution "
+                "session fallback coverage is observational and must not refresh "
+                "dependencies, append events, mutate TaskBoard rows, write "
+                "sessions, or claim/complete/fail executions."
+            )
+            continue
+        if callee.startswith("self._board."):
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}():"
+                f"{node.lineno} calls {callee}(); projected runtime-execution "
+                "session fallback coverage must consume reviewed row/fact "
+                "projection helpers instead of raw TaskBoard methods."
+            )
+            continue
+        if callee.startswith("self.") and callee not in allowed_self_calls:
+            offenders.append(
+                f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}():"
+                f"{node.lineno} calls {callee}(); projected runtime-execution "
+                "session fallback coverage may only call the explicit file-row "
+                "loader, execution-fact loader, projected-session reader, or pure "
+                "task-id normalization helpers."
             )
 
     return offenders
@@ -3899,6 +4021,24 @@ def test_task_row_read_model_fallback_coverage_is_read_only_projection() -> None
         "observable rows, and normalize task ids; it must not append execution "
         "events, write sessions, refresh dependencies, claim/complete/fail "
         "executions, or mutate the raw TaskBoard. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_projected_runtime_execution_session_fallback_coverage_is_read_only_projection() -> None:
+    """WS2 projected runtime-execution session fallback-coverage fence."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_projected_runtime_execution_session_fallback_coverage_boundary()
+
+    assert not offenders, (
+        "WS2 projected runtime-execution session fallback-coverage fence: "
+        f"{rel}:TaskRuntimeService.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}() "
+        "must exist and remain a read-only coverage projection. It must load "
+        "file rows with include_terminal=True and augment_runtime_state=True, "
+        "load task_runtime.execution fact rows, derive projected sessions from "
+        "both sources, and compare their task-id coverage without refreshing "
+        "dependencies, appending events, mutating TaskBoard rows, writing "
+        "sessions, or claim/complete/fail transitions. Offenders:\n" + "\n".join(offenders)
     )
 
 
@@ -8172,11 +8312,18 @@ STATS_COMPAT_FORBIDDEN_RAW_READ_TARGETS: dict[str, str] = {
         "get_task_row_stats() must delegate to get_observable_task_row_stats(), "
         "not independently project fallback coverage"
     ),
+    "self.projected_runtime_execution_session_fallback_coverage": (
+        "get_task_row_stats() must delegate to get_observable_task_row_stats(), "
+        "not independently project projected runtime-execution session fallback coverage"
+    ),
     "task_row_status_counts": (
         "get_task_row_stats() must delegate to get_observable_task_row_stats(), not independently compute status counts"
     ),
 }
 STATS_FALLBACK_COVERAGE_FIELD = "read_model_fallback_coverage"
+STATS_PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_FIELD = (
+    "projected_runtime_execution_session_fallback_coverage"
+)
 STATS_EXIT_METHODS: frozenset[str] = frozenset(
     {
         "get_observable_task_row_stats",
@@ -8254,13 +8401,15 @@ def _node_is_or_contains_bound_name(node: ast.AST, bound_names: AbstractSet[str]
     return any(isinstance(child, ast.Name) and child.id in bound_names for child in ast.walk(node))
 
 
-def _stats_field_receives_fallback_coverage(method_def: ast.FunctionDef) -> bool:
-    """Return whether fallback coverage is projected under the stats field."""
+def _stats_field_receives_self_method_result(
+    method_def: ast.FunctionDef,
+    *,
+    field_name: str,
+    method_name: str,
+) -> bool:
+    """Return whether a stats field receives a self-method result."""
 
-    coverage_names = _local_names_bound_to_self_method_call(
-        method_def,
-        TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD,
-    )
+    coverage_names = _local_names_bound_to_self_method_call(method_def, method_name)
 
     for node in _walk_task_runtime_method_body(method_def):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -8269,27 +8418,46 @@ def _stats_field_receives_fallback_coverage(method_def: ast.FunctionDef) -> bool
             if value is None:
                 continue
             if not (
-                _node_contains_self_method_call(value, TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD)
+                _node_contains_self_method_call(value, method_name)
                 or _node_is_or_contains_bound_name(value, coverage_names)
             ):
                 continue
-            if any(
-                isinstance(target, ast.Subscript) and _subscript_key(target) == STATS_FALLBACK_COVERAGE_FIELD
-                for target in targets
-            ):
+            if any(isinstance(target, ast.Subscript) and _subscript_key(target) == field_name for target in targets):
                 return True
 
         if isinstance(node, ast.Dict):
             for key, value in zip(node.keys, node.values, strict=False):
-                if _string_literal(key) != STATS_FALLBACK_COVERAGE_FIELD:
+                if _string_literal(key) != field_name:
                     continue
-                if _node_contains_self_method_call(
+                if _node_contains_self_method_call(value, method_name) or _node_is_or_contains_bound_name(
                     value,
-                    TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD,
-                ) or _node_is_or_contains_bound_name(value, coverage_names):
+                    coverage_names,
+                ):
                     return True
 
     return False
+
+
+def _stats_field_receives_fallback_coverage(method_def: ast.FunctionDef) -> bool:
+    """Return whether task-row fallback coverage is projected under the stats field."""
+
+    return _stats_field_receives_self_method_result(
+        method_def,
+        field_name=STATS_FALLBACK_COVERAGE_FIELD,
+        method_name=TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD,
+    )
+
+
+def _stats_field_receives_projected_runtime_execution_session_fallback_coverage(
+    method_def: ast.FunctionDef,
+) -> bool:
+    """Return whether projected session fallback coverage is in the stats field."""
+
+    return _stats_field_receives_self_method_result(
+        method_def,
+        field_name=STATS_PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_FIELD,
+        method_name=PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD,
+    )
 
 
 def _return_is_direct_self_method_call(method_def: ast.FunctionDef, method_name: str) -> bool:
@@ -8353,6 +8521,41 @@ def _check_observable_task_row_stats_projects_fallback_coverage() -> list[str]:
             f"not project the result under stats[{STATS_FALLBACK_COVERAGE_FIELD!r}]. "
             "Coverage must be a nested stats field so downstream observers can "
             "audit fallback-read-model drift without invoking a separate method."
+        )
+
+    return offenders
+
+
+def _check_observable_task_row_stats_projects_projected_runtime_execution_session_fallback_coverage() -> list[str]:
+    """Emit offenders if observable stats omit projected session fallback coverage."""
+
+    method_def = _get_observable_task_row_stats_function_def()
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders: list[str] = []
+
+    coverage_calls = _direct_self_method_calls(
+        method_def,
+        PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD,
+    )
+    if not coverage_calls:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.get_observable_task_row_stats() does not call "
+            f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}(); "
+            "observable stats must expose projected runtime-execution session "
+            "fallback coverage so observers can audit file/fact projected "
+            "session drift through the stats read model."
+        )
+        return offenders
+
+    if not _stats_field_receives_projected_runtime_execution_session_fallback_coverage(method_def):
+        offenders.append(
+            f"{rel}:TaskRuntimeService.get_observable_task_row_stats() calls "
+            f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}() "
+            "but does not project the result under "
+            f"stats[{STATS_PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_FIELD!r}]. "
+            "Coverage must be a nested stats field so downstream observers can "
+            "audit projected runtime-execution session fallback drift without "
+            "invoking a separate method."
         )
 
     return offenders
@@ -8517,6 +8720,22 @@ def test_observable_task_row_stats_projects_read_model_fallback_coverage() -> No
         f"{rel}:TaskRuntimeService.get_observable_task_row_stats() must call "
         f"self.{TASK_ROW_READ_MODEL_FALLBACK_COVERAGE_METHOD}() and project "
         f"the result under stats[{STATS_FALLBACK_COVERAGE_FIELD!r}]. "
+        "Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_observable_task_row_stats_projects_projected_runtime_execution_session_fallback_coverage() -> None:
+    """WS2 stats projection fence for projected session fallback coverage."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _check_observable_task_row_stats_projects_projected_runtime_execution_session_fallback_coverage()
+
+    assert not offenders, (
+        "WS2 stats projected runtime-execution session fallback-coverage fence: "
+        f"{rel}:TaskRuntimeService.get_observable_task_row_stats() must call "
+        f"self.{PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_METHOD}() "
+        "and project the result under "
+        f"stats[{STATS_PROJECTED_RUNTIME_EXECUTION_SESSION_FALLBACK_COVERAGE_FIELD!r}]. "
         "Offenders:\n" + "\n".join(offenders)
     )
 
