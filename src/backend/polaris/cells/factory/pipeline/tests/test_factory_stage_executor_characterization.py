@@ -3175,6 +3175,184 @@ class TestQualityGateDeadlineHandling:
         assert command["deadline_capped_timeout_seconds"] <= 26.0
         assert command["configured_timeout_seconds"] == 240.0
 
+    @pytest.mark.asyncio
+    async def test_workspace_quality_skips_full_project_checks_when_source_tasks_not_unlocked(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "build": "tsc -p tsconfig.json",
+                        "test": "vitest run",
+                        "start": "npm run build && node dist/main.js",
+                    },
+                    "devDependencies": {"typescript": "^5.4.5", "vitest": "^1.6.0"},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tsconfig.json").write_text(
+            json.dumps({"include": ["src/**/*.ts", "tests/**/*.ts"]}, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-source-task-blocked",
+            config=FactoryConfig(name="source-task-blocked-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        class _ProjectionOnlyTaskRuntime:
+            def __init__(self, workspace: str) -> None:
+                assert workspace == str(tmp_path)
+
+            def list_observable_task_rows(self) -> list[dict[str, Any]]:
+                return [
+                    {
+                        "id": 1,
+                        "status": "failed",
+                        "metadata": {"target_files": ["package.json", "tsconfig.json"]},
+                    },
+                    {
+                        "id": 2,
+                        "status": "blocked",
+                        "metadata": {"target_files": ["src/index.ts", "tests/index.test.ts"]},
+                    },
+                ]
+
+        def fail_if_command_runs(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del command, timeout_seconds
+            raise AssertionError("workspace quality commands must not run before source tasks unlock")
+
+        def fail_if_depth_runs(_context: dict[str, Any]) -> dict[str, Any] | None:
+            raise AssertionError("delivery depth must not run before source tasks unlock")
+
+        def fail_if_runtime_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            raise AssertionError("runtime repair must not run before source tasks unlock")
+
+        async def fail_if_llm_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            raise AssertionError("LLM repair must not run before source tasks unlock")
+
+        monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ProjectionOnlyTaskRuntime)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", fail_if_depth_runs)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fail_if_command_runs)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fail_if_runtime_repair_runs)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fail_if_llm_repair_runs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(run, {})
+
+        assert passed is False
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["commands"] == []
+        assert payload["commands_skipped"] is True
+        assert payload["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
+        assert payload["responsible_layer"] == "execution_control_plane"
+        assert payload["repair"]["attempted"] is False
+        assert payload["repair"]["reason"] == "task_boundary_not_ready"
+        assert payload["task_boundary_blocker"]["blocked_source_task_count"] == 1
+        assert "factory_quality_gate_task_boundary_dependency_not_unlocked" in payload["warnings"]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_skips_checks_when_declared_test_targets_not_unlocked(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "index.ts").write_text("export const ready = true;\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "build": "tsc -p tsconfig.json",
+                        "test": "vitest run tests/simulation.test.ts tests/verify.test.ts",
+                        "start": "vite --host 127.0.0.1",
+                    },
+                    "devDependencies": {"typescript": "^5.4.5", "vitest": "^1.6.0", "vite": "^5.4.0"},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tsconfig.json").write_text(
+            json.dumps({"include": ["src/**/*.ts", "tests/**/*.ts"]}, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-tests-blocked",
+            config=FactoryConfig(name="tests-blocked-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        class _ProjectionOnlyTaskRuntime:
+            def __init__(self, workspace: str) -> None:
+                assert workspace == str(tmp_path)
+
+            def list_observable_task_rows(self) -> list[dict[str, Any]]:
+                return [
+                    {
+                        "id": 1,
+                        "status": "completed",
+                        "metadata": {"target_files": ["src/index.ts"]},
+                    },
+                    {
+                        "id": 2,
+                        "status": "failed",
+                        "metadata": {"target_files": ["index.html", "tests/simulation.test.ts"]},
+                    },
+                    {
+                        "id": 3,
+                        "status": "blocked",
+                        "metadata": {"target_files": ["src/verify.ts", "tests/verify.test.ts"]},
+                    },
+                ]
+
+        def fail_if_command_runs(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del command, timeout_seconds
+            raise AssertionError("workspace quality commands must not run before declared test targets unlock")
+
+        def fail_if_depth_runs(_context: dict[str, Any]) -> dict[str, Any] | None:
+            raise AssertionError("delivery depth must not run before declared test targets unlock")
+
+        def fail_if_runtime_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            raise AssertionError("runtime repair must not run before declared test targets unlock")
+
+        async def fail_if_llm_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            raise AssertionError("LLM repair must not run before declared test targets unlock")
+
+        monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ProjectionOnlyTaskRuntime)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", fail_if_depth_runs)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fail_if_command_runs)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fail_if_runtime_repair_runs)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fail_if_llm_repair_runs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(run, {})
+
+        assert passed is False
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["commands"] == []
+        assert payload["commands_skipped"] is True
+        assert payload["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
+        assert payload["responsible_layer"] == "execution_control_plane"
+        assert payload["task_boundary_blocker"]["source_files_present"] is True
+        assert payload["task_boundary_blocker"]["project_source_file_count"] == 1
+        assert payload["task_boundary_blocker"]["missing_target_files"] == [
+            "index.html",
+            "tests/simulation.test.ts",
+            "src/verify.ts",
+            "tests/verify.test.ts",
+        ]
+        assert "factory_quality_gate_task_boundary_missing_target_dependency_not_unlocked" in payload["warnings"]
+
 
 # ---------------------------------------------------------------------------
 # package.json parsing

@@ -79,6 +79,66 @@ _LANGUAGE_SOURCE_EXTENSIONS: dict[str, frozenset[str]] = {
     "scala": frozenset({".scala"}),
 }
 _WORKSPACE_QUALITY_MUTATION_TOKENS = WRITE_TOOLS | frozenset({"create_file", "text_replace"})
+_WORKSPACE_QUALITY_SOURCE_ROOTS: frozenset[str] = frozenset({"src", "test", "tests", "lib", "app", "apps", "packages"})
+_WORKSPACE_QUALITY_ROOT_SOURCE_FILES: frozenset[str] = frozenset(
+    {
+        "index.js",
+        "index.jsx",
+        "index.ts",
+        "index.tsx",
+        "main.js",
+        "main.jsx",
+        "main.ts",
+        "main.tsx",
+        "app.js",
+        "app.jsx",
+        "app.ts",
+        "app.tsx",
+        "main.py",
+        "app.py",
+        "main.go",
+        "main.rs",
+    }
+)
+_WORKSPACE_QUALITY_ENTRYPOINT_FILENAMES: frozenset[str] = frozenset(
+    {
+        "index.html",
+        "index.css",
+        "style.css",
+        "styles.css",
+    }
+)
+_WORKSPACE_QUALITY_SOURCE_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".mts",
+        ".cts",
+        ".py",
+        ".go",
+        ".rs",
+        ".java",
+        ".cpp",
+        ".cc",
+        ".cxx",
+        ".c",
+        ".hpp",
+        ".hxx",
+        ".cs",
+        ".rb",
+        ".swift",
+        ".kt",
+        ".kts",
+        ".scala",
+    }
+)
+_WORKSPACE_QUALITY_IGNORED_SOURCE_PARTS: frozenset[str] = frozenset(
+    {"node_modules", "dist", "build", "coverage", "runtime", ".polaris", ".git", "__pycache__"}
+)
 
 
 def _call_accepts_keyword(callable_obj: Any, keyword: str) -> bool:
@@ -5527,6 +5587,216 @@ class OrchestrationStageExecutor:
     def _workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
         return self._workspace_quality.workspace_quality_commands(context)
 
+    def _workspace_quality_project_source_files(self, *, limit: int = 20) -> list[str]:
+        workspace_root = self.workspace.resolve()
+        source_files: list[str] = []
+
+        def add_source(path: Path) -> None:
+            try:
+                relative = path.resolve().relative_to(workspace_root).as_posix()
+            except ValueError:
+                return
+            if relative in source_files:
+                return
+            source_files.append(relative)
+
+        for root_name in sorted(_WORKSPACE_QUALITY_SOURCE_ROOTS):
+            root = workspace_root / root_name
+            if not root.exists():
+                continue
+            candidates = [root] if root.is_file() else [path for path in root.rglob("*") if path.is_file()]
+            for path in candidates:
+                try:
+                    relative_parts = path.resolve().relative_to(workspace_root).parts
+                except ValueError:
+                    continue
+                if any(part in _WORKSPACE_QUALITY_IGNORED_SOURCE_PARTS for part in relative_parts):
+                    continue
+                if path.name.endswith(".d.ts"):
+                    continue
+                if path.suffix.lower() not in _WORKSPACE_QUALITY_SOURCE_SUFFIXES:
+                    continue
+                add_source(path)
+                if len(source_files) >= limit:
+                    return source_files
+
+        for filename in sorted(_WORKSPACE_QUALITY_ROOT_SOURCE_FILES):
+            path = workspace_root / filename
+            if path.is_file():
+                add_source(path)
+                if len(source_files) >= limit:
+                    break
+        return source_files
+
+    @staticmethod
+    def _workspace_quality_task_row_status(row: dict[str, Any]) -> str:
+        for key in ("status", "execution_state"):
+            value = str(row.get(key) or "").strip().lower()
+            if value:
+                return value
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        runtime_execution = metadata.get("runtime_execution") if isinstance(metadata, dict) else {}
+        if isinstance(runtime_execution, dict):
+            for key in ("effective_status", "raw_status"):
+                value = str(runtime_execution.get(key) or "").strip().lower()
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _workspace_quality_task_row_target_files(row: dict[str, Any]) -> list[str]:
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        raw_targets = metadata.get("target_files") if isinstance(metadata, dict) else None
+        if raw_targets is None:
+            raw_targets = metadata.get("boundary_target_files") if isinstance(metadata, dict) else None
+        if raw_targets is None:
+            raw_targets = row.get("target_files")
+        if not isinstance(raw_targets, list):
+            return []
+        targets: list[str] = []
+        for item in raw_targets:
+            normalized = os.path.normpath(str(item or "").strip().replace("\\", "/")).replace("\\", "/")
+            if normalized and not normalized.startswith("../") and not normalized.startswith("/"):
+                targets.append(normalized)
+        return targets
+
+    @staticmethod
+    def _workspace_quality_target_file_is_source(path: str) -> bool:
+        normalized = os.path.normpath(str(path or "").strip().replace("\\", "/")).replace("\\", "/")
+        if not normalized:
+            return False
+        parts = tuple(part for part in normalized.split("/") if part)
+        if any(part in _WORKSPACE_QUALITY_IGNORED_SOURCE_PARTS for part in parts):
+            return False
+        suffix = Path(normalized).suffix.lower()
+        if suffix not in _WORKSPACE_QUALITY_SOURCE_SUFFIXES:
+            return False
+        if normalized.endswith(".d.ts"):
+            return False
+        return bool(
+            parts
+            and (parts[0] in _WORKSPACE_QUALITY_SOURCE_ROOTS or normalized in _WORKSPACE_QUALITY_ROOT_SOURCE_FILES)
+        )
+
+    @staticmethod
+    def _workspace_quality_target_file_is_quality_artifact(path: str) -> bool:
+        normalized = os.path.normpath(str(path or "").strip().replace("\\", "/")).replace("\\", "/")
+        if not normalized:
+            return False
+        if OrchestrationStageExecutor._workspace_quality_target_file_is_source(normalized):
+            return True
+        filename = Path(normalized).name.lower()
+        if filename in _WORKSPACE_QUALITY_ENTRYPOINT_FILENAMES:
+            return True
+        parts = tuple(part for part in normalized.split("/") if part)
+        return bool(
+            parts
+            and parts[0] in {"src", "app", "apps", "public"}
+            and Path(normalized).suffix.lower() in {".html", ".css"}
+        )
+
+    def _workspace_quality_missing_quality_targets(self, targets: list[str]) -> list[str]:
+        missing: list[str] = []
+        for path in targets:
+            if not self._workspace_quality_target_file_is_quality_artifact(path):
+                continue
+            if not (self.workspace / path).is_file():
+                missing.append(path)
+        return missing
+
+    def _workspace_quality_task_boundary_blocker(self, context: dict[str, Any]) -> dict[str, Any] | None:
+        del context
+        source_files = self._workspace_quality_project_source_files(limit=8)
+        try:
+            rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return None
+        source_rows: list[dict[str, Any]] = []
+        unfinished_source_rows: list[dict[str, Any]] = []
+        blocked_rows: list[dict[str, Any]] = []
+        failed_rows: list[dict[str, Any]] = []
+        missing_target_files: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            targets = self._workspace_quality_task_row_target_files(row)
+            missing_targets = self._workspace_quality_missing_quality_targets(targets)
+            if not missing_targets and source_files:
+                continue
+            if not any(self._workspace_quality_target_file_is_quality_artifact(path) for path in targets):
+                continue
+            status = self._workspace_quality_task_row_status(row)
+            source_rows.append(
+                {
+                    "id": row.get("id"),
+                    "status": status,
+                    "target_files": targets[:12],
+                    "missing_target_files": missing_targets[:12],
+                    "last_error": row.get("last_error") or row.get("error_message"),
+                }
+            )
+            if (
+                status in {"completed", "complete", "success", "succeeded", "completed_verified"}
+                and not missing_targets
+            ):
+                continue
+            unfinished_source_rows.append(source_rows[-1])
+            for missing in missing_targets:
+                if missing not in missing_target_files:
+                    missing_target_files.append(missing)
+            if status in {"blocked", "waiting", "waiting_human"}:
+                blocked_rows.append(source_rows[-1])
+            if status in {"failed", "failure", "timeout", "cancelled"}:
+                failed_rows.append(source_rows[-1])
+
+        if not unfinished_source_rows:
+            return None
+        source_files_present = bool(source_files)
+        reason_code = (
+            "factory_quality_gate_task_boundary_dependency_not_unlocked"
+            if blocked_rows
+            else "factory_quality_gate_task_boundary_incomplete_materialization"
+        )
+        if source_files_present and missing_target_files:
+            reason_code = (
+                "factory_quality_gate_task_boundary_missing_target_dependency_not_unlocked"
+                if blocked_rows
+                else "factory_quality_gate_task_boundary_missing_target_incomplete_materialization"
+            )
+        failure_class = (
+            QaFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value
+            if blocked_rows
+            else QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
+        )
+        if source_files_present and missing_target_files:
+            detail = (
+                "Workspace quality checks skipped because TaskRuntime observable rows still have unfinished "
+                "source/test/entrypoint targets missing from the workspace. Running package scripts or delivery "
+                "depth now would misclassify upstream TaskBoundary dependency or materialization failure as an "
+                "implementation-depth defect."
+            )
+        else:
+            detail = (
+                "Workspace quality checks skipped because TaskRuntime observable rows still have "
+                "unfinished source-producing tasks and no project source files are materialized. "
+                "Running full build/test commands now would misclassify upstream dependency or "
+                "materialization failure as a TypeScript implementation defect."
+            )
+        return {
+            "schema_version": "factory.workspace_quality.task_boundary_blocker.v1",
+            "reason_code": reason_code,
+            "failure_class": failure_class,
+            "responsible_layer": "execution_control_plane",
+            "source_files_present": source_files_present,
+            "project_source_file_count": len(source_files),
+            "missing_target_files": missing_target_files[:24],
+            "source_rows": source_rows[:12],
+            "unfinished_source_rows": unfinished_source_rows[:12],
+            "blocked_source_task_count": len(blocked_rows),
+            "failed_source_task_count": len(failed_rows),
+            "detail": detail,
+        }
+
     @staticmethod
     def _trim_command_output(text: str, limit: int = _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS) -> str:
         return helpers.trim_command_output(text, limit)
@@ -6338,8 +6608,11 @@ class OrchestrationStageExecutor:
 
     async def _run_workspace_quality_checks(self, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
         commands = self._workspace_quality_commands(context)
-        depth_result = self._workspace_quality.delivery_depth_contract_result(context)
-        if not commands and depth_result is None:
+        task_boundary_blocker = self._workspace_quality_task_boundary_blocker(context)
+        depth_result = (
+            None if task_boundary_blocker else self._workspace_quality.delivery_depth_contract_result(context)
+        )
+        if not task_boundary_blocker and not commands and depth_result is None:
             return True, ""
 
         configured_timeout_seconds = float(
@@ -6359,6 +6632,7 @@ class OrchestrationStageExecutor:
             detail: str,
             *,
             repair_override: dict[str, Any] | None = None,
+            extra_payload: dict[str, Any] | None = None,
         ) -> tuple[bool, str]:
             payload = {
                 "schema_version": "factory.workspace_quality_checks.v1",
@@ -6378,8 +6652,37 @@ class OrchestrationStageExecutor:
                     "source": context.get("factory_run_deadline_source"),
                 },
             }
+            if extra_payload:
+                payload.update(dict(extra_payload))
             artifact = self._write_workspace_validation_artifact(run, context, payload)
             return False, artifact
+
+        if task_boundary_blocker:
+            reason_code = str(
+                task_boundary_blocker.get("reason_code")
+                or "factory_quality_gate_task_boundary_incomplete_materialization"
+            )
+            detail = str(task_boundary_blocker.get("detail") or reason_code)
+            repair_override = {
+                "attempted": False,
+                "success": False,
+                "source_tools": [],
+                "tool_results": 0,
+                "reason": "task_boundary_not_ready",
+                "task_boundary_blocker": task_boundary_blocker,
+            }
+            return write_workspace_validation_failure(
+                reason_code,
+                detail,
+                repair_override=repair_override,
+                extra_payload={
+                    "failure_class": task_boundary_blocker.get("failure_class"),
+                    "responsible_layer": task_boundary_blocker.get("responsible_layer"),
+                    "task_boundary_blocker": task_boundary_blocker,
+                    "commands_skipped": True,
+                    "skip_reason": reason_code,
+                },
+            )
 
         def workspace_checks_deadline_blocker(phase: str) -> str:
             remaining_seconds = self._factory_deadline_remaining_seconds(context)

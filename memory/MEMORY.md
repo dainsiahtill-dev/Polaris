@@ -791,3 +791,46 @@ Runs:
 - Verification passed: ruff, mypy(factory_stage_executor), pytest budget subset 6 passed, bench_gates 185 passed, factory stage timeout/quality/run_completion subset 24 passed, roles adapter repair 342 passed.
 - Next action: rerun isolated L1-01 r15 with fresh work dir and audit final provider requests plus terminal projection.
 
+## 2026-07-10T14:10:01Z - Latest base verification before L1-01 r16
+- Confirmed current HEAD includes the four new base commits that must be verified by bench:
+  - `e57fc554` Project factory cancel barriers into run results.
+  - `f32b288e` Preserve active Director sessions on factory cancel.
+  - `8c14ad4f` Skip scoped TypeScript checks before sources exist.
+  - `467c7887` Repair removed TypeScript compiler options.
+- Cleaned up prior owned isolated instance via Launcher API: `factory-bench-l1-01-r15-l1-01` moved to `stopped`.
+- Current pass/runnable baseline before r16 remains 0 projects passed, 0% runnable. The next run must not reuse r15 conclusions; it must audit the fresh execution fact chain: final provider request -> tool lifecycle -> effect receipt -> TaskBoundary verdict -> repair convergence -> QA verdict.
+- Skeptical note: having the commits present is not enough evidence. The architecture is only credible if the new run shows one coherent projection across Execution Ledger, TaskRuntime rows, Run Ledger, Factory result, and QA taxonomy.
+
+## 2026-07-10T14:24:22Z - L1-01 r16 audit and workspace-quality blocker fix
+- Bench: `L1-01 r16`, isolated instance `factory-bench-l1-01-r16-l1-01`, backend `49986`, frontend `5183`, workspace `/tmp/factory-bench-L1-01-r16/L1-01`, factory run `factory_12217390d70d`.
+- Result: FAIL in `220.5s`; project pass/runnable rate remains `0/1`, `0%`.
+- Gate snapshot:
+  - PASS: plan artifact, blueprint artifact, QA verdict artifact, wrong-product guard, backend freshness, LLM route audit.
+  - FAIL: `ts_syntax` (no TS files), `min_files`, content/structure/depth, chain clean, integration QA, real-run gate, run-ledger projection, delivery depth.
+- Verified base fixes:
+  - `session_not_active` did not reproduce.
+  - Factory cancel barrier did not trigger in this run.
+  - TS5102/removed `compilerOptions.charset` did not appear.
+  - TS18003 appeared only after source-producing tasks were blocked; this is an upstream task-boundary/dependency issue, not a TypeScript implementation defect.
+- Final provider request/tool chain:
+  - Director `director-39926be2fc5d` first request had PM contract, CE blueprint, module interface, target files, and `write_file` tool schema; no missing refs/tools.
+  - Native/effect chain worked for foundation materialization: 2 `write_file` calls dispatched, 2 success tool/effect receipts for `package.json` and `tsconfig.json`.
+  - TaskBoundary ledger for task 1 was `completed_verified` with downstream pending source/test artifacts listed.
+- Root cause:
+  1. `task_boundary_quality_conflict`: Director TaskBoundary passed the foundation task, but materialization quality failed the same row because manifest scripts referenced future `dist/main.js` / `dist/verify.js` before source tasks ran.
+  2. `dependency_not_unlocked`: source/model/entrypoint/test tasks stayed blocked after foundation failure, so source count/test count were zero.
+  3. `quality_gate_premature_full_project_validation`: Factory quality gate still ran `npm install`, `npm run build`, `npm test`, `npm run start`, and delivery-depth against a config-only workspace, producing TS18003 and 0-source noise.
+  4. `repair_wrong_layer`: workspace-quality repair tried `deterministic_npm_script_contract_repair` and later LLM repair instead of routing to task-boundary/dependency handling.
+  5. `projection_drift`: QA/run-ledger projected this as `IMPLEMENTATION_DEFECT` / `control_plane:tool_dispatch_failed`, despite the Director tool dispatch/effect receipts being healthy and the real blocker being upstream source task unlock.
+- Production fix:
+  - Added TaskRuntime-aware workspace-quality blocker in `factory_stage_executor.py`.
+  - The blocker reads `TaskRuntimeService.list_observable_task_rows()` only, detects no project source files plus unfinished source-producing task rows, and writes workspace-validation evidence with `failure_class=DEPENDENCY_NOT_UNLOCKED` or `INCOMPLETE_MATERIALIZATION`.
+  - It skips npm build/test/start, delivery-depth, runtime repair, and LLM repair in this state, preventing TS18003 from being misclassified as code failure.
+  - Added characterization test `test_workspace_quality_skips_full_project_checks_when_source_tasks_not_unlocked`.
+- Verification:
+  - `ruff check --fix` and `ruff format` passed for modified files.
+  - `mypy` passed for `factory_stage_executor.py` and `test_factory_stage_executor_characterization.py`.
+  - Focused pytest: 3 passed.
+  - `test_bench_gates.py`: 186 passed.
+  - workspace_quality characterization subset: 30 passed.
+- Next action: stop r16 isolated instance, then rerun `L1-01 r17` to verify Factory no longer starts full-project validation/repair when source tasks are blocked.
