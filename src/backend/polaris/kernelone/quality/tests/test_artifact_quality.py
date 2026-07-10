@@ -1073,6 +1073,46 @@ def test_artifact_quality_evidence_uses_direct_html_module_script_issue(tmp_path
     assert metadata["diagnostic_kind"] == "html_module_script_typescript_source"
 
 
+def test_artifact_quality_evidence_reports_html_js_entrypoint_backed_by_typescript_source(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "web.ts").write_text("export function startBrowser(): void {}\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "outDir": "dist",
+                    "rootDir": "src",
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.html").write_text(
+        '<html><body><script type="module" src="./src/web.js"></script></body></html>\n',
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["index.html"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: HTML module script references missing compiled JavaScript "
+        "'./src/web.js' in index.html; TypeScript build emitted './dist/web.js'",
+    )
+    assert len(evidence.issues) == 1
+    issue = evidence.issues[0]
+    assert issue.code == "html_module_script_compiled_javascript_missing"
+    assert issue.source == "html_module_script_scanner"
+    assert issue.path == "index.html"
+    metadata = dict(issue.metadata)
+    assert metadata["raw"] == evidence.errors[0]
+    assert metadata["script_src"] == "./src/web.js"
+    assert metadata["compiled_script_src"] == "./src/web.js"
+    assert metadata["typescript_source"] == "src/web.ts"
+    assert metadata["emitted_script_src"] == "./dist/web.js"
+    assert metadata["diagnostic_kind"] == "html_module_script_compiled_javascript_missing"
+
+
 def test_artifact_quality_issue_code_from_typed_metadata_maps_html_module_script_diagnostic() -> None:
     """Project the HTML module-script diagnostic_kind to its canonical issue code."""
 

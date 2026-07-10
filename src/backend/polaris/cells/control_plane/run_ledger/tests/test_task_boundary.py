@@ -349,6 +349,27 @@ def test_task_boundary_reports_missing_html_script_entrypoint(tmp_path: Path) ->
     assert verdict["missing_entrypoint_targets"] == ["src/app.js"]
 
 
+def test_task_boundary_does_not_treat_html_js_entrypoint_with_ts_source_as_scope_gap(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "web.ts").write_text("export function startBrowser(): void {}\n", encoding="utf-8")
+    (tmp_path / "index.html").write_text(
+        '<html><body><script type="module" src="./src/web.js"></script></body></html>',
+        encoding="utf-8",
+    )
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-2",
+        run_id="run-1",
+        target_files=["index.html", "src/web.ts"],
+        completed_artifacts=["index.html", "src/web.ts"],
+    ).to_dict()
+
+    assert verdict["ok"] is True
+    assert verdict["status"] == "completed_verified"
+    assert verdict["missing_entrypoint_targets"] == []
+
+
 def test_task_boundary_reports_missing_go_main_entrypoint(tmp_path: Path) -> None:
     (tmp_path / "go.mod").write_text("module example.com/app\n\ngo 1.22\n", encoding="utf-8")
 

@@ -6634,6 +6634,32 @@ def test_public_html_module_script_uses_tsconfig_rootdir_for_compiled_entrypoint
     assert 'src="./dist/src/web.js"' in planning["composition_summary"]["patches"][0]["content_after"]
 
 
+def test_public_html_module_script_consumes_scanner_missing_compiled_javascript_diagnostic() -> None:
+    diagnostic = (
+        "Artifact quality scan failed: HTML module script references missing compiled JavaScript "
+        "'./src/web.js' in index.html; TypeScript build emitted './dist/web.js'"
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
+            base_files={
+                "index.html": '<script type="module" src="./src/web.js"></script>\n',
+                "tsconfig.json": '{"compilerOptions":{"outDir":"dist","rootDir":"src"},"include":["src/**/*.ts"]}\n',
+                "src/web.ts": "console.log('web');\n",
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "html.typescript_module_script"
+    assert planning["composition_summary"]["patch_count"] == 1
+    assert 'src="./dist/web.js"' in planning["composition_summary"]["patches"][0]["content_after"]
+
+
 def test_public_html_module_script_rewrites_typescript_source_entrypoint() -> None:
     diagnostic = (
         "Artifact quality scan failed: HTML module script references TypeScript source "

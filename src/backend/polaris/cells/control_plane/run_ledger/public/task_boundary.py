@@ -134,6 +134,29 @@ def _is_generated_entrypoint_artifact(value: Any) -> bool:
     return bool(token and token.startswith(_GENERATED_ENTRYPOINT_PREFIXES))
 
 
+def _typescript_source_sibling_for_entrypoint(entrypoint: str) -> tuple[str, ...]:
+    token = _clean_path(entrypoint)
+    if not token.endswith(".js"):
+        return ()
+    stem = token[:-3]
+    return (f"{stem}.ts", f"{stem}.tsx")
+
+
+def _entrypoint_is_satisfied_by_typescript_source(workspace: Path, entrypoint: str, known_artifacts: set[str]) -> bool:
+    """Return true when a missing JS entrypoint is represented by TS source.
+
+    Browser HTML often points at an emitted JavaScript module while Director is
+    working on the TypeScript source module in the same task. TaskBoundary must
+    not classify that as a PM/CE scope gap; artifact quality and verifier gates
+    still remain responsible for ensuring the HTML points at a runnable output.
+    """
+
+    for candidate in _typescript_source_sibling_for_entrypoint(entrypoint):
+        if _path_exists(workspace, candidate) or candidate in known_artifacts:
+            return True
+    return False
+
+
 def _string_list(value: Any) -> list[str]:
     if isinstance(value, str):
         raw_items: list[Any] = [value]
@@ -618,7 +641,9 @@ def evaluate_task_boundary_verdict(
     missing_entrypoints = tuple(
         entrypoint
         for entrypoint in _workspace_entrypoint_targets(workspace_path)
-        if not _path_exists(workspace_path, entrypoint) and entrypoint not in known_artifacts
+        if not _path_exists(workspace_path, entrypoint)
+        and entrypoint not in known_artifacts
+        and not _entrypoint_is_satisfied_by_typescript_source(workspace_path, entrypoint, known_artifacts)
     )
     if missing_entrypoints:
         return TaskBoundaryVerdictV1(

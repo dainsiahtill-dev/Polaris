@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from polaris.kernelone.quality.cross_artifact_interfaces import (
@@ -122,6 +122,7 @@ _DIAGNOSTIC_KIND_SOURCE_RULES: Mapping[str, frozenset[str]] = {
     "syntax_error": frozenset(("source_syntax_checker",)),
     "package_module_type_commonjs_mismatch": frozenset(("package_module_type_scanner",)),
     "html_module_script_typescript_source": frozenset(("html_module_script_scanner",)),
+    "html_module_script_compiled_javascript_missing": frozenset(("html_module_script_scanner",)),
     "unresolved_relative_import": frozenset(("typescript_import_scanner",)),
     "undeclared_runtime_import": frozenset(("typescript_import_scanner",)),
     "typescript_node_types_missing": frozenset(("typescript_import_scanner",)),
@@ -184,6 +185,10 @@ _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE = re.compile(
 )
 _HTML_TYPESCRIPT_MODULE_SCRIPT_RE = re.compile(
     r"<script\b(?=[^>]*\btype\s*=\s*['\"]module['\"])[^>]*\bsrc\s*=\s*['\"](?P<src>[^'\"]+\.(?:ts|tsx))['\"][^>]*>",
+    re.IGNORECASE,
+)
+_HTML_JAVASCRIPT_MODULE_SCRIPT_RE = re.compile(
+    r"<script\b(?=[^>]*\btype\s*=\s*['\"]module['\"])[^>]*\bsrc\s*=\s*['\"](?P<src>[^'\"]+\.js)['\"][^>]*>",
     re.IGNORECASE,
 )
 _TS_ZOD_INFERRED_TYPE_RE = re.compile(
@@ -1781,7 +1786,7 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     typescript_red_flag_evidence = _scan_typescript_syntax_red_flag_evidence(root_full, full_path, text, relative_path)
     errors.extend(typescript_red_flag_evidence.errors)
     issues.extend(typescript_red_flag_evidence.issues)
-    html_module_script_evidence = _scan_html_typescript_module_script_evidence(full_path, text, relative_path)
+    html_module_script_evidence = _scan_html_typescript_module_script_evidence(root_full, full_path, text, relative_path)
     errors.extend(html_module_script_evidence.errors)
     issues.extend(html_module_script_evidence.issues)
     for marker in _DETERMINISTIC_SCAFFOLD_MARKERS:
@@ -1974,7 +1979,115 @@ def _html_module_script_quality_issue(error: str, relative_path: str, *, src: st
     )
 
 
+def _html_local_script_path(relative_path: str, src: str) -> str:
+    raw_src = str(src or "").strip().split("#", 1)[0].split("?", 1)[0].replace("\\", "/")
+    if not raw_src or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", raw_src) or raw_src.startswith("//"):
+        return ""
+    html_parent = PurePosixPath(str(relative_path or "").replace("\\", "/")).parent
+    normalized = PurePosixPath(raw_src.lstrip("/")) if raw_src.startswith("/") else html_parent / raw_src
+    normalized_text = str(normalized).replace("\\", "/")
+    while normalized_text.startswith("./"):
+        normalized_text = normalized_text[2:]
+    if not normalized_text or normalized_text.startswith("../") or "/../" in normalized_text:
+        return ""
+    return normalized_text.strip("/")
+
+
+def _html_script_source_sibling(root_full: Path, script_path: str) -> str:
+    normalized = str(script_path or "").strip().replace("\\", "/")
+    if not normalized.endswith(".js"):
+        return ""
+    stem = normalized[:-3]
+    for suffix in (".ts", ".tsx"):
+        candidate = f"{stem}{suffix}"
+        if (root_full / candidate).is_file():
+            return candidate
+    return ""
+
+
+def _typescript_compiled_output_path(root_full: Path, source_path: str) -> str:
+    out_dir = "dist"
+    root_dir = ""
+    config_path = root_full / "tsconfig.json"
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        payload = {}
+    if isinstance(payload, dict):
+        compiler_options = payload.get("compilerOptions")
+        if isinstance(compiler_options, dict):
+            out_dir_value = compiler_options.get("outDir")
+            root_dir_value = compiler_options.get("rootDir")
+            if isinstance(out_dir_value, str) and out_dir_value.strip():
+                out_dir = out_dir_value.strip().replace("\\", "/").strip("/") or out_dir
+            if isinstance(root_dir_value, str) and root_dir_value.strip():
+                root_dir = root_dir_value.strip().replace("\\", "/").strip("/")
+
+    normalized_source = str(source_path or "").strip().replace("\\", "/").strip("/")
+    source_without_ext = re.sub(r"\.tsx?$", "", normalized_source)
+    if root_dir and source_without_ext.startswith(f"{root_dir}/"):
+        emitted_relative = source_without_ext[len(root_dir) + 1 :]
+    elif not root_dir and source_without_ext.startswith("src/"):
+        emitted_relative = source_without_ext[4:]
+    else:
+        emitted_relative = source_without_ext
+    return f"{out_dir}/{emitted_relative}.js".replace("//", "/").strip("/")
+
+
+def _html_script_prefixed_path(original_src: str, normalized_path: str) -> str:
+    raw = str(original_src or "").strip()
+    normalized = str(normalized_path or "").strip().replace("\\", "/").strip("/")
+    if not normalized:
+        return ""
+    if raw.startswith("/"):
+        return f"/{normalized}"
+    if raw.startswith("./"):
+        return f"./{normalized}"
+    return normalized
+
+
+def _html_module_script_compiled_javascript_issue(
+    *,
+    root_full: Path,
+    relative_path: str,
+    src: str,
+) -> tuple[str, ArtifactQualityIssue] | None:
+    script_path = _html_local_script_path(relative_path, src)
+    if not script_path or not script_path.endswith(".js") or (root_full / script_path).is_file():
+        return None
+    source_path = _html_script_source_sibling(root_full, script_path)
+    if not source_path:
+        return None
+    emitted_path = _typescript_compiled_output_path(root_full, source_path)
+    emitted_ref = _html_script_prefixed_path(src, emitted_path)
+    source_ref = _html_script_prefixed_path(src, script_path)
+    error = (
+        "Artifact quality scan failed: HTML module script references missing compiled JavaScript "
+        f"{source_ref!r} in {relative_path}; TypeScript build emitted {emitted_ref!r}"
+    )
+    message = error[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    return (
+        error,
+        ArtifactQualityIssue(
+            code="html_module_script_compiled_javascript_missing",
+            message=message,
+            path=relative_path,
+            source="html_module_script_scanner",
+            metadata={
+                "raw": error,
+                "html_path": relative_path,
+                "script_src": src,
+                "compiled_script_src": source_ref,
+                "typescript_source": source_path,
+                "emitted_script_src": emitted_ref,
+                "diagnostic_kind": "html_module_script_compiled_javascript_missing",
+            },
+        ),
+    )
+
+
 def _scan_html_typescript_module_script_evidence(
+    root_full: Path,
     full_path: Path,
     text: str,
     relative_path: str,
@@ -1994,6 +2107,20 @@ def _scan_html_typescript_module_script_evidence(
             )
             errors.append(error)
             issues.append(_html_module_script_quality_issue(error, relative_path, src=src))
+    for match in _HTML_JAVASCRIPT_MODULE_SCRIPT_RE.finditer(text):
+        src = str(match.group("src") or "").strip()
+        if not src:
+            continue
+        compiled_issue = _html_module_script_compiled_javascript_issue(
+            root_full=root_full,
+            relative_path=relative_path,
+            src=src,
+        )
+        if compiled_issue is None:
+            continue
+        error, issue = compiled_issue
+        errors.append(error)
+        issues.append(issue)
     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
