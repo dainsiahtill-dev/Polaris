@@ -770,7 +770,9 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "tsconfig.json",
                     "src/index.ts",
                     "src/main.ts",
+                    "src/models/types.ts",
                     *model_file_targets,
+                    "src/models/index.ts",
                 ]
                 visual_targets = [
                     "index.html",
@@ -801,15 +803,18 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "steps": [
                             "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
                             "创建 tsconfig.json，启用 strict、DOM/ES2020 lib、outDir=dist、rootDir=src，并保持 package.json type 与 compilerOptions.module 一致",
+                            "实现 src/models/types.ts，集中定义跨模型共享类型、状态接口和领域枚举，禁止让多个文件重复定义同名类型",
                             "实现 src/index.ts、src/main.ts 与 src/models/ 需求派生领域模块，暴露可运行入口和核心需求状态",
+                            "实现 src/models/index.ts 作为唯一模型聚合导出面，后续 engine/web/test 任务只能通过该公开面或具体模型文件导入",
                             "`npm start` 必须先 build 或引用当前存在的源码入口，不能指向未生成的 dist 文件",
                             "`npm start` 必须运行 Node-safe 入口（如 src/main.ts 或 dist/main.js），不得在 Node 中直接执行 DOM/browser 入口（src/web.ts 或 dist/web.js）",
                             "若 package.json 使用 type=module，则 TypeScript 必须输出可被 Node/浏览器加载的 ESM；否则不要声明 type=module",
                         ],
                         "acceptance": [
-                            "`package.json`、`tsconfig.json`、`src/index.ts`、`src/main.ts` 与 `src/models/` 需求派生领域模块存在且非空",
+                            "`package.json`、`tsconfig.json`、`src/index.ts`、`src/main.ts`、`src/models/types.ts`、`src/models/index.ts` 与 `src/models/` 需求派生领域模块存在且非空",
                             "`npm run build`、`npm run test` 与 `npm start` 对真实入口执行检查",
                             "package.json type 与 tsconfig module 不得出现 ESM/CommonJS 错配",
+                            "`src/models/types.ts` 是共享类型唯一来源，`src/models/index.ts` 导出模型公共 API，避免下游任务产生 unresolved local import",
                             "`npm start` 不得在 Node 中直接运行 `dist/web.js`、`src/web.ts` 或其他依赖 document/window 的浏览器入口",
                             f"源码或测试覆盖需求关键词：{keyword_summary}",
                         ],

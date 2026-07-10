@@ -149,10 +149,12 @@ def test_pm_typescript_package_contract_uses_requirement_checks_not_fixed_templa
 
     assert len(contracts) == 3
     for model_target in (
+        "src/models/types.ts",
         "src/models/Firefly.ts",
         "src/models/Flower.ts",
         "src/models/MoonPhase.ts",
         "src/models/Humidity.ts",
+        "src/models/index.ts",
     ):
         assert model_target in payload
     assert "content_any:firefly|flower|moon|humidity" in payload
