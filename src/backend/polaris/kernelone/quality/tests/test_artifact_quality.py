@@ -108,6 +108,29 @@ def test_artifact_quality_evidence_reports_removed_tsconfig_compiler_option(tmp_
     }
 
 
+def test_artifact_quality_evidence_skips_project_typecheck_before_typescript_sources_exist(tmp_path: Path) -> None:
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "target": "ES2020",
+                    "module": "ES2020",
+                    "strict": True,
+                },
+                "include": ["src/**/*.ts"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["tsconfig.json"])
+
+    assert evidence.errors == ()
+    assert evidence.issues == ()
+
+
 def _assert_file_marker_issue(
     tmp_path: Path,
     *,

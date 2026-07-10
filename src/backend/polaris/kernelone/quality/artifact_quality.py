@@ -3095,6 +3095,10 @@ def _scan_typescript_project_typecheck_evidence(
         Path(path).suffix.lower() in {".ts", ".tsx"} or Path(path).name == "tsconfig.json" for path in relative_paths
     ):
         return _FileArtifactQualityEvidence()
+    scoped_has_typescript_source = any(Path(path).suffix.lower() in {".ts", ".tsx"} for path in relative_paths)
+    scoped_has_tsconfig = any(Path(path).name == "tsconfig.json" for path in relative_paths)
+    if scoped_has_tsconfig and not scoped_has_typescript_source and not _workspace_has_typescript_source(root_full):
+        return _FileArtifactQualityEvidence()
     tsc = _typescript_project_typecheck_command(root_full)
     if not tsc:
         return _FileArtifactQualityEvidence()
@@ -3126,6 +3130,18 @@ def _scan_typescript_project_typecheck_evidence(
             ),
         ),
     )
+
+
+def _workspace_has_typescript_source(root_full: Path) -> bool:
+    """Return whether the workspace already contains TypeScript sources."""
+
+    try:
+        for full_path in _iter_workspace_source_files(root_full):
+            if full_path.suffix.lower() in {".ts", ".tsx"}:
+                return True
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return False
 
 
 def _typescript_project_typecheck_command(root_full: Path) -> str:
