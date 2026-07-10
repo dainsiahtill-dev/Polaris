@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -23,6 +24,14 @@ _PATH_TOKEN_RE = re.compile(
     r"(?:^|[\s:：])(?:package\.json|AGENTS\.md|Cargo\.toml|webpack\.config\.js|jest\.config\.js|tsconfig\.json)(?=$|[\s,，;；。.])",
 )
 _PACKAGE_SECTIONS = ("scripts", "dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+_SHELL_OPERATORS = {"&&", "||", ";", "|", "&"}
+_NODE_INTERPRETERS = {"node", "node.cmd", "node.exe"}
+_NODE_OPTION_WITH_VALUE = {"-r", "--require", "--import", "--loader"}
+_NODE_INLINE_OPTIONS = {"-e", "--eval", "-p", "--print"}
+_SCRIPT_HELPER_DIRS_REQUIRING_OWNERSHIP = {"scripts", "tools", "bin"}
+_GENERATED_NODE_ENTRYPOINT_DIRS = {"dist", "build", "out", "lib"}
+_LOCAL_ENTRYPOINT_EXTENSIONS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx")
+_SCRIPT_PATH_PATTERN_CHARS = "*?[]{}"
 
 
 @dataclass(frozen=True)
@@ -223,6 +232,13 @@ def validate_tool_write_policy(
                     and not scripts_diff.changed
                 ):
                     reasons.append("package.json writes may not remove all existing scripts")
+                reasons.extend(
+                    _unowned_helper_entrypoint_reasons(
+                        package_after=package_after,
+                        package_diff=package_diff,
+                        allowed_scope=allowed_scope,
+                    )
+                )
 
     return ToolWritePolicyVerdict(
         allowed=not reasons,
@@ -248,6 +264,110 @@ def _parse_json_object(text: str) -> dict[str, Any]:
 
 def _dict_section(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _unowned_helper_entrypoint_reasons(
+    *,
+    package_after: str,
+    package_diff: PackageManifestDiff,
+    allowed_scope: list[str],
+) -> tuple[str, ...]:
+    """Return package script helper entrypoints introduced outside write scope.
+
+    This guard is intentionally narrow: it rejects scripts that introduce
+    ``node ./scripts/...`` / ``node ./tools/...`` / ``node ./bin/...`` helper
+    entrypoints unless the helper file is owned by the current write scope.
+    Build outputs under ``dist``/``build``/``out``/``lib`` remain allowed
+    because they are generated artifacts, not helper source files.
+
+    Complexity:
+        O(s * t) time for changed scripts ``s`` and shell tokens ``t``;
+        O(e) memory for introduced entrypoints.
+    """
+
+    scripts_diff = package_diff.sections.get("scripts")
+    if scripts_diff is None or not scripts_diff.has_changes:
+        return ()
+
+    try:
+        payload = _parse_json_object(package_after)
+    except ValueError:
+        return ()
+    scripts = _dict_section(payload.get("scripts"))
+    changed_script_names = set(scripts_diff.added) | set(scripts_diff.changed)
+    allowed = {_normalize_policy_path(path) for path in allowed_scope}
+    reasons: list[str] = []
+    for script_name in sorted(changed_script_names):
+        command = scripts.get(script_name)
+        if not isinstance(command, str):
+            continue
+        for entrypoint in _node_helper_entrypoints(command):
+            normalized_entrypoint = _normalize_policy_path(entrypoint)
+            if normalized_entrypoint in allowed or _is_generated_node_entrypoint(normalized_entrypoint):
+                continue
+            reasons.append(
+                "package.json script "
+                f"{script_name!r} references unowned local helper entrypoint "
+                f"{entrypoint!r}; declare that file in the current/downstream target scope "
+                "or use an existing build/test command"
+            )
+    return tuple(reasons)
+
+
+def _node_helper_entrypoints(command: str) -> tuple[str, ...]:
+    """Extract local helper entrypoints directly invoked by node commands."""
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return ()
+
+    entrypoints: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = os.path.basename(str(tokens[index] or "")).lower()
+        if token not in _NODE_INTERPRETERS:
+            index += 1
+            continue
+        index += 1
+        while index < len(tokens):
+            candidate = str(tokens[index] or "").strip()
+            if candidate in _SHELL_OPERATORS:
+                break
+            if candidate in _NODE_INLINE_OPTIONS:
+                index += 2
+                continue
+            if candidate in _NODE_OPTION_WITH_VALUE:
+                if index + 1 < len(tokens) and _is_local_helper_entrypoint(tokens[index + 1]):
+                    entrypoints.append(tokens[index + 1])
+                index += 2
+                continue
+            if candidate.startswith("-"):
+                index += 1
+                continue
+            if _is_local_helper_entrypoint(candidate):
+                entrypoints.append(candidate)
+            break
+    return tuple(dict.fromkeys(entrypoints))
+
+
+def _is_local_helper_entrypoint(value: str) -> bool:
+    token = str(value or "").strip().strip("'\"").replace("\\", "/")
+    if not token or any(char in token for char in _SCRIPT_PATH_PATTERN_CHARS):
+        return False
+    if "://" in token or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", token):
+        return False
+    normalized = _normalize_policy_path(token)
+    if not normalized.lower().endswith(_LOCAL_ENTRYPOINT_EXTENSIONS):
+        return False
+    first_segment = normalized.split("/", 1)[0]
+    return first_segment in _SCRIPT_HELPER_DIRS_REQUIRING_OWNERSHIP
+
+
+def _is_generated_node_entrypoint(value: str) -> bool:
+    normalized = _normalize_policy_path(value)
+    first_segment = normalized.split("/", 1)[0]
+    return first_segment in _GENERATED_NODE_ENTRYPOINT_DIRS
 
 
 def _normalize_policy_path(value: str) -> str:

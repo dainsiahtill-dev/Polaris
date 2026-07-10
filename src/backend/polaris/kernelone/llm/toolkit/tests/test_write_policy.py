@@ -179,3 +179,49 @@ def test_validate_tool_write_policy_blocks_package_scripts_collapse() -> None:
 
     assert verdict.allowed is False
     assert "package.json writes may not remove all existing scripts" in verdict.reasons
+
+def test_validate_tool_write_policy_blocks_unowned_node_helper_script_entrypoint() -> None:
+    before = json.dumps(
+        {"scripts": {"test": "npm run build", "typecheck": "tsc --noEmit"}},
+        ensure_ascii=False,
+    )
+    after = json.dumps(
+        {
+            "scripts": {
+                "test": "node ./scripts/test-package.mjs",
+                "typecheck": "node ./scripts/check-package.mjs",
+            }
+        },
+        ensure_ascii=False,
+    )
+
+    verdict = validate_tool_write_policy(
+        changed_files=["package.json"],
+        allowed_scope=["package.json"],
+        agents_md="",
+        operation="write_file",
+        package_before=before,
+        package_after=after,
+    )
+
+    assert verdict.allowed is False
+    assert any("scripts/test-package.mjs" in reason for reason in verdict.reasons)
+    assert any("scripts/check-package.mjs" in reason for reason in verdict.reasons)
+
+def test_validate_tool_write_policy_allows_generated_dist_node_entrypoint() -> None:
+    before = json.dumps({"scripts": {"start": "npm run build"}}, ensure_ascii=False)
+    after = json.dumps(
+        {"scripts": {"build": "tsc -p tsconfig.json", "start": "npm run build && node dist/main.js"}},
+        ensure_ascii=False,
+    )
+
+    verdict = validate_tool_write_policy(
+        changed_files=["package.json"],
+        allowed_scope=["package.json"],
+        agents_md="",
+        operation="write_file",
+        package_before=before,
+        package_after=after,
+    )
+
+    assert verdict.allowed is True
