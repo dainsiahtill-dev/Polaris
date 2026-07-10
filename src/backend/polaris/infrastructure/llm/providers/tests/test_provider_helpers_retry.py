@@ -108,3 +108,48 @@ def test_http_429_retries_without_opening_circuit_breaker(monkeypatch) -> None:
     assert breaker.before_calls == 2
     assert breaker.failures == 0
     assert len(clock.sleep_calls) == 1
+
+
+def test_blocking_http_post_preserves_tuple_timeout(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Response:
+        ok = True
+
+    def _post(*_args, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return _Response()
+
+    monkeypatch.setattr(provider_helpers.requests, "post", _post)
+
+    response = provider_helpers._blocking_http_post(
+        "http://localhost:8189/v1/chat/completions",
+        headers={},
+        payload={"messages": []},
+        timeout=(10.0, 422.0),
+    )
+
+    assert response.ok is True
+    assert captured["timeout"] == (10.0, 422.0)
+
+
+def test_blocking_http_get_preserves_tuple_timeout(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Response:
+        ok = True
+
+    def _get(*_args, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return _Response()
+
+    monkeypatch.setattr(provider_helpers.requests, "get", _get)
+
+    response = provider_helpers._blocking_http_get(
+        "http://localhost:8189/v1/models",
+        headers={},
+        timeout=(5.0, 10.0),
+    )
+
+    assert response.ok is True
+    assert captured["timeout"] == (5.0, 10.0)

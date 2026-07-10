@@ -61,6 +61,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+HttpTimeout = int | float | tuple[float, float]
+
 _aiohttp_module: Any | None = None
 _REAL_CLIENT_SESSION_TYPE: type[Any] | None = None
 _BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
@@ -235,14 +237,17 @@ def _do_requests_post(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any],
-    timeout: int,
+    timeout: HttpTimeout,
 ):
     """Thread-safe requests.post call (for ThreadPoolExecutor wrapping)."""
+    timeout_value: HttpTimeout | None = timeout
+    if isinstance(timeout, (int, float)) and timeout <= 0:
+        timeout_value = None
     return requests.post(
         url,
         headers=headers,
         json=payload,
-        timeout=timeout if timeout > 0 else None,
+        timeout=timeout_value,
     )
 
 
@@ -250,7 +255,7 @@ def _blocking_http_post(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any],
-    timeout: int,
+    timeout: HttpTimeout,
 ):
     """Call requests.post, safely.
 
@@ -761,7 +766,7 @@ def invoke_with_retry(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any],
-    timeout: int,
+    timeout: HttpTimeout,
     retries: int,
     prompt: str,
     extract_output: Callable[[dict[str, Any]], str],
@@ -991,7 +996,7 @@ def health_check_post(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any],
-    timeout: int,
+    timeout: HttpTimeout,
 ) -> HealthResult:
     """POST-based health check with standard error classification.
 
@@ -1056,16 +1061,19 @@ def health_check_post(
 def _do_requests_get(
     url: str,
     headers: dict[str, str],
-    timeout: int,
+    timeout: HttpTimeout,
 ):
     """Thread-safe requests.get call (for ThreadPoolExecutor wrapping)."""
-    return requests.get(url, headers=headers, timeout=timeout if timeout > 0 else None)
+    timeout_value: HttpTimeout | None = timeout
+    if isinstance(timeout, (int, float)) and timeout <= 0:
+        timeout_value = None
+    return requests.get(url, headers=headers, timeout=timeout_value)
 
 
 def _blocking_http_get(
     url: str,
     headers: dict[str, str],
-    timeout: int,
+    timeout: HttpTimeout,
 ):
     """Call requests.get safely, offloading to a thread when an event loop is running.
 
@@ -1096,7 +1104,7 @@ def _blocking_http_get(
 def list_models_from_api(
     url: str,
     headers: dict[str, str],
-    timeout: int,
+    timeout: HttpTimeout,
     data_key: str = "data",
 ) -> ModelListResult:
     """GET-based model listing with standard response parsing.

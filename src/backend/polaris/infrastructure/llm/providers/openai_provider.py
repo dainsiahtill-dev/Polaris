@@ -128,6 +128,20 @@ def _timeout_seconds(config: dict[str, Any], default: int) -> int:
     return normalize_timeout_seconds(config.get("timeout"), default=default)
 
 
+def _connect_timeout_seconds(config: dict[str, Any], *, request_timeout: int) -> int:
+    """Resolve a bounded connect timeout separate from generation/read timeout."""
+
+    default_connect_timeout = min(10, max(1, int(request_timeout or 1)))
+    resolved = normalize_timeout_seconds(config.get("connect_timeout"), default=default_connect_timeout)
+    return max(1, min(int(resolved), int(request_timeout or resolved)))
+
+
+def _http_timeout(config: dict[str, Any], default: int) -> tuple[float, float]:
+    request_timeout = _timeout_seconds(config, default)
+    connect_timeout = _connect_timeout_seconds(config, request_timeout=request_timeout)
+    return (float(connect_timeout), float(request_timeout))
+
+
 # Never omit max_tokens: when the request leaves it unset, vLLM defaults the
 # output budget to "whatever window remains" and its default-vs-validation
 # accounting disagrees by a few template-suffix tokens — every large-prompt
@@ -547,7 +561,7 @@ class OpenAIProvider(BaseProvider):
         base = normalize_base_url(str(config.get("base_url") or ""))
         api_path = str(config.get("api_path") or DEFAULT_CHAT_PATH).strip()
         url = join_url(base, api_path, strip_prefixes=["/v1"])
-        timeout = _timeout_seconds(config, 30)
+        timeout = _http_timeout(config, 30)
         api_key = config.get("api_key")
         test_payload = _build_openai_payload(
             prompt="hello",
@@ -564,13 +578,13 @@ class OpenAIProvider(BaseProvider):
         if "/v1/" not in base and models_path.startswith("/models"):
             models_path = DEFAULT_MODELS_PATH
         url = join_url(base, models_path, strip_prefixes=["/v1"])
-        timeout = _timeout_seconds(config, 10)
+        timeout = _http_timeout(config, 10)
         api_key = config.get("api_key")
         return list_models_from_api(url, _headers(config, api_key), timeout)
 
     def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
         base = normalize_base_url(str(config.get("base_url") or ""))
-        timeout = _timeout_seconds(config, 60)
+        timeout = _http_timeout(config, 60)
         retries = int(config.get("retries") or 0)
         api_path = str(config.get("api_path") or DEFAULT_CHAT_PATH).strip()
         url = join_url(base, api_path, strip_prefixes=["/v1"])
