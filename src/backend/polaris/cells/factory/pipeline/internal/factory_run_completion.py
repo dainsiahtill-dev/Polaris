@@ -152,6 +152,14 @@ class RunCompletionWaiter:
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
             return
+        barrier_result = self._active_task_runtime_barrier_result(run_id=normalized_run_id, reason=reason)
+        if barrier_result is not None:
+            logger.info(
+                "Factory cancellation left active TaskRuntime execution intact for run %s: %s",
+                normalized_run_id,
+                barrier_result.metadata,
+            )
+            return
         try:
             from polaris.cells.orchestration.workflow_runtime.public import (
                 get_orchestration_service,

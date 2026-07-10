@@ -4965,6 +4965,57 @@ class TestDirectorDispatchLoop:
             await fake_orchestration.active_task
 
     @pytest.mark.asyncio
+    async def test_cancel_active_run_preserves_active_director_session(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeOrchestrationService:
+            def __init__(self) -> None:
+                self.active_task = asyncio.create_task(asyncio.sleep(60))
+                self._active_runs = {"run-1": self.active_task}
+                self.cancelled: list[tuple[str, bool]] = []
+
+            async def cancel_run(self, run_id: str, force: bool = False) -> object:
+                self.cancelled.append((run_id, force))
+                self.active_task.cancel()
+                return object()
+
+        fake_orchestration = _FakeOrchestrationService()
+
+        async def _fake_get_orchestration_service() -> _FakeOrchestrationService:
+            return fake_orchestration
+
+        monkeypatch.setattr(
+            "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+            _fake_get_orchestration_service,
+        )
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.create_task_row(subject="direct cancellation active director task")
+        claim = task_runtime.claim_execution(
+            task["id"],
+            worker_id="director",
+            role_id="director",
+            run_id="run-1",
+            selection_source="unit",
+        )
+        assert claim["success"] is True
+
+        await RunCompletionWaiter(tmp_path).cancel_active_run("run-1", reason="factory_stage_timeout")
+
+        assert fake_orchestration.cancelled == []
+        assert fake_orchestration.active_task.cancelled() is False
+        guarded_heartbeat = task_runtime.heartbeat_execution(
+            task["id"],
+            session_id=str(claim["session"]["session_id"]),
+        )
+        assert guarded_heartbeat["success"] is True
+
+        fake_orchestration.active_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await fake_orchestration.active_task
+
+    @pytest.mark.asyncio
     async def test_run_completion_waiter_timeout_preserves_active_director_session_by_default(
         self,
         monkeypatch: pytest.MonkeyPatch,
