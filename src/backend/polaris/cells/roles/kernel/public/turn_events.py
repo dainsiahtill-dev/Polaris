@@ -181,6 +181,9 @@ class CompletionEvent:
     batch_receipt: dict[str, Any] = field(default_factory=dict)
     # Structured error message when status == "failed" (e.g. ask_user clarification)
     error: str | None = None
+    # Canonical durable execution fact and its FactStream receipt.
+    turn_outcome: dict[str, Any] = field(default_factory=dict)
+    commit_receipt: dict[str, Any] = field(default_factory=dict)
     turn_request_id: str | None = None
     span_id: str | None = None
     parent_span_id: str | None = None
@@ -204,6 +207,8 @@ class CompletionEvent:
             turn_kind="final_answer",
             batch_receipt={},
             error=None,
+            turn_outcome={},
+            commit_receipt={},
         )
 
 

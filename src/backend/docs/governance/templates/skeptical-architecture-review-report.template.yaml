@@ -1,0 +1,126 @@
+schema_version: polaris.skeptical_architecture_review_report.v1
+schema_ref: docs/governance/schemas/skeptical-architecture-review-report.schema.yaml
+generated_at: "YYYY-MM-DDTHH:MM:SSZ"
+reviewer: "agent-or-human"
+scope:
+  change_summary: "What base/bench architecture claim is being reviewed"
+  touched_areas:
+    - "Factory"
+    - "Director"
+    - "ToolCallLifecycle"
+  referenced_assets:
+    - "docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md"
+    - "docs/governance/schemas/skeptical-architecture-review-report.schema.yaml"
+
+architecture_claim:
+  claim: "The execution architecture is reliable because ..."
+  claim_status: unproven
+  proof_level: wave_level
+  accepted_proof_levels:
+    - component
+    - integration
+    - wave_level
+    - system_oracle
+
+fresh_isolated_run:
+  required_for_architecture_proof: true
+  requested_project_id: ""
+  canonical_project_id: ""
+  instance_id: ""
+  workspace: ""
+  backend_port: null
+  frontend_port: null
+  factory_run_id: ""
+  run_id: ""
+  wall_clock_seconds: null
+  final_project_status: ""
+  completed_verified: false
+  evidence_ref: ""
+
+fact_chain:
+  final_provider_request:
+    status: missing
+    evidence_ref: ""
+    hash: ""
+    notes: ""
+  provider_response:
+    status: missing
+    evidence_ref: ""
+    hash: ""
+    notes: ""
+  tool_lifecycle_receipt:
+    status: missing
+    native_tool_calls_count: null
+    decoded_tool_calls_count: null
+    dispatched_tool_calls_count: null
+    effect_receipt_count: null
+    evidence_ref: ""
+    notes: ""
+  tool_dispatch:
+    status: missing
+    evidence_ref: ""
+    notes: ""
+  effect_receipt:
+    status: missing
+    count: null
+    evidence_refs: []
+    notes: ""
+  task_boundary_verdict:
+    status: missing
+    verdict_status: ""
+    failure_class: ""
+    responsible_layer: ""
+    evidence_ref: ""
+    notes: ""
+  task_runtime_projection:
+    status: missing
+    observable_row_ref: ""
+    legacy_fallback_used: false
+    projection_mismatch: false
+    notes: ""
+  run_ledger_projection:
+    status: missing
+    evidence_ref: ""
+    projection_mismatch: false
+    notes: ""
+  qa_verdict:
+    status: missing
+    verdict: ""
+    failure_class: ""
+    responsible_layer: ""
+    evidence_ref: ""
+    notes: ""
+  factory_bench_report:
+    status: missing
+    evidence_ref: ""
+    pass_rate: ""
+    runnable_rate: ""
+    notes: ""
+
+red_flags:
+  coverage_pass_without_dispatchable_required_tool: unknown
+  native_tools_removed_without_text_fallback_evidence: unknown
+  downstream_quality_ran_before_target_owners_completed: unknown
+  implementation_defect_masks_task_boundary_failure: unknown
+  task_runtime_run_ledger_qa_disagree: unknown
+  raw_taskboard_or_session_used_as_authority: unknown
+  deadline_cancel_without_barrier_settlement: unknown
+  summary_gate_improved_without_fact_chain: unknown
+
+disproof_questions:
+  exact_fresh_run_proving_change: ""
+  final_request_ref_proving_role_contract_targets_tools_budget: ""
+  lifecycle_ref_proving_normalization_dispatch_result_effect: ""
+  text_tool_parser_dispatch_ref_if_used: ""
+  upstream_failure_classification_explanation: ""
+  project_quality_waited_for_declared_target_owners: ""
+  statuses_derived_from_same_execution_facts: ""
+  falsification_condition: ""
+
+verdict:
+  architecture_reliable: false
+  verdict_status: unproven
+  blocking_gaps:
+    - "No fresh isolated COMPLETED_VERIFIED evidence yet"
+  next_actions:
+    - "Run fresh isolated bench and attach full fact-chain evidence"

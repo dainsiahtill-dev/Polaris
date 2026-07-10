@@ -834,3 +834,198 @@ Runs:
   - `test_bench_gates.py`: 186 passed.
   - workspace_quality characterization subset: 30 passed.
 - Next action: stop r16 isolated instance, then rerun `L1-01 r17` to verify Factory no longer starts full-project validation/repair when source tasks are blocked.
+
+## 2026-07-10T14:59:05Z - Bench-root-cause summary for base rearchitecture handoff
+- User requested a base-agent handoff for a deeper architecture rewrite. Acceptance must not be "more unit tests pass"; it must prove a fresh project can cross multiple Director turns, tool batches, cancel/deadline boundaries, and QA into stable `COMPLETED_VERIFIED`.
+- Fresh evidence:
+  - L1-01 r16: `0/1` pass/runnable, `220.5s`; config-only workspace incorrectly entered full project quality validation and produced noisy TS18003/depth failures.
+  - L1-01 r17 after local workspace-quality blocker: still `0/1`, `396.3s`, but materialization improved from 0 source files to 8 source files. Failure moved to TASK-2 `model_provider_timeout`, TASK-3 blocked, missing test/verify entrypoints.
+  - r17 final-provider evidence for TASK-2 was not context starvation or role串线: Director request had PM contract, CE blueprint, target files, module interface, actual sibling exports, and `write_file` in the first request. Window utilization was about 2.1%.
+  - r17 retry path degraded to `required_tool_text_fallback` for MiniMax-M3: retry context had `tool_schema_count=0` and `tool_choice=none`. This may be an intentional provider compatibility fallback, but observability still marked evidence coverage as pass and did not clearly prove parser -> dispatch -> effect receipt. The task then timed out/cancelled before materialization.
+  - r17 Factory result projected final failure as missing test entrypoints/depth, while the upstream chain showed TASK-2 failed and TASK-3 blocked. The root is execution-control/task-boundary propagation, not "LLM cannot write tests" or missing TS repair.
+- Local code changes currently only have unit/regression validation, not fresh end-to-end proof:
+  - Factory workspace-quality blocker now skips full-project commands/repair when source-producing tasks are not unlocked.
+  - A second local taxonomy change blocks package/depth checks when declared source/test/HTML targets are missing and owned by failed/blocked TaskRuntime rows.
+  - Validation run: ruff, mypy, focused workspace-quality tests, workspace_quality subset, and `test_bench_gates.py` passed. No r18 end-to-end proof yet.
+- Consolidated structural root causes to hand to base agent:
+  1. Execution fact chain is still not one transaction: final provider request, tool lifecycle, effect receipt, task-boundary verdict, TaskRuntime row, Run Ledger projection, Factory result, and QA verdict can diverge.
+  2. Required-tool retry compatibility is under-specified: text fallback can intentionally remove native tool schemas, but final-request audit still reports pass without enough parser/dispatch/effect evidence or a hard barrier.
+  3. Deadline/cancel policy still ends runs while upstream Director tasks are unresolved; active sessions may be preserved, but Factory/bench projections still collapse into generic timeout/partial/depth failures.
+  4. Quality gates run at the wrong boundary: project-level package/depth/real-run checks can fire while declared downstream targets are failed/blocked/missing, causing implementation-defect misclassification.
+  5. QA taxonomy still loses upstream causality: `test_files=0` and missing entrypoints need to map to dependency_not_unlocked / incomplete_materialization when target owner tasks are unfinished.
+  6. Ownership/scope evidence is noisy: failed TASK-2 included large out-of-scope/owner_unknown projections after no tool execution, suggesting scope projection can produce misleading evidence in timeout paths.
+  7. Unit tests are insufficient acceptance. The base rewrite must be measured by a new isolated bench run that reaches stable `COMPLETED_VERIFIED` with coherent ledger projections.
+- Standing skeptical acceptance lens for future base changes:
+  - If a fresh project does not reach stable `COMPLETED_VERIFIED`, the architecture is not proven, no matter how many unit tests pass.
+  - If any status is derived from raw TaskBoard/session files instead of Execution Ledger / TaskRuntime observable projection, assume the old split-brain path is still alive.
+  - If provider retry, text-tool fallback, or cancel/deadline behavior lacks lifecycle/effect receipts, assume the execution control plane is still under-specified.
+  - If QA/bench reports implementation failure while an upstream task is failed/blocked/missing target ownership, assume taxonomy drift until disproven.
+  - If final provider request coverage says pass but the request cannot actually dispatch the required write/effect path, treat coverage as observability noise rather than proof.
+  - If a fix only improves a summary gate and not the provider-request -> tool-lifecycle -> effect-receipt -> TaskBoundary -> QA fact chain, it is probably another local patch.
+
+## 2026-07-10T15:01:59Z - Skeptical architecture review checklist added
+- Added `src/backend/docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md`.
+- Purpose: make the standing skeptical voice operational for base and bench agents. The document defines the core question, required evidence chain, red flags, disproof-first prompts, and acceptance bar for claiming the Polaris execution architecture is reliable.
+- Important limit: this is a governance/checklist artifact, not proof that the architecture is already converged. Proof still requires a fresh isolated project reaching stable `COMPLETED_VERIFIED` with coherent final-provider-request, tool lifecycle, effect receipt, TaskBoundary, TaskRuntime, Run Ledger, QA, and bench projections.
+
+## 2026-07-10T15:03:10Z - Skeptical review linked from governance entrypoint
+- Linked `POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md` from `src/backend/docs/governance/README.md` so future base and bench agents see the disproof-first checklist from the governance directory entrypoint.
+- This keeps the skeptical lens discoverable without changing production behavior or treating the checklist as proof of convergence.
+
+## 2026-07-10T15:04:35Z - Skeptical review added to backend architecture standard
+- Added section `8.8 反证式架构验收标准` to `src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md`.
+- This makes `POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md` part of the required backend-agent architecture entry path for Factory, Director, ToolCallLifecycle, TaskRuntime, Run Ledger, TaskBoundary, QA, cancel/deadline, repair convergence, and bench taxonomy changes.
+- The standard now explicitly says unit tests, summary gates, coverage pass, or local bench improvement cannot prove convergence without fresh isolated evidence through the full provider-request -> tool-lifecycle -> effect-receipt -> TaskBoundary -> TaskRuntime -> Run Ledger -> QA -> Factory/bench chain.
+
+## 2026-07-10T15:06:15Z - Skeptical review of execution fact authority artifacts
+- Read the new untracked base-agent artifacts:
+  - `src/backend/docs/blueprints/EXECUTION_FACT_AUTHORITY_BLUEPRINT_20260710.md`
+  - `src/backend/docs/governance/decisions/adr-0097-execution-fact-authority-and-commit-barrier.md`
+  - `src/backend/docs/governance/templates/verification-cards/vc-20260710-execution-fact-authority.yaml`
+- codegraph spot-check supports their premise: `TurnOutcome`, `CommitReceipt`, `SealedTurn`, `_commit_turn_to_snapshot`, and independent `append_run_ledger_event` paths exist in the indexed codebase. This is a real architectural seam, not just a prompt-level theory.
+- Skeptical finding: the blueprint says no Factory Bench run is required to prove an individual implementation wave. That is acceptable as a wave-level component exit, but it must not be widened into an architecture-complete claim.
+- Updated `POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md` with a "Wave-Level Verification vs Architecture Proof" section: local contract/parity/recovery/concurrency tests can reduce migration risk, but any claim that the execution architecture is reliable still requires fresh isolated `COMPLETED_VERIFIED` evidence through the complete fact chain.
+
+## 2026-07-10T15:08:18Z - Skeptical review report template added
+- Added `src/backend/docs/governance/templates/skeptical-architecture-review-report.template.yaml`.
+- Linked the template from `POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md` and `src/backend/docs/governance/README.md`.
+- Purpose: future base/bench agents must report architecture reliability claims in a machine-readable shape that lists fresh isolated run identity, every fact-chain link, red flags, disproof questions, and a final verdict.
+- Validation: YAML parsed successfully with PyYAML; no tabs detected. This validates the template syntax only, not architecture convergence.
+
+## 2026-07-10T15:11:25Z - Skeptical review report schema added
+- Added `src/backend/docs/governance/schemas/skeptical-architecture-review-report.schema.yaml`.
+- Updated the skeptical review template with a `schema_ref` and linked the schema from `POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md` plus `src/backend/docs/governance/README.md`.
+- Validation: `jsonschema.Draft202012Validator.check_schema(...)` passed, and the template validates against the new schema.
+- Skeptical limit: a schema-valid report only proves reporting shape. It still cannot prove the architecture reliable unless the report contains fresh isolated `COMPLETED_VERIFIED` evidence through the full fact chain.
+
+## 2026-07-10T15:16:15Z - Skeptical architecture review validator added
+- Added executable governance validation:
+  - `src/backend/docs/governance/ci/scripts/skeptical_architecture_review_policy.py`
+  - `src/backend/docs/governance/ci/scripts/check_skeptical_architecture_review.py`
+  - `src/backend/docs/governance/ci/scripts/tests/test_skeptical_architecture_review_policy.py`
+- The checker validates skeptical review reports against the schema and rejects reliability claims when:
+  - `architecture_reliable=true` lacks fresh `completed_verified` evidence.
+  - proof level is not `system_oracle`.
+  - any red flag is `"true"`.
+  - any fact-chain node is not `present`.
+- Validation run:
+  - `ruff check --fix` passed.
+  - `ruff format` passed.
+  - `mypy` passed for the new policy/checker/tests.
+  - focused pytest passed: `5 passed`.
+  - CLI JSON smoke passed against the repository template.
+- Skeptical limit: the validator makes false reliability claims harder, but it does not itself prove Polaris reliable. A fresh isolated run still has to provide the full evidence chain.
+
+## 2026-07-10T15:18:27Z - Skeptical review validator wired into fitness runner
+- Wired `evaluate_skeptical_architecture_review(...)` into `src/backend/docs/governance/ci/scripts/fitness_rule_checker.py` as rule id `skeptical_architecture_review`.
+- Updated the focused test suite so the aggregate `FitnessRuleChecker` consumes the same canonical policy result.
+- Updated `src/backend/docs/governance/README.md` to mention `fitness_rule_checker.py --rule skeptical_architecture_review`.
+- Validation run:
+  - `ruff check --fix` passed.
+  - `ruff format` passed.
+  - `mypy` passed for the touched governance scripts/tests.
+  - focused pytest passed: `6 passed`.
+  - aggregate CLI smoke passed: `fitness_rule_checker.py --rule skeptical_architecture_review --json`.
+- Skeptical limit: aggregate runner integration validates the reporting guardrail by default; it still does not prove architecture reliability without a fresh isolated `COMPLETED_VERIFIED` report.
+
+## 2026-07-10T15:20:22Z - Skeptical review registered in fitness rules manifest
+- Added `skeptical_architecture_review_report_valid` to `src/backend/docs/governance/ci/fitness-rules.yaml`.
+- The rule records the governance intent: architecture reliability claims must use the skeptical report schema and cannot set `architecture_reliable=true` without fresh isolated `COMPLETED_VERIFIED` evidence, system-oracle proof level, complete fact-chain evidence, and no true red flags.
+- Validation run:
+  - `fitness-rules.yaml` parsed successfully; 66 rules found.
+  - `skeptical_architecture_review_report_valid` is present.
+  - focused skeptical pytest remains green: `6 passed`.
+  - aggregate skeptical CLI smoke remains green.
+- Skeptical limit: registering the rule only strengthens governance discoverability. It still does not prove the execution architecture reliable.
+
+## 2026-07-10T15:24:29Z - Base-agent reconstruction prompt prepared from bench failures
+- User asked for a complete root-cause summary and a prompt for a base Agent rewrite whose acceptance bar is not more unit tests, but a fresh project task chain that survives multiple Director turns, tool batches, cancel/deadline boundaries, QA, and reaches stable `COMPLETED_VERIFIED`.
+- Bench root-cause synthesis:
+  - The repeated failures were not primarily TypeScript/JavaScript syntax skill gaps. They exposed split execution authority across final provider request evidence, provider response, tool lifecycle, effect receipts, TaskRuntime, Run Ledger, QA, and Factory/bench projection.
+  - Provider route and fallback evidence improved across L1-01 r01-r05, but only after fixing backup binding selection, stale provider/model propagation, request snapshot preservation, and transaction error metadata projection. This shows the platform lacked a single immutable LLM-call evidence object.
+  - Runs r08-r11 showed that tool dispatch and effect receipts can work, but deadline/cancel/session state, TaskBoundary classification, downstream dependency unlock, QA projection, and bench taxonomy can still diverge.
+  - `session_not_active`, `run_not_found`, no materialized changes, dependency-not-unlocked, and missing tests were often projections of upstream execution-control failure, not ordinary implementation defects.
+  - New repair/environment planes help only after artifacts exist; they cannot solve missing materialization, incomplete tool dispatch, cancelled active sessions, or TaskBoard/Run Ledger split-brain.
+  - codegraph spot-check confirms observable task rows now route through `TaskRuntimeService.list_observable_task_rows()` with fact-only/transitional cutover, while `RunCompletionWaiter.wait()` and task-runtime projection remain key risk boundaries to validate end-to-end.
+- Required reconstruction target:
+  - Establish an atomic Execution Control Plane where `Provider Response -> ToolCallLifecycle -> Effect Receipt -> Execution Ledger Commit -> TaskBoundary Verdict -> TaskRuntime Observable Projection -> Run Ledger Projection -> QA Verdict -> Factory/bench Report` is one auditable transaction chain.
+  - Do not treat raw TaskBoard rows, old session JSON, prompt summaries, language repair coverage, or unit-test waves as proof of convergence.
+  - Architecture can only be called reliable after a fresh isolated new project reaches `COMPLETED_VERIFIED` with complete fact-chain evidence and no projection mismatch.
+
+## 2026-07-10T15:27:51Z - Execution control reconstruction prompt persisted
+- Added `src/backend/docs/governance/POLARIS_EXECUTION_CONTROL_PLANE_RECONSTRUCTION_PROMPT.md`.
+- Linked it from `src/backend/docs/governance/README.md` and `src/backend/docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md`.
+- The prompt codifies the bench-derived reconstruction target:
+  - Execution Ledger / `task_runtime.execution` fact stream is the execution authority.
+  - TaskBoard, Director status, UI status, QA status, and Factory report are projections.
+  - Provider response, tool lifecycle, dispatch, effect receipts, TaskBoundary, TaskRuntime, Run Ledger, QA, and Factory/bench report must form one auditable chain.
+  - Repair remains downstream of existing artifacts; it must not handle missing materialization, missing tool dispatch, cancelled sessions, or dependency-not-unlocked failures.
+  - Final acceptance is a fresh isolated project reaching stable `COMPLETED_VERIFIED`, not a larger unit-test count.
+- Focused validation:
+  - `check_skeptical_architecture_review.py --report skeptical-architecture-review-current-unproven-20260710.yaml --json`: passed. This confirms the current sample is a valid honest `unproven` report, not architecture proof.
+  - `pytest test_skeptical_architecture_review_policy.py -q`: `6 passed`.
+  - YAML parse check passed for the skeptical report, schema, and template.
+  - UTF-8 markdown read check passed for the new reconstruction prompt, skeptical review, and governance README.
+
+## 2026-07-10T15:30:51Z - Execution control reconstruction verification card template added
+- Added `src/backend/docs/governance/templates/verification-cards/execution-control-plane-reconstruction-card.template.yaml`.
+- Linked the template from:
+  - `src/backend/docs/governance/POLARIS_EXECUTION_CONTROL_PLANE_RECONSTRUCTION_PROMPT.md`
+  - `src/backend/docs/governance/README.md`
+- Purpose: base Agent reconstruction sign-off must include a filled verification card with fresh isolated `COMPLETED_VERIFIED` run identity, fact-chain evidence, projection consistency, and negative controls. A natural-language summary or wave-level unit-test pass is not enough.
+- Focused validation:
+  - YAML parse check passed for the new verification-card template, the generic verification-card template, and the skeptical architecture review template.
+  - `check_skeptical_architecture_review.py --workspace . --json`: passed against the default skeptical report template.
+  - `pytest test_skeptical_architecture_review_policy.py -q`: `6 passed`.
+- Skeptical limit: this template is an accountability artifact. It still does not prove the architecture reliable until a real filled card and skeptical report attach fresh isolated system-oracle evidence.
+
+## 2026-07-10T15:33:37Z - Execution control reconstruction card schema added
+- Added `src/backend/docs/governance/schemas/execution-control-plane-reconstruction-card.schema.yaml`.
+- Updated `src/backend/docs/governance/templates/verification-cards/execution-control-plane-reconstruction-card.template.yaml` with `schema_version` and `schema_ref`.
+- Linked the schema from:
+  - `src/backend/docs/governance/POLARIS_EXECUTION_CONTROL_PLANE_RECONSTRUCTION_PROMPT.md`
+  - `src/backend/docs/governance/README.md`
+- Purpose: make the execution-control reconstruction sign-off card machine-checkable. A base Agent must provide the required fact-chain sections, negative controls, verification plan, and sign-off fields before any reliability claim can be reviewed.
+- Focused validation:
+  - `jsonschema.Draft202012Validator.check_schema(...)`: passed for the new schema.
+  - The reconstruction card template validates against the new schema.
+  - `check_skeptical_architecture_review.py --workspace . --json`: still passed against the skeptical report template.
+  - `pytest test_skeptical_architecture_review_policy.py -q`: `6 passed`.
+- Skeptical limit: schema-valid means the card shape is reviewable. It still does not prove architecture reliability without a filled card and fresh isolated `COMPLETED_VERIFIED` system-oracle run.
+
+## 2026-07-10T15:36:55Z - Execution control reconstruction card fitness rule added
+- Added `src/backend/docs/governance/ci/scripts/execution_control_reconstruction_card_policy.py`.
+- Added `src/backend/docs/governance/ci/scripts/tests/test_execution_control_reconstruction_card_policy.py`.
+- Wired the policy into `src/backend/docs/governance/ci/scripts/fitness_rule_checker.py` as rule id `execution_control_reconstruction_card`.
+- Added `execution_control_reconstruction_card_valid` to `src/backend/docs/governance/ci/fitness-rules.yaml` and linked the policy from `src/backend/docs/governance/README.md`.
+- Policy behavior:
+  - The template can pass with `architecture_reliable=false`.
+  - If a filled card sets `sign_off.architecture_reliable=true`, the policy requires non-empty fact-chain evidence refs, effect receipt refs, tool lifecycle counts, projection mismatch flags set to false, factory identity/ports, QA failure/responsible-layer fields, negative-control evidence, and completed/verified sign-off fields.
+- Focused validation:
+  - `ruff check ... --fix`: passed.
+  - `ruff format ...`: passed.
+  - `mypy execution_control_reconstruction_card_policy.py fitness_rule_checker.py test_execution_control_reconstruction_card_policy.py`: passed.
+  - `pytest test_execution_control_reconstruction_card_policy.py -q`: `3 passed`.
+  - `fitness_rule_checker.py --rule execution_control_reconstruction_card --json`: passed against the template.
+  - Existing skeptical review tests and fitness rule remained green: `6 passed` and `fitness_rule_checker.py --rule skeptical_architecture_review --json` passed.
+- Skeptical limit: this closes the "shape can be hand-waved" gap for reconstruction cards. It still does not prove architecture reliability without a fresh isolated `COMPLETED_VERIFIED` filled card plus skeptical report.
+
+## 2026-07-10T15:39:30Z - Execution control reconstruction card standalone CLI added
+- Added `src/backend/docs/governance/ci/scripts/check_execution_control_reconstruction_card.py`.
+- Updated `src/backend/docs/governance/ci/scripts/tests/test_execution_control_reconstruction_card_policy.py` to cover:
+  - standalone checker parity with the canonical policy;
+  - CLI JSON output;
+  - aggregate fitness runner exposure.
+- Updated links in:
+  - `src/backend/docs/governance/POLARIS_EXECUTION_CONTROL_PLANE_RECONSTRUCTION_PROMPT.md`
+  - `src/backend/docs/governance/README.md`
+  - `src/backend/docs/governance/ci/fitness-rules.yaml`
+- Focused validation:
+  - `ruff check ... --fix`: passed.
+  - `ruff format ...`: passed.
+  - `mypy check_execution_control_reconstruction_card.py execution_control_reconstruction_card_policy.py test_execution_control_reconstruction_card_policy.py fitness_rule_checker.py`: passed.
+  - `pytest test_execution_control_reconstruction_card_policy.py -q`: `5 passed`.
+  - `check_execution_control_reconstruction_card.py --workspace . --json`: passed against the template.
+  - `fitness_rule_checker.py --rule execution_control_reconstruction_card --json`: passed.
+  - Existing skeptical review rule remained green: `pytest test_skeptical_architecture_review_policy.py -q` returned `6 passed`, and `fitness_rule_checker.py --rule skeptical_architecture_review --json` passed.
+- Skeptical limit: the card now has a direct CLI, but a green template check still only proves the checker works. Architecture reliability remains unproven until a filled card references a fresh isolated `COMPLETED_VERIFIED` run and the skeptical report verifies the same fact chain.

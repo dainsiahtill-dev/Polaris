@@ -125,6 +125,28 @@ def test_check_package_scripts_accepts_typescript_entrypoint_local_ts_import(
     assert result.ok is True
 
 
+def test_check_package_scripts_accepts_nodenext_js_specifier_resolving_to_typescript(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text(
+        "import { run } from './index.js';\nrun();\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "index.ts").write_text(
+        "export function run() { return true; }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"start:src":"node --import tsx ./src/main.ts"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is True
+
+
 def test_check_package_scripts_plain_js_entrypoint_does_not_accept_ts_only_import(
     tmp_path: Path,
 ) -> None:
@@ -157,6 +179,31 @@ def test_check_package_scripts_accepts_build_script_before_dist_entrypoint(tmp_p
     result = check_package_scripts(str(tmp_path))
 
     assert result.ok is True
+
+
+def test_check_package_scripts_accepts_start_build_output_from_separate_build_script(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"build":"tsc -p tsconfig.json","start":"node dist/main.js"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is True
+
+
+def test_check_package_scripts_rejects_missing_bun_and_deno_entrypoints(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"bun:start":"bun run src/main.ts","deno:start":"deno run --allow-read src/main.ts"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is False
+    assert [issue.entrypoint for issue in result.issues] == ["src/main.ts", "src/main.ts"]
 
 
 def test_check_package_scripts_rejects_direct_recursive_npm_script(tmp_path: Path) -> None:

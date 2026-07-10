@@ -9,7 +9,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, NoReturn, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, NoReturn, Sequence
 
 from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
@@ -58,9 +58,17 @@ from .execution_session import (
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from polaris.cells.runtime.task_runtime.public.contracts import (
+        OwnerReworkExecutionPreparationResultV1,
+        PrepareOwnerReworkExecutionCommandV1,
+    )
+
 _TASK_ID_PATTERN = re.compile(r"^task-(\d+)(?:-|$)", re.IGNORECASE)
 _TASK_RUNTIME_EXECUTION_STREAM = "task_runtime.execution"
-_TASK_RUNTIME_EXECUTION_FACT_CAS_RETRIES = 3
+_OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1 = "task-runtime.owner-rework-execution-authorization/1"
+_OWNER_REWORK_HANDOFFS_METADATA_KEY = "owner_rework_handoffs"
+_OWNER_REWORK_EXECUTION_AUTHORIZATION_METADATA_KEY = "owner_rework_execution_authorization"
 _REEXECUTION_METADATA_DROP_KEYS = frozenset(
     {
         "adapter_phase",
@@ -178,6 +186,371 @@ class TaskRuntimeService:
 
         with self._session_write_receipt_lock:
             return self._last_session_write_receipt
+
+    @staticmethod
+    def _owner_rework_execution_result(
+        *,
+        ok: bool,
+        code: str,
+        reason: str,
+        task_id: str,
+        handoff_id: str = "",
+        task_role: str = "",
+        runtime_task_id: str = "",
+        reopened: bool = False,
+        idempotent: bool = False,
+        execution_event: Mapping[str, Any] | None = None,
+    ) -> OwnerReworkExecutionPreparationResultV1:
+        """Build the public result without coupling module import initialization.
+
+        The import is intentionally local: ``public.service`` owns the public
+        facade and imports this implementation, so importing its contracts at
+        module import time would create an avoidable package cycle.
+        """
+
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            OwnerReworkExecutionPreparationResultV1,
+        )
+
+        return OwnerReworkExecutionPreparationResultV1(
+            ok=ok,
+            code=code,
+            reason=reason,
+            task_id=task_id,
+            handoff_id=handoff_id,
+            task_role=task_role,
+            runtime_task_id=runtime_task_id,
+            reopened=reopened,
+            idempotent=idempotent,
+            execution_event=dict(execution_event or {}),
+        )
+
+    def prepare_owner_rework_execution(
+        self,
+        command: PrepareOwnerReworkExecutionCommandV1,
+    ) -> OwnerReworkExecutionPreparationResultV1:
+        """Prepare one claimed owner/requester rework task for adapter execution.
+
+        TaskMarket is the sole authority for owner/requester routing,
+        ``resolved_only`` readiness, and claim leasing. This method consumes a
+        typed snapshot of that already-granted authority and only reconciles
+        TaskRuntime's task row and execution session. It never queries
+        TaskMarket, recreates dependencies, or mutates TaskMarket state.
+
+        A terminal TaskRuntime row is reopened only through the sanctioned
+        runtime path, which rotates a terminal session and appends execution
+        facts. A matching authorization on an already non-terminal row is a
+        no-op, while a conflicting or malformed authorization fails closed.
+        """
+
+        authorization = getattr(command, "authorization", None)
+        task_id = str(getattr(authorization, "task_id", "") or "").strip()
+        if not task_id:
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="owner_rework_authorization_malformed",
+                reason="owner rework authorization is missing task_id",
+                task_id="unknown",
+            )
+
+        schema_version = str(getattr(authorization, "schema_version", "") or "").strip()
+        if schema_version != _OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1:
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="owner_rework_authorization_malformed",
+                reason="owner rework authorization schema is invalid",
+                task_id=task_id,
+            )
+        if str(getattr(authorization, "workspace", "") or "").strip() != self.workspace:
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="owner_rework_workspace_mismatch",
+                reason="owner rework authorization workspace does not match TaskRuntime",
+                task_id=task_id,
+            )
+
+        from polaris.cells.runtime.task_market.public.contracts import OwnerReworkHandoffV1
+
+        handoff = getattr(authorization, "handoff", None)
+        if not isinstance(handoff, OwnerReworkHandoffV1):
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="owner_rework_authorization_malformed",
+                reason="owner rework authorization handoff is not typed",
+                task_id=task_id,
+            )
+        try:
+            canonical_handoff = OwnerReworkHandoffV1.from_record(handoff.to_record())
+        except (AttributeError, TypeError, ValueError):
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="owner_rework_authorization_malformed",
+                reason="owner rework authorization handoff is malformed",
+                task_id=task_id,
+            )
+
+        task_role = str(getattr(authorization, "task_role", "") or "").strip().lower()
+        counterparty_task_id = str(getattr(authorization, "counterparty_task_id", "") or "").strip()
+        if task_role == "owner":
+            expected_task_id = canonical_handoff.owner_task_id
+            expected_counterparty_task_id = canonical_handoff.requester_task_id
+            role_allowed = canonical_handoff.owner_reopened
+        elif task_role == "requester":
+            expected_task_id = canonical_handoff.requester_task_id
+            expected_counterparty_task_id = canonical_handoff.owner_task_id
+            role_allowed = True
+        else:
+            expected_task_id = ""
+            expected_counterparty_task_id = ""
+            role_allowed = False
+        if not role_allowed or task_id != expected_task_id or counterparty_task_id != expected_counterparty_task_id:
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="owner_rework_handoff_mismatch",
+                reason="owner rework task role or counterparty does not match handoff",
+                task_id=task_id,
+                handoff_id=canonical_handoff.handoff_id,
+                task_role=task_role,
+            )
+
+        worker_id = str(getattr(authorization, "worker_id", "") or "").strip()
+        worker_role = str(getattr(authorization, "worker_role", "") or "").strip()
+        lease_token = str(getattr(authorization, "lease_token", "") or "").strip()
+        claimed_item = getattr(authorization, "claimed_item", None)
+        counterparty_item = getattr(authorization, "counterparty_item", None)
+        if not isinstance(claimed_item, Mapping) or not isinstance(counterparty_item, Mapping):
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="owner_rework_authorization_malformed",
+                reason="owner rework authorization item evidence is malformed",
+                task_id=task_id,
+                handoff_id=canonical_handoff.handoff_id,
+                task_role=task_role,
+            )
+        if (
+            worker_role != "director"
+            or not worker_id
+            or not lease_token
+            or str(claimed_item.get("task_id") or "").strip() != task_id
+            or str(claimed_item.get("status") or "").strip().lower() != "in_execution"
+            or str(claimed_item.get("lease_token") or "").strip() != lease_token
+            or str(claimed_item.get("claimed_by") or "").strip() != worker_id
+        ):
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="owner_rework_claim_evidence_invalid",
+                reason="owner rework authorization does not prove the active Director lease",
+                task_id=task_id,
+                handoff_id=canonical_handoff.handoff_id,
+                task_role=task_role,
+            )
+        if str(counterparty_item.get("task_id") or "").strip() != counterparty_task_id:
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="owner_rework_counterparty_evidence_invalid",
+                reason="owner rework authorization counterparty item does not match handoff",
+                task_id=task_id,
+                handoff_id=canonical_handoff.handoff_id,
+                task_role=task_role,
+            )
+
+        for item in (claimed_item, counterparty_item):
+            metadata = item.get("metadata")
+            handoffs = metadata.get(_OWNER_REWORK_HANDOFFS_METADATA_KEY) if isinstance(metadata, Mapping) else None
+            record = handoffs.get(canonical_handoff.handoff_id) if isinstance(handoffs, Mapping) else None
+            try:
+                item_handoff = OwnerReworkHandoffV1.from_record(record)
+            except (TypeError, ValueError):
+                return self._owner_rework_execution_result(
+                    ok=False,
+                    code="owner_rework_handoff_evidence_invalid",
+                    reason="owner rework authorization item lacks a valid matching handoff",
+                    task_id=task_id,
+                    handoff_id=canonical_handoff.handoff_id,
+                    task_role=task_role,
+                )
+            if item_handoff.to_record() != canonical_handoff.to_record():
+                return self._owner_rework_execution_result(
+                    ok=False,
+                    code="owner_rework_handoff_evidence_invalid",
+                    reason="owner rework authorization item handoff conflicts with claim evidence",
+                    task_id=task_id,
+                    handoff_id=canonical_handoff.handoff_id,
+                    task_role=task_role,
+                )
+
+        observable_row = self.get_task(task_id)
+        if not isinstance(observable_row, Mapping):
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="runtime_task_not_found",
+                reason="TaskRuntime has no execution row for the claimed owner rework task",
+                task_id=task_id,
+                handoff_id=canonical_handoff.handoff_id,
+                task_role=task_role,
+            )
+        runtime_task_id = self.normalize_task_id(observable_row.get("id"))
+        if runtime_task_id is None:
+            return self._owner_rework_execution_result(
+                ok=False,
+                code="runtime_task_invalid",
+                reason="TaskRuntime execution row has no valid task id",
+                task_id=task_id,
+                handoff_id=canonical_handoff.handoff_id,
+                task_role=task_role,
+            )
+
+        authorization_record = {
+            "schema_version": _OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
+            "handoff_id": canonical_handoff.handoff_id,
+            "task_id": task_id,
+            "task_role": task_role,
+            "counterparty_task_id": counterparty_task_id,
+            "worker_id": worker_id,
+            "worker_role": worker_role,
+            "lease_token_sha256": hashlib.sha256(lease_token.encode("utf-8")).hexdigest(),
+        }
+        with self._get_session_lock(runtime_task_id):
+            current_row = self.get_task(task_id)
+            if not isinstance(current_row, Mapping):
+                return self._owner_rework_execution_result(
+                    ok=False,
+                    code="runtime_task_not_found",
+                    reason="TaskRuntime execution row disappeared before preparation",
+                    task_id=task_id,
+                    handoff_id=canonical_handoff.handoff_id,
+                    task_role=task_role,
+                    runtime_task_id=str(runtime_task_id),
+                )
+            current_metadata = current_row.get("metadata")
+            metadata = current_metadata if isinstance(current_metadata, Mapping) else {}
+            existing_record = metadata.get(_OWNER_REWORK_EXECUTION_AUTHORIZATION_METADATA_KEY)
+            matching_authorization = False
+            if existing_record is not None:
+                if not isinstance(existing_record, Mapping):
+                    return self._owner_rework_execution_result(
+                        ok=False,
+                        code="owner_rework_authorization_conflict",
+                        reason="TaskRuntime has malformed owner rework authorization state",
+                        task_id=task_id,
+                        handoff_id=canonical_handoff.handoff_id,
+                        task_role=task_role,
+                        runtime_task_id=str(runtime_task_id),
+                    )
+                matching_authorization = dict(existing_record) == authorization_record
+                if not matching_authorization:
+                    return self._owner_rework_execution_result(
+                        ok=False,
+                        code="owner_rework_authorization_conflict",
+                        reason="TaskRuntime task is already prepared for a different owner rework authorization",
+                        task_id=task_id,
+                        handoff_id=canonical_handoff.handoff_id,
+                        task_role=task_role,
+                        runtime_task_id=str(runtime_task_id),
+                    )
+
+            session = self._read_session(runtime_task_id)
+            active_session = (
+                session is not None and session.status == "active" and not session.is_expired(now=utc_now())
+            )
+            if active_session and matching_authorization:
+                return self._owner_rework_execution_result(
+                    ok=True,
+                    code="owner_rework_execution_already_prepared",
+                    reason="matching owner rework execution is already active",
+                    task_id=task_id,
+                    handoff_id=canonical_handoff.handoff_id,
+                    task_role=task_role,
+                    runtime_task_id=str(runtime_task_id),
+                    idempotent=True,
+                )
+            if active_session:
+                return self._owner_rework_execution_result(
+                    ok=False,
+                    code="runtime_execution_lease_conflict",
+                    reason="TaskRuntime has an active execution lease for this task",
+                    task_id=task_id,
+                    handoff_id=canonical_handoff.handoff_id,
+                    task_role=task_role,
+                    runtime_task_id=str(runtime_task_id),
+                )
+
+            terminal_evidence = is_terminal_task_row_status(current_row.get("status")) or (
+                session is not None and is_terminal_session_status(session.status)
+            )
+            if matching_authorization and not terminal_evidence:
+                return self._owner_rework_execution_result(
+                    ok=True,
+                    code="owner_rework_execution_already_prepared",
+                    reason="matching owner rework execution is already prepared",
+                    task_id=task_id,
+                    handoff_id=canonical_handoff.handoff_id,
+                    task_role=task_role,
+                    runtime_task_id=str(runtime_task_id),
+                    idempotent=True,
+                )
+
+            reopened = False
+            if terminal_evidence:
+                reopened_row = self.reopen_task_row(
+                    runtime_task_id,
+                    reason="owner_rework_execution_authorized",
+                    metadata={
+                        _OWNER_REWORK_EXECUTION_AUTHORIZATION_METADATA_KEY: authorization_record,
+                    },
+                )
+                if reopened_row is None:
+                    return self._owner_rework_execution_result(
+                        ok=False,
+                        code="runtime_task_not_found",
+                        reason="TaskRuntime could not reopen the owner rework execution row",
+                        task_id=task_id,
+                        handoff_id=canonical_handoff.handoff_id,
+                        task_role=task_role,
+                        runtime_task_id=str(runtime_task_id),
+                    )
+                reopened = True
+
+            metadata_update: dict[str, Any] = {
+                _OWNER_REWORK_EXECUTION_AUTHORIZATION_METADATA_KEY: authorization_record,
+            }
+            if terminal_evidence:
+                metadata_update["terminal_reset_at"] = utc_now().timestamp()
+            updated_row = self.update_task_row(runtime_task_id, metadata=metadata_update)
+            if updated_row is None:
+                return self._owner_rework_execution_result(
+                    ok=False,
+                    code="runtime_task_not_found",
+                    reason="TaskRuntime execution row disappeared while recording authorization",
+                    task_id=task_id,
+                    handoff_id=canonical_handoff.handoff_id,
+                    task_role=task_role,
+                    runtime_task_id=str(runtime_task_id),
+                )
+            prepared_row = self.get_task(task_id) or updated_row
+            execution_event = self._append_execution_event(
+                "owner_rework_execution_prepared",
+                task_row=dict(prepared_row),
+                session=self._read_session(runtime_task_id),
+                details={
+                    "handoff_id": canonical_handoff.handoff_id,
+                    "task_role": task_role,
+                    "counterparty_task_id": counterparty_task_id,
+                    "lease_token_sha256": authorization_record["lease_token_sha256"],
+                    "reopened": reopened,
+                },
+            )
+        return self._owner_rework_execution_result(
+            ok=True,
+            code="owner_rework_execution_prepared",
+            reason="TaskRuntime owner rework execution is prepared",
+            task_id=task_id,
+            handoff_id=canonical_handoff.handoff_id,
+            task_role=task_role,
+            runtime_task_id=str(runtime_task_id),
+            reopened=reopened,
+            execution_event=execution_event,
+        )
 
     def _list_file_task_entities(self) -> list[Task]:
         """Return raw file-backed ``TaskBoard`` entities for owner-cell use.
@@ -2930,7 +3303,7 @@ class TaskRuntimeService:
     def _session_file_lock_path(self, task_id: int) -> Path:
         """Return the cooperative cross-process lock path for one session file."""
 
-        return self._kernel_fs.resolve_path(f"runtime/tasks/.task_{int(task_id)}.session.json.lock")
+        return Path(self._kernel_fs.resolve_path(f"runtime/tasks/.task_{int(task_id)}.session.json.lock"))
 
     def _session_logical_path(self, task_id: int) -> str:
         return f"runtime/tasks/task_{int(task_id)}.session.json"
@@ -3762,7 +4135,7 @@ class TaskRuntimeService:
         )
         event_type_str = str(payload.get("event_type") or "unknown")
         try:
-            appended = self._append_execution_fact_with_cas(
+            appended = self._append_execution_fact(
                 event_type_str=event_type_str,
                 payload=payload,
             )
@@ -3860,45 +4233,16 @@ class TaskRuntimeService:
             return {}
         return {"session_write_receipt": receipt.to_dict()}
 
-    def _next_execution_fact_expected_seq(self) -> int:
-        """Return the next expected sequence for the execution fact stream.
-
-        Boundary:
-            This helper reads through the public FactStream query API only. It
-            must not inspect the JSONL store, ``.seq`` cursor, or filesystem
-            internals directly; the subsequent append is still protected by the
-            FactStream CAS contract, so a concurrent append causes an
-            ``expected_seq_drift`` failure instead of silent sequence reuse.
-
-        Complexity:
-            O(n) time in the current FactStream query implementation because
-            the JSONL stream is parsed to compute ``total``; O(1) additional
-            memory from this helper.
-        """
-
-        result = self._query_execution_fact_events(limit=1, offset=0)
-        return int(result.total) + 1
-
-    def _append_execution_fact_with_cas(
+    def _append_execution_fact(
         self,
         *,
         event_type_str: str,
         payload: dict[str, Any],
     ) -> FactEventAppendedV1:
-        """Append one execution fact with bounded optimistic sequence CAS.
+        """Append through the FactStream-owned atomic sequence boundary."""
 
-        Concurrent TaskRuntime transitions all append to the same
-        ``task_runtime.execution`` stream. The expected sequence is therefore
-        derived immediately before each append attempt, then enforced by the
-        FactStream store. A CAS drift means another writer legitimately landed
-        first, so the service retries a small fixed number of times; non-CAS
-        failures propagate to the existing append-error projection.
-        """
-
-        last_drift: FactStreamError | None = None
-        for attempt in range(1, _TASK_RUNTIME_EXECUTION_FACT_CAS_RETRIES + 1):
-            expected_seq = self._next_execution_fact_expected_seq()
-            command = AppendFactEventCommandV1(
+        return append_fact_event(
+            AppendFactEventCommandV1(
                 workspace=self.workspace,
                 stream=_TASK_RUNTIME_EXECUTION_STREAM,
                 event_type=event_type_str,
@@ -3907,26 +4251,8 @@ class TaskRuntimeService:
                 run_id=str(payload.get("run_id") or "").strip() or None,
                 task_id=str(payload.get("task_id") or "").strip() or None,
                 correlation_id=str(payload.get("session_id") or "").strip() or None,
-                expected_seq=expected_seq,
             )
-            try:
-                return append_fact_event(command)
-            except FactStreamError as exc:
-                if exc.code != "expected_seq_drift":
-                    raise
-                last_drift = exc
-                if attempt >= _TASK_RUNTIME_EXECUTION_FACT_CAS_RETRIES:
-                    break
-                logger.debug(
-                    "Retrying task runtime execution event append after expected_seq drift "
-                    "event_type=%s attempt=%s expected_seq=%s",
-                    event_type_str,
-                    attempt,
-                    expected_seq,
-                )
-        if last_drift is not None:
-            raise last_drift
-        raise RuntimeError("task runtime execution event append exhausted without result")
+        )
 
     def _publish_factory_execution_event(self, payload: dict[str, Any]) -> bool:
         factory_run_id = str(payload.get("factory_run_id") or "").strip()

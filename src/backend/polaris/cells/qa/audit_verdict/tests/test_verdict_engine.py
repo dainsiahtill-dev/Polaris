@@ -118,3 +118,81 @@ def test_tool_lifecycle_failed_projection_blocks_with_projected_failure_class(tm
     assert envelope.classification.responsible_layer == "execution_control_plane"
     assert envelope.classification.repairable_by_director is False
     assert "effect receipt" in envelope.classification.reason
+
+
+def test_task_boundary_text_fallback_failure_routes_to_platform(tmp_path: Path) -> None:
+    engine = QAVerdictEngine(str(tmp_path))
+
+    envelope = engine.build_envelope(
+        task_id="TASK-5",
+        payload={"task_id": "TASK-5"},
+        ledger_projection={
+            "task_boundary": {
+                "latest": {
+                    "ok": False,
+                    "failure_class": "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED",
+                    "responsible_layer": "execution_control_plane",
+                    "reason": "compatibility parser produced no dispatch",
+                }
+            }
+        },
+    )
+
+    assert envelope.verdict == "BLOCKED"
+    assert envelope.next_stage == "waiting_human"
+    assert envelope.classification.failure_class == "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED"
+    assert envelope.classification.responsible_layer == "execution_control_plane"
+    assert envelope.classification.repairable_by_director is False
+
+
+def test_task_boundary_failed_projection_beats_unrelated_latest_success(tmp_path: Path) -> None:
+    engine = QAVerdictEngine(str(tmp_path))
+
+    envelope = engine.build_envelope(
+        task_id="TASK-2",
+        payload={"task_id": "TASK-2"},
+        ledger_projection={
+            "task_boundary": {
+                "ok": False,
+                "latest": {
+                    "task_id": "TASK-3",
+                    "ok": True,
+                    "failure_class": "PASSED",
+                },
+                "failed": [
+                    {
+                        "task_id": "TASK-2",
+                        "ok": False,
+                        "failure_class": "INCOMPLETE_MATERIALIZATION",
+                        "responsible_layer": "director",
+                        "reason": "TASK-2 remains incomplete",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert envelope.verdict == "FAIL"
+    assert envelope.next_stage == "pending_exec"
+    assert envelope.classification.failure_class == "INCOMPLETE_MATERIALIZATION"
+
+
+def test_failed_required_evidence_is_compiler_or_test_failure(tmp_path: Path) -> None:
+    engine = QAVerdictEngine(str(tmp_path))
+
+    envelope = engine.build_envelope(
+        task_id="TASK-6",
+        payload={"task_id": "TASK-6"},
+        ledger_projection={
+            "evidence_policy": {
+                "required_modalities": ["command"],
+                "missing_required_modalities": [],
+                "failed_required_modalities": ["command"],
+            }
+        },
+    )
+
+    assert envelope.verdict == "FAIL"
+    assert envelope.next_stage == "pending_exec"
+    assert envelope.classification.failure_class == "COMPILER_OR_TEST_FAILURE"
+    assert envelope.classification.responsible_layer == "director"

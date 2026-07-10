@@ -39,6 +39,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     OrchestrationStageExecutor,
 )
 from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
+from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 from polaris.cells.roles.adapters.public import (
     build_director_materialization_quality_repair_message,
     extract_workspace_quality_summary,
@@ -585,6 +586,9 @@ class TestChiefEngineerHandoffGuards:
         assert depth_contract["minimums"]["min_test_files"] == 1
         assert depth_contract["minimums"]["min_test_assertions"] == 8
         assert context["metadata"]["delivery_depth_contract"] == depth_contract
+        assert context["pm_task_contract"]["id"] == "TASK-1"
+        assert context["pm_task_contract"]["target_files"] == ["package.json", "src/index.ts"]
+        assert context["target_files"] == ["package.json", "src/index.ts"]
 
     def test_task_blueprint_context_merges_catalog_minimums_into_existing_depth_contract(
         self,
@@ -2621,7 +2625,7 @@ class TestQualityGateDeadlineHandling:
         assert decision["llm_timeout_seconds"] == 123
 
     def test_chief_engineer_deadline_projection_caps_llm_timeout_to_available_budget(self) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 150.0
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 180.0
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {
                 "factory_run_deadline_epoch_seconds": deadline_epoch,
@@ -2632,8 +2636,8 @@ class TestQualityGateDeadlineHandling:
         )
 
         assert decision["use_deadline_projection"] is False
-        assert decision["reserved_downstream_seconds"] == 95.0
-        assert 50 <= decision["llm_timeout_seconds"] <= 55
+        assert decision["reserved_downstream_seconds"] == 120.0
+        assert 55 <= decision["llm_timeout_seconds"] <= 60
 
     def test_chief_engineer_deadline_projection_skips_llm_when_downstream_budget_is_at_risk(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
@@ -2704,7 +2708,7 @@ class TestQualityGateDeadlineHandling:
             materialization_pending=True,
         )
 
-        assert 65 <= timeout <= 70
+        assert 130 <= timeout <= 136
 
     def test_director_dispatch_timeout_keeps_quality_reserve_after_materialization(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
@@ -2744,6 +2748,7 @@ class TestQualityGateDeadlineHandling:
             },
             requested_timeout_seconds=1800,
             materialization_pending=True,
+            first_materialization_pending=True,
         )
 
         assert decision["allow_dispatch"] is False
@@ -2762,12 +2767,35 @@ class TestQualityGateDeadlineHandling:
             },
             requested_timeout_seconds=1800,
             materialization_pending=True,
+            first_materialization_pending=True,
         )
 
         assert decision["allow_dispatch"] is True
         assert decision["reason"] == ""
         assert decision["minimum_start_budget_seconds"] == 90.0
         assert 230 <= decision["llm_timeout_seconds"] <= 235
+
+    def test_director_dispatch_deadline_admission_uses_standard_budget_after_first_round(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 213.0
+        decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 150,
+                "quality_gate_reserved_budget_seconds": 120,
+            },
+            requested_timeout_seconds=1800,
+            materialization_pending=True,
+            first_materialization_pending=False,
+        )
+
+        assert decision["allow_dispatch"] is True
+        assert decision["materialization_pending"] is True
+        assert decision["first_materialization_pending"] is False
+        assert (
+            decision["minimum_start_budget_seconds"]
+            == stage_executor_module.FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
+        )
+        assert 87 <= decision["llm_timeout_seconds"] <= 88
 
     @pytest.mark.asyncio
     async def test_director_dispatch_deadline_admission_stops_before_llm_turn(self, tmp_path: Path) -> None:
@@ -5659,52 +5687,108 @@ class TestDirectorDispatchLoop:
             def __init__(self) -> None:
                 self.cancelled: list[tuple[str, str]] = []
 
+            def active_execution_barrier_result(self, *, run_id: str, reason: str) -> CommandResult:
+                return CommandResult(
+                    run_id=run_id,
+                    status="cancelled" if reason == "factory_cancelled" else "timeout",
+                    message=f"Director run left active for execution-control-plane barrier: {reason}",
+                    metadata={
+                        "cancel_signal_sent": False,
+                        "cancel_reason": reason,
+                        "inflight_run_continues": True,
+                        "terminal_source": "task_runtime_active_execution_barrier",
+                        "active_task_count": 1,
+                        "active_task_ids": ["TASK-1"],
+                    },
+                )
+
             async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
                 self.cancelled.append((run_id, reason))
 
-        class _ActiveExecutor(OrchestrationStageExecutor):
-            def _read_taskboard_stats(self) -> dict[str, int]:
-                return {
-                    "total": 1,
-                    "pending": 0,
-                    "ready": 0,
-                    "in_progress": 1,
-                    "completed": 0,
-                    "failed": 0,
-                    "blocked": 0,
-                }
+        class _SettlingService:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                self.calls += 1
+                if self.calls == 1:
+                    return CommandResult(run_id=run_id, status="running", message="settling")
+                return CommandResult(run_id=run_id, status="completed", message="done")
 
         fake_waiter = _FakeRunCompletionWaiter()
-        executor = _ActiveExecutor(tmp_path)
+        executor = OrchestrationStageExecutor(tmp_path)
         executor._run_completion_waiter = fake_waiter  # type: ignore[assignment]
         cancel_event = asyncio.Event()
         cancel_event.set()
 
         result = await executor._settle_inflight_director_run_after_timeout(
-            service=object(),  # type: ignore[arg-type]
+            service=_SettlingService(),  # type: ignore[arg-type]
             run_id="run-2",
             grace_seconds=30,
             cancel_event=cancel_event,
         )
 
         assert result is not None
-        assert result.status == "cancelled"
+        assert result.status == "completed"
         assert result.metadata == {
             "cancel_signal_sent": False,
-            "cancel_reason": "factory_cancelled",
-            "inflight_run_continues": True,
-            "timeout_settle_grace_seconds": 30,
-            "terminal_source": "active_director_task_barrier",
-            "task_status_counts": {
-                "total": 1,
-                "pending": 0,
-                "ready": 0,
-                "in_progress": 1,
-                "completed": 0,
-                "failed": 0,
-                "blocked": 0,
-            },
+            "barrier_cancel_deferred": True,
+            "deferred_cancel_reason": "factory_cancelled",
         }
+        assert fake_waiter.cancelled == []
+
+    @pytest.mark.asyncio
+    async def test_director_timeout_settle_renews_idle_window_from_task_runtime_progress(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class _ProgressWaiter:
+            def __init__(self) -> None:
+                self.marker_index = 0
+                self.cancelled: list[tuple[str, str]] = []
+
+            def active_execution_progress_marker(
+                self,
+                *,
+                run_id: str,
+            ) -> tuple[tuple[str, str, str, str], ...]:
+                del run_id
+                self.marker_index += 1
+                return (("TASK-1", str(self.marker_index), f"heartbeat-{self.marker_index}", "in_progress"),)
+
+            async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
+                self.cancelled.append((run_id, reason))
+
+        class _ProgressService:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                self.calls += 1
+                if self.calls < 3:
+                    return CommandResult(run_id=run_id, status="running", message="settling")
+                return CommandResult(run_id=run_id, status="completed", message="done")
+
+        async def _yield_without_waiting(_seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", _yield_without_waiting)
+        fake_waiter = _ProgressWaiter()
+        executor = OrchestrationStageExecutor(tmp_path)
+        executor._run_completion_waiter = fake_waiter  # type: ignore[assignment]
+
+        result = await executor._settle_inflight_director_run_after_timeout(
+            service=_ProgressService(),  # type: ignore[arg-type]
+            run_id="run-progress",
+            grace_seconds=1,
+        )
+
+        assert result is not None
+        assert result.status == "completed"
+        assert result.metadata["barrier_progress_extensions"] == 2
+        assert result.metadata["barrier_progress_source"] == "task_runtime_execution_fact"
+        assert result.metadata["barrier_max_total_seconds"] == 4.0
         assert fake_waiter.cancelled == []
 
     @pytest.mark.asyncio
@@ -5716,6 +5800,21 @@ class TestDirectorDispatchLoop:
             def __init__(self) -> None:
                 self.cancelled: list[tuple[str, str]] = []
 
+            def active_execution_barrier_result(self, *, run_id: str, reason: str) -> CommandResult:
+                return CommandResult(
+                    run_id=run_id,
+                    status="timeout",
+                    message=f"Director run left active for execution-control-plane barrier: {reason}",
+                    metadata={
+                        "cancel_signal_sent": False,
+                        "cancel_reason": reason,
+                        "inflight_run_continues": True,
+                        "terminal_source": "task_runtime_active_execution_barrier",
+                        "active_task_count": 1,
+                        "active_task_ids": ["TASK-1"],
+                    },
+                )
+
             async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
                 self.cancelled.append((run_id, reason))
 
@@ -5723,20 +5822,8 @@ class TestDirectorDispatchLoop:
             async def query_run_status(self, run_id: str) -> CommandResult:
                 return CommandResult(run_id=run_id, status="running", message="still running")
 
-        class _NoTerminalExecutor(OrchestrationStageExecutor):
-            def _read_taskboard_stats(self) -> dict[str, int]:
-                return {
-                    "total": 1,
-                    "pending": 0,
-                    "ready": 0,
-                    "in_progress": 1,
-                    "completed": 0,
-                    "failed": 0,
-                    "blocked": 0,
-                }
-
         fake_waiter = _FakeRunCompletionWaiter()
-        executor = _NoTerminalExecutor(tmp_path)
+        executor = OrchestrationStageExecutor(tmp_path)
         executor._run_completion_waiter = fake_waiter  # type: ignore[assignment]
 
         result = await executor._settle_inflight_director_run_after_timeout(
@@ -5752,16 +5839,13 @@ class TestDirectorDispatchLoop:
             "cancel_reason": "factory_stage_timeout",
             "inflight_run_continues": True,
             "timeout_settle_grace_seconds": 1,
-            "terminal_source": "active_director_task_barrier",
-            "task_status_counts": {
-                "total": 1,
-                "pending": 0,
-                "ready": 0,
-                "in_progress": 1,
-                "completed": 0,
-                "failed": 0,
-                "blocked": 0,
-            },
+            "terminal_source": "task_runtime_active_execution_barrier",
+            "active_task_count": 1,
+            "active_task_ids": ["TASK-1"],
+            "barrier_state": "timeout",
+            "barrier_timeout": True,
+            "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+            "responsible_layer": "execution_control_plane",
         }
         assert fake_waiter.cancelled == []
 
@@ -5849,18 +5933,24 @@ class TestDirectorDispatchLoop:
                 await asyncio.sleep(60)
                 return CommandResult(run_id="run-active", status="completed", message="late")
 
-            def _read_taskboard_stats(self) -> dict[str, int]:
-                return {
-                    "total": 1,
-                    "pending": 0,
-                    "ready": 0,
-                    "in_progress": 1,
-                    "completed": 0,
-                    "failed": 0,
-                    "blocked": 0,
-                }
+        class _RunScopedBarrierWaiter:
+            def active_execution_barrier_result(self, *, run_id: str, reason: str) -> CommandResult:
+                return CommandResult(
+                    run_id=run_id,
+                    status="cancelled",
+                    message=f"Director run left active for execution-control-plane barrier: {reason}",
+                    metadata={
+                        "cancel_signal_sent": False,
+                        "cancel_reason": reason,
+                        "inflight_run_continues": True,
+                        "terminal_source": "task_runtime_active_execution_barrier",
+                        "active_task_count": 1,
+                        "active_task_ids": ["TASK-1"],
+                    },
+                )
 
         executor = _ActiveExecutor(tmp_path)
+        executor._run_completion_waiter = _RunScopedBarrierWaiter()  # type: ignore[assignment]
         executor._binding_status_probe_seconds = 0.01
         cancel_event = asyncio.Event()
         cancel_event.set()
@@ -5894,17 +5984,10 @@ class TestDirectorDispatchLoop:
                 "cancel_signal_sent": False,
                 "cancel_reason": "factory_cancelled",
                 "inflight_run_continues": True,
-                "terminal_source": "active_director_task_barrier",
+                "terminal_source": "task_runtime_active_execution_barrier",
                 "timeout_settle_grace_seconds": 0,
-                "task_status_counts": {
-                    "total": 1,
-                    "pending": 0,
-                    "ready": 0,
-                    "in_progress": 1,
-                    "completed": 0,
-                    "failed": 0,
-                    "blocked": 0,
-                },
+                "active_task_count": 1,
+                "active_task_ids": ["TASK-1"],
             }
         ]
 
@@ -7782,6 +7865,205 @@ class TestDirectorDispatchLoop:
         assert "director.taskboard_not_converged" not in codes
         assert payload["attempts"][-1]["settled_after_timeout"] is True
         assert payload["taskboard"]["converged"] is True
+
+    @pytest.mark.asyncio
+    async def test_soft_timeout_settles_before_another_director_round(self, tmp_path: Path) -> None:
+        class _BarrierService:
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="director-inflight", status="running", message="submitted")
+
+        class _BarrierExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.execute_calls = 0
+                self.claim_calls = 0
+                self.settle_calls = 0
+                self.taskboard_state = {
+                    "total": 1,
+                    "pending": 1,
+                    "ready": 1,
+                    "in_progress": 0,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+
+            def _build_orchestration_service(self, context: dict[str, Any]) -> _BarrierService:
+                del context
+                return _BarrierService()
+
+            def _resolve_director_binding_fanout(
+                self,
+                context: dict[str, Any] | None = None,
+            ) -> list[dict[str, str]]:
+                del context
+                return []
+
+            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+                del limit
+                self.claim_calls += 1
+                if self.claim_calls > 1:
+                    raise AssertionError("a second Director round started before the inflight child settled")
+                return ["TASK-1"]
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return dict(self.taskboard_state)
+
+            async def _wait_run_completion(self, *args: object, **kwargs: object) -> CommandResult:
+                del args, kwargs
+                self.execute_calls += 1
+                self.taskboard_state.update({"pending": 0, "ready": 0, "in_progress": 1})
+                return CommandResult(
+                    run_id="director-inflight",
+                    status="timeout",
+                    message="soft timeout",
+                    metadata={
+                        "cancel_signal_sent": False,
+                        "cancel_reason": "factory_stage_timeout",
+                        "inflight_run_continues": True,
+                    },
+                )
+
+            async def _settle_inflight_director_run_after_timeout(self, *args: object, **kwargs: object) -> CommandResult:
+                del args, kwargs
+                self.settle_calls += 1
+                self.taskboard_state.update({"in_progress": 0, "completed": 1})
+                target = self.workspace / "src/index.ts"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("export const ready = true;\n", encoding="utf-8")
+                return CommandResult(
+                    run_id="director-inflight",
+                    status="completed",
+                    message="settled",
+                    metadata={"task_status_counts": dict(self.taskboard_state)},
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _BarrierExecutor(tmp_path)
+        tasks = [{"id": "TASK-1", "target_files": ["src/index.ts"]}]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
+        run = FactoryRun(
+            id="factory-immediate-barrier",
+            config=FactoryConfig(name="immediate-barrier"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-07-10T00:00:00+00:00",
+        )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 2, "execution_mode": "serial", "max_workers": 1},
+        )
+
+        assert result.status == "success"
+        assert executor.execute_calls == 1
+        assert executor.settle_calls == 1
+        assert executor.claim_calls == 1
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert payload["attempts"][0]["settlement_attempted"] is True
+        assert payload["attempts"][0]["settled_after_timeout"] is True
+        assert "director.inflight_timeout_settled" in {
+            str(item.get("code") or "") for item in payload["signals"]
+        }
+
+    @pytest.mark.asyncio
+    async def test_soft_timeout_barrier_expiry_fails_without_replaying_director(self, tmp_path: Path) -> None:
+        class _BarrierService:
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="director-inflight", status="running", message="submitted")
+
+        class _BarrierTimeoutExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.execute_calls = 0
+                self.taskboard_state = {
+                    "total": 1,
+                    "pending": 1,
+                    "ready": 1,
+                    "in_progress": 0,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+
+            def _build_orchestration_service(self, context: dict[str, Any]) -> _BarrierService:
+                del context
+                return _BarrierService()
+
+            def _resolve_director_binding_fanout(
+                self,
+                context: dict[str, Any] | None = None,
+            ) -> list[dict[str, str]]:
+                del context
+                return []
+
+            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+                del limit
+                return ["TASK-1"]
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return dict(self.taskboard_state)
+
+            async def _wait_run_completion(self, *args: object, **kwargs: object) -> CommandResult:
+                del args, kwargs
+                self.execute_calls += 1
+                if self.execute_calls > 1:
+                    raise AssertionError("barrier timeout must not replay the Director")
+                self.taskboard_state.update({"pending": 0, "ready": 0, "in_progress": 1})
+                return CommandResult(
+                    run_id="director-inflight",
+                    status="timeout",
+                    message="soft timeout",
+                    metadata={"inflight_run_continues": True, "cancel_signal_sent": False},
+                )
+
+            async def _settle_inflight_director_run_after_timeout(self, *args: object, **kwargs: object) -> CommandResult:
+                del args, kwargs
+                return CommandResult(
+                    run_id="director-inflight",
+                    status="timeout",
+                    message="barrier timeout",
+                    metadata={
+                        "inflight_run_continues": True,
+                        "cancel_signal_sent": False,
+                        "barrier_state": "timeout",
+                        "barrier_timeout": True,
+                    },
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _BarrierTimeoutExecutor(tmp_path)
+        tasks = [{"id": "TASK-1", "target_files": ["src/index.ts"]}]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
+        run = FactoryRun(
+            id="factory-barrier-timeout",
+            config=FactoryConfig(name="barrier-timeout"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-07-10T00:00:00+00:00",
+        )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 2, "execution_mode": "serial", "max_workers": 1},
+        )
+
+        assert result.status == "failed"
+        assert executor.execute_calls == 1
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        codes = {str(item.get("code") or "") for item in payload["signals"]}
+        assert "director.execution_barrier_timeout" in codes
+        assert "director.taskboard_not_converged" not in codes
+        assert payload["attempts"][0]["settlement_attempted"] is True
+        assert payload["attempts"][0]["settled_after_timeout"] is False
 
 
 class TestPmMetaDiagnostic:

@@ -1,0 +1,172 @@
+schema_version: polaris.execution_control_plane_reconstruction_card.v1
+schema_ref: "docs/governance/schemas/execution-control-plane-reconstruction-card.schema.yaml"
+card_id: "vc-YYYYMMDD-execution-control-plane-reconstruction"
+bug_summary: >
+  Execution reliability is unproven until one fresh isolated project reaches
+  stable COMPLETED_VERIFIED through a single provider-request -> tool lifecycle
+  -> effect receipt -> TaskBoundary -> TaskRuntime -> Run Ledger -> QA ->
+  Factory/bench fact chain.
+
+classification: structural
+
+objective:
+  acceptance_bar: fresh_isolated_completed_verified
+  non_acceptance_examples:
+    - "more unit tests pass"
+    - "one bench summary gate improves"
+    - "coverage matched without plan/effect evidence"
+    - "raw TaskBoard or session JSON appears consistent"
+  required_prompt: "docs/governance/POLARIS_EXECUTION_CONTROL_PLANE_RECONSTRUCTION_PROMPT.md"
+  required_skeptical_report_schema: "docs/governance/schemas/skeptical-architecture-review-report.schema.yaml"
+
+bug_path:
+  file: "polaris/cells/roles/kernel | polaris/cells/runtime/task_runtime | polaris/cells/control_plane/run_ledger | polaris/cells/factory"
+  method: "execution_control_plane_boundary"
+  symptom: >
+    Provider request evidence, provider response, tool lifecycle, effect
+    receipts, task boundary verdict, TaskRuntime projection, Run Ledger, QA, and
+    Factory/bench report can diverge or classify upstream platform failures as
+    ordinary implementation defects.
+
+assumptions:
+  - id: A1
+    statement: "Execution Ledger / task_runtime.execution is the authoritative execution fact stream."
+    status: unverified
+    evidence: "Fact append and projection tests plus fresh isolated run evidence."
+  - id: A2
+    statement: "TaskBoard, Director status, UI status, QA status, and Factory report are projections only."
+    status: unverified
+    evidence: "Code audit proving observers use TaskRuntime observable rows / Run Ledger projections."
+  - id: A3
+    statement: "Every provider tool call enters ToolCallLifecycle and dispatch/effect receipt accounting."
+    status: unverified
+    evidence: "Tool lifecycle receipt refs from the fresh isolated run."
+  - id: A4
+    statement: "Cancel/deadline barriers preserve active Director settlement unless explicit cancellation is proven."
+    status: unverified
+    evidence: "RunCompletionWaiter / TaskRuntime facts from a run that crosses the barrier."
+  - id: A5
+    statement: "QA and Factory taxonomy preserve upstream task-boundary and execution-control root causes."
+    status: unverified
+    evidence: "QA verdict and Factory report failure_class/responsible_layer refs."
+
+pre_mortem:
+  failure_point: >
+    The most likely failed rewrite is another partial authority layer: a new
+    receipt or ledger is added, but TaskRuntime, Run Ledger, QA, Factory, or UI
+    still reads old state and reports a contradictory terminal status.
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal"
+    - "polaris/cells/runtime/task_runtime/internal"
+    - "polaris/cells/control_plane/run_ledger"
+    - "polaris/cells/factory/pipeline"
+    - "polaris/cells/roles/adapters"
+    - "polaris/delivery/ws"
+
+fact_chain_required_for_signoff:
+  final_provider_request:
+    required: true
+    evidence_ref: ""
+  provider_response:
+    required: true
+    evidence_ref: ""
+  tool_lifecycle_receipt:
+    required: true
+    evidence_ref: ""
+    native_tool_calls_count: null
+    decoded_tool_calls_count: null
+    dispatched_tool_calls_count: null
+  effect_receipts:
+    required: true
+    evidence_refs: []
+  task_boundary_verdict:
+    required: true
+    evidence_ref: ""
+    allowed_terminal_statuses:
+      - completed_verified
+      - incomplete_materialization
+      - tool_dispatch_failed
+      - dependency_not_unlocked
+      - session_not_active
+  task_runtime_observable_projection:
+    required: true
+    evidence_ref: ""
+    projection_mismatch: null
+  run_ledger_projection:
+    required: true
+    evidence_ref: ""
+    projection_mismatch: null
+  qa_verdict:
+    required: true
+    evidence_ref: ""
+    failure_class: ""
+    responsible_layer: ""
+  factory_bench_report:
+    required: true
+    evidence_ref: ""
+    requested_project_id: ""
+    canonical_project_id: ""
+    instance_id: ""
+    workspace: ""
+    backend_port: null
+    frontend_port: null
+
+negative_controls:
+  raw_taskboard_used_as_authority:
+    expected: false
+    evidence: ""
+  old_session_json_used_as_authority:
+    expected: false
+    evidence: ""
+  prompt_text_regex_used_as_state:
+    expected: false
+    evidence: ""
+  legacy_deterministic_repair_path_required:
+    expected: false
+    evidence: ""
+  bench_gate_modified_to_force_pass:
+    expected: false
+    evidence: ""
+  target_project_code_modified_by_agent:
+    expected: false
+    evidence: ""
+
+verification_plan:
+  unit_tests:
+    - command: "PYTHONPATH=src/backend pytest <focused execution-control tests> -q"
+      expected: "Commit, lifecycle, effect, projection, cancel/deadline, and taxonomy tests pass."
+      status: new
+  integration_tests:
+    - command: >
+        rtk proxy bash -lc '<fresh isolated factory_bench command with
+        --launcher-instance-mode isolated --bench-session-reporting off>'
+      expected: "A new project reaches stable COMPLETED_VERIFIED with full fact-chain evidence."
+      status: required
+  governance_checks:
+    - command: >
+        PYTHONPATH=src/backend python
+        src/backend/docs/governance/ci/scripts/check_skeptical_architecture_review.py
+        --workspace . --report <filled skeptical report> --json
+      expected: "Report passes schema and reliability-claim policy."
+      status: required
+  manual_check:
+    - "Open final provider request snapshots and verify role, contract, target files, tools, token budget, and context coverage."
+    - "Compare TaskRuntime observable rows, Run Ledger projection, QA verdict, and Factory/bench report for every task."
+
+related_assets:
+  - "docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md"
+  - "docs/governance/POLARIS_EXECUTION_CONTROL_PLANE_RECONSTRUCTION_PROMPT.md"
+  - "docs/governance/templates/skeptical-architecture-review-report.template.yaml"
+  - "docs/governance/templates/verification-cards/vc-20260710-execution-fact-authority.yaml"
+
+sign_off:
+  completed_by: ""
+  completed_at: ""
+  verified_by: ""
+  verified_at: ""
+  architecture_reliable: false
+  reliability_claim_rule: >
+    May be set to true only when the skeptical architecture review report passes
+    with proof_level=system_oracle, completed_verified=true, every fact-chain
+    node present, no projection mismatch, no true red flags, and no legacy path
+    needed for success.

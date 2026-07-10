@@ -1,0 +1,139 @@
+schema_version: polaris.skeptical_architecture_review_report.v1
+schema_ref: docs/governance/schemas/skeptical-architecture-review-report.schema.yaml
+generated_at: "2026-07-10T15:22:00Z"
+reviewer: "codex-bench-agent"
+scope:
+  change_summary: >
+    Current skeptical review state after adding governance docs, schema,
+    template, and validator guardrails for Polaris execution architecture
+    reliability claims.
+  touched_areas:
+    - governance
+    - skeptical_review
+    - fitness_rules
+  referenced_assets:
+    - "docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md"
+    - "docs/governance/schemas/skeptical-architecture-review-report.schema.yaml"
+    - "docs/governance/templates/skeptical-architecture-review-report.template.yaml"
+    - "docs/governance/ci/scripts/check_skeptical_architecture_review.py"
+
+architecture_claim:
+  claim: >
+    Polaris now has a governance guardrail that prevents unsupported execution
+    architecture reliability claims, but the execution architecture itself is
+    not yet proven reliable.
+  claim_status: unproven
+  proof_level: none
+  accepted_proof_levels:
+    - component
+    - integration
+    - wave_level
+    - system_oracle
+
+fresh_isolated_run:
+  required_for_architecture_proof: true
+  requested_project_id: ""
+  canonical_project_id: ""
+  instance_id: ""
+  workspace: ""
+  backend_port: null
+  frontend_port: null
+  factory_run_id: ""
+  run_id: ""
+  wall_clock_seconds: null
+  final_project_status: "not_run_for_this_review"
+  completed_verified: false
+  evidence_ref: ""
+
+fact_chain:
+  final_provider_request:
+    status: missing
+    evidence_ref: ""
+    hash: ""
+    notes: "No fresh isolated system-oracle run was executed for this governance-only review."
+  provider_response:
+    status: missing
+    evidence_ref: ""
+    hash: ""
+    notes: "No provider response evidence is attached."
+  tool_lifecycle_receipt:
+    status: missing
+    native_tool_calls_count: null
+    decoded_tool_calls_count: null
+    dispatched_tool_calls_count: null
+    effect_receipt_count: null
+    evidence_ref: ""
+    notes: "No tool lifecycle receipt evidence is attached."
+  tool_dispatch:
+    status: missing
+    evidence_ref: ""
+    notes: "No dispatch evidence is attached."
+  effect_receipt:
+    status: missing
+    count: null
+    evidence_refs: []
+    notes: "No effect receipt evidence is attached."
+  task_boundary_verdict:
+    status: missing
+    verdict_status: ""
+    failure_class: ""
+    responsible_layer: ""
+    evidence_ref: ""
+    notes: "No TaskBoundary verdict evidence is attached."
+  task_runtime_projection:
+    status: missing
+    observable_row_ref: ""
+    legacy_fallback_used: false
+    projection_mismatch: false
+    notes: "No TaskRuntime observable projection evidence is attached."
+  run_ledger_projection:
+    status: missing
+    evidence_ref: ""
+    projection_mismatch: false
+    notes: "No Run Ledger projection evidence is attached."
+  qa_verdict:
+    status: missing
+    verdict: ""
+    failure_class: ""
+    responsible_layer: ""
+    evidence_ref: ""
+    notes: "No QA verdict evidence is attached."
+  factory_bench_report:
+    status: missing
+    evidence_ref: ""
+    pass_rate: "not_run"
+    runnable_rate: "not_run"
+    notes: "No Factory/bench report is attached."
+
+red_flags:
+  coverage_pass_without_dispatchable_required_tool: unknown
+  native_tools_removed_without_text_fallback_evidence: unknown
+  downstream_quality_ran_before_target_owners_completed: unknown
+  implementation_defect_masks_task_boundary_failure: unknown
+  task_runtime_run_ledger_qa_disagree: unknown
+  raw_taskboard_or_session_used_as_authority: unknown
+  deadline_cancel_without_barrier_settlement: unknown
+  summary_gate_improved_without_fact_chain: unknown
+
+disproof_questions:
+  exact_fresh_run_proving_change: "None; no fresh isolated system-oracle run was executed."
+  final_request_ref_proving_role_contract_targets_tools_budget: "Missing."
+  lifecycle_ref_proving_normalization_dispatch_result_effect: "Missing."
+  text_tool_parser_dispatch_ref_if_used: "Missing."
+  upstream_failure_classification_explanation: "Not applicable; no fresh run."
+  project_quality_waited_for_declared_target_owners: "Unproven."
+  statuses_derived_from_same_execution_facts: "Unproven."
+  falsification_condition: >
+    A fresh isolated bench report reaches stable COMPLETED_VERIFIED and provides
+    complete fact-chain evidence without projection mismatch or true red flags.
+
+verdict:
+  architecture_reliable: false
+  verdict_status: unproven
+  blocking_gaps:
+    - "No fresh isolated COMPLETED_VERIFIED evidence is attached."
+    - "No full provider-request -> tool-lifecycle -> effect-receipt -> TaskBoundary -> TaskRuntime -> Run Ledger -> QA -> Factory/bench fact chain is attached."
+  next_actions:
+    - "After base refactor, run a fresh isolated project and fill a new skeptical architecture review report with concrete evidence refs."
+    - "Keep this report as an example of honest unproven status, not as proof of reliability."
+

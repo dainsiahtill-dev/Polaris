@@ -13,6 +13,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import (
+    AppendRunLedgerEventCommandV1,
+    append_run_ledger_event,
+)
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench.run_factory_bench import (
     _desktop_backend_info_path,
@@ -213,110 +217,81 @@ def _ok_run_ledger_projection(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
     }
 
 
-def test_task_boundary_verdict_is_appended_to_run_ledger(tmp_path: Path) -> None:
+def test_bench_reads_authoritative_task_boundary_without_appending(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "package.json").write_text(
-        json.dumps({"scripts": {"start": "node src/index.js"}}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    record = {
-        "task_id": "TASK-1",
-        "declared_source_targets": ["package.json"],
-        "source_files": ["package.json"],
-        "code_files": ["package.json"],
-    }
-
-    verdict = bench._append_task_boundary_verdict_to_run_ledger(
-        workspace=workspace,
-        run_id="run-task-boundary",
-        project_id="L1-01",
-        record=record,
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(workspace),
+            run_id="run-task-boundary",
+            event={
+                "event_type": "task_boundary_verdict",
+                "stage": "task_boundary",
+                "task_id": "TASK-1",
+                "task_boundary_verdict": {
+                    "schema_version": "task_boundary_verdict.v1",
+                    "status": "dependency_not_unlocked",
+                    "ok": False,
+                    "failure_class": "DEPENDENCY_NOT_UNLOCKED",
+                    "responsible_layer": "execution_control_plane",
+                    "reason": "TASK-0 is not complete",
+                },
+                "job_token": {
+                    "token_id": "token-task-boundary",
+                    "run_id": "run-task-boundary",
+                    "task_id": "TASK-1",
+                    "project_id": "L1-01",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+            },
+        )
     )
     projection = bench.load_run_ledger_projection(workspace, run_id="run-task-boundary")
+    event_count_before = int(projection["event_count"])
+
+    verdict = bench._read_task_boundary_verdict_from_run_ledger_projection(projection)
+
+    event_count_after = int(
+        bench.load_run_ledger_projection(workspace, run_id="run-task-boundary")["event_count"]
+    )
 
     assert verdict["ok"] is False
-    assert verdict["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+    assert verdict["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
     assert projection["task_boundary"]["ok"] is False
-    assert projection["task_boundary"]["latest"]["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+    assert projection["task_boundary"]["latest"]["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
+    assert event_count_before == event_count_after == 1
 
 
-def test_task_boundary_verdict_projects_real_run_gate_evidence(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    source = workspace / "src" / "index.js"
-    source.parent.mkdir(parents=True)
-    source.write_text("console.log('planet weather')\n", encoding="utf-8")
-    record = {
-        "task_id": "TASK-1",
-        "declared_source_targets": ["src/index.js"],
-        "source_files": ["src/index.js"],
-        "code_files": ["src/index.js"],
-        "real_run_gate": {
-            "ok": False,
-            "requirements": {
-                "artifact_landed": {"ok": True},
-                "source_files_present": {"ok": True},
-                "declared_source_targets_present": {"ok": True},
-                "scaffolding_present": {"ok": True},
-                "build_test_lint_ran": {"ok": False, "detail": "npm test failed"},
-            },
-            "commands": [{"ok": False, "script": "test"}],
-            "command_count_total": 1,
-            "entrypoint": {"ok": False, "kind": "", "detail": "not evaluated"},
-        },
-    }
+def test_bench_reports_missing_authoritative_task_boundary() -> None:
+    verdict = bench._read_task_boundary_verdict_from_run_ledger_projection({})
 
-    verdict = bench._append_task_boundary_verdict_to_run_ledger(
-        workspace=workspace,
-        run_id="run-task-boundary",
-        project_id="L1-01",
-        record=record,
+    assert verdict["ok"] is False
+    assert verdict["status"] == "task_boundary_verdict_missing"
+    assert verdict["failure_class"] == "EXECUTION_EVIDENCE_MISSING"
+    assert verdict["responsible_layer"] == "execution_control_plane"
+    assert verdict["authoritative"] is False
+
+
+def test_bench_preserves_text_fallback_task_boundary_classification() -> None:
+    verdict = bench._read_task_boundary_verdict_from_run_ledger_projection(
+        {
+            "task_boundary": {
+                "latest": {
+                    "ok": False,
+                    "status": "required_tool_text_fallback_not_dispatched",
+                    "failure_class": "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED",
+                    "responsible_layer": "execution_control_plane",
+                    "reason": "compatibility parser produced no dispatch",
+                }
+            }
+        }
     )
 
     assert verdict["ok"] is False
-    assert verdict["status"] == "required_evidence_failed"
-    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
-    assert verdict["required_evidence_modalities"] == ["code", "command"]
-    assert verdict["failed_required_evidence_modalities"] == ["command"]
-
-
-def test_task_boundary_verdict_preserves_tool_dispatch_dropped_chain_failure(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    record = {
-        "task_id": "TASK-1",
-        "declared_source_targets": ["package.json"],
-        "source_files": [],
-        "code_files": [],
-        "failure_evidence": [
-            "Director dispatch failed: error=tool_dispatch_dropped; root_cause_hint=required write tool dropped"
-        ],
-        "real_run_gate": {
-            "ok": False,
-            "requirements": {
-                "artifact_landed": {"ok": True},
-                "source_files_present": {"ok": False},
-                "build_test_lint_ran": {"ok": False, "detail": "not run"},
-            },
-            "commands": [],
-            "entrypoint": {"ok": False, "kind": "", "detail": "not run"},
-        },
-    }
-
-    verdict = bench._append_task_boundary_verdict_to_run_ledger(
-        workspace=workspace,
-        run_id="run-tool-dispatch-dropped",
-        project_id="L2-08",
-        record=record,
-    )
-    projection = bench.load_run_ledger_projection(workspace, run_id="run-tool-dispatch-dropped")
-
-    assert verdict["ok"] is False
-    assert verdict["status"] == "tool_dispatch_dropped"
-    assert verdict["failure_class"] == "TOOL_DISPATCH_DROPPED"
-    assert projection["tool_lifecycle"]["dropped_count"] == 1
-    assert projection["tool_lifecycle"]["events"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
-    assert projection["task_boundary"]["latest"]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert verdict["status"] == "required_tool_text_fallback_not_dispatched"
+    assert verdict["failure_class"] == "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED"
+    assert verdict["responsible_layer"] == "execution_control_plane"
 
 
 def test_chain_failure_overrides_static_artifact_checks() -> None:

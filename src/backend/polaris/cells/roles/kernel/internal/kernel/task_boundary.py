@@ -271,6 +271,7 @@ def build_director_task_boundary_verdict(
         or completed_artifacts
         or downstream_pending_artifacts
         or dispatch.get("dropped")
+        or dispatch.get("failure_class")
         or blocked_dependencies
         or evidence_policy
         or any(verifier_policy.values())
@@ -434,3 +435,13 @@ def append_role_turn_task_boundary_verdict(
         tool_dispatch=tool_dispatch,
         evidence_refs=evidence_refs,
     )
+
+
+def task_boundary_evidence_refs_from_metadata(metadata: dict[str, Any]) -> list[str]:
+    """Project canonical context and execution-commit references for QA."""
+
+    candidates = [str(metadata.get("context_snapshot_ref") or "").strip()]
+    commit_receipt = metadata.get("turn_commit_receipt")
+    if isinstance(commit_receipt, dict):
+        candidates.append(str(commit_receipt.get("fact_event_id") or "").strip())
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))

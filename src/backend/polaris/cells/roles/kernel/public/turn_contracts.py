@@ -244,7 +244,13 @@ class ToolExecutionResult(_FrozenMappingModel):
 
 
 class BatchReceipt(_FrozenMappingModel):
-    """工具批执行完成的收据。"""
+    """工具批执行完成的收据。
+
+    ``effect_receipts`` keeps the authoritative effect evidence emitted by
+    policy-gated tool adapters.  It is separate from ``results`` because a
+    batch may commit an effect receipt even when a provider-facing result row
+    is unavailable or intentionally redacted.
+    """
 
     batch_id: BatchId
     turn_id: TurnId
@@ -254,6 +260,7 @@ class BatchReceipt(_FrozenMappingModel):
     pending_async_count: int = 0
     has_pending_async: bool = False
     raw_results: list[dict[str, Any]] = Field(default_factory=list)
+    effect_receipts: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TurnFinalization(_FrozenMappingModel):
@@ -356,6 +363,7 @@ class OutcomeStatus(str, Enum):
     FAILED = "failed"
     PANIC = "panic"
     HANDED_OFF = "handed_off"
+    CANCELLED = "cancelled"
 
 
 class ResolutionCode(str, Enum):
@@ -368,6 +376,7 @@ class ResolutionCode(str, Enum):
     FAIL_CLOSED = "fail_closed"
     HANDOFF_WORKFLOW = "handoff_workflow"
     NEED_HUMAN = "need_human"
+    CANCELLED = "cancelled"
 
 
 class ContinuationHint(_FrozenMappingModel):
@@ -431,6 +440,11 @@ class CommitReceipt(_FrozenMappingModel):
     truthlog_seq_range: tuple[int, int]
     sealed_at: str  # ISO 8601
     validation_passed: bool
+    fact_stream: str = ""
+    fact_event_id: str = ""
+    fact_event_seq: int | None = None
+    fact_storage_path: str = ""
+    outcome_hash: str = ""
 
 
 class SealedTurn(_FrozenMappingModel):
@@ -459,6 +473,7 @@ class TurnFailureClass(str, Enum):
     DURABILITY_FAILURE = "durability_failure"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     POLICY_FAILURE = "policy_failure"
+    CANCELLATION = "cancellation"
 
 
 class AgentStatus(str, Enum):
@@ -490,9 +505,10 @@ class TurnOutcome(_FrozenMappingModel):
     4. continuation_hint 是 derived projection，不是独立 truth source
     """
 
+    schema_version: str = "roles.kernel.turn_outcome.v1"
     turn_id: TurnId
     run_id: str
-    decision: TurnDecision
+    decision: TurnDecision | None = None
     execution: ToolBatchExecution | None = None
     closing: FinalizationRecord | None = None
     outcome_status: OutcomeStatus
@@ -501,6 +517,7 @@ class TurnOutcome(_FrozenMappingModel):
     commit_ref: CommitReceipt | None = None
     continuation_hint: ContinuationHint | None = None
     user_visible_result_ref: str | None = None
+    failure_reason: str | None = None
 
     def to_summary_dict(self) -> dict[str, Any]:
         """生成轻量摘要，供 Orchestrator 快速消费。"""
@@ -511,4 +528,6 @@ class TurnOutcome(_FrozenMappingModel):
             "failure_class": self.failure_class.value if self.failure_class else None,
             "continuation_hint": self.continuation_hint.to_dict() if self.continuation_hint else None,
             "commit_snapshot_id": self.commit_ref.snapshot_id if self.commit_ref else None,
+            "commit_event_id": self.commit_ref.fact_event_id if self.commit_ref else None,
+            "commit_event_seq": self.commit_ref.fact_event_seq if self.commit_ref else None,
         }

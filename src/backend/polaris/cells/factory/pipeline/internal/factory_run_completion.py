@@ -44,6 +44,70 @@ class RunCompletionWaiter:
     def __init__(self, workspace: Path) -> None:
         self.workspace = Path(workspace)
 
+    def _active_execution_rows(self, *, run_id: str) -> list[dict[str, Any]]:
+        """Return TaskRuntime-owned active rows for one child run.
+
+        TaskRuntime's observable projection is the only status input used by the
+        Factory execution barrier.  Keeping the lookup in one helper prevents
+        cancellation checks and progress checks from drifting onto different
+        row sources.
+
+        Complexity:
+            O(r) time and memory over observable TaskRuntime rows.
+        """
+
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return []
+        try:
+            from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+
+            rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug(
+                "TaskRuntime active-run projection unavailable for run %s: %s",
+                normalized_run_id,
+                exc,
+            )
+            return []
+        return [
+            row
+            for row in rows
+            if isinstance(row, dict) and self._row_matches_active_run(row, run_id=normalized_run_id)
+        ]
+
+    def active_execution_progress_marker(self, *, run_id: str) -> tuple[tuple[str, str, str, str], ...]:
+        """Return a stable marker for observable progress in one active run.
+
+        The append-only fact sequence is authoritative when present.  The
+        heartbeat timestamp remains as a transitional fallback for rows whose
+        fact projection predates ``fact_event_seq``.  Consumers compare markers;
+        they must not interpret the values as permissions or task completion.
+
+        Complexity:
+            O(r log r) time and O(r) memory over active rows.
+        """
+
+        markers: list[tuple[str, str, str, str]] = []
+        for row in self._active_execution_rows(run_id=run_id):
+            metadata = row.get("metadata")
+            metadata_map = metadata if isinstance(metadata, dict) else {}
+            runtime_execution = metadata_map.get("runtime_execution")
+            runtime_execution_map = runtime_execution if isinstance(runtime_execution, dict) else {}
+            markers.append(
+                (
+                    str(row.get("id") or row.get("task_id") or "").strip(),
+                    str(row.get("fact_event_seq") or runtime_execution_map.get("fact_event_seq") or "").strip(),
+                    str(
+                        row.get("last_heartbeat_at")
+                        or runtime_execution_map.get("last_heartbeat_at")
+                        or ""
+                    ).strip(),
+                    str(row.get("status") or row.get("execution_state") or "").strip().lower(),
+                )
+            )
+        return tuple(sorted(markers))
+
     @staticmethod
     def _row_matches_active_run(row: dict[str, Any], *, run_id: str) -> bool:
         """Return whether a task row still represents active work for ``run_id``.
@@ -91,7 +155,7 @@ class RunCompletionWaiter:
             "executing",
         } or session_status in {"active", "claimed", "in_progress", "running"}
 
-    def _active_task_runtime_barrier_result(self, *, run_id: str, reason: str) -> CommandResult | None:
+    def active_execution_barrier_result(self, *, run_id: str, reason: str) -> CommandResult | None:
         """Return a non-mutating cancellation result when TaskRuntime is active.
 
         Boundary:
@@ -106,20 +170,7 @@ class RunCompletionWaiter:
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
             return None
-        try:
-            from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-
-            rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            logger.debug(
-                "TaskRuntime active-run barrier unavailable for run %s: %s",
-                normalized_run_id,
-                exc,
-            )
-            return None
-        active_rows = [
-            row for row in rows if isinstance(row, dict) and self._row_matches_active_run(row, run_id=normalized_run_id)
-        ]
+        active_rows = self._active_execution_rows(run_id=normalized_run_id)
         if not active_rows:
             return None
         status = "cancelled" if reason == "factory_cancelled" else "timeout"
@@ -140,6 +191,11 @@ class RunCompletionWaiter:
                 ],
             },
         )
+
+    def _active_task_runtime_barrier_result(self, *, run_id: str, reason: str) -> CommandResult | None:
+        """Compatibility delegate for internal callers during barrier cutover."""
+
+        return self.active_execution_barrier_result(run_id=run_id, reason=reason)
 
     def build_orchestration_service(self, context: dict[str, Any]) -> Any:
         from polaris.bootstrap.config import Settings

@@ -15,7 +15,21 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-_SCRIPT_INTERPRETERS = {"node", "python", "python3", "bash", "sh"}
+_SCRIPT_INTERPRETERS = {
+    "bash",
+    "bun",
+    "deno",
+    "node",
+    "python",
+    "python3",
+    "sh",
+    "ts-node",
+    "tsx",
+}
+_SCRIPT_INTERPRETER_SUBCOMMANDS = {
+    "bun": {"run", "test"},
+    "deno": {"run", "test"},
+}
 _SCRIPT_PATH_EXTENSIONS = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 _SHELL_OPERATORS = {"&&", "||", ";", "|"}
 _BUILD_OUTPUT_DIR_NAMES = {"dist", "build", "out", "bin"}
@@ -34,6 +48,12 @@ _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
 )
 _NODE_MODULE_EXTENSIONS = (".js", ".cjs", ".mjs", ".json", ".node")
 _TYPESCRIPT_MODULE_EXTENSIONS = (".ts", ".tsx", ".mts", ".cts")
+_TYPESCRIPT_RUNTIME_EXTENSION_SUBSTITUTIONS: Mapping[str, tuple[str, ...]] = {
+    ".js": (".ts", ".tsx", ".d.ts"),
+    ".jsx": (".tsx", ".ts", ".d.ts"),
+    ".mjs": (".mts", ".d.mts"),
+    ".cjs": (".cts", ".d.cts"),
+}
 _LOCAL_REQUIRE_RE = re.compile(r"""require\(\s*["'](?P<ref>\.{1,2}/[^"']+|/[^"']+)["']\s*\)""")
 _LOCAL_DYNAMIC_IMPORT_RE = re.compile(r"""import\(\s*["'](?P<ref>\.{1,2}/[^"']+|/[^"']+)["']\s*\)""")
 _LOCAL_STATIC_IMPORT_RE = re.compile(
@@ -159,6 +179,12 @@ def _resolve_node_module_reference(
         return exact
     base, ext = os.path.splitext(exact)
     if ext:
+        _, importer_ext = os.path.splitext(importer_path)
+        if importer_ext.lower() in _TYPESCRIPT_MODULE_EXTENSIONS:
+            for source_ext in _TYPESCRIPT_RUNTIME_EXTENSION_SUBSTITUTIONS.get(ext.lower(), ()):
+                candidate = base + source_ext
+                if os.path.isfile(candidate):
+                    return candidate
         return None
     suffixes = _node_module_extensions_for_entrypoint(importer_path)
     for suffix in suffixes:
@@ -277,7 +303,7 @@ def _missing_package_script_entrypoint_issues(
     index = 0
     while index < len(tokens):
         interpreter_index = index
-        token = os.path.basename(tokens[index])
+        token = os.path.basename(tokens[index]).lower()
         if token not in _SCRIPT_INTERPRETERS:
             index += 1
             continue
@@ -286,6 +312,9 @@ def _missing_package_script_entrypoint_issues(
             candidate = tokens[index]
             if candidate in _SHELL_OPERATORS:
                 break
+            if candidate.lower() in _SCRIPT_INTERPRETER_SUBCOMMANDS.get(token, set()):
+                index += 1
+                continue
             if token == "node" and candidate in {"-e", "--eval", "-p", "--print"}:
                 index += 2
                 continue

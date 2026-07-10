@@ -33,6 +33,9 @@ _VALID_HUMAN_RESOLUTIONS = {
     "close_as_invalid",
     "shadow_continue",
 }
+OWNER_REWORK_HANDOFFS_METADATA_KEY = "owner_rework_handoffs"
+OWNER_REWORK_ROUTE_SCHEMA_V1 = "task-market.owner-rework-route/1"
+OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE = "resolved_only"
 
 
 class TaskWorkItemState(str, Enum):
@@ -43,6 +46,22 @@ class TaskWorkItemState(str, Enum):
     STAGE1_COMPLETE = "stage1_complete"
     STAGE2_CLAIMED = "stage2_claimed"
     STAGE2_COMPLETE = "stage2_complete"
+
+
+class OwnerReworkRouteReasonV1(str, Enum):
+    """Stable outcomes for an owner-rework routing transaction."""
+
+    ROUTED = "owner_rework_routed"
+    ALREADY_ROUTED = "owner_rework_already_routed"
+    OWNER_NOT_FOUND = "owner_not_found"
+    REQUESTER_NOT_FOUND = "requester_not_found"
+    REQUESTER_LEASE_MISMATCH = "requester_lease_mismatch"
+    OWNER_TERMINAL_UNRECOVERABLE = "owner_terminal_unrecoverable"
+    OWNER_REOPEN_BUDGET_EXCEEDED = "owner_reopen_budget_exceeded"
+    OWNER_REQUESTER_SAME_TASK = "owner_requester_same_task"
+    DEPENDENCY_CYCLE = "owner_rework_dependency_cycle"
+    HANDOFF_STATE_CONFLICT = "owner_rework_handoff_state_conflict"
+    STALE_WRITE_CONFLICT = "stale_write_conflict"
 
 
 def _require_non_empty(name: str, value: str) -> str:
@@ -286,6 +305,169 @@ class RequeueTaskCommandV1:
         object.__setattr__(self, "reason", _require_non_empty("reason", self.reason))
         object.__setattr__(self, "metadata", _copy_mapping(self.metadata))
         object.__setattr__(self, "reopen_policy", _copy_mapping(self.reopen_policy))
+
+
+@dataclass(frozen=True)
+class RouteOwnerReworkCommandV1:
+    """Atomically defer a requester until its file-owning task is repaired."""
+
+    workspace: str
+    owner_task_id: str
+    requester_task_id: str
+    requester_lease_token: str
+    handoff_id: str
+    failure_metadata: Mapping[str, Any]
+    evidence_metadata: Mapping[str, Any]
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    max_reopen_count: int = 1
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "owner_task_id",
+            _require_non_empty("owner_task_id", self.owner_task_id),
+        )
+        object.__setattr__(
+            self,
+            "requester_task_id",
+            _require_non_empty("requester_task_id", self.requester_task_id),
+        )
+        object.__setattr__(
+            self,
+            "requester_lease_token",
+            _require_non_empty("requester_lease_token", self.requester_lease_token),
+        )
+        object.__setattr__(self, "handoff_id", _require_non_empty("handoff_id", self.handoff_id))
+        failure_metadata = _copy_mapping(self.failure_metadata)
+        if not failure_metadata:
+            raise ValueError("failure_metadata must not be empty")
+        object.__setattr__(self, "failure_metadata", failure_metadata)
+        evidence_metadata = _copy_mapping(self.evidence_metadata)
+        if not evidence_metadata:
+            raise ValueError("evidence_metadata must not be empty")
+        object.__setattr__(self, "evidence_metadata", evidence_metadata)
+        object.__setattr__(self, "metadata", _copy_mapping(self.metadata))
+        if not 1 <= int(self.max_reopen_count) <= 20:
+            raise ValueError("max_reopen_count must be between 1 and 20")
+        object.__setattr__(self, "max_reopen_count", int(self.max_reopen_count))
+
+
+@dataclass(frozen=True)
+class OwnerReworkHandoffV1:
+    """Canonical persisted handoff joining one requester to its file owner.
+
+    The handoff is stored on both work items under
+    :data:`OWNER_REWORK_HANDOFFS_METADATA_KEY`.  It is the sole authority for
+    the ``resolved_only`` readiness rule; task ``depends_on`` remains the
+    canonical DAG relation and must not be supplemented by a parallel index.
+    """
+
+    schema_version: str
+    handoff_id: str
+    owner_task_id: str
+    requester_task_id: str
+    owner_previous_status: str
+    requester_previous_status: str
+    owner_reopened: bool
+    dependency_mode: str
+    failure_metadata: Mapping[str, Any]
+    evidence_metadata: Mapping[str, Any]
+    metadata: Mapping[str, Any]
+    routed_at: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "schema_version",
+            _require_non_empty("schema_version", self.schema_version),
+        )
+        if self.schema_version != OWNER_REWORK_ROUTE_SCHEMA_V1:
+            raise ValueError(
+                "schema_version must be "
+                f"{OWNER_REWORK_ROUTE_SCHEMA_V1!r}"
+            )
+        object.__setattr__(self, "handoff_id", _require_non_empty("handoff_id", self.handoff_id))
+        object.__setattr__(self, "owner_task_id", _require_non_empty("owner_task_id", self.owner_task_id))
+        object.__setattr__(
+            self,
+            "requester_task_id",
+            _require_non_empty("requester_task_id", self.requester_task_id),
+        )
+        object.__setattr__(
+            self,
+            "owner_previous_status",
+            _require_non_empty("owner_previous_status", self.owner_previous_status),
+        )
+        object.__setattr__(
+            self,
+            "requester_previous_status",
+            _require_non_empty("requester_previous_status", self.requester_previous_status),
+        )
+        if not isinstance(self.owner_reopened, bool):
+            raise ValueError("owner_reopened must be a bool")
+        object.__setattr__(
+            self,
+            "dependency_mode",
+            _require_non_empty("dependency_mode", self.dependency_mode),
+        )
+        if self.dependency_mode != OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE:
+            raise ValueError(
+                "dependency_mode must be "
+                f"{OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE!r}"
+            )
+        failure_metadata = _copy_mapping(self.failure_metadata)
+        if not failure_metadata:
+            raise ValueError("failure_metadata must not be empty")
+        object.__setattr__(self, "failure_metadata", failure_metadata)
+        evidence_metadata = _copy_mapping(self.evidence_metadata)
+        if not evidence_metadata:
+            raise ValueError("evidence_metadata must not be empty")
+        object.__setattr__(self, "evidence_metadata", evidence_metadata)
+        object.__setattr__(self, "metadata", _copy_mapping(self.metadata))
+        object.__setattr__(self, "routed_at", _require_non_empty("routed_at", self.routed_at))
+
+    def to_record(self) -> dict[str, Any]:
+        """Return the JSON-serializable persistence representation."""
+
+        return {
+            "schema_version": self.schema_version,
+            "handoff_id": self.handoff_id,
+            "owner_task_id": self.owner_task_id,
+            "requester_task_id": self.requester_task_id,
+            "owner_previous_status": self.owner_previous_status,
+            "requester_previous_status": self.requester_previous_status,
+            "owner_reopened": self.owner_reopened,
+            "dependency_mode": self.dependency_mode,
+            "failure_metadata": dict(self.failure_metadata),
+            "evidence_metadata": dict(self.evidence_metadata),
+            "metadata": dict(self.metadata),
+            "routed_at": self.routed_at,
+        }
+
+    @classmethod
+    def from_record(cls, record: object) -> OwnerReworkHandoffV1:
+        """Decode a persisted handoff and reject incomplete or malformed state."""
+
+        if not isinstance(record, dict):
+            raise ValueError("owner-rework handoff record must be a mapping")
+        try:
+            return cls(
+                schema_version=str(record.get("schema_version") or ""),
+                handoff_id=str(record.get("handoff_id") or ""),
+                owner_task_id=str(record.get("owner_task_id") or ""),
+                requester_task_id=str(record.get("requester_task_id") or ""),
+                owner_previous_status=str(record.get("owner_previous_status") or ""),
+                requester_previous_status=str(record.get("requester_previous_status") or ""),
+                owner_reopened=record.get("owner_reopened"),
+                dependency_mode=str(record.get("dependency_mode") or ""),
+                failure_metadata=record.get("failure_metadata"),
+                evidence_metadata=record.get("evidence_metadata"),
+                metadata=record.get("metadata"),
+                routed_at=str(record.get("routed_at") or ""),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid owner-rework handoff record") from exc
 
 
 @dataclass(frozen=True)
@@ -545,6 +727,25 @@ class TaskMarketStatusResultV1:
 
 
 @dataclass(frozen=True)
+class OwnerReworkRouteResultV1:
+    """Result of one atomic owner-rework routing attempt."""
+
+    ok: bool
+    reason: OwnerReworkRouteReasonV1
+    handoff_id: str
+    owner_task_id: str
+    requester_task_id: str
+    owner_status: str = ""
+    requester_status: str = ""
+    owner_version: int = 0
+    requester_version: int = 0
+    owner_reopened: bool = False
+    dependency_added: bool = False
+    idempotent: bool = False
+    post_commit_evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class HumanReviewResultV1:
     ok: bool
     task_id: str
@@ -598,6 +799,9 @@ TaskMarketErrorV1 = TaskMarketError
 
 
 __all__ = [
+    "OWNER_REWORK_HANDOFFS_METADATA_KEY",
+    "OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE",
+    "OWNER_REWORK_ROUTE_SCHEMA_V1",
     "AcknowledgeTaskStageCommandV1",
     "ChangeOrderResultV1",
     "ClaimStage1Result",
@@ -606,6 +810,9 @@ __all__ = [
     "FailTaskStageCommandV1",
     "HumanReviewResultV1",
     "MoveTaskToDeadLetterCommandV1",
+    "OwnerReworkHandoffV1",
+    "OwnerReworkRouteReasonV1",
+    "OwnerReworkRouteResultV1",
     "PlanRevisionResultV1",
     "PublishTaskWorkItemCommandV1",
     "QueryChangeOrdersV1",
@@ -617,6 +824,7 @@ __all__ = [
     "RequestHumanReviewCommandV1",
     "RequeueTaskCommandV1",
     "ResolveHumanReviewCommandV1",
+    "RouteOwnerReworkCommandV1",
     "SubmitChangeOrderCommandV1",
     "TaskDeadLetteredEventV1",
     "TaskLeaseGrantedEventV1",

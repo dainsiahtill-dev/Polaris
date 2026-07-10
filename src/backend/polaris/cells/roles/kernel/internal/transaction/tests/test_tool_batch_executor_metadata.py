@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from polaris.cells.control_plane.run_ledger.public import (
+    ReadRunLedgerProjectionQueryV1,
     native_tool_call_count_from_metadata,
     native_tool_call_envelope_refs_from_metadata,
+    read_run_ledger_projection,
 )
+from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    batch_write_failure_error_types,
+    batch_write_failures_require_llm_replan,
+)
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
+    _append_tool_batch_receipts_to_run_ledger,
     _batch_has_authoritative_success,
     _effect_receipts_from_batch_receipts,
+    _resolve_tool_batch_execution_identity,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
 from polaris.cells.roles.kernel.public.turn_contracts import ToolExecutionMode
@@ -140,6 +149,122 @@ def test_batch_authoritative_success_requires_success_pending_or_effect_receipt(
     assert _batch_has_authoritative_success([{"results": [{"status": "success"}]}]) is True
     assert _batch_has_authoritative_success([{"effect_receipts": [{"file": "src/app.ts"}]}]) is True
     assert _batch_has_authoritative_success([{"pending_async_count": 1}]) is True
+
+
+def test_scope_denied_write_requires_new_llm_invocation_without_widening_scope() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "write_file",
+                "status": "error",
+                "result": {
+                    "ok": False,
+                    "error_type": "director_write_policy_denied",
+                    "retryable": False,
+                    "director_policy": {
+                        "allowed": False,
+                        "allowed_scope": ["src/models/firefly.ts"],
+                    },
+                },
+            }
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == ("director_write_policy_denied",)
+    assert batch_write_failures_require_llm_replan(receipt) is True
+    assert receipt["results"][0]["result"]["director_policy"]["allowed_scope"] == [
+        "src/models/firefly.ts"
+    ]
+
+
+def test_inactive_session_write_failure_remains_fail_closed() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "write_file",
+                "status": "error",
+                "result": {
+                    "ok": False,
+                    "error_type": "session_not_active",
+                    "retryable": False,
+                },
+            }
+        ]
+    }
+
+    assert batch_write_failure_error_types(receipt) == ("session_not_active",)
+    assert batch_write_failures_require_llm_replan(receipt) is False
+
+
+def test_unknown_write_failure_remains_fail_closed() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "write_file",
+                "status": "error",
+                "result": {"ok": False, "error_type": "unclassified_runtime_failure"},
+            }
+        ]
+    }
+
+    assert batch_write_failures_require_llm_replan(receipt) is False
+
+
+def test_tool_batch_execution_identity_falls_back_to_transaction_authority() -> None:
+    config = TransactionConfig(
+        role_id="director",
+        run_id="director-run-1",
+        task_id="TASK-2",
+        workspace="/workspace/project",
+    )
+
+    assert _resolve_tool_batch_execution_identity({}, config) == (
+        "/workspace/project",
+        "director-run-1",
+        "TASK-2",
+    )
+
+
+def test_failed_tool_batch_lifecycle_is_durable_without_effect_receipt(tmp_path) -> None:
+    _append_tool_batch_receipts_to_run_ledger(
+        workspace=str(tmp_path),
+        run_id="director-run-1",
+        role_id="director",
+        task_id="TASK-2",
+        turn_id="turn-1",
+        invocations=[{"tool_name": "write_file", "call_id": "call-1"}],
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "turn_id": "turn-1",
+                "results": [
+                    {
+                        "call_id": "call-1",
+                        "tool_name": "write_file",
+                        "status": "error",
+                        "result": {"error_type": "director_write_policy_denied"},
+                    }
+                ],
+                "raw_results": [],
+                "success_count": 0,
+                "failure_count": 1,
+                "pending_async_count": 0,
+                "has_pending_async": False,
+            }
+        ],
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            run_id="director-run-1",
+        )
+    ).projection
+
+    assert projection["tool_lifecycle"]["event_count"] == 1
+    assert projection["tool_lifecycle"]["failed_count"] == 1
+    failure = projection["tool_lifecycle"]["failure_evidence"][0]
+    assert failure["failure_class"] == "TOOL_RESULT_FAILED"
 
 
 def test_metadata_native_tool_call_count_accepts_lifecycle_envelope_refs() -> None:

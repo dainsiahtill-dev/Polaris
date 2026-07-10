@@ -46,6 +46,9 @@ class TransactionConfig:
     """事务控制器配置"""
 
     role_id: str = ""
+    run_id: str = ""
+    task_id: str = ""
+    durable_commit_required: bool = False
     domain: Literal["document", "code"] = "document"
     workspace: str = ""
     max_tool_execution_time_ms: int = 60000
@@ -156,6 +159,7 @@ class TurnLedger:
 
     # 决策记录
     decisions: list[dict] = field(default_factory=list)
+    _final_decision: TurnDecision | None = field(default=None, repr=False)
     tool_batch_count: int = 0
 
     # 事件序列
@@ -327,20 +331,36 @@ class TurnLedger:
             "speculative.false_positive_rate": float(false_positive_rate),
         }
 
-    def record_decision(self, decision: TurnDecision) -> None:
-        """记录决策（追加到决策列表）"""
-        self.decisions.append(self._decision_to_dict(decision))
+    @property
+    def final_decision(self) -> TurnDecision | None:
+        """Return the canonical decoded decision without lossy reconstruction."""
 
-    def replace_decision(self, decision: TurnDecision) -> None:
+        return self._final_decision
+
+    def record_decision(self, decision: TurnDecision | Mapping[str, Any]) -> None:
+        """记录决策（追加到决策列表）"""
+        canonical = self._canonical_decision(decision)
+        self._final_decision = canonical
+        self.decisions.append(self._decision_to_dict(canonical))
+
+    def replace_decision(self, decision: TurnDecision | Mapping[str, Any]) -> None:
         """替换当前决策（用于重试场景，保持单一决策不变量）。
 
         根据 TransactionKernel 协议，每个 turn 只能有一个最终决策。
         重试时使用此方法替换已有决策，而不是追加新决策。
         """
+        canonical = self._canonical_decision(decision)
+        self._final_decision = canonical
         if self.decisions:
-            self.decisions[-1] = self._decision_to_dict(decision)
+            self.decisions[-1] = self._decision_to_dict(canonical)
         else:
-            self.decisions.append(self._decision_to_dict(decision))
+            self.decisions.append(self._decision_to_dict(canonical))
+
+    @staticmethod
+    def _canonical_decision(decision: TurnDecision | Mapping[str, Any]) -> TurnDecision:
+        if isinstance(decision, TurnDecision):
+            return decision
+        return TurnDecision.model_validate(dict(decision))
 
     def _decision_to_dict(self, decision: TurnDecision) -> dict[str, Any]:
         """将决策转换为字典格式"""
@@ -386,11 +406,12 @@ class TurnLedger:
     def to_turn_outcome(
         self,
         run_id: str,
-        decision: TurnDecision,
+        decision: TurnDecision | None,
         execution: ToolBatchExecution | None = None,
         closing: FinalizationRecord | None = None,
         failure_class: TurnFailureClass | None = None,
         commit_ref: CommitReceipt | None = None,
+        failure_reason: str | None = None,
     ) -> TurnOutcome:
         """从账本生成 TurnOutcome。
 
@@ -401,6 +422,9 @@ class TurnLedger:
         if failure_class == TurnFailureClass.CONTRACT_VIOLATION:
             outcome_status = OutcomeStatus.PANIC
             resolution_code = ResolutionCode.FAIL_CLOSED
+        elif failure_class == TurnFailureClass.CANCELLATION:
+            outcome_status = OutcomeStatus.CANCELLED
+            resolution_code = ResolutionCode.CANCELLED
         elif failure_class == TurnFailureClass.DURABILITY_FAILURE or failure_class is not None:
             outcome_status = OutcomeStatus.FAILED
             resolution_code = ResolutionCode.FAIL_CLOSED
@@ -440,6 +464,7 @@ class TurnLedger:
             failure_class=failure_class,
             commit_ref=commit_ref,
             continuation_hint=continuation_hint,
+            failure_reason=failure_reason,
         )
 
     def to_audit_log(self) -> dict[str, Any]:

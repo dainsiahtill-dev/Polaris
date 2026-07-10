@@ -61,6 +61,8 @@ from .factory_workspace_quality import WorkspaceQualityRunner
 
 logger = logging.getLogger(__name__)
 
+_DIRECTOR_EXECUTION_BARRIER_MAX_PROGRESS_WINDOWS = 4
+
 # Language-to-extension mapping for PM plan language consistency validation.
 # Used to detect when the PM model plans files in the wrong language
 # (e.g. Java files for a JavaScript project — context bleed from other projects).
@@ -1691,6 +1693,10 @@ class OrchestrationStageExecutor:
 
     def _task_blueprint_context(self, task: dict[str, Any], *, run_id: str, index: int) -> dict[str, Any]:
         context = dict(task)
+        # Preserve the validated PM task as a named evidence slot. Flattened
+        # task fields are useful prompt material, but they are not a provenance
+        # reference and cannot satisfy final-request contract coverage.
+        context["pm_task_contract"] = dict(task)
         context["source_artifact"] = "tasks/plan.json"
         context["factory_run_id"] = run_id
         context["task_index"] = index
@@ -2027,6 +2033,19 @@ class OrchestrationStageExecutor:
         return ids
 
     @staticmethod
+    def _remaining_director_task_count(stats: dict[str, int], *, fallback: int) -> int:
+        """Return unresolved PM task owners from the observable projection."""
+
+        total = max(0, _safe_taskboard_stat(stats.get("total")))
+        terminal = sum(
+            _safe_taskboard_stat(stats.get(key))
+            for key in ("completed", "failed", "cancelled")
+        )
+        if total > 0:
+            return max(1, total - terminal)
+        return max(1, int(fallback))
+
+    @staticmethod
     def _terminal_status_from_task_counts(counts: Any) -> str:
         if not isinstance(counts, dict):
             return ""
@@ -2140,7 +2159,7 @@ class OrchestrationStageExecutor:
         task_count: int,
         materialization_pending: bool = False,
     ) -> int:
-        del task_count
+        remaining_task_count = max(1, int(task_count))
         resolved_timeout: int | None = None
         raw_override = context.get("director_dispatch_timeout_seconds")
         if raw_override is not None:
@@ -2177,15 +2196,16 @@ class OrchestrationStageExecutor:
 
         remaining_seconds = OrchestrationStageExecutor._factory_deadline_remaining_seconds(context)
         if remaining_seconds is not None:
-            quality_gate_reserve = OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context)
+            quality_gate_reserve = OrchestrationStageExecutor._director_downstream_reserved_budget_seconds(
+                context,
+                materialization_pending=materialization_pending,
+                remaining_task_count=remaining_task_count,
+            )
             safety_budget = (
                 quality_gate_reserve
                 if remaining_seconds > quality_gate_reserve
                 else _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
             )
-            # Even first materialization may not consume the quality gate reserve:
-            # the factory contract requires runnable proof, not just files on disk.
-            del materialization_pending
             deadline_timeout = int(max(1.0, remaining_seconds - safety_budget))
             return max(1, min(resolved_timeout, deadline_timeout))
 
@@ -2197,6 +2217,8 @@ class OrchestrationStageExecutor:
         *,
         requested_timeout_seconds: int,
         materialization_pending: bool,
+        first_materialization_pending: bool,
+        remaining_task_count: int = 1,
     ) -> dict[str, Any]:
         """Return whether there is enough factory deadline to start a Director turn."""
 
@@ -2212,14 +2234,19 @@ class OrchestrationStageExecutor:
                 "llm_timeout_seconds": normalized_timeout,
             }
 
+        normalized_remaining_task_count = max(1, int(remaining_task_count))
         reserved_downstream_seconds = (
-            OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context)
+            OrchestrationStageExecutor._director_downstream_reserved_budget_seconds(
+                context,
+                materialization_pending=materialization_pending,
+                remaining_task_count=normalized_remaining_task_count,
+            )
             + _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
         )
         available_for_director = remaining_seconds - reserved_downstream_seconds
         minimum_start_budget = (
             OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context)
-            if materialization_pending
+            if first_materialization_pending
             else FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
         )
         if available_for_director < minimum_start_budget:
@@ -2232,6 +2259,8 @@ class OrchestrationStageExecutor:
                 "minimum_start_budget_seconds": minimum_start_budget,
                 "llm_timeout_seconds": 0,
                 "materialization_pending": materialization_pending,
+                "first_materialization_pending": first_materialization_pending,
+                "remaining_task_count": normalized_remaining_task_count,
             }
         return {
             "allow_dispatch": True,
@@ -2242,6 +2271,8 @@ class OrchestrationStageExecutor:
             "minimum_start_budget_seconds": minimum_start_budget,
             "llm_timeout_seconds": max(1, min(normalized_timeout, int(available_for_director))),
             "materialization_pending": materialization_pending,
+            "first_materialization_pending": first_materialization_pending,
+            "remaining_task_count": normalized_remaining_task_count,
         }
 
     @staticmethod
@@ -2274,6 +2305,31 @@ class OrchestrationStageExecutor:
             value = _QUALITY_GATE_RESERVED_BUDGET_SECONDS
         minimum = _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS
         return max(minimum, min(value, 600.0))
+
+    @staticmethod
+    def _director_downstream_reserved_budget_seconds(
+        context: dict[str, Any],
+        *,
+        materialization_pending: bool,
+        remaining_task_count: int,
+    ) -> float:
+        """Reserve only executable downstream work at the Director boundary.
+
+        Project quality and QA cannot run while more than one declared owner
+        task still has to materialize its targets. In that state the scheduler
+        retains the minimum budget needed to start both downstream stages,
+        rather than the configured full quality allowance. The final owner (or
+        an already materialized workspace) keeps the full reserve.
+
+        Complexity:
+            O(1) time and memory.
+        """
+
+        configured_reserve = OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context)
+        minimum_reserve = _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS
+        if materialization_pending and max(1, int(remaining_task_count)) > 1:
+            return min(configured_reserve, minimum_reserve)
+        return configured_reserve
 
     @staticmethod
     def _director_dispatch_timeout_settle_grace_seconds(context: dict[str, Any]) -> int:
@@ -2909,6 +2965,8 @@ class OrchestrationStageExecutor:
                 "queried_status",
                 "timeout_settle_grace_seconds",
                 "task_status_counts",
+                "active_task_count",
+                "active_task_ids",
             ):
                 if evidence_key in result_metadata:
                     entry[evidence_key] = result_metadata[evidence_key]
@@ -4015,6 +4073,9 @@ class OrchestrationStageExecutor:
                         timeout_seconds=ce_timeout_seconds,
                         metadata={
                             "constraints": task_constraints,
+                            "pm_task_contract": dict(task),
+                            "target_files": list(task_context.get("target_files") or []),
+                            "scope_paths": list(task_context.get("scope_paths") or []),
                             "source": "factory_stage_executor.chief_engineer_review",
                             "cognitive_runtime_mode": "off",
                             "cognitive_runtime_enabled": False,
@@ -4447,6 +4508,7 @@ class OrchestrationStageExecutor:
         idle_budget = max(1, int(context.get("director_idle_budget") or 2))
         idle_rounds = 0
         requires_taskboard_convergence = True
+        execution_barrier_timeout_observed = False
 
         # Enforce mainline-full: no silent single-worker fallback
         execution_mode = str(context.get("execution_mode", "parallel")).strip().lower()
@@ -4537,15 +4599,26 @@ class OrchestrationStageExecutor:
                 }
                 missing_declared_targets = self._missing_declared_delivery_targets(pm_tasks)
                 materialization_pending = bool(missing_declared_targets)
+                first_materialization_pending = (
+                    materialization_pending
+                    and not attempts
+                    and int(before_stats.get("completed") or 0) == 0
+                )
+                remaining_task_count = self._remaining_director_task_count(
+                    before_stats,
+                    fallback=len(pm_tasks),
+                )
                 director_timeout_seconds = self._director_dispatch_timeout_seconds(
                     context,
-                    task_count=len(pm_tasks),
+                    task_count=remaining_task_count,
                     materialization_pending=materialization_pending,
                 )
                 admission_decision = self._director_dispatch_deadline_admission_decision(
                     context,
                     requested_timeout_seconds=director_timeout_seconds,
                     materialization_pending=materialization_pending,
+                    first_materialization_pending=first_materialization_pending,
+                    remaining_task_count=remaining_task_count,
                 )
                 if not bool(admission_decision.get("allow_dispatch")):
                     stage_signals.append(
@@ -4579,7 +4652,8 @@ class OrchestrationStageExecutor:
                     {
                         "director_dispatch_timeout_seconds": director_timeout_seconds,
                         "director_deadline_admission": admission_decision,
-                        "director_first_materialization_pending": materialization_pending,
+                        "director_first_materialization_pending": first_materialization_pending,
+                        "director_remaining_task_count": remaining_task_count,
                         "director_missing_declared_target_count": len(missing_declared_targets),
                         "director_missing_declared_target_sample": missing_declared_targets[:12],
                     }
@@ -4759,9 +4833,14 @@ class OrchestrationStageExecutor:
                         abort_checker=abort_checker,
                         cancel_on_timeout=False,
                     )
+                director_result, barrier_observed = await self._settle_inflight_director_result(
+                    service,
+                    result=director_result,
+                    grace_seconds=self._director_dispatch_timeout_settle_grace_seconds(context),
+                    cancel_event=self._resolve_cancel_event(context),
+                    abort_checker=abort_checker,
+                )
                 final_result = director_result
-                if str(director_result.status or "").strip().lower() == "cancelled":
-                    break
 
                 after_stats = self._read_taskboard_stats()
                 workspace_delta = self._workspace_delivery_delta(
@@ -4799,8 +4878,39 @@ class OrchestrationStageExecutor:
                     "metadata_progress": metadata_progress,
                     "workspace_delta_progress": workspace_delta_progress,
                     "workspace_delta": workspace_delta,
+                    "settlement_attempted": barrier_observed,
+                    "settled_after_timeout": barrier_observed
+                    and not bool(metadata_payload.get("inflight_run_continues")),
                 }
                 attempts.append(attempt_entry)
+                if barrier_observed:
+                    barrier_still_active = bool(metadata_payload.get("inflight_run_continues"))
+                    stage_signals.append(
+                        {
+                            "code": (
+                                "director.execution_barrier_timeout"
+                                if barrier_still_active
+                                else "director.inflight_timeout_settled"
+                            ),
+                            "severity": "error" if barrier_still_active else "info",
+                            "detail": (
+                                "Director child execution remained active after the settlement barrier"
+                                if barrier_still_active
+                                else "Director child execution reached a terminal fact before the next dispatch round"
+                            ),
+                            "round": round_index,
+                            "run_id": str(director_result.run_id or command_result.run_id or "").strip(),
+                            "failure_class": (
+                                QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value if barrier_still_active else ""
+                            ),
+                            "responsible_layer": "execution_control_plane",
+                            "inflight_run_continues": barrier_still_active,
+                            "settled_after_timeout": not barrier_still_active,
+                        }
+                    )
+                    if barrier_still_active:
+                        execution_barrier_timeout_observed = True
+                        break
                 if workspace_delta_progress:
                     stage_signals.append(
                         {
@@ -5104,6 +5214,7 @@ class OrchestrationStageExecutor:
             requires_taskboard_convergence
             and not converged
             and not fanout_quality_handoff
+            and not execution_barrier_timeout_observed
             and not any(
                 str(item.get("code") or "") == "director.taskboard_not_converged"
                 for item in stage_signals
@@ -7633,6 +7744,175 @@ class OrchestrationStageExecutor:
             cancel_on_timeout=cancel_on_timeout,
         )
 
+    @staticmethod
+    def _inflight_director_run_ids(result: CommandResult) -> tuple[str, ...]:
+        """Return child run ids that explicitly crossed the soft-timeout barrier."""
+
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        run_ids: list[str] = []
+        if bool(metadata.get("inflight_run_continues")):
+            run_id = str(result.run_id or "").strip()
+            if run_id:
+                run_ids.append(run_id)
+        per_binding = metadata.get("per_binding")
+        if isinstance(per_binding, list):
+            for entry in per_binding:
+                if not isinstance(entry, dict) or not bool(entry.get("inflight_run_continues")):
+                    continue
+                run_id = str(entry.get("run_id") or "").strip()
+                if run_id:
+                    run_ids.append(run_id)
+        return tuple(dict.fromkeys(run_ids))
+
+    async def _settle_inflight_director_result(
+        self,
+        service: OrchestrationCommandService,
+        *,
+        result: CommandResult,
+        grace_seconds: int,
+        cancel_event: asyncio.Event | None,
+        abort_checker: Callable[[], Awaitable[str | None]] | None,
+    ) -> tuple[CommandResult, bool]:
+        """Settle every child run named by a soft-timeout result before reuse.
+
+        The provider response and tool batch belong to one execution attempt.
+        Once a wait result says that attempt is still in flight, starting a new
+        Director turn would create two writers for the same task boundary. This
+        method therefore acts as the parent-side commit barrier and returns only
+        after each named child is terminal or the barrier itself times out.
+
+        Complexity:
+            O(b) time and memory over the number of active Director bindings;
+            waits execute concurrently and are bounded by ``grace_seconds``.
+        """
+
+        run_ids = self._inflight_director_run_ids(result)
+        if not run_ids:
+            return result, False
+
+        settled_results = await asyncio.gather(
+            *(
+                self._settle_inflight_director_run_after_timeout(
+                    service,
+                    run_id=run_id,
+                    grace_seconds=grace_seconds,
+                    cancel_event=cancel_event,
+                    abort_checker=abort_checker,
+                )
+                for run_id in run_ids
+            )
+        )
+        settlements: dict[str, CommandResult] = {}
+        for run_id, settled in zip(run_ids, settled_results, strict=True):
+            if settled is None:
+                settled = CommandResult(
+                    run_id=run_id,
+                    status="timeout",
+                    message="Director execution barrier produced no terminal result",
+                    metadata={
+                        "barrier_state": "timeout",
+                        "barrier_timeout": True,
+                        "inflight_run_continues": True,
+                        "cancel_signal_sent": False,
+                        "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                        "responsible_layer": "execution_control_plane",
+                    },
+                )
+            settlements[run_id] = settled
+
+        original_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        per_binding = original_metadata.get("per_binding")
+        if isinstance(per_binding, list):
+            updated_bindings: list[dict[str, Any]] = []
+            for raw_entry in per_binding:
+                if not isinstance(raw_entry, dict):
+                    continue
+                entry = dict(raw_entry)
+                run_id = str(entry.get("run_id") or "").strip()
+                settled = settlements.get(run_id)
+                if settled is not None:
+                    settled_metadata = settled.metadata if isinstance(settled.metadata, dict) else {}
+                    entry.update(
+                        {
+                            "status": str(settled.status or "").strip(),
+                            "message": str(settled.message or "").strip(),
+                            "settled_after_timeout": not bool(settled_metadata.get("inflight_run_continues")),
+                            **settled_metadata,
+                        }
+                    )
+                updated_bindings.append(entry)
+
+            active = any(bool(item.get("inflight_run_continues")) for item in updated_bindings)
+            failed = any(
+                str(item.get("status") or "").strip().lower()
+                in {"failed", "blocked", "cancelled", "timeout"}
+                for item in updated_bindings
+                if str(item.get("run_id") or "").strip()
+            )
+            merged_status = "timeout" if active else ("failed" if failed else "completed")
+            merged_metadata = {
+                **original_metadata,
+                "per_binding": updated_bindings,
+                "settlement_attempted": True,
+                "settled_run_count": len(settlements),
+                "inflight_run_continues": active,
+                "barrier_state": "timeout" if active else "settled",
+                "barrier_timeout": active,
+            }
+            if active:
+                merged_metadata.update(
+                    {
+                        "cancel_signal_sent": False,
+                        "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                        "responsible_layer": "execution_control_plane",
+                    }
+                )
+            return (
+                CommandResult(
+                    run_id=str(result.run_id or run_ids[0]).strip(),
+                    status=merged_status,
+                    message=(
+                        "Director binding execution barrier timed out"
+                        if active
+                        else "Director binding execution barrier settled"
+                    ),
+                    reason_code=result.reason_code,
+                    stage_results=result.stage_results,
+                    started_at=result.started_at,
+                    completed_at=result.completed_at,
+                    artifacts=result.artifacts,
+                    metadata=merged_metadata,
+                ),
+                True,
+            )
+
+        settled = settlements[run_ids[0]]
+        settled_metadata = settled.metadata if isinstance(settled.metadata, dict) else {}
+        active = bool(settled_metadata.get("inflight_run_continues"))
+        merged_metadata = {
+            **original_metadata,
+            **settled_metadata,
+            "settlement_attempted": True,
+            "settled_run_count": 1,
+            "inflight_run_continues": active,
+            "barrier_state": "timeout" if active else "settled",
+            "barrier_timeout": active,
+        }
+        return (
+            CommandResult(
+                run_id=str(settled.run_id or result.run_id or "").strip(),
+                status=str(settled.status or result.status or "").strip(),
+                message=settled.message or result.message,
+                reason_code=settled.reason_code or result.reason_code,
+                stage_results=settled.stage_results or result.stage_results,
+                started_at=settled.started_at or result.started_at,
+                completed_at=settled.completed_at or result.completed_at,
+                artifacts=settled.artifacts or result.artifacts,
+                metadata=merged_metadata,
+            ),
+            True,
+        )
+
     async def _settle_inflight_director_run_after_timeout(
         self,
         service: OrchestrationCommandService,
@@ -7652,7 +7932,10 @@ class OrchestrationStageExecutor:
                 grace_seconds=0,
             )
             if barrier_result is not None:
-                return barrier_result
+                return self._execution_barrier_timeout_result(
+                    barrier_result,
+                    grace_seconds=0,
+                )
             barrier_result = await self._run_completion_waiter.cancel_active_run(
                 normalized_run_id,
                 reason="factory_stage_timeout",
@@ -7670,10 +7953,17 @@ class OrchestrationStageExecutor:
                 },
             )
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + max(0.0, float(grace_seconds))
+        started_at = loop.time()
+        idle_window_seconds = max(0.0, float(grace_seconds))
+        idle_deadline = started_at + idle_window_seconds
+        hard_limit_seconds = idle_window_seconds * _DIRECTOR_EXECUTION_BARRIER_MAX_PROGRESS_WINDOWS
+        hard_deadline = started_at + max(idle_window_seconds, hard_limit_seconds)
+        progress_marker = self._active_director_execution_progress_marker(run_id=normalized_run_id)
+        progress_extensions = 0
+        deferred_cancel_reason = ""
         terminal_statuses = {"completed", "success", "failed", "cancelled", "blocked"}
         while True:
-            if cancel_event is not None and cancel_event.is_set():
+            if cancel_event is not None and cancel_event.is_set() and not deferred_cancel_reason:
                 status_probe: CommandResult | None = None
                 with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
                     status_probe = await service.query_run_status(normalized_run_id)
@@ -7686,33 +7976,42 @@ class OrchestrationStageExecutor:
                     grace_seconds=grace_seconds,
                 )
                 if barrier_result is not None:
-                    return barrier_result
-                barrier_result = await self._run_completion_waiter.cancel_active_run(
-                    normalized_run_id,
-                    reason="factory_cancelled",
-                )
-                if barrier_result is not None:
-                    return barrier_result
-                return CommandResult(
-                    run_id=normalized_run_id,
-                    status="cancelled",
-                    message="Run cancelled: factory_cancelled",
-                )
-            if abort_checker is not None:
+                    deferred_cancel_reason = "factory_cancelled"
+                else:
+                    barrier_result = await self._run_completion_waiter.cancel_active_run(
+                        normalized_run_id,
+                        reason="factory_cancelled",
+                    )
+                    if barrier_result is not None:
+                        return barrier_result
+                    return CommandResult(
+                        run_id=normalized_run_id,
+                        status="cancelled",
+                        message="Run cancelled: factory_cancelled",
+                    )
+            if abort_checker is not None and not deferred_cancel_reason:
                 with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
                     abort_reason = await abort_checker()
                     if abort_reason:
-                        barrier_result = await self._run_completion_waiter.cancel_active_run(
-                            normalized_run_id,
+                        barrier_result = self._active_director_task_barrier_result(
+                            run_id=normalized_run_id,
                             reason=abort_reason,
+                            grace_seconds=grace_seconds,
                         )
                         if barrier_result is not None:
-                            return barrier_result
-                        return CommandResult(
-                            run_id=normalized_run_id,
-                            status="cancelled",
-                            message=f"Run cancelled: {abort_reason}",
-                        )
+                            deferred_cancel_reason = abort_reason
+                        else:
+                            barrier_result = await self._run_completion_waiter.cancel_active_run(
+                                normalized_run_id,
+                                reason=abort_reason,
+                            )
+                            if barrier_result is not None:
+                                return barrier_result
+                            return CommandResult(
+                                run_id=normalized_run_id,
+                                status="cancelled",
+                                message=f"Run cancelled: {abort_reason}",
+                            )
 
             settle_status_probe: CommandResult | None = None
             with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
@@ -7720,11 +8019,17 @@ class OrchestrationStageExecutor:
             if settle_status_probe is not None:
                 probed_status = str(settle_status_probe.status or "").strip().lower()
                 if probed_status in terminal_statuses:
-                    return settle_status_probe
+                    return self._with_execution_barrier_progress(
+                        settle_status_probe,
+                        progress_extensions=progress_extensions,
+                        elapsed_seconds=loop.time() - started_at,
+                        max_total_seconds=max(idle_window_seconds, hard_limit_seconds),
+                        deferred_cancel_reason=deferred_cancel_reason,
+                    )
                 metadata = settle_status_probe.metadata if isinstance(settle_status_probe.metadata, dict) else {}
                 count_status = self._terminal_status_from_task_counts(metadata.get("task_status_counts"))
                 if count_status:
-                    return CommandResult(
+                    terminal_result = CommandResult(
                         run_id=normalized_run_id,
                         status=count_status,
                         message=(
@@ -7737,25 +8042,21 @@ class OrchestrationStageExecutor:
                             "queried_status": probed_status,
                         },
                     )
-
-            with contextlib.suppress(RuntimeError, OSError, TypeError, ValueError):
-                taskboard_stats = self._read_taskboard_stats()
-                count_status = self._terminal_status_from_task_counts(taskboard_stats)
-                if count_status:
-                    return CommandResult(
-                        run_id=normalized_run_id,
-                        status=count_status,
-                        message=(
-                            "Director run reached terminal workspace TaskBoard counts during timeout settle grace: "
-                            f"{taskboard_stats}"
-                        ),
-                        metadata={
-                            "terminal_source": "timeout_settle_workspace_taskboard_counts",
-                            "task_status_counts": dict(taskboard_stats),
-                        },
+                    return self._with_execution_barrier_progress(
+                        terminal_result,
+                        progress_extensions=progress_extensions,
+                        elapsed_seconds=loop.time() - started_at,
+                        max_total_seconds=max(idle_window_seconds, hard_limit_seconds),
+                        deferred_cancel_reason=deferred_cancel_reason,
                     )
 
-            remaining = deadline - loop.time()
+            next_progress_marker = self._active_director_execution_progress_marker(run_id=normalized_run_id)
+            if next_progress_marker and next_progress_marker != progress_marker:
+                progress_marker = next_progress_marker
+                progress_extensions += 1
+                idle_deadline = min(loop.time() + idle_window_seconds, hard_deadline)
+
+            remaining = min(idle_deadline, hard_deadline) - loop.time()
             if remaining <= 0:
                 barrier_result = self._active_director_task_barrier_result(
                     run_id=normalized_run_id,
@@ -7763,7 +8064,17 @@ class OrchestrationStageExecutor:
                     grace_seconds=grace_seconds,
                 )
                 if barrier_result is not None:
-                    return barrier_result
+                    timeout_result = self._execution_barrier_timeout_result(
+                        barrier_result,
+                        grace_seconds=grace_seconds,
+                    )
+                    return self._with_execution_barrier_progress(
+                        timeout_result,
+                        progress_extensions=progress_extensions,
+                        elapsed_seconds=loop.time() - started_at,
+                        max_total_seconds=max(idle_window_seconds, hard_limit_seconds),
+                        deferred_cancel_reason=deferred_cancel_reason,
+                    )
                 barrier_result = await self._run_completion_waiter.cancel_active_run(
                     normalized_run_id,
                     reason="factory_stage_timeout",
@@ -7782,6 +8093,98 @@ class OrchestrationStageExecutor:
                 )
             await asyncio.sleep(min(2.0, remaining))
 
+    def _active_director_execution_progress_marker(
+        self,
+        *,
+        run_id: str,
+    ) -> tuple[tuple[str, str, str, str], ...]:
+        """Read the TaskRuntime-owned progress marker for a child run."""
+
+        progress_probe = getattr(self._run_completion_waiter, "active_execution_progress_marker", None)
+        if not callable(progress_probe):
+            return ()
+        with contextlib.suppress(RuntimeError, OSError, TypeError, ValueError):
+            marker = progress_probe(run_id=run_id)
+            if isinstance(marker, tuple):
+                return tuple(item for item in marker if isinstance(item, tuple) and len(item) == 4)
+        return ()
+
+    @staticmethod
+    def _with_execution_barrier_progress(
+        result: CommandResult,
+        *,
+        progress_extensions: int,
+        elapsed_seconds: float,
+        max_total_seconds: float,
+        deferred_cancel_reason: str = "",
+    ) -> CommandResult:
+        """Attach progress-aware settlement evidence when a window was renewed."""
+
+        normalized_cancel_reason = str(deferred_cancel_reason or "").strip()
+        if progress_extensions <= 0 and not normalized_cancel_reason:
+            return result
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        progress_metadata: dict[str, Any] = {}
+        if progress_extensions > 0:
+            progress_metadata = {
+                "barrier_progress_extensions": progress_extensions,
+                "barrier_elapsed_seconds": round(max(0.0, elapsed_seconds), 3),
+                "barrier_max_total_seconds": round(max(0.0, max_total_seconds), 3),
+                "barrier_progress_source": "task_runtime_execution_fact",
+            }
+        if normalized_cancel_reason:
+            progress_metadata.update(
+                {
+                    "barrier_cancel_deferred": True,
+                    "deferred_cancel_reason": normalized_cancel_reason,
+                    "cancel_signal_sent": False,
+                }
+            )
+        return CommandResult(
+            run_id=str(result.run_id or "").strip(),
+            status=str(result.status or "").strip(),
+            message=result.message,
+            reason_code=result.reason_code,
+            stage_results=result.stage_results,
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+            artifacts=result.artifacts,
+            metadata={
+                **metadata,
+                **progress_metadata,
+            },
+        )
+
+    @staticmethod
+    def _execution_barrier_timeout_result(
+        result: CommandResult,
+        *,
+        grace_seconds: int,
+    ) -> CommandResult:
+        """Project a still-active child as an explicit control-plane timeout."""
+
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        return CommandResult(
+            run_id=str(result.run_id or "").strip(),
+            status="timeout",
+            message="Director child execution remained active after settlement barrier timeout",
+            reason_code=result.reason_code,
+            stage_results=result.stage_results,
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+            artifacts=result.artifacts,
+            metadata={
+                **metadata,
+                "cancel_signal_sent": False,
+                "inflight_run_continues": True,
+                "timeout_settle_grace_seconds": grace_seconds,
+                "barrier_state": "timeout",
+                "barrier_timeout": True,
+                "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                "responsible_layer": "execution_control_plane",
+            },
+        )
+
     def _active_director_task_barrier_result(
         self,
         *,
@@ -7799,47 +8202,28 @@ class OrchestrationStageExecutor:
         into the ledger.
         """
 
+        barrier_probe = getattr(self._run_completion_waiter, "active_execution_barrier_result", None)
+        if not callable(barrier_probe):
+            return None
         with contextlib.suppress(RuntimeError, OSError, TypeError, ValueError):
-            taskboard_stats = self._read_taskboard_stats()
-            if self._task_counts_have_active_execution(taskboard_stats):
+            result = barrier_probe(run_id=run_id, reason=reason)
+            if isinstance(result, CommandResult):
+                metadata = result.metadata if isinstance(result.metadata, dict) else {}
                 return CommandResult(
-                    run_id=run_id,
-                    status="cancelled" if reason == "factory_cancelled" else "timeout",
-                    message=(f"Director run left active for execution-control-plane barrier: {reason}"),
+                    run_id=str(result.run_id or run_id).strip(),
+                    status=str(result.status or "").strip(),
+                    message=result.message,
+                    reason_code=result.reason_code,
+                    stage_results=result.stage_results,
+                    started_at=result.started_at,
+                    completed_at=result.completed_at,
+                    artifacts=result.artifacts,
                     metadata={
-                        "cancel_signal_sent": False,
-                        "cancel_reason": reason,
-                        "inflight_run_continues": True,
+                        **metadata,
                         "timeout_settle_grace_seconds": grace_seconds,
-                        "terminal_source": "active_director_task_barrier",
-                        "task_status_counts": dict(taskboard_stats),
                     },
                 )
         return None
-
-    @staticmethod
-    def _task_counts_have_active_execution(counts: Any) -> bool:
-        if not isinstance(counts, dict):
-            return False
-
-        def _count(key: str) -> int:
-            try:
-                return int(counts.get(key) or 0)
-            except (TypeError, ValueError):
-                return 0
-
-        active_keys = (
-            "claimed",
-            "in_progress",
-            "in_design",
-            "in_execution",
-            "in_qa",
-            "running",
-            "processing",
-            "executing",
-            "waiting_human",
-        )
-        return any(_count(key) > 0 for key in active_keys)
 
     @staticmethod
     def _resolve_cancel_event(context: dict[str, Any]) -> asyncio.Event | None:

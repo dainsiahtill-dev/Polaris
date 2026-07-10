@@ -222,6 +222,46 @@ rules:
       - diff affected Cells via catalog
       - select tests by subgraph and dependent Cells
 
+  - id: skeptical_architecture_review_report_valid
+    severity: high
+    description: >
+      Claims that the Polaris execution architecture is reliable must be
+      reported through the skeptical architecture review schema and must not
+      mark `architecture_reliable=true` without fresh isolated
+      `COMPLETED_VERIFIED` evidence, system-oracle proof level, all fact-chain
+      nodes present, and zero true red flags.
+    evidence:
+      - docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md
+      - docs/governance/schemas/skeptical-architecture-review-report.schema.yaml
+      - docs/governance/templates/skeptical-architecture-review-report.template.yaml
+      - docs/governance/ci/scripts/check_skeptical_architecture_review.py
+    current_status: enforced_template_and_report_shape
+    desired_automation:
+      - run docs/governance/ci/scripts/check_skeptical_architecture_review.py --workspace .
+      - run docs/governance/ci/scripts/fitness_rule_checker.py --rule skeptical_architecture_review
+      - require fresh isolated system-oracle report before accepting architecture reliability claims
+
+  - id: execution_control_reconstruction_card_valid
+    severity: high
+    description: >
+      Base execution-control-plane reconstruction sign-off must use the
+      reconstruction verification-card schema. A card may not claim
+      `architecture_reliable=true` unless it provides fresh isolated
+      `COMPLETED_VERIFIED` fact-chain evidence, projection consistency,
+      negative-control evidence, and complete sign-off fields.
+    evidence:
+      - docs/governance/POLARIS_EXECUTION_CONTROL_PLANE_RECONSTRUCTION_PROMPT.md
+      - docs/governance/schemas/execution-control-plane-reconstruction-card.schema.yaml
+      - docs/governance/templates/verification-cards/execution-control-plane-reconstruction-card.template.yaml
+      - docs/governance/ci/scripts/check_execution_control_reconstruction_card.py
+      - docs/governance/ci/scripts/execution_control_reconstruction_card_policy.py
+    current_status: enforced_template_and_card_shape
+    desired_automation:
+      - run docs/governance/ci/scripts/check_execution_control_reconstruction_card.py --workspace .
+      - run docs/governance/ci/scripts/fitness_rule_checker.py --rule execution_control_reconstruction_card
+      - require a filled reconstruction card before accepting execution-control reliability claims
+      - require the skeptical architecture review report as the final system-oracle proof
+
   - id: critical_subgraph_has_verify_targets
     severity: high
     description: >

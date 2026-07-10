@@ -23,6 +23,10 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     role_turn_result_from_transaction_result,
 )
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
+    _bind_transaction_attempt,
+    _start_transaction_invocation,
+)
 from polaris.cells.roles.kernel.internal.kernel.turn_prompt_setup import (
     RoleTurnSetupError,
     build_role_turn_prompt_setup,
@@ -87,7 +91,9 @@ async def execute_non_stream_role_turn(
     kernel._cached_tool_gateway = None
     kernel._cached_gateway_profile = None
 
-    max_retries = request.max_retries if request.max_retries > 0 else kernel.config.max_retries
+    # ``RoleTurnRequest`` owns the default. An explicit zero is a real
+    # no-retry budget, not a request to silently borrow the kernel default.
+    max_retries = max(0, int(request.max_retries))
     validate_output = request.validate_output
     last_validation: QualityResult | None = None
     last_error: str | None = None
@@ -101,8 +107,14 @@ async def execute_non_stream_role_turn(
     if request.run_id is None:
         request.run_id = observer_run_id
     transaction_executor = TransactionTurnExecutor(kernel)
+    transaction_invocation_id = _start_transaction_invocation(request)
 
     for attempt in range(max_retries + 1):
+        _bind_transaction_attempt(
+            request,
+            invocation_id=transaction_invocation_id,
+            attempt=attempt,
+        )
         system_prompt = prompt_builder.build_retry_prompt(
             base_system_prompt,
             quality_result_to_dict(last_validation),

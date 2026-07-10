@@ -29,6 +29,8 @@ from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteTo
 from polaris.cells.roles.kernel.internal.speculative_flags import is_adoption_audit_enabled
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    batch_write_failure_error_types,
+    batch_write_failures_require_llm_replan,
     batch_write_results_all_failed_on_argument_shape,
     extract_allowed_scope_paths_from_message,
     extract_invocation_tool_name,
@@ -114,6 +116,24 @@ _EDIT_FAILURE_MARKERS: tuple[str, ...] = (
     "SEARCH text exactly matches file content",
     "Failed to parse edit blocks",
 )
+
+
+def _resolve_tool_batch_execution_identity(
+    metadata: Mapping[str, Any],
+    config: TransactionConfig,
+) -> tuple[str, str, str]:
+    """Resolve workspace/run/task identity without trusting model output.
+
+    Provider decision metadata may carry transport evidence, but execution
+    identity belongs to the immutable transaction configuration. Explicit
+    metadata remains supported for internal deterministic callers and tests;
+    absent fields fall back to the transaction authority.
+    """
+
+    workspace = str(metadata.get("workspace") or config.workspace or ".").strip() or "."
+    run_id = str(metadata.get("run_id") or config.run_id or "").strip()
+    task_id = str(metadata.get("task_id") or config.task_id or "").strip()
+    return workspace, run_id, task_id
 
 
 def _recent_edit_failure_in_context(context: Any, lookback: int = 8) -> bool:
@@ -1424,7 +1444,10 @@ class ToolBatchExecutor:
             return cached_receipt
 
         metadata = decision.get("metadata", {})
-        workspace = str(metadata.get("workspace", ".")).strip() or "."
+        workspace, execution_run_id, execution_task_id = _resolve_tool_batch_execution_identity(
+            metadata,
+            self.config,
+        )
         raw_invocations = list(tool_batch.get("invocations", []) or [])
         invocations = rewrite_existing_file_paths_in_invocations(
             turn_id=turn_id,
@@ -2094,8 +2117,8 @@ class ToolBatchExecutor:
                 for invocation in invocations
             ]
             lifecycle = build_tool_batch_lifecycle_receipt_from_sources(
-                run_id=str(metadata.get("run_id") or ""),
-                task_id=str(metadata.get("task_id") or ""),
+                run_id=execution_run_id,
+                task_id=execution_task_id,
                 turn_id=turn_id,
                 role=str(getattr(self.config, "role_id", "") or ""),
                 provider_response_hash=str(metadata.get("provider_response_hash") or ""),
@@ -2105,6 +2128,19 @@ class ToolBatchExecutor:
                 missing_receipt_reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
             ).to_dict()
             ledger.anomaly_flags.append(build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt(lifecycle))
+            _append_tool_batch_receipts_to_run_ledger(
+                workspace=workspace,
+                run_id=execution_run_id,
+                role_id=str(getattr(self.config, "role_id", "") or ""),
+                task_id=execution_task_id,
+                turn_id=turn_id,
+                invocations=invocations,
+                receipts=[],
+                capability_token=_capability_token_from_metadata(metadata),
+                execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
+                provider_response_hash=str(metadata.get("provider_response_hash") or ""),
+                metadata=metadata,
+            )
             raise RuntimeError("tool_dispatch_dropped: decoded tool batch produced no authoritative batch receipt")
 
         if write_file_autofill_evidence:
@@ -2128,9 +2164,9 @@ class ToolBatchExecutor:
         record_receipts_to_ledger(receipts_as_dicts, ledger)
         _append_tool_batch_receipts_to_run_ledger(
             workspace=workspace,
-            run_id=str(metadata.get("run_id") or ""),
+            run_id=execution_run_id,
             role_id=str(getattr(self.config, "role_id", "") or ""),
-            task_id=str(metadata.get("task_id") or ""),
+            task_id=execution_task_id,
             turn_id=turn_id,
             invocations=invocations,
             receipts=receipts_as_dicts,
@@ -2140,6 +2176,8 @@ class ToolBatchExecutor:
             metadata=metadata,
         )
         if invocations and receipts_as_dicts and not _batch_has_authoritative_success(receipts_as_dicts):
+            merged_failed_receipt = _merge_batch_receipts(receipts_as_dicts) or {}
+            failure_error_types = batch_write_failure_error_types(merged_failed_receipt)
             failed_tool_names = [
                 str(result.get("tool_name") or "").strip()
                 for receipt in normalize_batch_receipts(receipts_as_dicts)
@@ -2153,11 +2191,19 @@ class ToolBatchExecutor:
                     "reason": "decoded_tool_batch_produced_only_failed_results",
                     "decoded_tool_calls_count": len(invocations),
                     "failed_tool_names": [name for name in failed_tool_names if name],
+                    "error_types": list(failure_error_types),
                 }
             )
+            if batch_write_failures_require_llm_replan(merged_failed_receipt):
+                ledger.tool_batch_count = max(0, int(ledger.tool_batch_count or 0) - 1)
+                rendered_error_types = ",".join(failure_error_types) or "correctable_write_rejection"
+                raise RuntimeError(
+                    "single_batch_contract_violation: write tool batch produced no effects and requires "
+                    f"a new invocation within the authorized target scope; error_types={rendered_error_types}"
+                )
             raise RuntimeError(
                 "tool_dispatch_failed: decoded tool batch produced only failed tool results; "
-                f"decoded_tool_calls={len(invocations)}"
+                f"decoded_tool_calls={len(invocations)}; error_types={','.join(failure_error_types) or 'unknown'}"
             )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此

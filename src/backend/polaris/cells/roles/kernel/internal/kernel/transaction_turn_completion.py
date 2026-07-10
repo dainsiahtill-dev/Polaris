@@ -30,7 +30,10 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
 )
-from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
+from polaris.cells.roles.kernel.internal.kernel.task_boundary import (
+    append_role_turn_task_boundary_verdict,
+    task_boundary_evidence_refs_from_metadata,
+)
 from polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection import (
     append_tool_call_lifecycle_control_plane_event,
 )
@@ -114,6 +117,12 @@ def build_transaction_turn_completion_result(
         tool_filter_audit=tool_filter_audit,
         ledger=ledger,
     )
+    commit_receipt = tk_result.get("commit_receipt")
+    if isinstance(commit_receipt, Mapping):
+        metadata["turn_commit_receipt"] = dict(commit_receipt)
+    turn_outcome = tk_result.get("turn_outcome")
+    if isinstance(turn_outcome, Mapping):
+        metadata["turn_outcome"] = dict(turn_outcome)
     error_msg, is_complete = _resolve_completion_status(kind=str(kind), finalization=finalization, metadata=metadata)
     lifecycle_receipt = record_missing_dispatch_lifecycle_receipt(
         role=role,
@@ -164,6 +173,8 @@ def build_transaction_turn_completion_result(
         thinking=final_thinking,
         tool_results=tool_results,
     )
+    # ContextOS is a rebuildable conversation projection. The authoritative
+    # execution outcome was already committed by TransactionKernel.
     _commit_turn_to_snapshot(
         request=request,
         turn_id=turn_id,
@@ -425,7 +436,7 @@ def _append_task_boundary_verdict(
             needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
             workflow_reason=str(metadata.get("workflow_reason") or ""),
             error_message=error_msg,
-            evidence_refs=[str(metadata.get("context_snapshot_ref") or "").strip()],
+            evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         logger.debug("failed to append role-turn task boundary verdict", exc_info=True)

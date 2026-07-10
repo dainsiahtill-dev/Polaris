@@ -37,36 +37,10 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
     the existing event's seq doesn't match the request, we fail-closed
     rather than silently returning a mismatched event.
     """
+    idempotency_key = str(command.idempotency_key or "").strip()
+    store: JsonlEventStore | None = None
     try:
         store = JsonlEventStore(command.workspace)
-        idempotency_key = str(command.idempotency_key or "").strip()
-        if idempotency_key:
-            existing = _find_existing_idempotent_event(
-                store=store,
-                stream=command.stream,
-                idempotency_key=idempotency_key,
-            )
-            if existing is not None:
-                if command.expected_seq is not None and existing.seq != command.expected_seq:
-                    raise FactStreamError(
-                        "idempotent hit but expected_seq drift",
-                        code="expected_seq_drift",
-                        details={
-                            "workspace": command.workspace,
-                            "stream": command.stream,
-                            "expected_seq": command.expected_seq,
-                            "existing_seq": int(existing.seq),
-                            "event_id": existing.event_id,
-                        },
-                    )
-                return FactEventAppendedV1(
-                    event_id=existing.event_id,
-                    workspace=command.workspace,
-                    stream=command.stream,
-                    storage_path=store.stream_logical_path(command.stream),
-                    appended_at=existing.occurred_at,
-                    appended_seq=int(existing.seq),
-                )
         metadata = _compact_metadata(
             {
                 "run_id": command.run_id,
@@ -85,6 +59,7 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
             correlation_id=command.correlation_id,
             metadata=metadata,
             expected_seq=command.expected_seq,
+            idempotency_key=idempotency_key,
         )
     except (ValueError, EventSourcingError) as exc:
         # Translate generic store failures to FactStreamError so callers
@@ -97,15 +72,27 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
         message = str(exc)
         if "expected_seq drift" in message:
             code = "expected_seq_drift"
+        elif "idempotency conflict" in message:
+            code = "idempotency_conflict"
+        details: dict[str, Any] = {
+            "workspace": command.workspace,
+            "stream": command.stream,
+            "event_type": command.event_type,
+            "expected_seq": command.expected_seq,
+        }
+        if code == "expected_seq_drift" and idempotency_key and store is not None:
+            existing = _find_existing_idempotent_event(
+                store=store,
+                stream=command.stream,
+                idempotency_key=idempotency_key,
+            )
+            if existing is not None:
+                details["existing_seq"] = int(existing.seq)
+                details["event_id"] = existing.event_id
         raise FactStreamError(
             f"append_fact_event failed: {exc}",
             code=code,
-            details={
-                "workspace": command.workspace,
-                "stream": command.stream,
-                "event_type": command.event_type,
-                "expected_seq": command.expected_seq,
-            },
+            details=details,
         ) from exc
 
     return FactEventAppendedV1(

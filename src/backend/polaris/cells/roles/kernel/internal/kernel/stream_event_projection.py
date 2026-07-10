@@ -24,7 +24,10 @@ from polaris.cells.roles.kernel.internal.kernel.role_result_projection import (
     tool_calls_from_batch_receipt,
     tool_results_from_batch_receipt,
 )
-from polaris.cells.roles.kernel.internal.kernel.task_boundary import append_role_turn_task_boundary_verdict
+from polaris.cells.roles.kernel.internal.kernel.task_boundary import (
+    append_role_turn_task_boundary_verdict,
+    task_boundary_evidence_refs_from_metadata,
+)
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion import (
     MISSING_DISPATCH_COMPLETION_ERROR,
     record_missing_dispatch_lifecycle_receipt,
@@ -172,6 +175,10 @@ class StreamEventProjector:
             monitoring=event.monitoring if isinstance(event.monitoring, dict) else None,
         )
         _lift_completion_audit_evidence(metadata, event.monitoring)
+        if event.commit_receipt:
+            metadata["turn_commit_receipt"] = dict(event.commit_receipt)
+        if event.turn_outcome:
+            metadata["turn_outcome"] = dict(event.turn_outcome)
 
         if event.status in ("failed", "suspended"):
             self._record_projection_outcome(success=False, reason="stream failure")
@@ -313,7 +320,7 @@ class StreamEventProjector:
                 tool_results=tool_results,
                 tool_dispatch=tool_dispatch,
                 needs_followup_workflow=False,
-                evidence_refs=[str(metadata.get("context_snapshot_ref") or "").strip()],
+                evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             logger.debug("failed to append stream director task boundary verdict", exc_info=True)

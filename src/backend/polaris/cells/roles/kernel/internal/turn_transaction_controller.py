@@ -57,6 +57,7 @@ import contextlib
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import replace
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
@@ -111,6 +112,11 @@ from polaris.cells.roles.kernel.internal.transaction.llm_response_metadata impor
 from polaris.cells.roles.kernel.internal.transaction.modification_contract import ModificationContract
 from polaris.cells.roles.kernel.internal.transaction.mutation_contract_guard import (
     apply_mutation_contract_guard,
+)
+from polaris.cells.roles.kernel.internal.transaction.outcome_commit import (
+    DurableTurnCommit,
+    TurnOutcomeCommitError,
+    commit_turn_result,
 )
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import PhaseManager
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
@@ -653,6 +659,35 @@ class TurnTransactionController:
     # Public API
     # ---------------------------------------------------------------------------
 
+    def _commit_canonical_outcome(
+        self,
+        *,
+        ledger: TurnLedger,
+        result: Mapping[str, Any] | None,
+        completion_status: str,
+        failure_reason: str | None = None,
+    ) -> DurableTurnCommit | None:
+        """Commit authoritative task turns; leave ad-hoc chat turns ephemeral."""
+
+        if not self.config.durable_commit_required:
+            return None
+        return commit_turn_result(
+            workspace=self.config.workspace,
+            run_id=self.config.run_id,
+            task_id=self.config.task_id,
+            ledger=ledger,
+            result=result,
+            completion_status=completion_status,
+            failure_reason=failure_reason,
+        )
+
+    @staticmethod
+    def _completion_status_from_result(result: Mapping[str, Any]) -> str:
+        kind = str(result.get("kind") or "").strip()
+        if kind in {"inline_patch_escape_blocked", "mutation_bypass_blocked"}:
+            return "failed"
+        return "success"
+
     async def execute(
         self,
         turn_id: str,
@@ -699,6 +734,15 @@ class TurnTransactionController:
                     stream=False,
                     tool_choice_override=tool_choice_override,
                 )
+                durable_commit = self._commit_canonical_outcome(
+                    ledger=ledger,
+                    result=result,
+                    completion_status=self._completion_status_from_result(result),
+                )
+                if durable_commit is not None:
+                    result["turn_outcome"] = durable_commit.outcome.to_dict()
+                    result["commit_receipt"] = durable_commit.receipt.to_dict()
+                    result["sealed_turn"] = durable_commit.sealed_turn.to_dict()
                 result.setdefault("ledger", ledger)
                 result["state_trajectory"] = [s[0] for s in ledger.state_history]
                 logger.debug(
@@ -729,6 +773,18 @@ class TurnTransactionController:
                 )
 
                 ledger.finalize()
+                if not isinstance(e, TurnOutcomeCommitError):
+                    try:
+                        self._commit_canonical_outcome(
+                            ledger=ledger,
+                            result=None,
+                            completion_status="error",
+                            failure_reason=str(e),
+                        )
+                    except TurnOutcomeCommitError as commit_exc:
+                        raise TurnOutcomeCommitError(
+                            f"turn failed and its terminal outcome could not be committed: {commit_exc}"
+                        ) from e
                 with contextlib.suppress(TypeError):
                     vars(e)["turn_ledger"] = ledger
                 self._emit_phase_event(
@@ -770,6 +826,8 @@ class TurnTransactionController:
             effective_turn_request_id = scope.effective_turn_request_id
             effective_turn_span_id = scope.effective_turn_span_id
             truthlog_recorder = scope.truthlog_recorder
+            canonical_outcome_committed = False
+            last_stream_error = ""
             try:
 
                 async def _call_stream_llm_with_turn_tool_choice(
@@ -800,6 +858,28 @@ class TurnTransactionController:
                     ledger,
                     call_llm_for_decision_stream=_call_stream_llm_with_turn_tool_choice,
                 ):
+                    if isinstance(event, CompletionEvent):
+                        if canonical_outcome_committed:
+                            raise RuntimeError(f"duplicate terminal completion event for turn {turn_id}")
+                        durable_commit = self._commit_canonical_outcome(
+                            ledger=ledger,
+                            result={
+                                "kind": event.turn_kind,
+                                "visible_content": event.visible_content,
+                                "batch_receipt": event.batch_receipt,
+                            },
+                            completion_status=event.status,
+                            failure_reason=event.error,
+                        )
+                        if durable_commit is not None:
+                            event = replace(
+                                event,
+                                turn_outcome=durable_commit.outcome.to_dict(),
+                                commit_receipt=durable_commit.receipt.to_dict(),
+                            )
+                            canonical_outcome_committed = True
+                    elif isinstance(event, ErrorEvent):
+                        last_stream_error = event.message
                     event_with_request_id = self._attach_event_correlation(
                         event,
                         turn_request_id=effective_turn_request_id,
@@ -814,9 +894,28 @@ class TurnTransactionController:
                             turn_request_id_fallback=effective_turn_request_id,
                         )
                     yield event_with_request_id
+                if not canonical_outcome_committed:
+                    self._commit_canonical_outcome(
+                        ledger=ledger,
+                        result=None,
+                        completion_status="error",
+                        failure_reason=last_stream_error or "stream ended without a completion event",
+                    )
             except Exception as e:
                 logger.exception("execute_stream failed: turn_id=%s", turn_id)
                 ledger.finalize()
+                if not canonical_outcome_committed and not isinstance(e, TurnOutcomeCommitError):
+                    try:
+                        self._commit_canonical_outcome(
+                            ledger=ledger,
+                            result=None,
+                            completion_status="error",
+                            failure_reason=str(e),
+                        )
+                    except TurnOutcomeCommitError as commit_exc:
+                        raise TurnOutcomeCommitError(
+                            f"stream turn failed and its terminal outcome could not be committed: {commit_exc}"
+                        ) from e
                 with contextlib.suppress(TypeError):
                     vars(e)["turn_ledger"] = ledger
                 error_event = self._attach_event_correlation(
@@ -980,6 +1079,7 @@ class TurnTransactionController:
                     # Wave-5: bootstrap a READ-ONLY violating batch directly instead
                     # of discarding the model's reads and re-asking.
                     original_decision=decision,
+                    initial_failure_reason=str(exc),
                 )
 
         else:

@@ -417,6 +417,27 @@ def test_task_boundary_reports_tool_dispatch_dropped(tmp_path: Path) -> None:
     assert verdict["responsible_layer"] == "execution_control_plane"
 
 
+def test_task_boundary_preserves_text_fallback_not_dispatched(tmp_path: Path) -> None:
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-1",
+        run_id="run-1",
+        tool_dispatch={
+            "status": "blocked",
+            "failure_class": "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED",
+            "text_fallback_requested": True,
+            "parser_attempted": True,
+            "reason": "text fallback parser produced no calls",
+        },
+    ).to_dict()
+
+    assert verdict["ok"] is False
+    assert verdict["status"] == "required_tool_text_fallback_not_dispatched"
+    assert verdict["failure_class"] == "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED"
+    assert verdict["responsible_layer"] == "execution_control_plane"
+    assert verdict["tool_dispatch"]["parser_attempted"] is True
+
+
 def test_task_boundary_reports_blocked_dependencies(tmp_path: Path) -> None:
     verdict = evaluate_task_boundary_verdict(
         workspace=tmp_path,
@@ -457,7 +478,7 @@ def test_task_boundary_reports_failed_required_evidence(tmp_path: Path) -> None:
 
     assert verdict["ok"] is False
     assert verdict["status"] == "required_evidence_failed"
-    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["failure_class"] == "COMPILER_OR_TEST_FAILURE"
     assert verdict["failed_required_evidence_modalities"] == ["command"]
 
 
@@ -473,7 +494,7 @@ def test_task_boundary_failed_evidence_takes_precedence_over_missing_flag(tmp_pa
 
     assert verdict["ok"] is False
     assert verdict["status"] == "required_evidence_failed"
-    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["failure_class"] == "COMPILER_OR_TEST_FAILURE"
     assert verdict["missing_required_evidence_modalities"] == []
 
 
@@ -502,5 +523,5 @@ def test_task_boundary_reports_failed_required_verifier(tmp_path: Path) -> None:
 
     assert verdict["ok"] is False
     assert verdict["status"] == "required_verifier_failed"
-    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["failure_class"] == "COMPILER_OR_TEST_FAILURE"
     assert verdict["failed_required_verifiers"] == ["npm test"]

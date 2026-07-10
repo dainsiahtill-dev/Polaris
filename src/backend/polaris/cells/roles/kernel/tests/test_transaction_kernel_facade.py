@@ -1010,7 +1010,17 @@ async def test_retry_tool_batch_after_contract_violation_appends_retry_contract_
         return {
             "kind": TurnDecisionKind.TOOL_BATCH,
             "turn_id": "turn_retry_contract",
-            "tool_batch": {"invocations": []},
+            "visible_message": "retry write",
+            "tool_batch": {
+                "batch_id": "turn_retry_contract_batch",
+                "invocations": [],
+                "parallel_readonly": [],
+                "readonly_serial": [],
+                "serial_writes": [],
+                "async_receipts": [],
+            },
+            "finalize_mode": "none",
+            "domain": "code",
         }
 
     async def _fake_execute_tool_batch(
@@ -1042,19 +1052,27 @@ async def test_retry_tool_batch_after_contract_violation_appends_retry_contract_
         ledger=ledger,
         stream=False,
         shadow_engine=None,
+        initial_failure_reason=(
+            "single_batch_contract_violation: write tool batch produced no effects and requires "
+            "a new invocation within the authorized target scope; "
+            "error_types=director_write_policy_denied"
+        ),
     )
 
     assert result["kind"] == "tool_batch_with_receipt"
     retry_context = captured["retry_context"]
     assert isinstance(retry_context, list)
-    assert len(retry_context) == len(context) + 1
+    assert len(retry_context) == len(context) + 2
     assert retry_context[0]["role"] == "system"
     assert "RETRY CONTRACT" in str(retry_context[0]["content"])
     assert "Allowed write tools" in str(retry_context[0]["content"])
     assert "HARD GATE: never return plain-text-only completion" in str(retry_context[0]["content"])
     assert "MANDATORY:" not in str(retry_context[0]["content"])
     assert "Do not guess exact-match edit search text" in str(retry_context[0]["content"])
-    assert retry_context[-1]["role"] == "user"
+    assert retry_context[-2]["role"] == "user"
+    assert retry_context[-1]["role"] == "system"
+    assert "RETRY ENFORCEMENT" in str(retry_context[-1]["content"])
+    assert "director_write_policy_denied" in str(retry_context[-1]["content"])
     execute_context = captured["execute_context"]
     assert execute_context == retry_context
     assert captured["stream"] is False

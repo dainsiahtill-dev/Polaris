@@ -17,15 +17,18 @@ market's ``_exec_claim_ready`` then serializes the two writers for free.
 
 Language-agnostic: the ledger only stores the CE's own ``step_id`` /
 ``parent_task_id`` strings keyed by ``target_file`` — no per-language parsing,
-honoring the "no business code in Polaris" rule. Best-effort persistence (a
-write failure never aborts fission); the load-bearing guarantee is the
-``depends_on`` serialization computed in-process at publish.
+honoring the "no business code in Polaris" rule. Step-fission persistence stays
+best-effort because its load-bearing guarantee is the in-process
+``depends_on`` serialization computed at publish. Task-level ownership granted
+at the CE handoff boundary is stricter: persistence and read-back must succeed
+before the handoff can be treated as authoritative.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 from collections.abc import Iterator
@@ -35,6 +38,7 @@ from typing import Any
 
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.fs.text_ops import write_json_atomic
+from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 logger = logging.getLogger(__name__)
@@ -42,6 +46,8 @@ logger = logging.getLogger(__name__)
 _LEDGER_REL_PATH = "runtime/contracts/file_ownership_ledger.json"
 _SCHEMA_VERSION = "file-ownership-ledger/1"
 _HANDOFF_REQUEST_SCHEMA_VERSION = "file-ownership-handoff-request/1"
+_MAX_TASK_ID_LENGTH = 256
+_WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:/")
 
 # In-process serialization. The cross-process file lock below is keyed by a lock
 # FILE created with O_CREAT|O_EXCL, which serializes other PROCESSES but does not
@@ -50,6 +56,10 @@ _HANDOFF_REQUEST_SCHEMA_VERSION = "file-ownership-handoff-request/1"
 # is therefore required in addition, to serialize the concurrent CEConsumer fission
 # threads (KERNELONE_TASK_MARKET_ROLE_POOLS includes chief_engineer + concurrency>1).
 _PROCESS_LOCK = threading.Lock()
+
+
+class FileOwnershipLedgerError(RuntimeError):
+    """Raised when authoritative ownership persistence cannot be proven."""
 
 
 def task_identifier_token_aliases(value: Any) -> tuple[str, ...]:
@@ -143,7 +153,11 @@ class FileOwnershipHandoffRequest:
 
 
 @contextmanager
-def _ledger_write_lock(ledger_path: str) -> Iterator[None]:
+def _ledger_write_lock(
+    ledger_path: str,
+    *,
+    fail_closed: bool = False,
+) -> Iterator[None]:
     """Serialize the whole load-modify-write of the ledger keyed by its path.
 
     Guards against concurrent fissions (CEConsumer threads, possibly across
@@ -161,6 +175,10 @@ def _ledger_write_lock(ledger_path: str) -> Iterator[None]:
     """
     with _PROCESS_LOCK, file_lock(f"{ledger_path}.rmw.lock") as acquired:
         if not acquired:
+            if fail_closed:
+                raise FileOwnershipLedgerError(
+                    f"file ownership ledger lock acquisition failed: {ledger_path}"
+                )
             logger.warning("file ownership ledger rmw lock not acquired (non-fatal); proceeding")
         yield
 
@@ -186,36 +204,85 @@ def _normalize_target(raw: Any) -> str:
     return normalize_file_ownership_target(raw)
 
 
+def _normalize_authoritative_task_target(raw: object) -> str:
+    """Validate and canonicalize one CE-authoritative file target.
+
+    This stricter parser is deliberately private to task-level registration.
+    Existing fission and read-routing callers retain their lexical normalization
+    semantics, while a CE handoff may only become authoritative when each file
+    key is a safe, reproducible workspace-relative path.
+    """
+
+    if not isinstance(raw, str):
+        raise TypeError("authoritative target files must be strings")
+    target = _normalize_target(raw)
+    if not target:
+        raise ValueError("authoritative target file must be non-empty")
+    if (
+        target.startswith(("/", "~"))
+        or _WINDOWS_DRIVE_PATH_RE.match(target)
+        or "://" in target
+        or "\x00" in target
+    ):
+        raise ValueError(f"authoritative target file is not workspace-relative: {raw!r}")
+    parts = target.split("/")
+    if (
+        any(not part or part in {".", ".."} for part in parts)
+        or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in target)
+    ):
+        raise ValueError(f"authoritative target file is invalid: {raw!r}")
+    return "/".join(parts)
+
+
 def _ledger_path(workspace: str, cache_root: str) -> str:
     return resolve_artifact_path(workspace, cache_root, _LEDGER_REL_PATH)
 
 
-def _load(workspace: str, cache_root: str) -> dict[str, Any]:
+def _empty_ledger() -> dict[str, Any]:
+    return {"schema_version": _SCHEMA_VERSION, "files": {}}
+
+
+def _load(
+    workspace: str,
+    cache_root: str,
+    *,
+    fail_closed: bool = False,
+) -> dict[str, Any]:
     path = _ledger_path(workspace, cache_root)
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        return {"schema_version": _SCHEMA_VERSION, "files": {}}
+    except FileNotFoundError:
+        return _empty_ledger()
+    except (OSError, json.JSONDecodeError) as exc:
+        if fail_closed:
+            raise FileOwnershipLedgerError(
+                f"file ownership ledger read failed: {path}"
+            ) from exc
+        return _empty_ledger()
     if not isinstance(data, dict):
-        return {"schema_version": _SCHEMA_VERSION, "files": {}}
+        if fail_closed:
+            raise FileOwnershipLedgerError(
+                f"file ownership ledger must contain a JSON object: {path}"
+            )
+        return _empty_ledger()
     if not isinstance(data.get("files"), dict):
+        if fail_closed:
+            raise FileOwnershipLedgerError(
+                f"file ownership ledger has an invalid files mapping: {path}"
+            )
         data["files"] = {}
     return data
 
 
-def record_file_owners(
+def _record_file_owners(
     workspace: str,
     cache_root: str,
     steps: list[dict[str, Any]],
     parent_task_id: str,
+    *,
+    fail_closed: bool,
 ) -> None:
-    """Claim each step's target_file for this parent — FIRST writer wins.
-
-    A file already owned (by any earlier parent's step) is NEVER reassigned, so
-    ownership is stable across the run. Best-effort: a ledger write failure must
-    never abort fission, so OSError is swallowed (logged).
-    """
     if not steps:
         return
     parent = str(parent_task_id or "").strip()
@@ -224,8 +291,8 @@ def record_file_owners(
     # entire load-modify-write must be serialized, otherwise two concurrent
     # fissions both load the same baseline and the later write clobbers the
     # earlier's first-writer-wins entries (lost write).
-    with _ledger_write_lock(ledger_path):
-        ledger = _load(workspace, cache_root)
+    with _ledger_write_lock(ledger_path, fail_closed=fail_closed):
+        ledger = _load(workspace, cache_root, fail_closed=fail_closed)
         files: dict[str, Any] = ledger["files"]
         changed = False
         for step in steps:
@@ -244,7 +311,32 @@ def record_file_owners(
         try:
             write_json_atomic(ledger_path, ledger)
         except OSError as exc:
+            if fail_closed:
+                raise FileOwnershipLedgerError(
+                    f"file ownership ledger write failed: {ledger_path}"
+                ) from exc
             logger.warning("file ownership ledger write failed (non-fatal): %s", exc)
+
+
+def record_file_owners(
+    workspace: str,
+    cache_root: str,
+    steps: list[dict[str, Any]],
+    parent_task_id: str,
+) -> None:
+    """Claim each step's target_file for this parent — FIRST writer wins.
+
+    A file already owned (by any earlier parent's step) is NEVER reassigned, so
+    ownership is stable across the run. Best-effort: a ledger write failure must
+    never abort fission, so OSError is swallowed (logged).
+    """
+    _record_file_owners(
+        workspace,
+        cache_root,
+        steps,
+        parent_task_id,
+        fail_closed=False,
+    )
 
 
 def read_file_owners(
@@ -270,6 +362,108 @@ def read_file_owners(
             "owner_step_id": owner_step_id,
             "owner_parent": str(entry.get("owner_parent") or "").strip(),
         }
+    return owners
+
+
+def record_task_file_owners(
+    workspace: str,
+    cache_root: str,
+    target_files: list[str],
+    *,
+    task_id: str,
+) -> dict[str, dict[str, str]]:
+    """Record CE-authoritative task targets and verify every path has an owner.
+
+    PM target files become authoritative only after Chief Engineer validation.
+    Recording them at that boundary gives later scope-authority decisions a
+    durable owner even when CE step fission is disabled. Existing first-writer
+    ownership remains unchanged for intentionally shared files.
+
+    Raises:
+        TypeError: If ``target_files`` is not a list of string paths.
+        ValueError: If a task id, cache root, or target path is invalid.
+        FileOwnershipLedgerError: If persistence, read-back, or owner evidence
+            cannot be proven.
+
+    Complexity:
+        O(n) time and memory over ``target_files``.
+    """
+
+    normalized_workspace = str(workspace or "").strip()
+    if not normalized_workspace:
+        raise ValueError("workspace must be a non-empty string")
+    if not isinstance(target_files, list):
+        raise TypeError("target_files must be a list of strings")
+    if not isinstance(task_id, str):
+        raise TypeError("task_id must be a string")
+    normalized_task_id = task_id.strip()
+    if not normalized_task_id:
+        raise ValueError("task_id must be a non-empty string")
+    if (
+        len(normalized_task_id) > _MAX_TASK_ID_LENGTH
+        or normalized_task_id in {".", ".."}
+        or any(
+            char.isspace() or char in {"/", "\\"} or ord(char) < 32 or ord(char) == 127
+            for char in normalized_task_id
+        )
+    ):
+        raise ValueError("task_id contains unsupported characters")
+
+    roots = resolve_storage_roots(normalized_workspace)
+    resolved_cache_root = os.path.abspath(os.path.expanduser(str(roots.runtime_root).strip()))
+    if not resolved_cache_root:
+        raise FileOwnershipLedgerError(
+            "resolved storage roots did not provide a runtime_root"
+        )
+    requested_cache_root = str(cache_root or "").strip()
+    if requested_cache_root:
+        requested_cache_root = os.path.abspath(os.path.expanduser(requested_cache_root))
+        if os.path.normcase(requested_cache_root) != os.path.normcase(resolved_cache_root):
+            raise ValueError(
+                "cache_root must match the workspace runtime_root resolved by storage layout"
+            )
+
+    normalized_targets = list(dict.fromkeys(_normalize_authoritative_task_target(raw) for raw in target_files))
+    if not normalized_targets:
+        return {}
+    _record_file_owners(
+        normalized_workspace,
+        resolved_cache_root,
+        [
+            {
+                "target_file": target,
+                "step_id": normalized_task_id,
+            }
+            for target in normalized_targets
+        ],
+        parent_task_id=normalized_task_id,
+        fail_closed=True,
+    )
+    persisted_ledger = _load(
+        normalized_workspace,
+        resolved_cache_root,
+        fail_closed=True,
+    )
+    persisted_files: dict[str, Any] = persisted_ledger["files"]
+    owners: dict[str, dict[str, str]] = {}
+    for target in normalized_targets:
+        entry = persisted_files.get(target)
+        if not isinstance(entry, dict):
+            continue
+        owner_step_id = str(entry.get("owner_step_id") or "").strip()
+        owner_parent = str(entry.get("owner_parent") or "").strip()
+        if not owner_step_id or not owner_parent:
+            continue
+        owners[target] = {
+            "owner_step_id": owner_step_id,
+            "owner_parent": owner_parent,
+        }
+    missing = [target for target in normalized_targets if target not in owners]
+    if missing:
+        raise FileOwnershipLedgerError(
+            "file ownership ledger has missing or unverifiable task target owners: "
+            + ", ".join(missing[:12])
+        )
     return owners
 
 
@@ -347,11 +541,13 @@ def render_edit_contract(owned_by_other: dict[str, dict[str, str]]) -> str:
 
 __all__ = [
     "FileOwnershipHandoffRequest",
+    "FileOwnershipLedgerError",
     "build_file_ownership_handoff_requests",
     "normalize_file_ownership_target",
     "owner_task_identifier_token_aliases",
     "read_file_owners",
     "record_file_owners",
+    "record_task_file_owners",
     "render_edit_contract",
     "task_identifier_token_aliases",
 ]

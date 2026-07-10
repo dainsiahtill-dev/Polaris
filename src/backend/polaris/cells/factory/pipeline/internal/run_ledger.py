@@ -11,7 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public.contracts import AppendRunLedgerEventCommandV1
+from polaris.cells.control_plane.run_ledger.public.contracts import (
+    AppendRunLedgerEventCommandV1,
+    ReadRunLedgerProjectionQueryV1,
+)
 from polaris.cells.control_plane.run_ledger.public.job_token import JobToken
 from polaris.cells.control_plane.run_ledger.public.ledger import (
     RunLedger as PlatformRunLedger,
@@ -21,7 +24,10 @@ from polaris.cells.control_plane.run_ledger.public.projection import (
     build_run_ledger_projection as _build_platform_run_ledger_projection,
     summarize_run_ledger_projection as _summarize_platform_run_ledger_projection,
 )
-from polaris.cells.control_plane.run_ledger.public.service import append_run_ledger_event
+from polaris.cells.control_plane.run_ledger.public.service import (
+    append_run_ledger_event,
+    read_run_ledger_projection,
+)
 from polaris.cells.control_plane.verifier_policy.public import (
     ReadVerifierPolicyQueryV1,
     read_verifier_policy,
@@ -923,7 +929,32 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
     return _summarize_platform_run_ledger_projection(value)
 
 
-def load_run_ledger_projection(workspace: Path, *, run_id: str) -> dict[str, Any]:
-    """Read a run ledger file and return the canonical projection."""
+def load_run_ledger_projection(
+    workspace: Path,
+    *,
+    run_id: str,
+    factory_run_id: str = "",
+    project_id: str = "",
+) -> dict[str, Any]:
+    """Read the canonical control-plane projection for one Factory run tree.
 
-    return build_run_ledger_projection(RunLedger(workspace, run_id=run_id).read_events())
+    FactStream is the authoritative source. The public service owns the
+    migration fallback to legacy NDJSON projections when no canonical facts
+    exist, so Factory and QA cannot silently observe different run states.
+    ``factory_run_id`` joins Director child runs through TaskRuntime execution
+    facts; ``project_id`` may only narrow that factory scope.
+    """
+
+    aggregate_projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(Path(workspace).expanduser().resolve()),
+            run_id=str(run_id or "").strip(),
+            factory_run_id=str(factory_run_id or "").strip(),
+            project_id=str(project_id or "").strip(),
+            max_runs=1,
+        )
+    ).projection
+    run_projection = aggregate_projection.get("run_projection")
+    if isinstance(run_projection, dict):
+        return dict(run_projection)
+    return build_run_ledger_projection([])

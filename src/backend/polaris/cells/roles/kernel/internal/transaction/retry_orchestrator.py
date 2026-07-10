@@ -544,6 +544,7 @@ class RetryOrchestrator:
         stream: bool,
         shadow_engine: Any | None = None,
         original_decision: Any | None = None,
+        initial_failure_reason: str = "",
     ) -> dict:
         latest_user_request = extract_latest_user_message(context)
         requires_mutation = requires_mutation_intent(latest_user_request)
@@ -574,6 +575,13 @@ class RetryOrchestrator:
             requires_verification=requires_verification,
             requires_mutation=requires_mutation,
         )
+        if initial_failure_reason:
+            retry_context = append_retry_enforcement_hint(
+                retry_context,
+                allowed_tool_names=allowed_retry_tool_names,
+                reason=initial_failure_reason,
+                forced_write_tool_name=None,
+            )
         max_retry_attempts = getattr(self.config, "max_retry_attempts", 4)
         retry_llm_call_ordinal = 0
         candidate_bootstrap_decision: TurnDecision | None = None

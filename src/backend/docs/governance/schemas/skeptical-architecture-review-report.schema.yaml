@@ -1,0 +1,378 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Skeptical Architecture Review Report
+description: >
+  Machine-readable report for disproof-first review of Polaris execution
+  architecture reliability claims. This schema records whether each link in the
+  provider-request -> tool-lifecycle -> effect-receipt -> TaskBoundary ->
+  TaskRuntime -> Run Ledger -> QA -> Factory/bench fact chain is proven.
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - generated_at
+  - reviewer
+  - scope
+  - architecture_claim
+  - fresh_isolated_run
+  - fact_chain
+  - red_flags
+  - disproof_questions
+  - verdict
+
+properties:
+  schema_version:
+    type: string
+    const: polaris.skeptical_architecture_review_report.v1
+  schema_ref:
+    type: string
+  generated_at:
+    type: string
+    format: date-time
+  reviewer:
+    type: string
+    minLength: 1
+  scope:
+    type: object
+    additionalProperties: false
+    required:
+      - change_summary
+      - touched_areas
+      - referenced_assets
+    properties:
+      change_summary:
+        type: string
+        minLength: 1
+      touched_areas:
+        $ref: "#/$defs/string_array"
+      referenced_assets:
+        $ref: "#/$defs/string_array"
+  architecture_claim:
+    type: object
+    additionalProperties: false
+    required:
+      - claim
+      - claim_status
+      - proof_level
+      - accepted_proof_levels
+    properties:
+      claim:
+        type: string
+        minLength: 1
+      claim_status:
+        type: string
+        enum:
+          - proven
+          - disproven
+          - unproven
+          - partially_proven
+      proof_level:
+        type: string
+        enum:
+          - component
+          - integration
+          - wave_level
+          - system_oracle
+          - none
+      accepted_proof_levels:
+        $ref: "#/$defs/string_array"
+  fresh_isolated_run:
+    type: object
+    additionalProperties: false
+    required:
+      - required_for_architecture_proof
+      - requested_project_id
+      - canonical_project_id
+      - instance_id
+      - workspace
+      - backend_port
+      - frontend_port
+      - factory_run_id
+      - run_id
+      - wall_clock_seconds
+      - final_project_status
+      - completed_verified
+      - evidence_ref
+    properties:
+      required_for_architecture_proof:
+        type: boolean
+      requested_project_id:
+        type: string
+      canonical_project_id:
+        type: string
+      instance_id:
+        type: string
+      workspace:
+        type: string
+      backend_port:
+        $ref: "#/$defs/nullable_integer"
+      frontend_port:
+        $ref: "#/$defs/nullable_integer"
+      factory_run_id:
+        type: string
+      run_id:
+        type: string
+      wall_clock_seconds:
+        $ref: "#/$defs/nullable_number"
+      final_project_status:
+        type: string
+      completed_verified:
+        type: boolean
+      evidence_ref:
+        type: string
+  fact_chain:
+    type: object
+    additionalProperties: false
+    required:
+      - final_provider_request
+      - provider_response
+      - tool_lifecycle_receipt
+      - tool_dispatch
+      - effect_receipt
+      - task_boundary_verdict
+      - task_runtime_projection
+      - run_ledger_projection
+      - qa_verdict
+      - factory_bench_report
+    properties:
+      final_provider_request:
+        $ref: "#/$defs/evidence_node_with_hash"
+      provider_response:
+        $ref: "#/$defs/evidence_node_with_hash"
+      tool_lifecycle_receipt:
+        type: object
+        additionalProperties: false
+        required:
+          - status
+          - native_tool_calls_count
+          - decoded_tool_calls_count
+          - dispatched_tool_calls_count
+          - effect_receipt_count
+          - evidence_ref
+          - notes
+        properties:
+          status:
+            $ref: "#/$defs/evidence_status"
+          native_tool_calls_count:
+            $ref: "#/$defs/nullable_integer"
+          decoded_tool_calls_count:
+            $ref: "#/$defs/nullable_integer"
+          dispatched_tool_calls_count:
+            $ref: "#/$defs/nullable_integer"
+          effect_receipt_count:
+            $ref: "#/$defs/nullable_integer"
+          evidence_ref:
+            type: string
+          notes:
+            type: string
+      tool_dispatch:
+        $ref: "#/$defs/evidence_node"
+      effect_receipt:
+        type: object
+        additionalProperties: false
+        required:
+          - status
+          - count
+          - evidence_refs
+          - notes
+        properties:
+          status:
+            $ref: "#/$defs/evidence_status"
+          count:
+            $ref: "#/$defs/nullable_integer"
+          evidence_refs:
+            $ref: "#/$defs/string_array"
+          notes:
+            type: string
+      task_boundary_verdict:
+        type: object
+        additionalProperties: false
+        required:
+          - status
+          - verdict_status
+          - failure_class
+          - responsible_layer
+          - evidence_ref
+          - notes
+        properties:
+          status:
+            $ref: "#/$defs/evidence_status"
+          verdict_status:
+            type: string
+          failure_class:
+            type: string
+          responsible_layer:
+            type: string
+          evidence_ref:
+            type: string
+          notes:
+            type: string
+      task_runtime_projection:
+        type: object
+        additionalProperties: false
+        required:
+          - status
+          - observable_row_ref
+          - legacy_fallback_used
+          - projection_mismatch
+          - notes
+        properties:
+          status:
+            $ref: "#/$defs/evidence_status"
+          observable_row_ref:
+            type: string
+          legacy_fallback_used:
+            type: boolean
+          projection_mismatch:
+            type: boolean
+          notes:
+            type: string
+      run_ledger_projection:
+        $ref: "#/$defs/projection_node"
+      qa_verdict:
+        type: object
+        additionalProperties: false
+        required:
+          - status
+          - verdict
+          - failure_class
+          - responsible_layer
+          - evidence_ref
+          - notes
+        properties:
+          status:
+            $ref: "#/$defs/evidence_status"
+          verdict:
+            type: string
+          failure_class:
+            type: string
+          responsible_layer:
+            type: string
+          evidence_ref:
+            type: string
+          notes:
+            type: string
+      factory_bench_report:
+        type: object
+        additionalProperties: false
+        required:
+          - status
+          - evidence_ref
+          - pass_rate
+          - runnable_rate
+          - notes
+        properties:
+          status:
+            $ref: "#/$defs/evidence_status"
+          evidence_ref:
+            type: string
+          pass_rate:
+            type: string
+          runnable_rate:
+            type: string
+          notes:
+            type: string
+  red_flags:
+    type: object
+    additionalProperties:
+      type: string
+      enum:
+        - "true"
+        - "false"
+        - unknown
+        - not_applicable
+  disproof_questions:
+    type: object
+    additionalProperties:
+      type: string
+  verdict:
+    type: object
+    additionalProperties: false
+    required:
+      - architecture_reliable
+      - verdict_status
+      - blocking_gaps
+      - next_actions
+    properties:
+      architecture_reliable:
+        type: boolean
+      verdict_status:
+        type: string
+        enum:
+          - proven
+          - disproven
+          - unproven
+          - blocked
+      blocking_gaps:
+        $ref: "#/$defs/string_array"
+      next_actions:
+        $ref: "#/$defs/string_array"
+
+$defs:
+  evidence_status:
+    type: string
+    enum:
+      - present
+      - partial
+      - missing
+      - contradicted
+      - not_applicable
+  evidence_node:
+    type: object
+    additionalProperties: false
+    required:
+      - status
+      - evidence_ref
+      - notes
+    properties:
+      status:
+        $ref: "#/$defs/evidence_status"
+      evidence_ref:
+        type: string
+      notes:
+        type: string
+  evidence_node_with_hash:
+    type: object
+    additionalProperties: false
+    required:
+      - status
+      - evidence_ref
+      - hash
+      - notes
+    properties:
+      status:
+        $ref: "#/$defs/evidence_status"
+      evidence_ref:
+        type: string
+      hash:
+        type: string
+      notes:
+        type: string
+  projection_node:
+    type: object
+    additionalProperties: false
+    required:
+      - status
+      - evidence_ref
+      - projection_mismatch
+      - notes
+    properties:
+      status:
+        $ref: "#/$defs/evidence_status"
+      evidence_ref:
+        type: string
+      projection_mismatch:
+        type: boolean
+      notes:
+        type: string
+  nullable_integer:
+    type:
+      - integer
+      - "null"
+  nullable_number:
+    type:
+      - number
+      - "null"
+  string_array:
+    type: array
+    items:
+      type: string

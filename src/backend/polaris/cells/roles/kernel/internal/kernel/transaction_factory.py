@@ -476,6 +476,9 @@ def create_transaction_kernel(
         config=TransactionConfig(
             domain="code" if role in {"director", "chief_engineer"} else "document",
             role_id=role,
+            run_id=str(request.run_id or "").strip(),
+            task_id=str(request.task_id or "").strip(),
+            durable_commit_required=bool(str(request.run_id or "").strip() and str(request.task_id or "").strip()),
             workspace=str(request.workspace or "").strip(),
             mutation_guard_mode="strict" if role == "director" else "warn",
             recon_required=resolve_recon_required(role, provider_profile),

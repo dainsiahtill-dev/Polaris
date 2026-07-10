@@ -9480,6 +9480,66 @@ def test_materialization_quality_errors_keep_pinned_step_single_file_scope(tmp_p
     assert not any("src/other.ts" in error for error in errors)
 
 
+def test_project_test_obligation_is_deferred_to_declared_downstream_owner(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _collect_materialization_quality_errors,
+    )
+
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "models" / "firefly.ts").write_text(
+        "export const firefly = 'glow';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"vitest run"}}\n',
+        encoding="utf-8",
+    )
+    context: dict[str, Any] = {
+        "project_declared_target_files": [
+            "src/models/firefly.ts",
+            "tests/simulation.test.ts",
+        ]
+    }
+
+    errors = _collect_materialization_quality_errors(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task={"target_files": ["src/models/firefly.ts"]},
+        all_affected_files=["src/models/firefly.ts"],
+        workspace_name=tmp_path.name,
+        context=context,
+    )
+
+    assert errors == []
+    deferred = context["director_task_boundary_deferred_quality_errors"]
+    project_record = next(
+        record for record in deferred if record["reason"] == "project_test_targets_not_unlocked"
+    )
+    assert project_record["target_files"] == ["tests/simulation.test.ts"]
+
+
+def test_project_test_obligation_remains_blocking_without_declared_owner(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _collect_materialization_quality_errors,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"vitest run"}}\n',
+        encoding="utf-8",
+    )
+
+    errors = _collect_materialization_quality_errors(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task={"target_files": ["src/index.ts"]},
+        all_affected_files=["src/index.ts"],
+        workspace_name=tmp_path.name,
+        context={},
+    )
+
+    assert any("test runner script but no test/spec files exist" in error for error in errors)
+
+
 def test_explicit_quality_repair_prefers_failed_test_named_artifact(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _explicit_artifact_quality_repair_target_files,
@@ -11452,7 +11512,7 @@ class TestQualityRepairMissingTargetContract:
             "scan_workspace_artifact_quality",
             lambda *_args, **_kwargs: [error],
         )
-        context: dict[str, Any] = {}
+        context: dict[str, Any] = {"project_declared_target_files": ["src/index.js"]}
 
         errors = _collect_materialization_quality_errors(
             SimpleNamespace(workspace=str(tmp_path)),

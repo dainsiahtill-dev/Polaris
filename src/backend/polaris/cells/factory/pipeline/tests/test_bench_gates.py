@@ -53,6 +53,34 @@ def _real_llm_event(
     return event
 
 
+def _canonical_run_ledger_projection(
+    *,
+    task_boundary_failures: list[dict[str, Any]] | None = None,
+    tool_lifecycle_failures: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build the minimal authoritative projection used by taxonomy tests."""
+
+    boundary_failures = [dict(item) for item in task_boundary_failures or []]
+    lifecycle_failures = {
+        str(task_key): dict(item)
+        for task_key, item in (tool_lifecycle_failures or {}).items()
+    }
+    return {
+        "schema_version": 1,
+        "source": "run_ledger_projection",
+        "available": True,
+        "task_boundary": {
+            "ok": not boundary_failures,
+            "failed": boundary_failures,
+            "latest": boundary_failures[-1] if boundary_failures else {},
+        },
+        "tool_lifecycle": {
+            "ok": not lifecycle_failures,
+            "unresolved_by_task": lifecycle_failures,
+        },
+    }
+
+
 def test_apply_factory_bench_failure_taxonomy_exposes_top_level_fields() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,
@@ -125,12 +153,14 @@ def test_failure_taxonomy_classifies_session_not_active_as_control_plane() -> No
     record: dict[str, Any] = {
         "all_checks_passed": False,
         "checks": [],
-        "chain_diagnostics": {
-            "director": {
-                "error": "session_not_active",
-                "detail": "TaskRuntime heartbeat failed: session_not_active after factory cancellation",
+        "run_ledger_projection": _canonical_run_ledger_projection(
+            tool_lifecycle_failures={
+                "2": {
+                    "failure_class": "SESSION_NOT_ACTIVE",
+                    "reason": "TaskRuntime heartbeat failed: session_not_active after factory cancellation",
+                }
             }
-        },
+        ),
         "factory_gates": [
             {
                 "gate": "chain_clean",
@@ -151,18 +181,17 @@ def test_failure_taxonomy_classifies_all_failed_tool_batch_as_control_plane() ->
     record: dict[str, Any] = {
         "all_checks_passed": False,
         "checks": [],
-        "chain": {
-            "audit_bundle": {
-                "failure": {
-                    "code": "tool_dispatch_failed",
-                    "detail": (
+        "run_ledger_projection": _canonical_run_ledger_projection(
+            tool_lifecycle_failures={
+                "2": {
+                    "failure_class": "TOOL_DISPATCH_FAILED",
+                    "reason": (
                         "tool_dispatch_failed: decoded tool batch produced only failed tool results; "
                         "no effect receipts were committed"
                     ),
-                    "responsible_layer": "execution_control_plane",
                 }
             }
-        },
+        ),
         "factory_gates": [
             {
                 "gate": "chain_clean",
@@ -184,7 +213,7 @@ def test_failure_taxonomy_classifies_all_failed_tool_batch_as_control_plane() ->
     ]
 
 
-def test_failure_taxonomy_prefers_runtime_director_incomplete_materialization(
+def test_failure_taxonomy_uses_canonical_incomplete_materialization_over_runtime_director_result(
     tmp_path: Path,
 ) -> None:
     runtime_dir = tmp_path / "runtime"
@@ -222,6 +251,17 @@ def test_failure_taxonomy_prefers_runtime_director_incomplete_materialization(
     record: dict[str, Any] = {
         "all_checks_passed": False,
         "runtime_dir": str(runtime_dir),
+        "run_ledger_projection": _canonical_run_ledger_projection(
+            task_boundary_failures=[
+                {
+                    "task_id": "2",
+                    "status": "incomplete_materialization",
+                    "failure_class": "INCOMPLETE_MATERIALIZATION",
+                    "responsible_layer": "director",
+                    "reason": "Director task produced no materialized workspace changes before timeout or completion",
+                }
+            ]
+        ),
         "checks": [
             {
                 "check": "implementation_depth",
@@ -262,7 +302,7 @@ def test_failure_taxonomy_prefers_runtime_director_incomplete_materialization(
     ]
 
 
-def test_failure_taxonomy_reads_runtime_director_blocked_dependency(
+def test_failure_taxonomy_reads_canonical_blocked_dependency(
     tmp_path: Path,
 ) -> None:
     runtime_dir = tmp_path / "runtime"
@@ -288,6 +328,17 @@ def test_failure_taxonomy_reads_runtime_director_blocked_dependency(
     record: dict[str, Any] = {
         "all_checks_passed": False,
         "runtime_dir": str(runtime_dir),
+        "run_ledger_projection": _canonical_run_ledger_projection(
+            task_boundary_failures=[
+                {
+                    "task_id": "3",
+                    "status": "dependency_not_unlocked",
+                    "failure_class": "DEPENDENCY_NOT_UNLOCKED",
+                    "responsible_layer": "task_boundary",
+                    "reason": "Blocked by failed dependency: 2",
+                }
+            ]
+        ),
         "checks": [],
         "factory_gates": [
             {
@@ -333,6 +384,17 @@ def test_failure_taxonomy_prefers_task_boundary_dependency_over_event_wait_timeo
     record: dict[str, Any] = {
         "all_checks_passed": False,
         "runtime_dir": str(runtime_dir),
+        "run_ledger_projection": _canonical_run_ledger_projection(
+            task_boundary_failures=[
+                {
+                    "task_id": "3",
+                    "status": "dependency_not_unlocked",
+                    "failure_class": "DEPENDENCY_NOT_UNLOCKED",
+                    "responsible_layer": "task_boundary",
+                    "reason": "Blocked by failed dependency: 2",
+                }
+            ]
+        ),
         "checks": [],
         "real_run_gate": {
             "ok": False,
@@ -2988,16 +3050,18 @@ def test_failure_taxonomy_prefers_task_boundary_dependency_before_integration_qa
             {"gate": "integration_qa_passed", "ok": False, "detail": "qa_ran=False qa_passed=False"},
             {"gate": "llm_route_audit", "ok": True, "detail": "LLM route audit passed"},
         ],
-        "run_ledger_projection": {
-            "task_boundary_verdict": {
-                "schema_version": "task_boundary.verdict.v1",
-                "ok": False,
-                "status": "dependency_not_unlocked",
-                "failure_class": "dependency_not_unlocked",
-                "responsible_layer": "execution_control_plane",
-                "reason": "TASK-1 did not reach completed_verified",
-            }
-        },
+        "run_ledger_projection": _canonical_run_ledger_projection(
+            task_boundary_failures=[
+                {
+                    "schema_version": "task_boundary.verdict.v1",
+                    "ok": False,
+                    "status": "dependency_not_unlocked",
+                    "failure_class": "dependency_not_unlocked",
+                    "responsible_layer": "task_boundary",
+                    "reason": "TASK-1 did not reach completed_verified",
+                }
+            ]
+        ),
         "real_run_gate": {"ok": True, "summary": "real run gate passed"},
         "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
         "chain_results": {"qa_reason": "qa did not run"},
@@ -3013,7 +3077,7 @@ def test_failure_taxonomy_prefers_task_boundary_dependency_before_integration_qa
     assert taxonomy["root_cause_signature"] == "task_boundary:dependency_not_unlocked"
     assert taxonomy["evidence"] == [
         "failure_class=dependency_not_unlocked;"
-        "responsible_layer=execution_control_plane;"
+        "responsible_layer=task_boundary;"
         "TASK-1 did not reach completed_verified"
     ]
 
@@ -3047,16 +3111,18 @@ def test_failure_taxonomy_prefers_specific_task_boundary_failure_over_downstream
             {"gate": "chain_clean", "ok": False, "detail": "chain_state=partial exit_code=1"},
             {"gate": "integration_qa_passed", "ok": False, "detail": "qa_ran=False qa_passed=False"},
         ],
-        "run_ledger_projection": {
-            "task_boundary_verdict": {
-                "schema_version": "task_boundary.verdict.v1",
-                "ok": False,
-                "status": "missing_entrypoint_target",
-                "failure_class": "MISSING_ENTRYPOINT_TARGET",
-                "responsible_layer": "task_boundary",
-                "reason": "index.html references src/web.js",
-            }
-        },
+        "run_ledger_projection": _canonical_run_ledger_projection(
+            task_boundary_failures=[
+                {
+                    "schema_version": "task_boundary.verdict.v1",
+                    "ok": False,
+                    "status": "missing_entrypoint_target",
+                    "failure_class": "MISSING_ENTRYPOINT_TARGET",
+                    "responsible_layer": "task_boundary",
+                    "reason": "index.html references src/web.js",
+                }
+            ]
+        ),
         "real_run_gate": {"ok": False, "summary": "entrypoint smoke failed"},
         "chain_state": "partial",
         "checks": [],

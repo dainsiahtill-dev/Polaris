@@ -4,6 +4,7 @@ from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import tool_lifecycle
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
+from polaris.cells.control_plane.run_ledger.public.projection import build_run_ledger_projection
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     batch_receipt_has_dispatch_evidence,
     build_missing_dispatch_lifecycle_receipt,
@@ -192,7 +193,7 @@ def test_project_tool_lifecycle_summary_owns_read_model_shape() -> None:
 
     projection = project_tool_lifecycle_summary(summary)
 
-    assert projection == {
+    assert {key: projection[key] for key in summary} == {
         "ok": False,
         "event_count": 2,
         "native_tool_calls_count": 3,
@@ -206,6 +207,13 @@ def test_project_tool_lifecycle_summary_owns_read_model_shape() -> None:
         "failure_evidence": [{"failure_class": "TOOL_DISPATCH_DROPPED"}],
         "events": [{"status": "dropped"}],
     }
+    assert projection["unresolved_count"] == 1
+    assert projection["unresolved_dropped_count"] == 1
+    assert projection["unresolved_failed_count"] == 1
+    assert set(projection["latest_by_task"]) == {"legacy:aggregate"}
+    assert set(projection["unresolved_by_task"]) == {"legacy:aggregate"}
+    assert projection["outcome_projection"]["degraded"] is True
+    assert projection["outcome_projection"]["fallback"] == "historical_counts"
 
 
 def test_normalize_native_tool_call_envelope_refs_filters_and_deduplicates() -> None:
@@ -343,6 +351,34 @@ def test_tool_batch_lifecycle_receipt_from_sources_owns_native_fact_projection()
     ]
 
 
+def test_text_fallback_lifecycle_without_dispatch_has_specific_failure_class() -> None:
+    receipt = build_tool_batch_lifecycle_receipt_from_sources(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        metadata={
+            "compatibility_mode": "required_tool_text_fallback",
+            "text_fallback_requested": True,
+            "native_tool_surface_absent_because_text_fallback": True,
+            "text_tool_parser_attempted": True,
+            "text_tool_decoded_calls_count": 1,
+            "native_tool_call_envelopes": [
+                {"envelope_id": "text-write-1", "tool_name": "write_file"},
+            ],
+        },
+        decoded_tool_calls_count=1,
+        receipts=[],
+    ).to_dict()
+
+    assert receipt["ok"] is False
+    assert receipt["dispatch_status"] == "dropped"
+    assert receipt["failure_class"] == "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED"
+    assert receipt["text_fallback_requested"] is True
+    assert receipt["parser_attempted"] is True
+    assert receipt["native_tool_surface_absent_because_text_fallback"] is True
+
+
 def test_tool_batch_lifecycle_receipt_keeps_authoritative_receipt_dispatched() -> None:
     receipt = build_tool_batch_lifecycle_receipt(
         run_id="run-1",
@@ -419,9 +455,7 @@ def test_build_dropped_lifecycle_from_anomaly_flags_prefers_lifecycle_receipt() 
                     "decoded_tool_calls_count": 1,
                     "dispatched_tool_calls_count": 0,
                     "native_tool_call_envelope_refs": [envelope, "invalid-ref", dict(envelope)],
-                    "dropped_tool_calls": [
-                        {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
-                    ],
+                    "dropped_tool_calls": [{"tool_name": "write_file", "reason": "tool_dispatch_dropped"}],
                     "dispatch_status": "dropped",
                     "failure_class": "TOOL_DISPATCH_DROPPED",
                 },
@@ -438,9 +472,7 @@ def test_build_dropped_lifecycle_from_anomaly_flags_prefers_lifecycle_receipt() 
     assert lifecycle["native_tool_calls_count"] == 1
     assert lifecycle["decoded_tool_calls_count"] == 1
     assert lifecycle["native_tool_call_envelope_refs"] == [envelope]
-    assert lifecycle["dropped_tool_calls"] == [
-        {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
-    ]
+    assert lifecycle["dropped_tool_calls"] == [{"tool_name": "write_file", "reason": "tool_dispatch_dropped"}]
 
 
 def test_build_dropped_lifecycle_from_observed_calls_owns_dropped_refs() -> None:
@@ -468,9 +500,7 @@ def test_build_dropped_lifecycle_from_observed_calls_prefers_native_envelopes() 
     )
 
     assert lifecycle["native_tool_calls_count"] == 1
-    assert lifecycle["native_tool_call_envelope_refs"] == [
-        {"envelope_id": "native-1", "tool_name": "write_file"}
-    ]
+    assert lifecycle["native_tool_call_envelope_refs"] == [{"envelope_id": "native-1", "tool_name": "write_file"}]
     assert lifecycle["dropped_tool_calls"] == [
         {"tool_name": "write_file", "envelope_id": "native-1", "reason": "tool_dispatch_dropped"}
     ]
@@ -672,6 +702,8 @@ def test_project_tool_lifecycle_event_centralizes_projection_shape() -> None:
     assert event["provider_response_hash"] == "provider-hash"
     assert event["append_id"] == "append-1"
     assert event["content_id"] == "event-1"
+    assert event["task_key"] == "TASK-1"
+    assert event["task_identity_source"] == "task_id"
     assert event["failure_evidence"]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert "provider_response:provider-hash" in event["failure_evidence"]["evidence_refs"]
     assert event["receipt"]["schema_version"] == "tool_call_lifecycle_receipt.v1"
@@ -724,7 +756,7 @@ def test_summarize_tool_lifecycle_events_centralizes_projection_totals() -> None
         ]
     )
 
-    assert summary["ok"] is False
+    assert summary["ok"] is True
     assert summary["event_count"] == 2
     assert summary["native_tool_calls_count"] == 2
     assert summary["decoded_tool_calls_count"] == 2
@@ -733,6 +765,9 @@ def test_summarize_tool_lifecycle_events_centralizes_projection_totals() -> None
     assert summary["native_tool_call_names"] == ["write_file"]
     assert summary["dropped_count"] == 1
     assert summary["failed_count"] == 1
+    assert summary["unresolved_count"] == 0
+    assert summary["unresolved_dropped_count"] == 0
+    assert summary["unresolved_failed_count"] == 0
     assert summary["failure_evidence"][0]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
     assert [event["content_id"] for event in summary["events"]] == ["event-1", "event-2"]
 
@@ -785,6 +820,8 @@ def test_project_tool_lifecycle_failure_status_centralizes_failure_precedence() 
         "status": "dropped",
         "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         "reason": "native calls had no dispatch receipt",
+        "degraded": False,
+        "fallback": "",
     }
 
 
@@ -820,12 +857,16 @@ def test_project_tool_lifecycle_failure_status_reports_non_dropped_failure() -> 
         "status": "blocked",
         "failure_class": FailureClassV1.MISSING_EFFECT_RECEIPT.value,
         "reason": "write result had no effect receipt",
+        "degraded": False,
+        "fallback": "",
     }
     assert project_tool_lifecycle_failure_status(empty_tool_lifecycle_summary()) == {
         "failed": False,
         "status": "",
         "failure_class": "",
         "reason": "",
+        "degraded": False,
+        "fallback": "",
     }
 
 
@@ -896,7 +937,204 @@ def test_empty_tool_lifecycle_summary_matches_public_projection_shape() -> None:
         "failed_count": 0,
         "failure_evidence": [],
         "events": [],
+        "latest_by_task": {},
+        "unresolved_by_task": {},
+        "unresolved_count": 0,
+        "unresolved_dropped_count": 0,
+        "unresolved_failed_count": 0,
+        "outcome_projection": {
+            "schema_version": "polaris.tool_lifecycle_outcome_projection.v1",
+            "source": "event_rows",
+            "degraded": False,
+            "fallback": "",
+        },
     }
+
+
+def test_tool_lifecycle_same_task_result_failures_are_resolved_by_later_success() -> None:
+    def receipt(*, turn_id: str, failure_count: int = 0) -> dict[str, Any]:
+        return build_tool_call_lifecycle_receipt(
+            run_id="run-r26",
+            task_id="TASK-1",
+            turn_id=turn_id,
+            role="director",
+            native_tool_calls_count=1,
+            decoded_tool_calls_count=1,
+            dispatched_tool_calls_count=1,
+            receipts=[
+                {
+                    "batch_id": f"batch-{turn_id}",
+                    "failure_count": failure_count,
+                    "results": [{"tool_name": "read_file", "status": "success"}],
+                }
+            ],
+            reason="tool result failed" if failure_count else "",
+        ).to_dict()
+
+    summary = summarize_tool_lifecycle_events(
+        [
+            project_tool_lifecycle_event(receipt(turn_id="turn-1")),
+            project_tool_lifecycle_event(receipt(turn_id="turn-2", failure_count=1)),
+            project_tool_lifecycle_event(receipt(turn_id="turn-3", failure_count=1)),
+            project_tool_lifecycle_event(receipt(turn_id="turn-4")),
+        ]
+    )
+
+    assert summary["failed_count"] == 2
+    assert [event["failure_class"] for event in summary["events"]] == [
+        "",
+        FailureClassV1.TOOL_RESULT_FAILED.value,
+        FailureClassV1.TOOL_RESULT_FAILED.value,
+        "",
+    ]
+    assert summary["unresolved_failed_count"] == 0
+    assert summary["unresolved_dropped_count"] == 0
+    assert summary["unresolved_by_task"] == {}
+    assert summary["ok"] is True
+    assert project_tool_lifecycle_failure_status(summary)["failed"] is False
+    merged = merge_tool_lifecycle_summaries([{"tool_lifecycle": summary}])
+    assert merged["ok"] is True
+    assert merged["outcome_projection"]["degraded"] is False
+
+
+def test_tool_lifecycle_success_for_another_task_does_not_resolve_failure() -> None:
+    failed = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-FAILED",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[{"batch_id": "batch-1", "failure_count": 1, "results": [{"status": "failed"}]}],
+        reason="tool result failed",
+    ).to_dict()
+    success = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-SUCCEEDED",
+        turn_id="turn-2",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[{"batch_id": "batch-2", "results": [{"status": "success"}]}],
+    ).to_dict()
+
+    summary = summarize_tool_lifecycle_events(
+        [project_tool_lifecycle_event(failed), project_tool_lifecycle_event(success)]
+    )
+
+    assert summary["ok"] is False
+    assert set(summary["latest_by_task"]) == {"TASK-FAILED", "TASK-SUCCEEDED"}
+    assert set(summary["unresolved_by_task"]) == {"TASK-FAILED"}
+    assert summary["unresolved_failed_count"] == 1
+
+
+def test_tool_lifecycle_p0_dropped_isolated_from_later_task_success() -> None:
+    dropped = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-DROPPED",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=0,
+        receipts=[],
+        reason="dispatch dropped",
+    ).to_dict()
+    success = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-SUCCEEDED",
+        turn_id="turn-2",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[{"batch_id": "batch-2", "results": [{"status": "success"}]}],
+    ).to_dict()
+
+    summary = summarize_tool_lifecycle_events(
+        [project_tool_lifecycle_event(dropped), project_tool_lifecycle_event(success)]
+    )
+    status = project_tool_lifecycle_failure_status(summary)
+
+    assert summary["unresolved_dropped_count"] == 1
+    assert set(summary["unresolved_by_task"]) == {"TASK-DROPPED"}
+    assert status["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+
+
+def test_project_tool_lifecycle_failure_status_marks_legacy_fallback_degraded() -> None:
+    status = project_tool_lifecycle_failure_status(
+        {
+            "ok": False,
+            "dropped_count": 0,
+            "failed_count": 1,
+            "events": [
+                {
+                    "task_id": "TASK-1",
+                    "failed": True,
+                    "status": "failed",
+                    "failure_class": FailureClassV1.TOOL_RESULT_FAILED.value,
+                    "reason": "structured legacy receipt failed",
+                }
+            ],
+        }
+    )
+
+    assert status["failed"] is True
+    assert status["degraded"] is True
+    assert status["fallback"] == "legacy_event_rows"
+
+
+def test_task_boundary_projection_retains_only_latest_failure_per_task() -> None:
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "task_boundary_verdict",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-1",
+                    "status": "incomplete_materialization",
+                    "ok": False,
+                    "failure_class": "INCOMPLETE_MATERIALIZATION",
+                },
+            },
+            {
+                "event_type": "task_boundary_verdict",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-1",
+                    "status": "completed_verified",
+                    "ok": True,
+                    "failure_class": "PASSED",
+                },
+            },
+            {
+                "event_type": "task_boundary_verdict",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-2",
+                    "status": "incomplete_materialization",
+                    "ok": False,
+                    "failure_class": "INCOMPLETE_MATERIALIZATION",
+                },
+            },
+            {
+                "event_type": "task_boundary_verdict",
+                "task_boundary_verdict": {
+                    "task_id": "TASK-3",
+                    "status": "completed_verified",
+                    "ok": True,
+                    "failure_class": "PASSED",
+                },
+            },
+        ]
+    )
+
+    task_boundary = projection["task_boundary"]
+    assert task_boundary["verdict_count"] == 4
+    assert task_boundary["historical_failed_count"] == 2
+    assert task_boundary["latest"]["task_id"] == "TASK-3"
+    assert task_boundary["latest_by_task"]["TASK-1"]["ok"] is True
+    assert [verdict["task_id"] for verdict in task_boundary["failed"]] == ["TASK-2"]
+    assert task_boundary["ok"] is False
 
 
 def test_tool_lifecycle_receipt_derives_counts_from_dropped_tool_details() -> None:
@@ -1574,7 +1812,11 @@ def test_project_tool_lifecycle_receipt_to_metadata_owns_canonical_and_compat_ke
     receipt = {
         "schema_version": "tool_call_lifecycle_receipt.v1",
         "native_tool_call_envelope_refs": [
-            {"schema_version": "native_tool_call_envelope.v1", "envelope_id": "native-write", "tool_name": "write_file"},
+            {
+                "schema_version": "native_tool_call_envelope.v1",
+                "envelope_id": "native-write",
+                "tool_name": "write_file",
+            },
         ],
         "dispatch_status": "dropped",
         "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
@@ -1969,7 +2211,11 @@ def test_tool_lifecycle_projects_task_boundary_dispatch_from_metadata() -> None:
         "decoded_tool_calls_count": 1,
         "dispatched_tool_calls_count": 0,
         "provider_response_hash": "provider/hash",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         "reason": "native_tool_calls_without_dispatch",
+        "compatibility_mode": "native_tools",
+        "text_fallback_requested": False,
+        "parser_attempted": False,
     }
 
 
@@ -1995,7 +2241,11 @@ def test_tool_lifecycle_projects_task_boundary_dispatch_from_receipt() -> None:
         "decoded_tool_calls_count": 1,
         "dispatched_tool_calls_count": 0,
         "provider_response_hash": "provider/hash",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         "reason": "native_tool_calls_without_dispatch",
+        "compatibility_mode": "native_tools",
+        "text_fallback_requested": False,
+        "parser_attempted": False,
     }
 
 
@@ -2033,8 +2283,37 @@ def test_tool_lifecycle_projects_task_boundary_dispatch_from_plural_receipts() -
         "decoded_tool_calls_count": 1,
         "dispatched_tool_calls_count": 0,
         "provider_response_hash": "provider/plural",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         "reason": "native_tool_calls_without_dispatch",
+        "compatibility_mode": "native_tools",
+        "text_fallback_requested": False,
+        "parser_attempted": False,
     }
+
+
+def test_tool_lifecycle_projects_failed_text_fallback_to_task_boundary() -> None:
+    lifecycle = build_tool_batch_lifecycle_receipt(
+        run_id="run-text-fallback",
+        task_id="TASK-2",
+        turn_id="turn-2",
+        role="director",
+        decoded_tool_calls_count=0,
+        receipts=[],
+        compatibility_mode="required_tool_text_fallback",
+        text_fallback_requested=True,
+        parser_attempted=True,
+        native_tool_surface_absent_because_text_fallback=True,
+    ).to_dict()
+
+    dispatch = task_boundary_tool_dispatch_from_lifecycle_receipt(lifecycle)
+
+    assert dispatch is not None
+    assert dispatch["status"] == "blocked"
+    assert dispatch["dropped"] is False
+    assert dispatch["failure_class"] == "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED"
+    assert dispatch["compatibility_mode"] == "required_tool_text_fallback"
+    assert dispatch["text_fallback_requested"] is True
+    assert dispatch["parser_attempted"] is True
 
 
 def test_tool_lifecycle_receipts_from_metadata_deduplicates_aliases() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -104,3 +105,54 @@ def test_jsonl_event_store_expected_seq_does_not_commit_seq_when_append_fails(
         )
 
     assert not Path(f"{absolute_path}.seq").exists()
+
+
+def test_jsonl_event_store_concurrent_idempotent_append_commits_once(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    def append_once() -> tuple[str, int]:
+        store = JsonlEventStore(str(workspace))
+        event = store.append(
+            stream="roles.kernel.turn_outcomes",
+            event_type="turn_outcome_committed",
+            source="roles.kernel",
+            payload={"run_id": "run-1", "turn_id": "turn-1"},
+            metadata={"idempotency_key": "run-1:turn-1"},
+            idempotency_key="run-1:turn-1",
+        )
+        return event.event_id, event.seq
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(lambda _index: append_once(), range(16)))
+
+    assert len({event_id for event_id, _seq in results}) == 1
+    assert {seq for _event_id, seq in results} == {1}
+    queried = JsonlEventStore(str(workspace)).query(
+        stream="roles.kernel.turn_outcomes",
+        limit=20,
+    )
+    assert queried.total == 1
+
+
+def test_jsonl_event_store_concurrent_unique_appends_have_monotonic_sequences(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    def append_once(index: int) -> int:
+        event = JsonlEventStore(str(workspace)).append(
+            stream="roles.kernel.turn_outcomes.unique",
+            event_type="turn_outcome_committed",
+            source="roles.kernel",
+            payload={"run_id": "run-1", "turn_id": f"turn-{index}"},
+            metadata={"idempotency_key": f"run-1:turn-{index}"},
+            idempotency_key=f"run-1:turn-{index}",
+        )
+        return event.seq
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        sequences = list(executor.map(append_once, range(16)))
+
+    assert sorted(sequences) == list(range(1, 17))

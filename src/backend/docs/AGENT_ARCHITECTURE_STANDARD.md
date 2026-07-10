@@ -216,6 +216,15 @@
    - `docs/governance/schemas/run-provenance-bundle.schema.yaml`
 7. 新增或修改 PM、Chief Engineer、Director、QA、Resident AGI、Run Ledger、ContextOS、ReceiptStore、tool guard、provider request audit 相关入口时，必须评估是否会破坏上述契约；若存在缺口，必须在代码、测试或审计文档中明确当前事实与目标态差距。
 
+## 8.8 反证式架构验收标准
+
+1. `docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md` 是 Polaris 执行架构可靠性审查的固定入口。
+2. 涉及 Factory、Director、ToolCallLifecycle、TaskRuntime、Run Ledger、TaskBoundary、QA verdict、cancel/deadline barrier、repair convergence 或 bench taxonomy 的底座改动，必须按该清单做反证式验收。
+3. 单测、summary gate、coverage pass 或局部 bench 改善不能单独证明架构收敛；至少需要 fresh isolated 项目的完整事实链证据。
+4. 若 fresh isolated 项目未能稳定进入 `COMPLETED_VERIFIED`，必须把断点定位到：
+   `final provider request -> provider response -> tool lifecycle receipt -> tool dispatch -> effect receipt -> TaskBoundary verdict -> TaskRuntime observable projection -> Run Ledger projection -> QA verdict -> Factory/bench report`。
+5. 若任一状态仍依赖 raw TaskBoard/session JSON、prompt 文本、messages-only 统计、legacy deterministic repair、bench direct-write workaround 或第二套投影，必须按架构未证明处理，禁止声称“底座已收敛”。
+
 ---
 
 ## 9. 文档与治理同步标准

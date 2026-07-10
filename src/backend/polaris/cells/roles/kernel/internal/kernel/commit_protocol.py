@@ -1,9 +1,9 @@
-"""Durable commit protocol for role-turn ContextOS persistence.
+"""Rebuildable ContextOS projection for a committed role turn.
 
-The three-stage durable-commit protocol — pre-commit validation, durable commit
-critical section, and post-commit seal — extracted verbatim from ``core.py`` as
-module-level functions. Callers should import this module directly; the
-``RoleExecutionKernel`` class no longer exposes commit-protocol static wrappers.
+The authoritative execution commit is owned by
+``transaction.outcome_commit`` and persisted through ``events.fact_stream``.
+This module only updates the in-memory ContextOS conversation projection; its
+receipt must never be used as terminal execution authority.
 
 This module must not import ``core.py`` at module top-level (circular-import
 guard): it only depends on public turn contracts and transaction ledger types.
@@ -108,10 +108,10 @@ def _execute_commit_protocol(
     ledger: TurnLedger | None,
     snapshot: dict[str, Any],
 ) -> CommitReceipt:
-    """Execute the durable commit protocol.
+    """Apply one turn to the rebuildable ContextOS snapshot.
 
-    This is the critical section: truthlog append + snapshot materialization.
-    Must remain synchronous and consistent.
+    This function has no durable execution authority. It remains synchronous
+    so a single request cannot observe a partially updated local snapshot.
     """
     transcript_log: list[dict[str, Any]] = snapshot.get("transcript_log") or []
     if not isinstance(transcript_log, list):
@@ -208,12 +208,11 @@ def _commit_turn_to_snapshot(
     tool_results: list[dict[str, Any]],
     ledger: TurnLedger | None = None,
 ) -> CommitReceipt | None:
-    """Merge turn history, events, and ledger data into the ContextOS snapshot.
+    """Merge a committed turn into the rebuildable ContextOS snapshot.
 
-    Phase 1 hardened version: three-stage durable commit protocol.
-    1. Pre-commit validation
-    2. Durable commit (critical section)
-    3. Post-commit seal
+    ``transaction.outcome_commit.commit_turn_result`` must run first for
+    authoritative task turns. This function is intentionally optional because
+    ad-hoc calls may not carry a ContextOS snapshot.
 
     Args:
         request: The turn request carrying ``context_override``.

@@ -23,7 +23,6 @@ Complexity:
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -39,7 +38,11 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_invocation_setup imp
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion import (
     build_transaction_turn_completion_result,
 )
-from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _resolve_transaction_turn_id
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
+    _bind_transaction_attempt,
+    _resolve_transaction_turn_id,
+    _start_transaction_invocation,
+)
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
 
 if TYPE_CHECKING:
@@ -157,7 +160,9 @@ class TransactionTurnExecutor:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Execute one streaming role turn via ``TransactionKernel``."""
         tk = create_transaction_kernel(self.kernel, role, profile, request)
-        turn_id = str(request.run_id or stream_run_id or uuid.uuid4().hex[:12])
+        invocation_id = _start_transaction_invocation(request)
+        _bind_transaction_attempt(request, invocation_id=invocation_id, attempt=0)
+        turn_id = _resolve_transaction_turn_id(request, stream_run_id)
 
         invocation_setup = await build_transaction_invocation_setup(
             kernel=self.kernel,

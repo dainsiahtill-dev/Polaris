@@ -11,6 +11,7 @@ from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.cells.director.tasking.public.service import (
     build_director_execution_profile_snapshot,
 )
+from polaris.kernelone.quality.file_ownership_ledger import record_task_file_owners
 
 from ..internal.adr_log import ADRDecisionLog, build_adr_event
 from ..internal.architecture_decisions import (
@@ -1451,15 +1452,17 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "updated_at": now,
     }
 
-    BlueprintPersistence(command.workspace).save(blueprint_id, payload)
-
-    # Tier-1: attach governance summary (risk + tech-debt summary +
-    # quality gate + rollback link) to the persisted blueprint. The
-    # governance field is additive; old consumers that ignore unknown
-    # keys are unaffected. ``attach_governance_to_blueprint`` mutates
-    # ``payload`` in place (adds ``governance`` + recomputes
-    # ``handoff_ready``) and rewrites the on-disk JSON.
-    attach_governance_to_blueprint(command.workspace, blueprint_id, payload)
+    # Governance determines whether the blueprint may be handed off. Compute it
+    # in memory so an allowed blueprint cannot reach disk before its authoritative
+    # target-file ownership facts have been durably recorded and verified.
+    attach_governance_to_blueprint(command.workspace, blueprint_id, payload, persist=False)
+    if bool(payload.get("handoff_ready")):
+        record_task_file_owners(
+            command.workspace,
+            str(context.get("cache_root") or ""),
+            target_files,
+            task_id=command.task_id,
+        )
     blueprint_hash = _blueprint_hash(payload)
     payload["blueprint_hash"] = blueprint_hash
     BlueprintPersistence(command.workspace).save(blueprint_id, payload)
@@ -2297,20 +2300,25 @@ def attach_governance_to_blueprint(
     workspace: str,
     blueprint_id: str,
     blueprint: dict[str, Any],
+    *,
+    persist: bool = True,
 ) -> GovernanceSummaryV1:
-    """Compute and *persist* governance for a blueprint.
+    """Compute governance and optionally persist it for a blueprint.
 
     The governance summary is computed from the current payload and the
-    workspace's Risk Register / Tech-Debt Ledger, then written back to
-    the blueprint JSON under the ``governance`` key. ``blueprint`` is
-    mutated in place: the ``governance`` field is added and
-    ``handoff_ready`` is recomputed from the quality gate. This call is
-    idempotent and safe to invoke from blueprint regeneration paths.
+    workspace's Risk Register / Tech-Debt Ledger, then optionally written back
+    to the blueprint JSON under the ``governance`` key. ``blueprint`` is mutated
+    in place: the ``governance`` field is added and ``handoff_ready`` is
+    recomputed from the quality gate. ``persist=False`` supports transaction-like
+    callers that must establish another durable prerequisite before a handoff-ready
+    blueprint is visible. This call is idempotent and safe to invoke from blueprint
+    regeneration paths.
     """
     summary = build_blueprint_governance(workspace, blueprint_id, blueprint)
     blueprint["governance"] = summary.to_dict()
     blueprint["handoff_ready"] = bool(summary.quality_gate.passed)
-    BlueprintPersistence(workspace).save(blueprint_id, blueprint)
+    if persist:
+        BlueprintPersistence(workspace).save(blueprint_id, blueprint)
     return summary
 
 

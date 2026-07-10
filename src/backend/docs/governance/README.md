@@ -28,6 +28,12 @@
   Tool Calling canonical 身份门禁标准与执行方式
 - `docs/governance/ci/scripts/run_tool_calling_canonical_gate.py`
   基于 tool_calling_matrix 审计包的 raw tool identity 门禁
+- `docs/governance/ci/scripts/check_skeptical_architecture_review.py`
+  Polaris 执行架构反证式验收报告 schema 与可靠性声明校验器；同时可通过 `fitness_rule_checker.py --rule skeptical_architecture_review` 执行
+- `docs/governance/ci/scripts/execution_control_reconstruction_card_policy.py`
+  执行控制面重构验收卡 policy；同时可通过 `fitness_rule_checker.py --rule execution_control_reconstruction_card` 执行
+- `docs/governance/ci/scripts/check_execution_control_reconstruction_card.py`
+  执行控制面重构验收卡独立 CLI；可用 `--card` 校验基座 Agent 填写的具体交付卡
 - `docs/governance/CONTEXT_OS_COGNITIVE_RUNTIME_EVAL_SUITE.md`
   Context OS + Cognitive Runtime 的统一评测与 rollout gate 说明
 - `docs/governance/ci/context-os-runtime-eval-gate.yaml`
@@ -36,6 +42,10 @@
   评测用例集 schema
 - `docs/governance/schemas/context-os-runtime-eval-report.schema.yaml`
   评测结果报告 schema
+- `docs/governance/schemas/skeptical-architecture-review-report.schema.yaml`
+  Polaris 执行架构反证式验收报告 schema
+- `docs/governance/schemas/execution-control-plane-reconstruction-card.schema.yaml`
+  执行控制面重构验收卡 schema，用于校验基座重构交付卡片是否包含事实链、负向控制和 fresh isolated 验收字段
 - `docs/governance/ci/external_plugin_pipeline.template.yaml`
   External Cell Plugin 专用准入流水线模板（当前分支可执行）
 - `docs/governance/debt.register.yaml`
@@ -46,8 +56,18 @@
   debt register 样板
 - `docs/governance/templates/verification-cards/`
   结构性 bug 验证卡模板与实例
+- `docs/governance/templates/verification-cards/execution-control-plane-reconstruction-card.template.yaml`
+  执行控制面重构验收卡模板：基座重构完成前必须填入 fresh isolated `COMPLETED_VERIFIED` 运行证据、事实链证据和负向控制结果
+- `docs/governance/templates/skeptical-architecture-review-report.template.yaml`
+  Polaris 执行架构反证式验收报告模板，用于记录事实链证据、红旗和最终可靠性结论
+- `docs/governance/audits/skeptical-architecture-review-current-unproven-20260710.yaml`
+  当前执行架构可靠性尚未证明的反证式验收样例报告
 - `docs/governance/CELL_EVOLUTION_ROLLOUT_CHECKLIST.md`
   Cell Evolution 从设计说明推进到治理落地的执行清单
+- `docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md`
+  Polaris 执行架构的反证式验收清单：用于判断 fresh isolated 项目是否真的通过同一条事实链进入 `COMPLETED_VERIFIED`
+- `docs/governance/POLARIS_EXECUTION_CONTROL_PLANE_RECONSTRUCTION_PROMPT.md`
+  给基座重构 Agent 的执行控制面重构提示词与验收口径：验收标准不是更多单测，而是 fresh isolated 新项目跨多轮 Director、工具批次、取消边界和 QA 后稳定进入 `COMPLETED_VERIFIED`
 - `docs/migration/ledger.yaml`
   迁移执行状态的机器事实源
 - `docs/MIGRATION_LEDGER.md`

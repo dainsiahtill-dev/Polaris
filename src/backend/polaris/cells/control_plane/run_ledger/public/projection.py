@@ -60,6 +60,17 @@ def _int_value(value: Any) -> int:
         return 0
 
 
+def _task_boundary_task_key(verdict: dict[str, Any]) -> str:
+    """Return the stable task identity for a task-boundary verdict row."""
+
+    task_id = _clean_string(verdict.get("task_id"))
+    if task_id:
+        return task_id
+    run_id = _clean_string(verdict.get("run_id")) or "unknown"
+    turn_id = _clean_string(verdict.get("turn_id")) or "unknown"
+    return f"run:{run_id}|turn:{turn_id}"
+
+
 def _merge_evidence_modality(
     modalities: dict[str, dict[str, Any]],
     name: str,
@@ -713,8 +724,12 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         event_type = event.get("event_type")
         if event_type == "tool_call_lifecycle":
             lifecycle_raw = event.get("tool_call_lifecycle_receipt") or event.get("tool_call_lifecycle")
+            lifecycle_input = dict(lifecycle_raw) if isinstance(lifecycle_raw, dict) else dict(event)
+            for key in ("task_id", "run_id", "turn_id"):
+                if not _clean_string(lifecycle_input.get(key)):
+                    lifecycle_input[key] = _clean_string(event.get(key))
             lifecycle_event = project_tool_lifecycle_event(
-                lifecycle_raw if isinstance(lifecycle_raw, dict) else event,
+                lifecycle_input,
                 append_id=event.get("append_id"),
                 content_id=event.get("content_id") or event.get("event_id"),
             )
@@ -725,8 +740,12 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             verdict = normalize_task_boundary_verdict(
                 task_boundary_raw if isinstance(task_boundary_raw, dict) else event
             )
+            for key in ("task_id", "run_id", "turn_id"):
+                if not _clean_string(verdict.get(key)):
+                    verdict[key] = _clean_string(event.get(key))
             verdict.setdefault("append_id", _clean_string(event.get("append_id")))
             verdict.setdefault("content_id", _clean_string(event.get("content_id") or event.get("event_id")))
+            verdict["task_key"] = _task_boundary_task_key(verdict)
             task_boundary_verdicts.append(verdict)
             if event_type == "task_boundary_verdict":
                 continue
@@ -824,7 +843,17 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     evidence_policy_outcome_ok = bool(gates) and not failed_required_modalities
     evidence_policy_ok = evidence_policy_integrity_ok and evidence_policy_outcome_ok
     latest_task_boundary = task_boundary_verdicts[-1] if task_boundary_verdicts else {}
-    failed_task_boundaries = [verdict for verdict in task_boundary_verdicts if not bool(verdict.get("ok"))]
+    latest_task_boundary_by_task: dict[str, dict[str, Any]] = {}
+    for verdict in task_boundary_verdicts:
+        task_key = _task_boundary_task_key(verdict)
+        latest_task_boundary_by_task.pop(task_key, None)
+        latest_task_boundary_by_task[task_key] = dict(verdict)
+    historical_failed_task_boundary_count = sum(
+        not bool(verdict.get("ok")) for verdict in task_boundary_verdicts
+    )
+    failed_task_boundaries = [
+        verdict for verdict in latest_task_boundary_by_task.values() if not bool(verdict.get("ok"))
+    ]
     task_boundary_ok = not failed_task_boundaries
     tool_lifecycle_summary = summarize_tool_lifecycle_events(tool_lifecycle_events)
     tool_lifecycle_projection = project_tool_lifecycle_summary(tool_lifecycle_summary)
@@ -875,7 +904,9 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         "task_boundary": {
             "ok": task_boundary_ok,
             "verdict_count": len(task_boundary_verdicts),
+            "historical_failed_count": historical_failed_task_boundary_count,
             "latest": latest_task_boundary,
+            "latest_by_task": latest_task_boundary_by_task,
             "failed": failed_task_boundaries,
         },
     }
@@ -936,7 +967,9 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
     task_boundary = value.get("task_boundary")
     task_boundary_map = task_boundary if isinstance(task_boundary, dict) else {}
     if task_boundary_map and not bool(task_boundary_map.get("ok", True)):
-        latest = task_boundary_map.get("latest")
+        failed = task_boundary_map.get("failed")
+        failed_rows = [dict(item) for item in failed if isinstance(item, dict)] if isinstance(failed, list) else []
+        latest = failed_rows[-1] if failed_rows else task_boundary_map.get("latest")
         latest_map = normalize_task_boundary_verdict(latest if isinstance(latest, dict) else {})
         failure = str(latest_map.get("failure_class") or "TASK_BOUNDARY_FAILED")
         return {

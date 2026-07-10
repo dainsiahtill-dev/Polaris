@@ -23,7 +23,7 @@ import urllib.parse
 import urllib.request
 import zlib
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from contextlib import suppress
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -2660,78 +2660,6 @@ def _load_runtime_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _runtime_director_result_payloads(record: dict[str, Any]) -> list[dict[str, Any]]:
-    payloads: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for runtime_dir in _runtime_dir_candidates(record):
-        candidates = [runtime_dir / "results" / "director.result.json"]
-        runs_dir = runtime_dir / "runs"
-        if runs_dir.is_dir():
-            with suppress(OSError):
-                candidates.extend(sorted(runs_dir.glob("*/results/director.result.json")))
-        for path in candidates:
-            key = str(path)
-            if key in seen:
-                continue
-            seen.add(key)
-            payload = _load_runtime_json(path)
-            if payload:
-                payloads.append(payload)
-    return payloads
-
-
-def _task_result_boundary_payload(task_result: dict[str, Any]) -> dict[str, Any]:
-    adapter_result = task_result.get("adapter_result")
-    adapter = adapter_result if isinstance(adapter_result, dict) else {}
-    task_id = str(task_result.get("task_id") or adapter.get("task_id") or "").strip()
-    raw_status = str(task_result.get("status") or "").strip().lower()
-    raw_error = str(task_result.get("error") or adapter.get("materialization_error") or "").strip()
-    raw_failure_class = str(adapter.get("failure_class") or task_result.get("failure_class") or "").strip()
-    responsible_layer = str(adapter.get("responsible_layer") or "").strip()
-
-    status = str(adapter.get("status") or "").strip()
-    failure_class = raw_failure_class
-    reason = ""
-    if raw_error in {"director_no_materialized_changes", "no_materialized_changes"}:
-        status = "incomplete_materialization"
-        failure_class = failure_class or "INCOMPLETE_MATERIALIZATION"
-        reason = "Director task produced no materialized workspace changes before timeout or completion"
-    elif raw_error == "blocked_by_failed_dependency" or raw_status == "blocked":
-        status = "dependency_not_unlocked"
-        failure_class = failure_class or "DEPENDENCY_NOT_UNLOCKED"
-        blocked_by = task_result.get("blocked_by")
-        reason = f"Blocked by failed dependency: {blocked_by}" if blocked_by else "Blocked by failed dependency"
-    elif failure_class.lower() in _TASK_BOUNDARY_FAILURE_CLASSES:
-        status = status or failure_class.lower()
-        reason = str(adapter.get("materialization_error") or adapter.get("reason") or "").strip()
-
-    if not status and not failure_class:
-        return {}
-    return {
-        "schema_version": "polaris.task_boundary_verdict.synthetic_from_director_result.v1",
-        "task_id": task_id,
-        "status": status or "task_boundary_failed",
-        "failure_class": failure_class,
-        "responsible_layer": responsible_layer or "task_boundary",
-        "reason": reason,
-    }
-
-
-def _runtime_director_task_boundary_payloads(record: dict[str, Any]) -> list[dict[str, Any]]:
-    payloads: list[dict[str, Any]] = []
-    for director_result in _runtime_director_result_payloads(record):
-        task_results = director_result.get("task_results")
-        if not isinstance(task_results, list):
-            continue
-        for item in task_results:
-            if not isinstance(item, dict):
-                continue
-            payload = _task_result_boundary_payload(item)
-            if payload:
-                payloads.append(payload)
-    return payloads
-
-
 def _first_repair_plan_probe(record: dict[str, Any]) -> dict[str, Any]:
     """Return the first nested repair plan-probe payload with stable structure."""
 
@@ -2799,26 +2727,22 @@ def _record_repair_convergence_attribution(record: dict[str, Any]) -> tuple[str,
 
 
 def _first_task_boundary_verdict(record: dict[str, Any]) -> dict[str, Any]:
-    """Find a failed TaskBoundary verdict projected anywhere in a bench record."""
+    """Return an unresolved TaskBoundary verdict from the canonical projection.
 
-    candidates: list[dict[str, Any]] = []
-    for payload in _runtime_director_task_boundary_payloads(record):
-        candidates.append(payload)
+    Factory/bench is a read-only consumer of the Execution Ledger projection.
+    Director result files, prompt text, and recursively discovered mappings are
+    deliberately excluded because reconstructing a verdict from those views
+    creates a second execution-state authority.
+    """
 
-    for payload in _iter_mapping_payloads(record):
-        schema = str(payload.get("schema_version") or "").strip()
-        status = str(payload.get("status") or payload.get("verdict_status") or "").strip()
-        failure_class = str(payload.get("failure_class") or "").strip()
-        if status in {"completed_verified", "passed"} or failure_class.lower() == "passed":
-            continue
-        if bool(payload.get("ok")) is True:
-            continue
-        if (
-            schema.startswith("task_boundary.")
-            or status in _TASK_BOUNDARY_FAILURE_STATUSES
-            or failure_class.lower() in _TASK_BOUNDARY_FAILURE_CLASSES
-        ):
-            candidates.append(payload)
+    projection = record.get("run_ledger_projection")
+    projection_map = projection if isinstance(projection, dict) else {}
+    if projection_map.get("source") != "run_ledger_projection":
+        return {}
+    task_boundary = projection_map.get("task_boundary")
+    task_boundary_map = task_boundary if isinstance(task_boundary, dict) else {}
+    failed = task_boundary_map.get("failed")
+    candidates = [dict(item) for item in failed if isinstance(item, dict)] if isinstance(failed, list) else []
     for payload in candidates:
         status = str(payload.get("status") or payload.get("verdict_status") or "").strip().lower()
         failure_class = str(payload.get("failure_class") or "").strip().lower()
@@ -2836,11 +2760,13 @@ def _record_task_boundary_attribution(record: dict[str, Any]) -> tuple[str, str,
     failure_class = str(verdict.get("failure_class") or "").strip()
     responsible_layer = str(verdict.get("responsible_layer") or "").strip()
     reason = str(verdict.get("reason") or "").strip()
-    if status == "tool_dispatch_dropped" or failure_class.lower() == "tool_dispatch_dropped":
+    responsible_layer_key = responsible_layer.lower()
+    if responsible_layer_key in {"control_plane", "execution_control_plane"}:
+        control_plane_reason = failure_class.lower() or status.lower() or "task_boundary_failed"
         return (
             "control_plane",
-            "tool_dispatch_dropped",
-            reason or "TaskBoundary verdict: tool dispatch dropped",
+            control_plane_reason,
+            reason or f"TaskBoundary verdict: {control_plane_reason}",
         )
     return (
         "task_boundary",
@@ -2857,70 +2783,41 @@ def _record_task_boundary_attribution(record: dict[str, Any]) -> tuple[str, str,
     )
 
 
-_EXECUTION_CONTROL_PLANE_FAILURE_TOKENS: tuple[tuple[str, str], ...] = (
-    ("session_not_active", "session_not_active"),
-    ("tool_dispatch_failed", "tool_dispatch_failed"),
-    ("decoded tool batch produced only failed tool results", "tool_dispatch_failed"),
-    ("tool batch produced only failed tool results", "tool_dispatch_failed"),
-)
+_EXECUTION_CONTROL_PLANE_FAILURE_CLASSES: dict[str, str] = {
+    "required_tool_text_fallback_not_dispatched": "required_tool_text_fallback_not_dispatched",
+    "session_not_active": "session_not_active",
+    "tool_dispatch_dropped": "tool_dispatch_dropped",
+    "tool_dispatch_failed": "tool_dispatch_failed",
+    "tool_lifecycle_failed": "tool_dispatch_failed",
+}
 
 
 def _record_execution_control_plane_attribution(record: dict[str, Any]) -> tuple[str, str, str] | None:
-    """Classify provider/tool/effect/session transaction failures."""
+    """Classify unresolved tool-transaction facts from the Run Ledger only."""
 
-    text = json.dumps(
-        {
-            "failure_reasons": record.get("failure_reasons"),
-            "failure_evidence": record.get("failure_evidence"),
-            "chain": record.get("chain"),
-            "chain_diagnostics": record.get("chain_diagnostics"),
-            "factory_gates": record.get("factory_gates"),
-            "real_run_gate": record.get("real_run_gate"),
-            "runtime_director_results": _runtime_director_result_payloads(record),
-        },
-        ensure_ascii=False,
-        default=str,
-    ).lower()
-    for token, reason in _EXECUTION_CONTROL_PLANE_FAILURE_TOKENS:
-        if token in text:
-            return (
-                "control_plane",
-                reason,
-                _execution_control_plane_evidence(record, token=token) or token,
-            )
+    projection = record.get("run_ledger_projection")
+    projection_map = projection if isinstance(projection, dict) else {}
+    if projection_map.get("source") != "run_ledger_projection":
+        return None
+    lifecycle = projection_map.get("tool_lifecycle")
+    lifecycle_map = lifecycle if isinstance(lifecycle, dict) else {}
+    unresolved = lifecycle_map.get("unresolved_by_task")
+    unresolved_map = unresolved if isinstance(unresolved, dict) else {}
+    for raw_event in unresolved_map.values():
+        if not isinstance(raw_event, dict):
+            continue
+        failure_class = str(raw_event.get("failure_class") or "").strip().lower()
+        reason = _EXECUTION_CONTROL_PLANE_FAILURE_CLASSES.get(failure_class)
+        if not reason:
+            continue
+        detail = str(raw_event.get("reason") or raw_event.get("status") or failure_class).strip()
+        return "control_plane", reason, detail
+    for raw_failure_class in projection_map.get("failed_control_plane_events") or ():
+        failure_class = str(raw_failure_class or "").strip().lower()
+        reason = _EXECUTION_CONTROL_PLANE_FAILURE_CLASSES.get(failure_class)
+        if reason:
+            return "control_plane", reason, failure_class
     return None
-
-
-def _execution_control_plane_evidence(record: dict[str, Any], *, token: str) -> str:
-    token_lower = str(token or "").lower()
-    candidate_roots = (
-        record.get("failure_evidence"),
-        record.get("failure_reasons"),
-        record.get("chain_diagnostics"),
-        record.get("chain"),
-        record.get("factory_gates"),
-        record.get("real_run_gate"),
-        _runtime_director_result_payloads(record),
-    )
-    for root in candidate_roots:
-        for text in _iter_strings(root):
-            if token_lower in text.lower():
-                return text[:1000]
-    return ""
-
-
-def _iter_strings(value: Any) -> Iterator[str]:
-    stack: list[Any] = [value]
-    while stack:
-        item = stack.pop()
-        if isinstance(item, str):
-            text = item.strip()
-            if text:
-                yield text
-        elif isinstance(item, dict):
-            stack.extend(item.values())
-        elif isinstance(item, (list, tuple, set)):
-            stack.extend(item)
 
 
 def _check_failure_is_runtime_environment(check: dict[str, Any]) -> bool:

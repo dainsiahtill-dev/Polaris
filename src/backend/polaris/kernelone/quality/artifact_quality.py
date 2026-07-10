@@ -298,9 +298,6 @@ _NPM_PLACEHOLDER_TEST_SCRIPT_RE = re.compile(
     r"\b(?:no\s+tests?\s+(?:specified|yet)|tests?\s+not\s+(?:implemented|available)|all\s+tests?\s+passed)\b",
     re.IGNORECASE,
 )
-_NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
-    r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile))"
-)
 _NPM_SCRIPT_ENTRYPOINT_COMMANDS = {"node", "tsx", "ts-node", "bun", "deno"}
 _NPM_SCRIPT_ENTRYPOINT_SUBCOMMANDS = {
     "bun": {"run", "test"},
@@ -2269,6 +2266,11 @@ def _package_script_gate_artifact_error(issue: PackageScriptIssue, relative_path
         )
     if issue.code == "npm_script_empty" and issue.script_name:
         return f"Artifact quality scan failed: npm package manifest script {issue.script_name!r} is empty in {relative_path}"
+    if issue.code == "npm_script_missing_local_entrypoint" and issue.script_name and issue.entrypoint:
+        return (
+            "Artifact quality scan failed: npm package manifest script "
+            f"{issue.script_name!r} references missing local entrypoint {issue.entrypoint!r} in {relative_path}"
+        )
     return f"Artifact quality scan failed: {issue.message} in {relative_path}"
 
 
@@ -2291,11 +2293,12 @@ def _package_script_gate_artifact_issue(
     message = display_error
     if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
         message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
+    is_missing_entrypoint = issue.code == "npm_script_missing_local_entrypoint"
     return ArtifactQualityIssue(
-        code="npm_manifest_invalid",
+        code=issue.code if is_missing_entrypoint else "npm_manifest_invalid",
         message=message,
         path=relative_path,
-        source="package_manifest_scanner",
+        source=issue.source if is_missing_entrypoint else "package_manifest_scanner",
         metadata=metadata,
     )
 
@@ -2370,6 +2373,7 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
             "npm_script_cycle",
             "npm_placeholder_script",
             "npm_script_empty",
+            "npm_script_missing_local_entrypoint",
         )
         for issue in package_script_gate_issues:
             if issue.code != "npm_script_cycle":
@@ -2466,6 +2470,18 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     relative_path,
                 )
                 continue
+            missing_entrypoint_issue = _first_package_script_gate_issue_for_script(
+                package_script_gate_issues,
+                script_name=str(script_name),
+                codes={"npm_script_missing_local_entrypoint"},
+            )
+            if missing_entrypoint_issue is not None:
+                _append_package_script_gate_issue(
+                    errors,
+                    issues,
+                    missing_entrypoint_issue,
+                    relative_path,
+                )
             if _NPM_SCRIPT_FAILURE_SWALLOW_RE.search(script_text):
                 _append_package_manifest_issue(
                     errors,
@@ -2532,14 +2548,6 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
             )
             errors.extend(test_directory_evidence.errors)
             issues.extend(test_directory_evidence.issues)
-            entrypoint_evidence = _scan_npm_script_missing_local_entrypoint_evidence(
-                root_full,
-                script_text,
-                str(script_name),
-                relative_path,
-            )
-            errors.extend(entrypoint_evidence.errors)
-            issues.extend(entrypoint_evidence.issues)
             config_evidence = _scan_npm_script_missing_local_config_evidence(
                 root_full,
                 tokens,
@@ -2744,87 +2752,6 @@ def _workspace_has_node_test_files(root_full: Path) -> bool:
     return any(
         _is_test_like_artifact_path(relative_path) for relative_path in _iter_workspace_relative_files(root_full)
     )
-
-
-_NPM_SCRIPT_ENTRYPOINT_PATTERN_CHARS = frozenset("*?[]{}")
-
-
-def _is_concrete_npm_script_entrypoint_path(value: str) -> bool:
-    return not any(char in value for char in _NPM_SCRIPT_ENTRYPOINT_PATTERN_CHARS)
-
-
-def _npm_script_missing_local_entrypoint_issue(
-    error: str,
-    relative_path: str,
-    *,
-    script_name: str,
-    entrypoint: str,
-) -> ArtifactQualityIssue:
-    message = str(error or "").strip()
-    if message.lower().startswith(_ARTIFACT_QUALITY_ERROR_PREFIX.lower()):
-        message = message[len(_ARTIFACT_QUALITY_ERROR_PREFIX) :].strip()
-    return ArtifactQualityIssue(
-        code="npm_script_missing_local_entrypoint",
-        message=message,
-        path=relative_path,
-        source="npm_script_entrypoint_scanner",
-        metadata={
-            "raw": str(error or "").strip(),
-            "manifest_path": relative_path,
-            "script_issue": "missing_local_entrypoint",
-            "script_issue_source": "npm_script_entrypoint_scanner",
-            "script_name": script_name,
-            "entrypoint": entrypoint,
-            "diagnostic_kind": "npm_script_missing_local_entrypoint",
-        },
-    )
-
-
-def _scan_npm_script_missing_local_entrypoint_evidence(
-    root_full: Path,
-    script_text: str,
-    script_name: str,
-    relative_path: str,
-) -> _FileArtifactQualityEvidence:
-    """Return npm script missing-entrypoint findings as strings and typed issues."""
-
-    if _NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE.search(script_text):
-        return _FileArtifactQualityEvidence()
-    try:
-        tokens = shlex.split(script_text, posix=(os.name != "nt"))
-    except ValueError:
-        return _FileArtifactQualityEvidence()
-    errors: list[str] = []
-    issues: list[ArtifactQualityIssue] = []
-    for index, token in enumerate(tokens[:-1]):
-        command = token.strip().lower()
-        if command not in _NPM_SCRIPT_ENTRYPOINT_COMMANDS:
-            continue
-        entrypoint = _npm_script_entrypoint_after_command(tokens, index)
-        if not entrypoint:
-            continue
-        normalized = entrypoint.replace("\\", "/")
-        if normalized.startswith(("/", "http://", "https://")) or ".." in normalized.split("/"):
-            continue
-        if not _is_concrete_npm_script_entrypoint_path(normalized):
-            continue
-        if Path(normalized).suffix.lower() not in {".js", ".mjs", ".cjs", ".ts", ".tsx"}:
-            continue
-        if not (root_full / normalized).is_file():
-            error = (
-                "Artifact quality scan failed: npm package manifest script "
-                f"{script_name!r} references missing local entrypoint {normalized!r} in {relative_path}"
-            )
-            errors.append(error)
-            issues.append(
-                _npm_script_missing_local_entrypoint_issue(
-                    error,
-                    relative_path,
-                    script_name=script_name,
-                    entrypoint=normalized,
-                )
-            )
-    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
 def _npm_script_node_test_directory_target_issue(

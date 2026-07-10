@@ -16,7 +16,11 @@ from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import reque
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
-from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _resolve_transaction_turn_id
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
+    _bind_transaction_attempt,
+    _resolve_transaction_turn_id,
+    _start_transaction_invocation,
+)
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
@@ -357,6 +361,22 @@ class TestTransactionTurnId:
         assert second.startswith("run-1")
         assert "D4-SAT-1" in first
         assert "D4-SAT-2" in second
+
+    def test_retry_attempts_have_distinct_terminal_fact_ids(self) -> None:
+        request = _MockRequest(run_id="run-1", task_id="TASK-1")
+        invocation_id = _start_transaction_invocation(request)
+
+        first_attempt = _bind_transaction_attempt(request, invocation_id=invocation_id, attempt=0)
+        first_turn_id = _resolve_transaction_turn_id(request, "run-1")
+        second_attempt = _bind_transaction_attempt(request, invocation_id=invocation_id, attempt=1)
+        second_turn_id = _resolve_transaction_turn_id(request, "run-1")
+
+        assert first_attempt != second_attempt
+        assert first_turn_id != second_turn_id
+        assert first_turn_id.startswith("run-1--TASK-1--attempt-")
+        assert second_turn_id.startswith("run-1--TASK-1--attempt-")
+        assert request.metadata["transaction_invocation_id"] == invocation_id
+        assert request.metadata["transaction_attempt"] == 1
 
 
 class TestContextHandoffPackMapping:

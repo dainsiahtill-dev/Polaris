@@ -390,7 +390,11 @@ def test_task_boundary_tool_dispatch_accepts_canonical_lifecycle_receipt() -> No
         "decoded_tool_calls_count": 1,
         "dispatched_tool_calls_count": 0,
         "provider_response_hash": "provider/hash",
+        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         "reason": "native_tool_calls_without_dispatch",
+        "compatibility_mode": "native_tools",
+        "text_fallback_requested": False,
+        "parser_attempted": False,
     }
 
 

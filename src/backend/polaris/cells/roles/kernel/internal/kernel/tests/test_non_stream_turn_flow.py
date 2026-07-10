@@ -188,3 +188,108 @@ def test_execute_non_stream_role_turn_calls_transaction_and_projects_success(mon
     assert metrics.llm_latencies
     assert metrics.executions == [("director", "success")]
     assert tracer.spans[0].tags["has_content"] is True
+
+
+def test_validation_retry_uses_distinct_transaction_attempt_identity(monkeypatch: Any) -> None:
+    profile = _profile()
+    fingerprint = PromptFingerprint(core_hash="core", profile_fingerprint=profile.profile_fingerprint)
+    event_emitter = _EventEmitter()
+    captured_attempts: list[dict[str, Any]] = []
+
+    def setup(*_: Any, **__: Any) -> Any:
+        return SimpleNamespace(
+            profile=profile,
+            prompt_builder=_PromptBuilder(),
+            fingerprint=fingerprint,
+            system_prompt="base",
+        )
+
+    class _RetryingTransactionTurnExecutor:
+        def __init__(self, _: Any) -> None:
+            pass
+
+        async def execute_turn(self, **kwargs: Any) -> RoleTurnResult:
+            request = kwargs["request"]
+            captured_attempts.append(dict(request.metadata))
+            return RoleTurnResult(
+                content=f"attempt-{len(captured_attempts)}",
+                thinking="",
+                profile_version=profile.version,
+                prompt_fingerprint=fingerprint,
+                is_complete=True,
+            )
+
+    def validate_turn_output(**kwargs: Any) -> tuple[SimpleNamespace, str | None]:
+        attempt = int(kwargs["attempt"])
+        if attempt == 0:
+            return (
+                SimpleNamespace(
+                    success=False,
+                    errors=["truncated structured output"],
+                    suggestions=[],
+                    data=None,
+                    quality_score=0.0,
+                    quality_passed=False,
+                ),
+                "truncated structured output",
+            )
+        return (
+            SimpleNamespace(
+                success=True,
+                errors=[],
+                suggestions=[],
+                data={"ok": True},
+                quality_score=1.0,
+                quality_passed=True,
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(flow, "build_role_turn_prompt_setup", setup)
+    monkeypatch.setattr(flow, "build_context_request", lambda request: {"request": request})
+    monkeypatch.setattr(flow, "get_kernel_event_emitter", lambda kernel: event_emitter)
+    monkeypatch.setattr(flow, "get_metrics_collector", lambda: _Metrics())
+    monkeypatch.setattr(flow, "get_tracer", lambda: _Tracer())
+    monkeypatch.setattr(flow, "TransactionTurnExecutor", _RetryingTransactionTurnExecutor)
+    monkeypatch.setattr(flow, "_validate_turn_output", validate_turn_output)
+
+    request = RoleTurnRequest(
+        message="return structured output",
+        validate_output=True,
+        max_retries=1,
+        run_id="run-retry",
+        task_id="TASK-1",
+    )
+    result = asyncio.run(
+        flow.execute_non_stream_role_turn(
+            kernel=_kernel(),
+            role="director",
+            request=request,
+        )
+    )
+
+    assert result.error is None
+    assert len(captured_attempts) == 2
+    assert captured_attempts[0]["transaction_attempt"] == 0
+    assert captured_attempts[1]["transaction_attempt"] == 1
+    assert captured_attempts[0]["transaction_invocation_id"] == captured_attempts[1]["transaction_invocation_id"]
+    assert captured_attempts[0]["transaction_attempt_id"] != captured_attempts[1]["transaction_attempt_id"]
+
+    captured_attempts.clear()
+    no_retry_result = asyncio.run(
+        flow.execute_non_stream_role_turn(
+            kernel=_kernel(),
+            role="director",
+            request=RoleTurnRequest(
+                message="return structured output once",
+                validate_output=True,
+                max_retries=0,
+                run_id="run-no-retry",
+                task_id="TASK-2",
+            ),
+        )
+    )
+
+    assert no_retry_result.error is not None
+    assert len(captured_attempts) == 1
+    assert captured_attempts[0]["transaction_attempt"] == 0

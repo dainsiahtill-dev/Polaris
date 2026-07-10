@@ -509,6 +509,39 @@ def _request_context(ai_request: Any) -> dict[str, Any]:
     return ctx if isinstance(ctx, dict) else {}
 
 
+def _tool_execution_surface_audit(
+    *,
+    ai_request: Any,
+    tool_schema_count: int,
+    tool_choice: Any,
+) -> dict[str, Any]:
+    """Describe dispatch capability separately from context evidence coverage."""
+
+    context = _request_context(ai_request)
+    text_fallback_requested = bool(context.get("required_tool_text_fallback"))
+    native_surface_absent = text_fallback_requested and tool_schema_count == 0
+    if text_fallback_requested:
+        compatibility_mode = "required_tool_text_fallback"
+        convergence_status = "pending_text_parser_dispatch"
+    elif tool_schema_count > 0:
+        compatibility_mode = "native_tools"
+        convergence_status = "pending_native_dispatch"
+    else:
+        compatibility_mode = "no_tool_surface"
+        convergence_status = "not_required_or_unavailable"
+    return {
+        "schema_version": "llm.tool_execution_surface_audit.v1",
+        "compatibility_mode": compatibility_mode,
+        "text_fallback_requested": text_fallback_requested,
+        "native_tool_surface_absent_because_text_fallback": native_surface_absent,
+        "parser_required": text_fallback_requested,
+        "tool_schema_count": int(tool_schema_count),
+        "tool_choice": tool_choice,
+        "convergence_status": convergence_status,
+        "convergence_proven": False,
+    }
+
+
 def _execution_profile(ai_request: Any) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     for key in (
@@ -2356,7 +2389,7 @@ def build_final_request_context_audit_for_request(
     message_chars = _message_chars(messages)
     message_token_estimate = _estimate_tokens_from_chars(message_chars)
 
-    tool_schema_payload, response_format_payload, _tool_choice_payload = _request_option_payloads(ai_request, prepared)
+    tool_schema_payload, response_format_payload, tool_choice_payload = _request_option_payloads(ai_request, prepared)
     tool_schema_chars = _json_chars(tool_schema_payload)
     tool_schema_token_estimate = _estimate_tokens_from_chars(tool_schema_chars)
     tool_schema_count = len(tool_schema_payload) if isinstance(tool_schema_payload, list) else 0
@@ -2402,6 +2435,22 @@ def build_final_request_context_audit_for_request(
         response_format_payload=response_format_payload,
     )
     quality = _add_evidence_coverage_findings(quality, evidence_coverage)
+    tool_execution_surface = _tool_execution_surface_audit(
+        ai_request=ai_request,
+        tool_schema_count=tool_schema_count,
+        tool_choice=tool_choice_payload,
+    )
+    if tool_execution_surface["text_fallback_requested"]:
+        findings = quality.get("findings")
+        if isinstance(findings, list):
+            findings.append(
+                {
+                    "code": "tool_execution_convergence_pending_text_fallback",
+                    "severity": "warning",
+                    "native_tool_surface_absent_because_text_fallback": True,
+                }
+            )
+        quality["context_needs_review"] = True
 
     return {
         "schema_version": "llm.final_request_context_audit.v1",
@@ -2411,6 +2460,10 @@ def build_final_request_context_audit_for_request(
         "tool_schema_count": tool_schema_count,
         "tool_schema_chars": tool_schema_chars,
         "tool_schema_token_estimate": tool_schema_token_estimate,
+        "tool_execution_surface": tool_execution_surface,
+        "native_tool_surface_absent_because_text_fallback": bool(
+            tool_execution_surface["native_tool_surface_absent_because_text_fallback"]
+        ),
         "response_format_chars": response_format_chars,
         "response_format_token_estimate": response_format_token_estimate,
         "final_request_token_estimate": final_request_token_estimate,

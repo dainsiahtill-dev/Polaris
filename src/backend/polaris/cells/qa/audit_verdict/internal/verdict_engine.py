@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
@@ -205,13 +205,17 @@ def _route_classification(
         )
         return "BLOCKED", False, "waiting_human", "", classification
     task_boundary = _mapping(ledger.get("task_boundary"))
-    latest_boundary = _mapping(task_boundary.get("latest"))
-    if latest_boundary and not bool(latest_boundary.get("ok", True)):
+    failed_boundaries_raw = task_boundary.get("failed")
+    failed_boundaries = [
+        _mapping(item) for item in failed_boundaries_raw if isinstance(item, Mapping)
+    ] if isinstance(failed_boundaries_raw, list) else []
+    boundary = failed_boundaries[-1] if failed_boundaries else _mapping(task_boundary.get("latest"))
+    if boundary and not bool(boundary.get("ok", True)):
         boundary_failure_class = normalize_qa_failure_class(
-            str(latest_boundary.get("failure_class") or TaskBoundaryFailureClassV1.TASK_BOUNDARY_FAILED.value).strip()
+            str(boundary.get("failure_class") or TaskBoundaryFailureClassV1.TASK_BOUNDARY_FAILED.value).strip()
         )
-        boundary_reason = str(latest_boundary.get("reason") or "Task boundary verdict failed").strip()
-        responsible_layer = str(latest_boundary.get("responsible_layer") or "execution_control_plane").strip()
+        boundary_reason = str(boundary.get("reason") or "Task boundary verdict failed").strip()
+        responsible_layer = str(boundary.get("responsible_layer") or "execution_control_plane").strip()
         if boundary_failure_class == TaskBoundaryFailureClassV1.INCOMPLETE_MATERIALIZATION.value:
             classification = build_qa_failure_classification_v1(
                 failure_class=QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
@@ -238,6 +242,41 @@ def _route_classification(
         if boundary_failure_class == TaskBoundaryFailureClassV1.EXECUTION_EVIDENCE_MISSING.value:
             classification = build_qa_failure_classification_v1(
                 failure_class=QaFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+                route="pending_exec",
+                reason=boundary_reason,
+                repairable_by_director=True,
+                owner="director",
+                responsible_layer=responsible_layer or "director",
+                evidence_refs=evidence_refs,
+            )
+            return "FAIL", False, "pending_exec", "", classification
+        if boundary_failure_class == TaskBoundaryFailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value:
+            classification = build_qa_failure_classification_v1(
+                failure_class=QaFailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value,
+                route="waiting_human",
+                reason=boundary_reason,
+                repairable_by_director=False,
+                severity="critical",
+                owner="platform",
+                responsible_layer="execution_control_plane",
+                evidence_refs=evidence_refs,
+            )
+            return "BLOCKED", False, "waiting_human", "", classification
+        if boundary_failure_class == TaskBoundaryFailureClassV1.NO_MATERIALIZED_EFFECT.value:
+            classification = build_qa_failure_classification_v1(
+                failure_class=QaFailureClassV1.NO_MATERIALIZED_EFFECT.value,
+                route="pending_exec",
+                reason=boundary_reason,
+                repairable_by_director=True,
+                severity="high",
+                owner="director",
+                responsible_layer=responsible_layer or "execution_control_plane",
+                evidence_refs=evidence_refs,
+            )
+            return "FAIL", False, "pending_exec", "", classification
+        if boundary_failure_class == TaskBoundaryFailureClassV1.COMPILER_OR_TEST_FAILURE.value:
+            classification = build_qa_failure_classification_v1(
+                failure_class=QaFailureClassV1.COMPILER_OR_TEST_FAILURE.value,
                 route="pending_exec",
                 reason=boundary_reason,
                 repairable_by_director=True,
@@ -340,7 +379,7 @@ def _route_classification(
         return "FAIL", False, "pending_exec", "", classification
     if failed_required:
         classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
+            failure_class=QaFailureClassV1.COMPILER_OR_TEST_FAILURE.value,
             route="pending_exec",
             reason="Required QA evidence modalities failed: " + ", ".join(failed_required),
             repairable_by_director=True,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import pytest
@@ -357,3 +358,65 @@ def test_append_fact_event_idempotent_hit_with_matching_expected_seq_succeeds(
         )
     )
     assert queried.total == 1
+
+
+def test_append_fact_event_concurrent_idempotency_is_atomic(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    command = AppendFactEventCommandV1(
+        workspace=str(workspace),
+        stream="roles.kernel.turn_outcomes",
+        event_type="turn_outcome_committed",
+        payload={"run_id": "run-atomic", "turn_id": "turn-atomic"},
+        source="roles.kernel",
+        run_id="run-atomic",
+        task_id="task-atomic",
+        idempotency_key="run-atomic:task-atomic:turn-atomic",
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(lambda _index: append_fact_event(command), range(16)))
+
+    assert len({result.event_id for result in results}) == 1
+    assert {result.appended_seq for result in results} == {1}
+    queried = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="roles.kernel.turn_outcomes",
+            limit=20,
+        )
+    )
+    assert queried.total == 1
+
+
+def test_append_fact_event_rejects_idempotency_key_payload_conflict(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="roles.kernel.turn_outcomes",
+            event_type="turn_outcome_committed",
+            source="roles.kernel",
+            run_id="run-conflict",
+            task_id="task-conflict",
+            idempotency_key="run-conflict:task-conflict:turn-conflict",
+            payload={"run_id": "run-conflict", "outcome_status": "completed"},
+        )
+    )
+
+    with pytest.raises(FactStreamError) as exc_info:
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=str(workspace),
+                stream="roles.kernel.turn_outcomes",
+                event_type="turn_outcome_committed",
+                source="roles.kernel",
+                run_id="run-conflict",
+                task_id="task-conflict",
+                idempotency_key="run-conflict:task-conflict:turn-conflict",
+                payload={"run_id": "run-conflict", "outcome_status": "failed"},
+            )
+        )
+
+    assert exc_info.value.code == "idempotency_conflict"

@@ -39,14 +39,6 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
-from polaris.cells.control_plane.run_ledger.public import (
-    AppendRunLedgerEventCommandV1,
-    AppendToolCallLifecycleEventCommandV1,
-    append_run_ledger_event,
-    append_tool_call_lifecycle_event,
-    build_tool_dispatch_dropped_lifecycle_from_observed_calls,
-    evaluate_task_boundary_verdict,
-)
 from polaris.cells.factory.pipeline.internal.bench_gates import (
     aggregate_goal_audit,
     apply_factory_bench_failure_taxonomy,
@@ -2259,214 +2251,31 @@ def _url_port(value: str) -> int | None:
     return None
 
 
-def _task_boundary_evidence_from_real_run_gate(real_run_gate: Any) -> dict[str, list[str]]:
-    """Project real-run gate evidence into the task-boundary contract."""
-
-    if not isinstance(real_run_gate, Mapping):
-        return {}
-    requirements_raw = real_run_gate.get("requirements")
-    requirements: Mapping[str, Any] = requirements_raw if isinstance(requirements_raw, Mapping) else {}
-    required = ["code", "command"]
-    present: list[str] = []
-    failed: list[str] = []
-
-    code_requirement_names = (
-        "artifact_landed",
-        "source_files_present",
-        "declared_source_targets_present",
-        "scaffolding_present",
-    )
-    code_requirements = [
-        requirements.get(name) for name in code_requirement_names if isinstance(requirements.get(name), Mapping)
-    ]
-    if code_requirements:
-        present.append("code")
-        if not all(bool(cast(Mapping[str, Any], item).get("ok")) for item in code_requirements):
-            failed.append("code")
-
-    build_requirement = requirements.get("build_test_lint_ran")
-    command_count = int(real_run_gate.get("command_count_total") or 0)
-    commands = real_run_gate.get("commands")
-    entrypoint_raw = real_run_gate.get("entrypoint")
-    entrypoint: Mapping[str, Any] = entrypoint_raw if isinstance(entrypoint_raw, Mapping) else {}
-    entrypoint_kind = str(entrypoint.get("kind") or "").strip()
-    entrypoint_is_command = bool(entrypoint_kind) and entrypoint_kind not in {"web_static", "web_playwright"}
-    command_present = (
-        isinstance(build_requirement, Mapping)
-        or command_count > 0
-        or isinstance(commands, list)
-        or entrypoint_is_command
-    )
-    if command_present:
-        present.append("command")
-        command_ok = (
-            bool(cast(Mapping[str, Any], build_requirement).get("ok"))
-            if isinstance(build_requirement, Mapping)
-            else bool(commands)
-        )
-        if entrypoint_is_command:
-            command_ok = (
-                bool(command_ok) and bool(entrypoint.get("ok"))
-                if isinstance(build_requirement, Mapping)
-                else bool(entrypoint.get("ok"))
-            )
-        if not command_ok:
-            failed.append("command")
-
-    missing = [item for item in required if item not in set(present) | set(failed)]
-    return {
-        "required": required,
-        "present": list(dict.fromkeys(present)),
-        "missing": missing,
-        "failed": list(dict.fromkeys(failed)),
-    }
-
-
-def _append_task_boundary_verdict_to_run_ledger(
-    *,
-    workspace: Path,
-    run_id: str,
-    project_id: str,
-    record: Mapping[str, Any],
+def _read_task_boundary_verdict_from_run_ledger_projection(
+    projection: Mapping[str, Any],
 ) -> dict[str, Any]:
-    declared_targets = record.get("declared_source_targets")
-    target_files = (
-        [str(item) for item in declared_targets if str(item).strip()] if isinstance(declared_targets, list) else []
-    )
-    completed_artifacts: list[str] = []
-    for key in ("source_files", "code_files"):
-        values = record.get(key)
-        if isinstance(values, list):
-            completed_artifacts.extend(str(item) for item in values if str(item).strip())
-    evidence_policy = _task_boundary_evidence_from_real_run_gate(record.get("real_run_gate"))
-    tool_dispatch = _tool_dispatch_failure_from_record(record)
-    if tool_dispatch is not None:
-        _append_tool_dispatch_failure_to_run_ledger(
-            workspace=workspace,
-            run_id=run_id,
-            project_id=project_id,
-            task_id=str(record.get("task_id") or project_id),
-            tool_dispatch=tool_dispatch,
-        )
-    verdict = evaluate_task_boundary_verdict(
-        workspace=workspace,
-        task_id=str(record.get("task_id") or project_id),
-        run_id=run_id,
-        target_files=target_files,
-        completed_artifacts=completed_artifacts,
-        required_evidence_modalities=evidence_policy.get("required"),
-        present_evidence_modalities=evidence_policy.get("present"),
-        missing_required_evidence_modalities=evidence_policy.get("missing"),
-        failed_required_evidence_modalities=evidence_policy.get("failed"),
-        tool_dispatch=tool_dispatch,
-    ).to_dict()
-    try:
-        append_run_ledger_event(
-            AppendRunLedgerEventCommandV1(
-                workspace=str(workspace),
-                run_id=run_id,
-                event={
-                    "event_type": "task_boundary_verdict",
-                    "stage": "task_boundary",
-                    "run_id": run_id,
-                    "task_id": str(record.get("task_id") or project_id),
-                    "task_boundary_verdict": verdict,
-                    "job_token": {
-                        "token_id": f"task-boundary-{project_id}",
-                        "run_id": run_id,
-                        "task_id": str(record.get("task_id") or project_id),
-                        "project_id": project_id,
-                        "capability_audit": {"ok": True, "issues": []},
-                        "gate_policy": {},
-                    },
-                },
-            )
-        )
-    except (OSError, RuntimeError, TypeError, ValueError):
-        _logger.debug("failed to append task boundary verdict", exc_info=True)
-    return verdict
+    """Read the authoritative TaskBoundary verdict without synthesizing facts.
 
+    Bench is an internal observer. It must never infer a replacement verdict
+    from workspace files, prose diagnostics, or a later real-run gate. Missing
+    TaskBoundary evidence is itself an execution-control-plane failure.
+    """
 
-def _tool_dispatch_failure_from_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Project chain-level tool dispatch failures into TaskBoundary input."""
-
-    reason = _first_text_with_token(
-        (
-            record.get("failure_evidence"),
-            record.get("failure_reasons"),
-            record.get("chain"),
-            record.get("chain_results"),
-            record.get("failure_taxonomy"),
-        ),
-        token="tool_dispatch_dropped",
-    )
-    if not reason:
-        return None
+    task_boundary = projection.get("task_boundary")
+    boundary_map: Mapping[str, Any] = task_boundary if isinstance(task_boundary, Mapping) else {}
+    latest = boundary_map.get("latest")
+    if isinstance(latest, Mapping):
+        return dict(latest)
     return {
-        "status": "dropped",
-        "dropped": True,
-        "reason": reason,
-        "source": "factory_bench_chain_failure_evidence",
+        "schema_version": "task_boundary_verdict.v1",
+        "status": "task_boundary_verdict_missing",
+        "ok": False,
+        "failure_class": "EXECUTION_EVIDENCE_MISSING",
+        "responsible_layer": "execution_control_plane",
+        "reason": "No authoritative TaskBoundary verdict was committed to the Execution Ledger",
+        "source": "factory_bench_read_projection",
+        "authoritative": False,
     }
-
-
-def _first_text_with_token(value: Any, *, token: str) -> str:
-    needle = token.lower()
-    stack: list[Any] = [value]
-    while stack:
-        current = stack.pop(0)
-        if isinstance(current, str):
-            if needle in current.lower():
-                return current
-            continue
-        if isinstance(current, Mapping):
-            stack.extend(current.values())
-            continue
-        if isinstance(current, Sequence) and not isinstance(current, str | bytes | bytearray):
-            stack.extend(current)
-    return ""
-
-
-def _append_tool_dispatch_failure_to_run_ledger(
-    *,
-    workspace: Path,
-    run_id: str,
-    project_id: str,
-    task_id: str,
-    tool_dispatch: Mapping[str, Any],
-) -> None:
-    """Append project-level lifecycle evidence for an already observed chain failure."""
-
-    lifecycle_receipt = build_tool_dispatch_dropped_lifecycle_from_observed_calls(
-        run_id=run_id,
-        task_id=task_id,
-        turn_id=str(tool_dispatch.get("turn_id") or ""),
-        role=str(tool_dispatch.get("role") or "director"),
-        reason=str(tool_dispatch.get("reason") or "tool_dispatch_dropped").strip(),
-    )
-    try:
-        append_tool_call_lifecycle_event(
-            AppendToolCallLifecycleEventCommandV1(
-                workspace=str(workspace),
-                run_id=run_id,
-                task_id=task_id,
-                turn_id=str(tool_dispatch.get("turn_id") or ""),
-                role=str(tool_dispatch.get("role") or "director"),
-                lifecycle_receipt=lifecycle_receipt,
-                stage="director_tool_dispatch",
-                project_id=project_id,
-                job_token={
-                    "token_id": f"tool-dispatch-{project_id}",
-                    "run_id": run_id,
-                    "task_id": task_id,
-                    "project_id": project_id,
-                    "capability_audit": {"ok": True, "issues": []},
-                    "gate_policy": {},
-                },
-            )
-        )
-    except (OSError, RuntimeError, TypeError, ValueError):
-        _logger.debug("failed to append tool dispatch lifecycle verdict", exc_info=True)
 
 
 def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> None:
@@ -3836,13 +3645,15 @@ def main() -> int:
                 stage=chain_phase_raw or chain_status_raw or "chain_non_terminal",
                 gate_name="chain_non_terminal",
             )
-        record["task_boundary_verdict"] = _append_task_boundary_verdict_to_run_ledger(
-            workspace=workspace,
+        record["run_ledger_projection"] = load_run_ledger_projection(
+            workspace,
             run_id=run_id,
+            factory_run_id=record["factory_run_id"],
             project_id=pid,
-            record=record,
         )
-        record["run_ledger_projection"] = load_run_ledger_projection(workspace, run_id=run_id)
+        record["task_boundary_verdict"] = _read_task_boundary_verdict_from_run_ledger_projection(
+            record["run_ledger_projection"]
+        )
         required_llm_roles = required_llm_roles_for_factory_record(chain=chain, record=record)
         record["required_llm_roles"] = list(required_llm_roles)
         record["llm_route_audit"] = build_llm_route_audit(

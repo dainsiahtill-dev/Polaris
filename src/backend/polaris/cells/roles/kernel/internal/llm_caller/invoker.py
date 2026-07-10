@@ -222,29 +222,40 @@ def _allowed_tool_names_from_prepared(prepared: PreparedLLMRequest) -> list[str]
     return names
 
 
+@dataclass(frozen=True)
+class _TextToolRecovery:
+    calls: tuple[dict[str, Any], ...] = ()
+    parser_attempted: bool = False
+    parser_available: bool = True
+    error: str = ""
+
+
 def _recover_text_tool_calls_from_response_text(
     *,
     response_text: str,
     raw_payload: dict[str, Any],
     prepared: PreparedLLMRequest,
     provider_hint: str,
-) -> list[dict[str, Any]]:
+) -> _TextToolRecovery:
     if not str(response_text or "").strip():
-        return []
+        return _TextToolRecovery(error="empty_response_text")
     allowed_tool_names = _allowed_tool_names_from_prepared(prepared)
     if not allowed_tool_names:
-        return []
+        return _TextToolRecovery(error="no_allowed_tool_names")
     try:
         from polaris.infrastructure.llm.tools.parser_adapter import LLMToolkitParserAdapter
-    except (ImportError, RuntimeError, ValueError):
-        return []
+    except (ImportError, RuntimeError, ValueError) as exc:
+        return _TextToolRecovery(parser_available=False, error=f"parser_unavailable:{exc}")
 
-    parsed = LLMToolkitParserAdapter().parse_calls(
-        text=response_text,
-        response_payload=raw_payload,
-        provider_hint=provider_hint,
-        allowed_tool_names=allowed_tool_names,
-    )
+    try:
+        parsed = LLMToolkitParserAdapter().parse_calls(
+            text=response_text,
+            response_payload=raw_payload,
+            provider_hint=provider_hint,
+            allowed_tool_names=allowed_tool_names,
+        )
+    except (RuntimeError, TypeError, ValueError) as exc:
+        return _TextToolRecovery(parser_attempted=True, error=f"parser_failed:{exc}")
     calls: list[dict[str, Any]] = []
     for item in parsed:
         to_openai_format = getattr(item, "to_openai_format", None)
@@ -253,7 +264,11 @@ def _recover_text_tool_calls_from_response_text(
         call = to_openai_format()
         if isinstance(call, dict):
             calls.append(call)
-    return calls
+    return _TextToolRecovery(
+        calls=tuple(calls),
+        parser_attempted=True,
+        error="" if calls else "parser_produced_no_tool_calls",
+    )
 
 
 def _required_tool_not_called_error(
@@ -288,13 +303,13 @@ def _required_tool_not_called_error(
     )
     if _called_required_native_tool(native_tool_calls, required_tools):
         return ""
-    recovered_tool_calls = _recover_text_tool_calls_from_response_text(
+    recovery = _recover_text_tool_calls_from_response_text(
         response_text=response_text,
         raw_payload=raw_payload,
         prepared=prepared,
         provider_hint=_provider,
     )
-    if _called_required_native_tool(recovered_tool_calls, required_tools):
+    if _called_required_native_tool(list(recovery.calls), required_tools):
         return ""
     return "required_tool_not_called: required_tools=" + ",".join(required_tools)
 
@@ -830,6 +845,8 @@ class LLMInvoker:
                             response=fallback_response,
                             profile=fallback_profile,
                         )
+                        if fallback_error:
+                            fallback_error = f"required_tool_text_fallback_not_dispatched: {fallback_error}"
                     if fallback_ok and not fallback_error:
                         return (
                             fallback_profile,
@@ -1079,6 +1096,7 @@ class LLMInvoker:
                     profile=profile,
                 )
                 if response_error:
+                    response_error = f"required_tool_text_fallback_not_dispatched: {response_error}"
                     is_response_ok = False
         else:
             retry_request = request_preparer._build_required_tool_retry_request(
@@ -1364,22 +1382,43 @@ class LLMInvoker:
         native_tool_calls, native_tool_provider = extract_native_tool_calls(
             raw_payload, provider_id=response_provider, model=response_model_name, response_text=response_text
         )
-        text_tool_recovery_metadata: dict[str, Any] = {}
+        active_context = getattr(active_request, "context", None)
+        active_context_payload = active_context if isinstance(active_context, dict) else {}
+        text_fallback_requested = bool(active_context_payload.get("required_tool_text_fallback"))
+        text_tool_recovery_metadata: dict[str, Any] = {
+            "compatibility_mode": "required_tool_text_fallback" if text_fallback_requested else "native_tools",
+            "text_fallback_requested": text_fallback_requested,
+            "native_tool_surface_absent_because_text_fallback": text_fallback_requested,
+            "text_tool_parser_attempted": False,
+            "text_tool_decoded_calls_count": 0,
+        }
         if not native_tool_calls:
-            recovered_tool_calls = _recover_text_tool_calls_from_response_text(
+            recovery = _recover_text_tool_calls_from_response_text(
                 response_text=response_text,
                 raw_payload=raw_payload,
                 prepared=prepared,
                 provider_hint=native_tool_provider,
             )
-            if recovered_tool_calls:
-                native_tool_calls = recovered_tool_calls
-                native_tool_provider = "openai"
-                text_tool_recovery_metadata = {
-                    "text_tool_recovery_used": True,
-                    "text_tool_recovery_call_count": len(recovered_tool_calls),
-                    "text_tool_recovery_provider": "toolkit_parser",
+            text_tool_recovery_metadata.update(
+                {
+                    "text_tool_parser_attempted": recovery.parser_attempted,
+                    "text_tool_parser_available": recovery.parser_available,
+                    "text_tool_parser_error": recovery.error,
+                    "text_tool_decoded_calls_count": len(recovery.calls),
                 }
+            )
+            if recovery.calls:
+                native_tool_calls = list(recovery.calls)
+                native_tool_provider = "openai"
+                text_tool_recovery_metadata.update(
+                    {
+                        "text_tool_recovery_used": True,
+                        "text_tool_recovery_call_count": len(recovery.calls),
+                        "text_tool_recovery_provider": "toolkit_parser",
+                    }
+                )
+            elif text_fallback_requested:
+                text_tool_recovery_metadata["failure_class"] = "required_tool_text_fallback_not_dispatched"
         native_tool_call_envelopes = build_native_tool_call_envelope_payloads(
             native_tool_calls,
             provider=native_tool_provider,

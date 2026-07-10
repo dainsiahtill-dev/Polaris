@@ -101,6 +101,34 @@ def _extract_task_target_path_candidates(task: dict[str, Any]) -> list[str]:
     )
 
 
+def _extract_project_declared_target_path_candidates(source: dict[str, Any] | None) -> list[str]:
+    """Return project-level target inventory without granting write authority.
+
+    Project targets describe cross-task ownership and dependency obligations.
+    They must never be merged into the current task's write scope.
+    """
+
+    if not isinstance(source, dict):
+        return []
+    metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+    candidates: list[str] = []
+    for record in (source, metadata):
+        for key in (
+            "project_declared_target_files",
+            "project_declared_source_targets",
+            "project_declared_entrypoint_targets",
+        ):
+            candidates.extend(_coerce_path_candidate_list(record.get(key)))
+    return _dedupe_preserve_order(
+        [
+            candidate
+            for candidate in candidates
+            if _looks_like_task_path_candidate(candidate)
+            or _looks_like_task_scope_directory_candidate(candidate)
+        ]
+    )
+
+
 def _path_matches_any_declared_candidate(path: str, candidates: list[str]) -> bool:
     return path_matches_any_declared_scope_candidate(path, candidates)
 

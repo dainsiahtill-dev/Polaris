@@ -55,6 +55,9 @@ class TaskBoundaryFailureClassV1(str, Enum):
     MISSING_ENTRYPOINT_TARGET = "MISSING_ENTRYPOINT_TARGET"
     UNRESOLVED_LOCAL_IMPORT = "UNRESOLVED_LOCAL_IMPORT"
     EXECUTION_EVIDENCE_MISSING = "EXECUTION_EVIDENCE_MISSING"
+    REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED = "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED"
+    NO_MATERIALIZED_EFFECT = "NO_MATERIALIZED_EFFECT"
+    COMPILER_OR_TEST_FAILURE = "COMPILER_OR_TEST_FAILURE"
     IMPLEMENTATION_DEFECT = "IMPLEMENTATION_DEFECT"
     DEPENDENCY_NOT_UNLOCKED = "DEPENDENCY_NOT_UNLOCKED"
     DEFERRED_FOLLOWUP_REQUIRED = "DEFERRED_FOLLOWUP_REQUIRED"
@@ -86,6 +89,11 @@ _TASK_BOUNDARY_FAILURE_CLASS_ALIASES = {
     "missing_entrypoint_target": TaskBoundaryFailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
     "unresolved_local_import": TaskBoundaryFailureClassV1.UNRESOLVED_LOCAL_IMPORT.value,
     "execution_evidence_missing": TaskBoundaryFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+    "required_tool_text_fallback_not_dispatched": (
+        TaskBoundaryFailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value
+    ),
+    "no_materialized_effect": TaskBoundaryFailureClassV1.NO_MATERIALIZED_EFFECT.value,
+    "compiler_or_test_failure": TaskBoundaryFailureClassV1.COMPILER_OR_TEST_FAILURE.value,
     "implementation_defect": TaskBoundaryFailureClassV1.IMPLEMENTATION_DEFECT.value,
     "dependency_not_unlocked": TaskBoundaryFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value,
     "deferred_followup_required": TaskBoundaryFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value,
@@ -605,6 +613,33 @@ def evaluate_task_boundary_verdict(
         "evidence_refs": evidence,
     }
 
+    dispatch_failure_class = _normalize_task_boundary_failure_class(dispatch.get("failure_class"))
+    if dispatch_failure_class == TaskBoundaryFailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value:
+        return TaskBoundaryVerdictV1(
+            status="required_tool_text_fallback_not_dispatched",
+            ok=False,
+            failure_class=dispatch_failure_class,
+            responsible_layer="execution_control_plane",
+            reason=(
+                str(dispatch.get("reason") or "").strip()
+                or "Required-tool text compatibility mode produced no authoritative tool dispatch"
+            ),
+            **base_kwargs,
+        )
+
+    if dispatch_failure_class == TaskBoundaryFailureClassV1.NO_MATERIALIZED_EFFECT.value:
+        return TaskBoundaryVerdictV1(
+            status="no_materialized_effect",
+            ok=False,
+            failure_class=dispatch_failure_class,
+            responsible_layer="execution_control_plane",
+            reason=(
+                str(dispatch.get("reason") or "").strip()
+                or "Required materialization completed without an authoritative effect receipt"
+            ),
+            **base_kwargs,
+        )
+
     if bool(dispatch.get("dropped")) or str(dispatch.get("status") or "").strip() == "dropped":
         return TaskBoundaryVerdictV1(
             status="tool_dispatch_dropped",
@@ -702,7 +737,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="required_evidence_failed",
             ok=False,
-            failure_class=TaskBoundaryFailureClassV1.IMPLEMENTATION_DEFECT.value,
+            failure_class=TaskBoundaryFailureClassV1.COMPILER_OR_TEST_FAILURE.value,
             responsible_layer="director",
             reason="Required execution evidence was committed but failed",
             **base_kwargs,
@@ -722,7 +757,7 @@ def evaluate_task_boundary_verdict(
         return TaskBoundaryVerdictV1(
             status="required_verifier_failed",
             ok=False,
-            failure_class=TaskBoundaryFailureClassV1.IMPLEMENTATION_DEFECT.value,
+            failure_class=TaskBoundaryFailureClassV1.COMPILER_OR_TEST_FAILURE.value,
             responsible_layer="director",
             reason="Required verifier execution failed",
             **base_kwargs,

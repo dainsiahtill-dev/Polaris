@@ -27,6 +27,9 @@ from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_facts_from_sources,
     tool_call_lifecycle_receipts_from_metadata,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+    build_final_request_context_audit_for_request,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
     classify_error,
     is_native_tool_calling_unsupported,
@@ -280,6 +283,16 @@ def test_required_tool_text_fallback_request_disables_native_tools_and_requests_
     assert fallback_request.context["required_tool_text_fallback_budget"]["required_tools"] == ["write_file"]
     assert "UTF-8 JSON 数组" in fallback_request.input
     assert '"name":"write_file"' in fallback_request.input
+    audit = build_final_request_context_audit_for_request(
+        ai_request=fallback_request,
+        prepared=prepared,
+        profile=cast("RoleProfile", MockProfile(role_id="director", provider_id="kimi")),
+    )
+    surface = audit["tool_execution_surface"]
+    assert audit["native_tool_surface_absent_because_text_fallback"] is True
+    assert surface["compatibility_mode"] == "required_tool_text_fallback"
+    assert surface["convergence_status"] == "pending_text_parser_dispatch"
+    assert surface["convergence_proven"] is False
 
 
 def test_recover_text_tool_calls_from_response_text_uses_allowed_tools() -> None:
@@ -302,10 +315,12 @@ def test_recover_text_tool_calls_from_response_text_uses_allowed_tools() -> None
         provider_hint="auto",
     )
 
-    assert len(recovered) == 1
-    assert recovered[0]["type"] == "function"
-    assert recovered[0]["function"]["name"] == "write_file"
-    arguments = json.loads(str(recovered[0]["function"]["arguments"]))
+    assert recovered.parser_attempted is True
+    assert recovered.error == ""
+    assert len(recovered.calls) == 1
+    assert recovered.calls[0]["type"] == "function"
+    assert recovered.calls[0]["function"]["name"] == "write_file"
+    arguments = json.loads(str(recovered.calls[0]["function"]["arguments"]))
     assert arguments["file"] == "package.json"
     assert arguments["content"] == '{"scripts":{}}'
 

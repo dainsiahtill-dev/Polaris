@@ -52,6 +52,7 @@ from .materialization_quality_runtime_ports import has_materialization_quality_r
 from .repair_profile_projection import project_repair_kernel_summary
 from .task_scope_paths import (
     _dedupe_preserve_order,
+    _extract_project_declared_target_path_candidates,
     _extract_task_path_candidates,
     _extract_task_target_path_candidates,
     _filter_diff_to_task_declared_paths,
@@ -1830,6 +1831,12 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
 
     if not _task_write_scope_candidates(task, workspace_name=workspace_name):
         return errors
+    project_targets = _dedupe_preserve_order(
+        [
+            *_extract_project_declared_target_path_candidates(context),
+            *_extract_project_declared_target_path_candidates(task),
+        ]
+    )
     typed_issue_paths_by_raw = _artifact_quality_issue_paths_by_raw(issue_payloads)
     retained: list[str] = []
     deferred_errors: list[str] = []
@@ -1846,17 +1853,31 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
                 task=task,
                 workspace_name=workspace_name,
             )
-            if candidates and not in_scope:
+            owner_targets, _unowned_targets = partition_paths_by_declared_scope(
+                out_of_scope,
+                project_targets,
+                workspace_name=workspace_name,
+            )
+            if candidates and not in_scope and owner_targets:
                 deferred_errors.append(text)
-                deferred_targets.extend(out_of_scope)
+                deferred_targets.extend(owner_targets)
                 continue
         local_module_match = _NPM_SCRIPT_MISSING_LOCAL_MODULE_RE.search(text)
         if local_module_match:
             entrypoint = typed_issue_paths_by_raw.get(text) or str(local_module_match.group("entrypoint") or "").strip()
-            if entrypoint and not _path_within_task_write_scope(
-                entrypoint,
-                task=task,
+            entrypoint_owned, _entrypoint_unowned = partition_paths_by_declared_scope(
+                [entrypoint] if entrypoint else [],
+                project_targets,
                 workspace_name=workspace_name,
+            )
+            if (
+                entrypoint
+                and not _path_within_task_write_scope(
+                    entrypoint,
+                    task=task,
+                    workspace_name=workspace_name,
+                )
+                and entrypoint_owned
             ):
                 deferred_errors.append(text)
                 deferred_targets.append(entrypoint)
@@ -1867,6 +1888,65 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
         errors=_dedupe_preserve_order(deferred_errors),
         target_files=_dedupe_preserve_order(deferred_targets),
         reason="npm_script_entrypoint_outside_current_task_target_files",
+        issue_payloads=issue_payloads,
+    )
+    return _dedupe_preserve_order(retained)
+
+
+def _filter_project_completion_errors_to_task_boundary(
+    errors: list[str],
+    *,
+    task: dict[str, Any],
+    workspace_name: str = "",
+    context: dict[str, Any] | None = None,
+    issue_payloads: tuple[dict[str, Any], ...] = (),
+) -> list[str]:
+    """Defer project-completion findings owned by explicit downstream targets.
+
+    A source/model task cannot satisfy a project-level test-file obligation
+    owned by a later task.  Deferral is allowed only when the project target
+    inventory explicitly names downstream test/spec files and the current task
+    owns none of them.  Missing or ambiguous ownership remains fail-closed.
+    """
+
+    project_targets = _dedupe_preserve_order(
+        [
+            *_extract_project_declared_target_path_candidates(context),
+            *_extract_project_declared_target_path_candidates(task),
+        ]
+    )
+    declared_test_targets = [target for target in project_targets if _is_test_like_javascript_path(target)]
+    if not declared_test_targets:
+        return errors
+    current_test_targets, downstream_test_targets = _partition_paths_by_task_write_scope(
+        declared_test_targets,
+        task=task,
+        workspace_name=workspace_name,
+    )
+    if current_test_targets or not downstream_test_targets:
+        return errors
+
+    issues_by_raw = {
+        artifact_quality_issue_raw(issue): issue
+        for issue in issue_payloads
+        if artifact_quality_issue_raw(issue)
+    }
+    retained: list[str] = []
+    deferred: list[str] = []
+    for error in errors:
+        text = str(error or "")
+        issue = issues_by_raw.get(text)
+        metadata = issue.get("metadata") if isinstance(issue, dict) else None
+        script_issue = str(metadata.get("script_issue") or "") if isinstance(metadata, dict) else ""
+        if script_issue == "missing_node_test_files":
+            deferred.append(text)
+            continue
+        retained.append(text)
+    _record_deferred_task_boundary_quality_errors(
+        context,
+        errors=_dedupe_preserve_order(deferred),
+        target_files=downstream_test_targets,
+        reason="project_test_targets_not_unlocked",
         issue_payloads=issue_payloads,
     )
     return _dedupe_preserve_order(retained)
@@ -2011,8 +2091,15 @@ def _collect_materialization_quality_findings(
         context=context,
         issue_payloads=scan_issues,
     )
-    filtered_errors = _filter_missing_workspace_file_errors_to_task_write_scope(
+    boundary_errors = _filter_project_completion_errors_to_task_boundary(
         scoped_errors,
+        task=task,
+        workspace_name=workspace_name,
+        context=context,
+        issue_payloads=scan_issues,
+    )
+    filtered_errors = _filter_missing_workspace_file_errors_to_task_write_scope(
+        boundary_errors,
         task=task,
         workspace_full=workspace_full,
         workspace_name=workspace_name,

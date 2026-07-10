@@ -1,0 +1,91 @@
+card_id: vc-20260710-execution-fact-authority
+bug_summary: >
+  Turn completion, tool lifecycle, TaskRuntime state, Run Ledger evidence,
+  Factory cancellation, and QA verdicts are not derived from one durable fact.
+  Typed TurnOutcome contracts exist but are not connected to production.
+
+classification: structural
+
+bug_path:
+  file: polaris/cells/roles/kernel/internal/kernel/commit_protocol.py
+  method: _commit_turn_to_snapshot
+  symptom: >
+    The method mutates an in-memory ContextOS mapping, may return None, and its
+    receipt is ignored while stream completion follows a separate path.
+
+assumptions:
+  - id: A1
+    statement: TurnOutcome, CommitReceipt, and SealedTurn are production authorities.
+    status: verified_false
+    evidence: >
+      Codegraph reports no production callers for TurnOutcome, CommitReceipt,
+      or SealedTurn; only schema tests exercise TurnLedger.to_turn_outcome().
+  - id: A2
+    statement: The current ContextOS commit is durable execution evidence.
+    status: verified_false
+    evidence: >
+      _execute_commit_protocol mutates context_override.context_os_snapshot in
+      memory and does not append through KFS, FactStream, or Run Ledger.
+  - id: A3
+    statement: Stream and non-stream share one terminal commit path.
+    status: verified_false
+    evidence: >
+      build_transaction_turn_completion_result calls _commit_turn_to_snapshot;
+      stream_event_projection independently builds lifecycle and TaskBoundary
+      evidence and does not call the commit protocol.
+  - id: A4
+    statement: FactStream can provide the required durable ordering primitive.
+    status: verified_true
+    evidence: >
+      events.fact_stream delegates to KernelOne JsonlEventStore; expected_seq
+      append holds a file lock through JSONL durability and sequence commit.
+  - id: A5
+    statement: TaskRuntime already treats fact evidence as authoritative in claims.
+    status: verified_true
+    evidence: >
+      TaskRuntimeService.claim_execution checks task_runtime.execution facts and
+      rejects terminal fact rows even when the file row is stale.
+  - id: A6
+    statement: Control Plane Run Ledger is already projection-only.
+    status: verified_false
+    evidence: >
+      append_run_ledger_event writes a separate runtime/control_plane/ledger
+      NDJSON file through RunLedger.append_event without sequence CAS.
+
+pre_mortem:
+  failure_point: >
+    Adding another execution envelope without activating the existing
+    TurnOutcome and without deleting downstream authority would increase drift.
+  risk_zone:
+    - polaris/cells/roles/kernel/public/turn_contracts.py
+    - polaris/cells/roles/kernel/internal/turn_transaction_controller.py
+    - polaris/cells/roles/kernel/internal/kernel/commit_protocol.py
+    - polaris/cells/events/fact_stream/public/service.py
+    - polaris/cells/runtime/task_runtime/internal/service.py
+    - polaris/cells/control_plane/run_ledger/public/service.py
+
+verification_plan:
+  - command: >
+      PYTHONPATH=src/backend PYTHONUTF8=1 pytest
+      src/backend/polaris/cells/events/fact_stream
+      src/backend/polaris/cells/roles/kernel/tests/test_commit_protocol.py
+      src/backend/polaris/cells/roles/kernel/tests/test_turn_outcome_envelope.py -q
+    expected: Fact append, commit receipt, and outcome contract tests pass.
+  - command: >
+      PYTHONPATH=src/backend PYTHONUTF8=1 pytest
+      src/backend/polaris/cells/roles/kernel/tests/test_stream_nonstream_parity_transaction_kernel.py -q
+    expected: Both transports emit one equivalent canonical commit.
+  - command: >
+      PYTHONPATH=src/backend PYTHONUTF8=1 pytest
+      src/backend/polaris/cells/runtime/task_runtime/tests/test_service.py -q
+    expected: TaskRuntime behavior remains valid after shared FactStream CAS migration.
+  - command: ruff check <touched paths>
+    expected: No lint violations.
+  - command: mypy <touched Python paths>
+    expected: No new type errors.
+
+rollback:
+  strategy: >
+    Revert the cohesive commit. Do not restore dual authority with a feature
+    flag; the old projection files remain readable during migration.
+

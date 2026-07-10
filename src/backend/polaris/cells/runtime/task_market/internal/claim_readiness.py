@@ -10,7 +10,54 @@ keep working unchanged.
 
 from __future__ import annotations
 
+from typing import Final
+
+from polaris.cells.runtime.task_market.public.contracts import (
+    OWNER_REWORK_HANDOFFS_METADATA_KEY,
+    OwnerReworkHandoffV1,
+)
+
 from .models import TaskWorkItemRecord, now_epoch
+
+_INVALID_RESOLVED_ONLY_HANDOFFS: Final[None] = None
+
+
+def _resolved_only_dependency_ids(item: TaskWorkItemRecord) -> frozenset[str] | None:
+    """Return typed owner dependencies or ``None`` for corrupt handoff state.
+
+    Owner-rework handoffs are authoritative readiness facts.  A malformed
+    dedicated handoff field or a handoff that names an unrelated task is an
+    integrity failure, so callers block rather than quietly falling back to
+    the ordinary QA fast-path.  Owner-side audit copies are valid but do not
+    constrain the owner's own readiness.
+    """
+
+    raw_metadata = getattr(item, "metadata", {})
+    if raw_metadata is None:
+        raw_metadata = {}
+    if not isinstance(raw_metadata, dict):
+        return _INVALID_RESOLVED_ONLY_HANDOFFS
+    raw_handoffs = raw_metadata.get(OWNER_REWORK_HANDOFFS_METADATA_KEY)
+    if raw_handoffs is None:
+        return frozenset()
+    if not isinstance(raw_handoffs, dict):
+        return _INVALID_RESOLVED_ONLY_HANDOFFS
+
+    dependency_ids: set[str] = set()
+    for raw_handoff_id, raw_record in raw_handoffs.items():
+        try:
+            handoff = OwnerReworkHandoffV1.from_record(raw_record)
+        except ValueError:
+            return _INVALID_RESOLVED_ONLY_HANDOFFS
+        if str(raw_handoff_id or "").strip() != handoff.handoff_id:
+            return _INVALID_RESOLVED_ONLY_HANDOFFS
+        if handoff.requester_task_id == item.task_id:
+            dependency_ids.add(handoff.owner_task_id)
+            continue
+        if handoff.owner_task_id == item.task_id:
+            continue
+        return _INVALID_RESOLVED_ONLY_HANDOFFS
+    return frozenset(dependency_ids)
 
 
 def exec_claim_ready(item: TaskWorkItemRecord, items: dict[str, TaskWorkItemRecord]) -> bool:
@@ -28,6 +75,13 @@ def exec_claim_ready(item: TaskWorkItemRecord, items: dict[str, TaskWorkItemReco
     if item.stage != "pending_exec":
         return True
     if not item.is_leaf:
+        return False
+
+    resolved_only_dependency_ids = _resolved_only_dependency_ids(item)
+    if resolved_only_dependency_ids is _INVALID_RESOLVED_ONLY_HANDOFFS:
+        return False
+    declared_dependency_ids = {str(dep_id).strip() for dep_id in item.depends_on if str(dep_id).strip()}
+    if not resolved_only_dependency_ids.issubset(declared_dependency_ids):
         return False
 
     def _target(record: TaskWorkItemRecord) -> str:
@@ -65,6 +119,8 @@ def exec_claim_ready(item: TaskWorkItemRecord, items: dict[str, TaskWorkItemReco
             return False
         if dep.status == "resolved":
             continue
+        if str(dep_id) in resolved_only_dependency_ids:
+            return False
         # Same-file predecessor must be fully RESOLVED, not merely at QA: the
         # pending_qa fast-path would otherwise let a QA bounce of the predecessor
         # put two writers on the same file concurrently (I3-r29 fill chains /

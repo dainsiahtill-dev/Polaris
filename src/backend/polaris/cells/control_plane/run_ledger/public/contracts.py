@@ -12,6 +12,8 @@ class ReadRunLedgerProjectionQueryV1:
 
     workspace: str
     run_id: str = ""
+    factory_run_id: str = ""
+    project_id: str = ""
     max_runs: int = 50
     include_migration_ledgers: bool = False
 
@@ -20,10 +22,16 @@ class ReadRunLedgerProjectionQueryV1:
         if not workspace:
             raise ValueError("workspace must be a non-empty string")
         run_id = str(self.run_id or "").strip()
+        factory_run_id = str(self.factory_run_id or "").strip()
+        project_id = str(self.project_id or "").strip()
+        if project_id and not factory_run_id:
+            raise ValueError("project_id requires factory_run_id to prevent cross-run projection leakage")
         max_runs = max(1, min(500, int(self.max_runs or 50)))
         include_migration_ledgers = bool(self.include_migration_ledgers)
         object.__setattr__(self, "workspace", workspace)
         object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "factory_run_id", factory_run_id)
+        object.__setattr__(self, "project_id", project_id)
         object.__setattr__(self, "max_runs", max_runs)
         object.__setattr__(self, "include_migration_ledgers", include_migration_ledgers)
 

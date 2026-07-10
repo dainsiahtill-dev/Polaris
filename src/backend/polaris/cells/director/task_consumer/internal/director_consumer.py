@@ -3,28 +3,69 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import threading
 import time
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
 from polaris.cells.runtime.task_market.public.contracts import (
+    OWNER_REWORK_HANDOFFS_METADATA_KEY,
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
     FailTaskStageCommandV1,
+    OwnerReworkHandoffV1,
+    OwnerReworkRouteReasonV1,
+    OwnerReworkRouteResultV1,
     QueryTaskMarketStatusV1,
     RenewTaskLeaseCommandV1,
+    RouteOwnerReworkCommandV1,
+    TaskMarketError,
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
+    OwnerReworkExecutionAuthorizationV1,
+    PrepareOwnerReworkExecutionCommandV1,
+)
+from polaris.cells.runtime.task_runtime.public.service import prepare_owner_rework_execution
 from polaris.kernelone.fs.materialization import materialized_file_paths
+from polaris.kernelone.quality import resolve_owner_handoff_routing, task_record_routing_key
 
 logger = logging.getLogger(__name__)
 
 _ROUTE_DIRECT_TO_DIRECTOR = "direct_to_director"
 _ROUTE_CHIEF_BLUEPRINT_REQUIRED = "chief_blueprint_required"
+_OWNER_HANDOFF_TASK_RECORD_LIMIT = 10_000
+_OWNER_HANDOFF_REQUEST_KEYS = (
+    "ownership_handoff_requests",
+    "owner_task_retry_handoff_requests",
+    "unresolved_owner_handoff_requests",
+)
+_STRUCTURED_FAILURE_MAPPING_KEYS = (
+    "task_boundary_scope_filter",
+    "scope_authority",
+    "adapter_result",
+    "metadata",
+    "failure_payload",
+    "typed_failure",
+    "task_boundary",
+    "task_boundary_failure",
+    "scope_authority_evidence",
+    "evidence",
+)
+_STRUCTURED_FAILURE_SEQUENCE_KEYS = (
+    "failure_evidence",
+    "evidence_rows",
+    "evidence",
+)
+_MAX_STRUCTURED_FAILURE_MAPPINGS = 32
 
 
 def _normalize_task_market_route(payload: dict[str, Any]) -> str:
@@ -166,6 +207,35 @@ class InterfaceContractRepairRequiredError(RuntimeError):
     def __init__(self, message: str, *, repair_evidence: dict[str, Any]) -> None:
         super().__init__(message)
         self.repair_evidence = dict(repair_evidence)
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnerHandoffFailure:
+    """Typed adapter-failure evidence needed for owner-task routing."""
+
+    scope_payload: dict[str, Any]
+    failure_class: str
+    responsible_layer: str
+    failure_evidence: tuple[dict[str, Any], ...]
+
+
+class _OwnerHandoffRoutingRequiredError(RuntimeError):
+    """Control-flow signal for a structured ScopeAuthority owner handoff."""
+
+    def __init__(self, message: str, *, failure: _OwnerHandoffFailure) -> None:
+        super().__init__(message)
+        self.failure = failure
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnerReworkPreparationPlan:
+    """Validated public evidence needed before TaskRuntime may reopen a task."""
+
+    command: PrepareOwnerReworkExecutionCommandV1 | None
+    error_code: str = ""
+    error_message: str = ""
+    handoff_id: str = ""
+    task_role: str = ""
 
 
 DirectorTaskExecutor = Callable[[str, dict[str, Any], str], dict[str, Any]]
@@ -578,6 +648,201 @@ def _adapter_failure_message(adapter_result: dict[str, Any]) -> str:
             if detail:
                 return f"{base}: {detail[:400]}"
     return base
+
+
+def _structured_adapter_failure_mappings(
+    adapter_result: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    """Return bounded typed mappings reachable through known failure fields.
+
+    The adapter payload is untrusted. Traversal follows only schema-bearing
+    mapping/list fields and never inspects display strings or exception prose.
+    """
+
+    pending: list[Mapping[str, Any]] = [adapter_result]
+    collected: list[Mapping[str, Any]] = []
+    seen: set[int] = set()
+    while pending and len(collected) < _MAX_STRUCTURED_FAILURE_MAPPINGS:
+        current = pending.pop(0)
+        identity = id(current)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        collected.append(current)
+
+        for key in _STRUCTURED_FAILURE_MAPPING_KEYS:
+            nested = current.get(key)
+            if isinstance(nested, Mapping):
+                pending.append(nested)
+        for key in _STRUCTURED_FAILURE_SEQUENCE_KEYS:
+            rows = current.get(key)
+            if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes, bytearray)):
+                continue
+            pending.extend(row for row in rows if isinstance(row, Mapping))
+    return tuple(collected)
+
+
+def _contains_owner_handoff_requests(payload: Mapping[str, Any]) -> bool:
+    """Return whether a typed scope payload contains concrete handoff rows."""
+
+    for key in _OWNER_HANDOFF_REQUEST_KEYS:
+        rows = payload.get(key)
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes, bytearray)):
+            continue
+        if any(isinstance(row, Mapping) for row in rows):
+            return True
+    return False
+
+
+def _first_structured_failure_token(
+    mappings: Sequence[Mapping[str, Any]],
+    key: str,
+) -> str:
+    for payload in mappings:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _first_failure_evidence_rows(
+    mappings: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    for payload in mappings:
+        raw_evidence = payload.get("failure_evidence")
+        if isinstance(raw_evidence, Mapping):
+            return (dict(raw_evidence),)
+        if not isinstance(raw_evidence, Sequence) or isinstance(raw_evidence, (str, bytes, bytearray)):
+            continue
+        rows = tuple(dict(row) for row in raw_evidence if isinstance(row, Mapping))
+        if rows:
+            return rows
+    return ()
+
+
+def _owner_handoff_failure_from_adapter_failure(
+    adapter_result: Mapping[str, Any],
+) -> _OwnerHandoffFailure | None:
+    """Extract owner-handoff facts from a typed adapter failure payload."""
+
+    if adapter_result.get("success") is True:
+        return None
+    mappings = _structured_adapter_failure_mappings(adapter_result)
+    scope_payload = next(
+        (dict(payload) for payload in mappings if _contains_owner_handoff_requests(payload)),
+        None,
+    )
+    if scope_payload is None:
+        return None
+    return _OwnerHandoffFailure(
+        scope_payload=scope_payload,
+        failure_class=_first_structured_failure_token(mappings, "failure_class"),
+        responsible_layer=_first_structured_failure_token(mappings, "responsible_layer"),
+        failure_evidence=_first_failure_evidence_rows(mappings),
+    )
+
+
+def _owner_handoff_id(
+    *,
+    requester_task_id: str,
+    owner_task_id: str,
+    handoff_request: Mapping[str, Any],
+) -> str:
+    """Return a deterministic idempotency key for one typed handoff request."""
+
+    identity = {
+        "owner_parent": str(handoff_request.get("owner_parent") or "").strip(),
+        "owner_step_id": str(handoff_request.get("owner_step_id") or "").strip(),
+        "owner_task_id": owner_task_id,
+        "requester_task_id": requester_task_id,
+        "schema_version": str(handoff_request.get("schema_version") or "").strip(),
+        "target_file": str(handoff_request.get("target_file") or "").strip(),
+    }
+    canonical = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+    return f"owner-handoff-{digest}"
+
+
+def _owner_handoff_failure_metadata(
+    failure: _OwnerHandoffFailure,
+    *,
+    adapter_failure_message: str,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "reason": "scope_authority_owner_handoff",
+        "adapter_failure_message": adapter_failure_message,
+    }
+    if failure.failure_class:
+        metadata["failure_class"] = failure.failure_class
+    if failure.responsible_layer:
+        metadata["responsible_layer"] = failure.responsible_layer
+    return metadata
+
+
+def _owner_handoff_evidence_metadata(
+    failure: _OwnerHandoffFailure,
+    *,
+    handoff_request: Mapping[str, Any] | None,
+    routing_summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "scope_authority": dict(failure.scope_payload),
+        "owner_handoff_routing": dict(routing_summary),
+        "failure_evidence": [dict(row) for row in failure.failure_evidence],
+    }
+    if handoff_request is not None:
+        evidence["ownership_handoff_request"] = dict(handoff_request)
+    return evidence
+
+
+def _owner_handoff_route_result_summary(result: OwnerReworkRouteResultV1) -> dict[str, Any]:
+    """Project the public owner-rework result without interpreting its meaning."""
+
+    return {
+        "ok": result.ok,
+        "reason": result.reason.value,
+        "handoff_id": result.handoff_id,
+        "owner_task_id": result.owner_task_id,
+        "requester_task_id": result.requester_task_id,
+        "owner_status": result.owner_status,
+        "requester_status": result.requester_status,
+        "owner_version": result.owner_version,
+        "requester_version": result.requester_version,
+        "owner_reopened": result.owner_reopened,
+        "dependency_added": result.dependency_added,
+        "idempotent": result.idempotent,
+    }
+
+
+def _owner_handoff_failure_projection(
+    failure: _OwnerHandoffFailure,
+    *,
+    adapter_failure_message: str,
+    handoff_request: Mapping[str, Any] | None,
+    routing_summary: Mapping[str, Any],
+    route_result: OwnerReworkRouteResultV1 | None = None,
+    routing_error: BaseException | None = None,
+) -> dict[str, Any]:
+    """Build auditable failure metadata from typed handoff facts only."""
+
+    metadata = _owner_handoff_failure_metadata(
+        failure,
+        adapter_failure_message=adapter_failure_message,
+    )
+    evidence = _owner_handoff_evidence_metadata(
+        failure,
+        handoff_request=handoff_request,
+        routing_summary=routing_summary,
+    )
+    if route_result is not None:
+        evidence["owner_rework_route_result"] = _owner_handoff_route_result_summary(route_result)
+    if routing_error is not None:
+        evidence["owner_rework_route_error"] = {
+            "type": type(routing_error).__name__,
+            "message": str(routing_error),
+        }
+    metadata["owner_handoff_evidence"] = evidence
+    return metadata
 
 
 def _scan_director_artifact_quality_evidence(
@@ -1006,6 +1271,127 @@ class DirectorExecutionConsumer:
                 self._active_claim_task_id = ""
                 self._active_claim_started_monotonic = None
 
+    def _owner_rework_preparation_plan(
+        self,
+        *,
+        claim: Any,
+        task_id: str,
+        lease_token: str,
+    ) -> _OwnerReworkPreparationPlan:
+        """Build TaskRuntime evidence from TaskMarket's public claim projection.
+
+        This is intentionally a public-read adapter. TaskMarket retains all
+        routing and dependency authority; Director merely forwards the
+        successful claim, both published handoff copies, and no inferred
+        readiness state to TaskRuntime.
+        """
+
+        try:
+            status = self._svc.query_status(
+                QueryTaskMarketStatusV1(
+                    workspace=self._workspace,
+                    include_payload=False,
+                    limit=_OWNER_HANDOFF_TASK_RECORD_LIMIT,
+                )
+            )
+        except (OSError, RuntimeError, TaskMarketError, TypeError, ValueError) as exc:
+            return _OwnerReworkPreparationPlan(
+                command=None,
+                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_UNAVAILABLE",
+                error_message=f"TaskMarket owner rework evidence is unavailable: {exc}",
+            )
+        raw_items = getattr(status, "items", ())
+        if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes, bytearray)):
+            return _OwnerReworkPreparationPlan(command=None)
+        items_by_task_id = {
+            str(item.get("task_id") or "").strip(): dict(item)
+            for item in raw_items
+            if isinstance(item, Mapping) and str(item.get("task_id") or "").strip()
+        }
+        current_item = items_by_task_id.get(task_id)
+        if current_item is None:
+            return _OwnerReworkPreparationPlan(command=None)
+        metadata = current_item.get("metadata")
+        handoff_records = metadata.get(OWNER_REWORK_HANDOFFS_METADATA_KEY) if isinstance(metadata, Mapping) else None
+        if handoff_records is None:
+            return _OwnerReworkPreparationPlan(command=None)
+        if not isinstance(handoff_records, Mapping):
+            return _OwnerReworkPreparationPlan(
+                command=None,
+                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
+                error_message="TaskMarket owner rework handoff evidence is malformed",
+            )
+
+        candidates: list[tuple[OwnerReworkHandoffV1, str, str]] = []
+        for record in handoff_records.values():
+            try:
+                handoff = OwnerReworkHandoffV1.from_record(record)
+            except (TypeError, ValueError):
+                return _OwnerReworkPreparationPlan(
+                    command=None,
+                    error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
+                    error_message="TaskMarket owner rework handoff record is malformed",
+                )
+            if handoff.owner_task_id == task_id:
+                candidates.append((handoff, "owner", handoff.requester_task_id))
+            elif handoff.requester_task_id == task_id:
+                candidates.append((handoff, "requester", handoff.owner_task_id))
+        if len(candidates) != 1:
+            return _OwnerReworkPreparationPlan(
+                command=None,
+                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
+                error_message="TaskMarket claim must carry exactly one matching owner rework handoff",
+            )
+
+        handoff, task_role, counterparty_task_id = candidates[0]
+        counterparty_item = items_by_task_id.get(counterparty_task_id)
+        if counterparty_item is None:
+            return _OwnerReworkPreparationPlan(
+                command=None,
+                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
+                error_message="TaskMarket owner rework counterparty evidence is missing",
+                handoff_id=handoff.handoff_id,
+                task_role=task_role,
+            )
+        claimed_by = str(getattr(claim, "claimed_by", "") or current_item.get("claimed_by") or "").strip()
+        claim_status = str(getattr(claim, "status", "") or current_item.get("status") or "").strip()
+        claimed_item = dict(current_item)
+        claimed_item.update(
+            {
+                "task_id": task_id,
+                "status": claim_status,
+                "lease_token": lease_token,
+                "claimed_by": claimed_by,
+            }
+        )
+        try:
+            authorization = OwnerReworkExecutionAuthorizationV1(
+                schema_version=OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
+                workspace=self._workspace,
+                task_id=task_id,
+                lease_token=lease_token,
+                worker_id=self._worker_id,
+                worker_role="director",
+                task_role=task_role,
+                counterparty_task_id=counterparty_task_id,
+                handoff=handoff,
+                claimed_item=claimed_item,
+                counterparty_item=counterparty_item,
+            )
+        except (TypeError, ValueError) as exc:
+            return _OwnerReworkPreparationPlan(
+                command=None,
+                error_code="OWNER_REWORK_EXECUTION_EVIDENCE_INVALID",
+                error_message=f"TaskMarket owner rework claim evidence is invalid: {exc}",
+                handoff_id=handoff.handoff_id,
+                task_role=task_role,
+            )
+        return _OwnerReworkPreparationPlan(
+            command=PrepareOwnerReworkExecutionCommandV1(authorization=authorization),
+            handoff_id=handoff.handoff_id,
+            task_role=task_role,
+        )
+
     def poll_once(self) -> list[dict[str, Any]]:
         """Poll once for PENDING_EXEC tasks."""
         results: list[dict[str, Any]] = []
@@ -1077,6 +1463,83 @@ class DirectorExecutionConsumer:
                     )
                 )
                 return {"task_id": task_id, "ok": False, "reason": "scope_conflict"}
+
+        owner_rework_plan = self._owner_rework_preparation_plan(
+            claim=claim,
+            task_id=task_id,
+            lease_token=lease_token,
+        )
+        if owner_rework_plan.error_code:
+            self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code=owner_rework_plan.error_code,
+                    error_message=owner_rework_plan.error_message,
+                    requeue_stage="pending_exec",
+                    metadata={
+                        "handoff_id": owner_rework_plan.handoff_id,
+                        "task_role": owner_rework_plan.task_role,
+                        "reason": "owner_rework_execution_authorization_rejected",
+                    },
+                )
+            )
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "reason": "owner_rework_execution_authorization_rejected",
+                "error_code": owner_rework_plan.error_code,
+            }
+        if owner_rework_plan.command is not None:
+            try:
+                owner_rework_preparation = prepare_owner_rework_execution(owner_rework_plan.command)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="OWNER_REWORK_EXECUTION_PREPARATION_ERROR",
+                        error_message=f"TaskRuntime owner rework preparation failed: {exc}",
+                        requeue_stage="pending_exec",
+                        metadata={
+                            "handoff_id": owner_rework_plan.handoff_id,
+                            "task_role": owner_rework_plan.task_role,
+                            "reason": "owner_rework_execution_preparation_error",
+                        },
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "reason": "owner_rework_execution_preparation_error",
+                }
+            if not owner_rework_preparation.ok:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="OWNER_REWORK_EXECUTION_PREPARATION_REJECTED",
+                        error_message=owner_rework_preparation.reason,
+                        requeue_stage="pending_exec",
+                        metadata={
+                            "handoff_id": owner_rework_preparation.handoff_id,
+                            "task_role": owner_rework_preparation.task_role,
+                            "runtime_task_id": owner_rework_preparation.runtime_task_id,
+                            "runtime_code": owner_rework_preparation.code,
+                            "reason": "owner_rework_execution_preparation_rejected",
+                        },
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "reason": "owner_rework_execution_preparation_rejected",
+                    "runtime_code": owner_rework_preparation.code,
+                }
+            payload["owner_rework_execution_preparation"] = owner_rework_preparation.to_record()
 
         heartbeat: _LeaseHeartbeat | None = None
         try:
@@ -1334,6 +1797,14 @@ class DirectorExecutionConsumer:
                 "reason": "interface_contract_repair_required",
             }
 
+        except _OwnerHandoffRoutingRequiredError as exc:
+            return self._handle_owner_handoff_routing(
+                task_id=task_id,
+                lease_token=lease_token,
+                failure=exc.failure,
+                adapter_failure_message=str(exc),
+            )
+
         except Exception as exc:
             logger.exception("Execution failed for task %s: %s", task_id, exc)
             self._svc.fail_task_stage(
@@ -1350,6 +1821,330 @@ class DirectorExecutionConsumer:
         finally:
             if heartbeat is not None:
                 heartbeat.stop()
+
+    def _handle_owner_handoff_routing(
+        self,
+        *,
+        task_id: str,
+        lease_token: str,
+        failure: _OwnerHandoffFailure,
+        adapter_failure_message: str,
+    ) -> dict[str, Any]:
+        """Route one structured owner handoff while the requester lease is held.
+
+        The KernelOne resolver only reads scope and Task Market projections. The
+        Task Market public route command remains the sole state-transition
+        authority for the requester lease, dependency, and owner reopening.
+        """
+
+        routing_summary: dict[str, Any] = {}
+        handoff_request: Mapping[str, Any] | None = None
+        try:
+            status = self._svc.query_status(
+                QueryTaskMarketStatusV1(
+                    workspace=self._workspace,
+                    include_payload=False,
+                    limit=_OWNER_HANDOFF_TASK_RECORD_LIMIT,
+                )
+            )
+            raw_task_records = status.items
+            if not isinstance(raw_task_records, Sequence) or isinstance(raw_task_records, (str, bytes, bytearray)):
+                raise TypeError("Task Market owner-handoff status rows must be a sequence")
+            task_records = tuple(dict(row) for row in raw_task_records if isinstance(row, Mapping))
+            routing = resolve_owner_handoff_routing(failure.scope_payload, task_records)
+            routing_summary = dict(routing.summary)
+            routing_summary["task_record_count"] = len(task_records)
+        except (OSError, TaskMarketError, TypeError, ValueError) as exc:
+            logger.exception(
+                "Owner-handoff projection failed: task_id=%s failure_class=%s error=%s",
+                task_id,
+                failure.failure_class,
+                exc,
+            )
+            return self._fail_owner_handoff(
+                task_id=task_id,
+                lease_token=lease_token,
+                failure=failure,
+                adapter_failure_message=adapter_failure_message,
+                error_code="OWNER_HANDOFF_PROJECTION_FAILED",
+                error_message="Owner-handoff projection could not be resolved",
+                reason="owner_handoff_projection_failed",
+                requeue_stage="pending_exec",
+                routing_summary=routing_summary,
+                routing_error=exc,
+            )
+
+        unresolved_requests = (
+            routing.index.unmatched_owner_handoff_requests
+            or routing.index.unknown_owner_handoff_requests
+        )
+        if routing.has_unresolved_handoffs or unresolved_requests:
+            handoff_request = unresolved_requests[0] if unresolved_requests else None
+            return self._fail_owner_handoff(
+                task_id=task_id,
+                lease_token=lease_token,
+                failure=failure,
+                adapter_failure_message=adapter_failure_message,
+                error_code="OWNER_HANDOFF_UNRESOLVED",
+                error_message="Owner-handoff projection requires Chief Engineer scope resolution",
+                reason="owner_handoff_unresolved",
+                requeue_stage="pending_design",
+                routing_summary=routing_summary,
+                handoff_request=handoff_request,
+            )
+
+        if len(routing.owner_routing_keys) != 1:
+            error_code = "OWNER_HANDOFF_AMBIGUOUS" if routing.owner_routing_keys else "OWNER_HANDOFF_UNRESOLVED"
+            if routing.owner_routing_keys:
+                handoff_request = routing.index.matched_owner_handoff_by_task_key.get(routing.owner_routing_keys[0])
+            return self._fail_owner_handoff(
+                task_id=task_id,
+                lease_token=lease_token,
+                failure=failure,
+                adapter_failure_message=adapter_failure_message,
+                error_code=error_code,
+                error_message="Owner-handoff projection did not resolve exactly one owner task",
+                reason="owner_handoff_ambiguous" if routing.owner_routing_keys else "owner_handoff_unresolved",
+                requeue_stage="pending_design",
+                routing_summary=routing_summary,
+                handoff_request=handoff_request,
+            )
+
+        owner_task_key = routing.owner_routing_keys[0]
+        owner_record = next(
+            (record for record in task_records if task_record_routing_key(record) == owner_task_key),
+            None,
+        )
+        handoff_request = routing.index.matched_owner_handoff_by_task_key.get(owner_task_key)
+        owner_task_id = str(owner_record.get("task_id") or "").strip() if owner_record is not None else ""
+        if not owner_task_id or not isinstance(handoff_request, Mapping):
+            return self._fail_owner_handoff(
+                task_id=task_id,
+                lease_token=lease_token,
+                failure=failure,
+                adapter_failure_message=adapter_failure_message,
+                error_code="OWNER_HANDOFF_OWNER_RECORD_INVALID",
+                error_message="Owner-handoff projection matched an invalid Task Market owner record",
+                reason="owner_handoff_owner_record_invalid",
+                requeue_stage="pending_design",
+                routing_summary=routing_summary,
+                handoff_request=handoff_request,
+            )
+
+        routing_summary = {
+            **routing_summary,
+            "selected_owner_task_key": owner_task_key,
+            "selected_owner_task_id": owner_task_id,
+        }
+        handoff_id = _owner_handoff_id(
+            requester_task_id=task_id,
+            owner_task_id=owner_task_id,
+            handoff_request=handoff_request,
+        )
+        try:
+            route_result = self._svc.route_owner_rework(
+                RouteOwnerReworkCommandV1(
+                    workspace=self._workspace,
+                    owner_task_id=owner_task_id,
+                    requester_task_id=task_id,
+                    requester_lease_token=lease_token,
+                    handoff_id=handoff_id,
+                    failure_metadata=_owner_handoff_failure_metadata(
+                        failure,
+                        adapter_failure_message=adapter_failure_message,
+                    ),
+                    evidence_metadata=_owner_handoff_evidence_metadata(
+                        failure,
+                        handoff_request=handoff_request,
+                        routing_summary=routing_summary,
+                    ),
+                    metadata={
+                        "worker_id": self._worker_id,
+                        "failure_class": failure.failure_class,
+                        "responsible_layer": failure.responsible_layer,
+                    },
+                )
+            )
+        except (OSError, TaskMarketError, TypeError, ValueError) as exc:
+            logger.exception(
+                "Owner-handoff route failed: task_id=%s owner_task_id=%s handoff_id=%s error=%s",
+                task_id,
+                owner_task_id,
+                handoff_id,
+                exc,
+            )
+            return self._fail_owner_handoff(
+                task_id=task_id,
+                lease_token=lease_token,
+                failure=failure,
+                adapter_failure_message=adapter_failure_message,
+                error_code="OWNER_HANDOFF_ROUTE_ERROR",
+                error_message="Owner-handoff route operation failed",
+                reason="owner_handoff_route_error",
+                requeue_stage="pending_exec",
+                routing_summary=routing_summary,
+                handoff_request=handoff_request,
+                routing_error=exc,
+            )
+
+        if not isinstance(route_result, OwnerReworkRouteResultV1):
+            protocol_error = TypeError(
+                "route_owner_rework returned an unexpected result type: "
+                f"{type(route_result).__name__}"
+            )
+            logger.error(
+                "Owner-handoff route result protocol violation: task_id=%s owner_task_id=%s handoff_id=%s",
+                task_id,
+                owner_task_id,
+                handoff_id,
+            )
+            return self._fail_owner_handoff(
+                task_id=task_id,
+                lease_token=lease_token,
+                failure=failure,
+                adapter_failure_message=adapter_failure_message,
+                error_code="OWNER_HANDOFF_ROUTE_PROTOCOL_ERROR",
+                error_message="Owner-handoff route returned an invalid result",
+                reason="owner_handoff_route_protocol_error",
+                requeue_stage="pending_exec",
+                routing_summary=routing_summary,
+                handoff_request=handoff_request,
+                routing_error=protocol_error,
+            )
+
+        route_summary = _owner_handoff_route_result_summary(route_result)
+        routing_summary = {**routing_summary, "route_result": route_summary}
+        if route_result.ok and route_result.reason in {
+            OwnerReworkRouteReasonV1.ROUTED,
+            OwnerReworkRouteReasonV1.ALREADY_ROUTED,
+        }:
+            logger.info(
+                "Owner-handoff routed: task_id=%s owner_task_id=%s handoff_id=%s reason=%s idempotent=%s",
+                task_id,
+                owner_task_id,
+                handoff_id,
+                route_result.reason.value,
+                route_result.idempotent,
+            )
+            return {
+                "task_id": task_id,
+                "ok": True,
+                "reason": route_result.reason.value,
+                "status": route_result.requester_status,
+                "owner_task_id": route_result.owner_task_id,
+                "handoff_id": route_result.handoff_id,
+                "idempotent": route_result.idempotent,
+            }
+
+        if route_result.ok:
+            protocol_error = ValueError(
+                f"route_owner_rework returned ok=True for unsupported reason={route_result.reason.value}"
+            )
+            logger.error(
+                "Owner-handoff route returned an unsupported success reason: task_id=%s reason=%s",
+                task_id,
+                route_result.reason.value,
+            )
+            return self._fail_owner_handoff(
+                task_id=task_id,
+                lease_token=lease_token,
+                failure=failure,
+                adapter_failure_message=adapter_failure_message,
+                error_code="OWNER_HANDOFF_ROUTE_PROTOCOL_ERROR",
+                error_message="Owner-handoff route returned an unsupported success reason",
+                reason="owner_handoff_route_protocol_error",
+                requeue_stage="pending_exec",
+                routing_summary=routing_summary,
+                handoff_request=handoff_request,
+                route_result=route_result,
+                routing_error=protocol_error,
+            )
+
+        if route_result.reason in {
+            OwnerReworkRouteReasonV1.REQUESTER_LEASE_MISMATCH,
+            OwnerReworkRouteReasonV1.REQUESTER_NOT_FOUND,
+            OwnerReworkRouteReasonV1.STALE_WRITE_CONFLICT,
+        }:
+            logger.warning(
+                "Owner-handoff route fenced without follow-up failure: task_id=%s reason=%s handoff_id=%s",
+                task_id,
+                route_result.reason.value,
+                handoff_id,
+            )
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "reason": "owner_handoff_route_fenced",
+                "error_code": "OWNER_HANDOFF_ROUTE_FENCED",
+                "failure_class": failure.failure_class,
+                "route_reason": route_result.reason.value,
+                "handoff_id": route_result.handoff_id,
+                "owner_handoff_routing": routing_summary,
+            }
+
+        return self._fail_owner_handoff(
+            task_id=task_id,
+            lease_token=lease_token,
+            failure=failure,
+            adapter_failure_message=adapter_failure_message,
+            error_code="OWNER_HANDOFF_ROUTE_REJECTED",
+            error_message=f"Owner-handoff route rejected: {route_result.reason.value}",
+            reason="owner_handoff_route_rejected",
+            requeue_stage="pending_exec",
+            routing_summary=routing_summary,
+            handoff_request=handoff_request,
+            route_result=route_result,
+        )
+
+    def _fail_owner_handoff(
+        self,
+        *,
+        task_id: str,
+        lease_token: str,
+        failure: _OwnerHandoffFailure,
+        adapter_failure_message: str,
+        error_code: str,
+        error_message: str,
+        reason: str,
+        requeue_stage: str,
+        routing_summary: Mapping[str, Any],
+        handoff_request: Mapping[str, Any] | None = None,
+        route_result: OwnerReworkRouteResultV1 | None = None,
+        routing_error: BaseException | None = None,
+    ) -> dict[str, Any]:
+        """Requeue a lease-held owner-handoff failure with its typed evidence."""
+
+        metadata = _owner_handoff_failure_projection(
+            failure,
+            adapter_failure_message=adapter_failure_message,
+            handoff_request=handoff_request,
+            routing_summary=routing_summary,
+            route_result=route_result,
+            routing_error=routing_error,
+        )
+        self._svc.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=self._workspace,
+                task_id=task_id,
+                lease_token=lease_token,
+                error_code=error_code,
+                error_message=error_message,
+                requeue_stage=requeue_stage,
+                metadata=metadata,
+            )
+        )
+        result: dict[str, Any] = {
+            "task_id": task_id,
+            "ok": False,
+            "reason": reason,
+            "error_code": error_code,
+            "failure_class": failure.failure_class,
+            "responsible_layer": failure.responsible_layer,
+        }
+        if route_result is not None:
+            result["route_reason"] = route_result.reason.value
+            result["handoff_id"] = route_result.handoff_id
+        return result
 
     def _append_final_convergence_event(
         self,
@@ -1607,6 +2402,12 @@ class DirectorExecutionConsumer:
                 raise InterfaceContractRepairRequiredError(
                     _adapter_failure_message(adapter_result),
                     repair_evidence=repair_evidence,
+                )
+            owner_handoff_failure = _owner_handoff_failure_from_adapter_failure(adapter_result)
+            if owner_handoff_failure is not None:
+                raise _OwnerHandoffRoutingRequiredError(
+                    _adapter_failure_message(adapter_result),
+                    failure=owner_handoff_failure,
                 )
             raise RuntimeError(_adapter_failure_message(adapter_result))
 

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     AppendToolCallLifecycleEventCommandV1,
@@ -21,6 +22,42 @@ from polaris.cells.control_plane.run_ledger.public import (
     service as run_ledger_service,
     summarize_run_ledger_projection,
 )
+from polaris.cells.events.fact_stream.public import AppendFactEventCommandV1, append_fact_event
+
+
+def test_projection_query_rejects_project_scope_without_factory_run() -> None:
+    with pytest.raises(ValueError, match="project_id requires factory_run_id"):
+        ReadRunLedgerProjectionQueryV1(
+            workspace="/tmp/polaris-run-ledger-contract",
+            project_id="L1-01",
+        )
+
+
+def _append_task_runtime_execution_fact(
+    workspace: Path,
+    *,
+    run_id: str,
+    factory_run_id: str,
+    project_id: str,
+    task_id: str,
+) -> None:
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="task_execution_updated",
+            source="run_ledger_scope_test",
+            run_id=run_id,
+            task_id=task_id,
+            payload={
+                "event_type": "task_execution_updated",
+                "run_id": run_id,
+                "task_id": task_id,
+                "factory_run_id": factory_run_id,
+                "factory_bench_project_id": project_id,
+            },
+        )
+    )
 
 
 def _write_ledger_event(workspace: Path, *, run_id: str = "run-1") -> None:
@@ -109,6 +146,11 @@ def test_append_run_ledger_event_public_service_projects_event(tmp_path: Path) -
     )
 
     ledger_path = Path(str(result.receipt["ledger_path"]))
+    fact_receipt = result.receipt["fact_receipt"]
+    assert fact_receipt["stream"] == "execution.control_plane"
+    assert fact_receipt["appended_seq"] == 1
+    # The NDJSON file is a rebuildable compatibility view, not authority.
+    ledger_path.unlink()
     projection = read_run_ledger_projection(
         ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-1")
     ).projection
@@ -118,6 +160,10 @@ def test_append_run_ledger_event_public_service_projects_event(tmp_path: Path) -
     assert projection["ok"] is True
     assert projection["projects"][0]["project_id"] == "P1"
     assert projection["evidence_modalities"]["tool_receipt"]["present"] == 1
+    assert projection["run_projection"]["gate_count"] == 1
+    assert projection["run_projection"]["gates"][0]["name"] == "director_mutation"
+    assert projection["query_scope"] == {"run_id": "run-1", "factory_run_id": "", "project_id": ""}
+    assert projection["consumed_run_ids"] == ["run-1"]
 
 
 def test_append_tool_call_lifecycle_event_public_service_projects_event(tmp_path: Path) -> None:
@@ -534,8 +580,276 @@ def test_public_projection_carries_task_boundary_and_tool_lifecycle(tmp_path: Pa
 
     assert projection["tool_lifecycle"]["dropped_count"] == 1
     assert projection["task_boundary"]["latest"]["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
+    assert projection["task_boundary"]["historical_failed_count"] == 1
+    assert projection["task_boundary"]["latest_by_task"]["TASK-1"]["failure_class"] == (
+        "DEFERRED_FOLLOWUP_REQUIRED"
+    )
     assert projection["projects"][0]["tool_lifecycle"]["dropped_count"] == 1
     assert projection["projects"][0]["task_boundary"]["latest"]["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
+
+
+def test_read_run_ledger_projection_aggregates_factory_children_without_workspace_leakage(
+    tmp_path: Path,
+) -> None:
+    factory_run_id = "factory-r26"
+    project_id = "L1-01"
+    parent_run_id = "ce65-parent-gate"
+    child_run_ids = ("director-1", "director-2", "director-3", "director-4")
+
+    for index, child_run_id in enumerate(child_run_ids, start=1):
+        _append_task_runtime_execution_fact(
+            tmp_path,
+            run_id=child_run_id,
+            factory_run_id=factory_run_id,
+            project_id=project_id,
+            task_id=f"TASK-{index}",
+        )
+    _append_task_runtime_execution_fact(
+        tmp_path,
+        run_id=child_run_ids[0],
+        factory_run_id=factory_run_id,
+        project_id=project_id,
+        task_id="TASK-1-RETRY",
+    )
+    _append_task_runtime_execution_fact(
+        tmp_path,
+        run_id="other-factory-director",
+        factory_run_id="factory-r27",
+        project_id=project_id,
+        task_id="TASK-OTHER-FACTORY",
+    )
+    _append_task_runtime_execution_fact(
+        tmp_path,
+        run_id="other-project-director",
+        factory_run_id=factory_run_id,
+        project_id="L1-02",
+        task_id="TASK-OTHER-PROJECT",
+    )
+
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id=parent_run_id,
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "real_run",
+                "gate": {"name": "real_run_gate", "ok": True, "summary": "parent gate passed"},
+                "job_token": {
+                    "token_id": "parent-token",
+                    "run_id": parent_run_id,
+                    "project_id": project_id,
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            },
+        )
+    )
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id=child_run_ids[0],
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=0,
+        dispatched_tool_calls_count=0,
+        receipts=[],
+        dispatch_status="dropped",
+        failure_class="TOOL_DISPATCH_DROPPED",
+    ).to_dict()
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id=child_run_ids[0],
+            event={
+                "event_type": "tool_call_lifecycle",
+                "run_id": child_run_ids[0],
+                "task_id": "TASK-1",
+                "job_token": {"project_id": project_id, "capability_audit": {"ok": True, "issues": []}},
+                "tool_call_lifecycle_receipt": lifecycle,
+            },
+        )
+    )
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id=child_run_ids[1],
+            event={
+                "event_type": "task_boundary_verdict",
+                "run_id": child_run_ids[1],
+                "task_id": "TASK-2",
+                "job_token": {"project_id": project_id, "capability_audit": {"ok": True, "issues": []}},
+                "task_boundary_verdict": {
+                    "schema_version": "polaris.task_boundary_verdict.v1",
+                    "task_id": "TASK-2",
+                    "status": "deferred_followup_required",
+                    "ok": False,
+                    "failure_class": "DEFERRED_FOLLOWUP_REQUIRED",
+                    "responsible_layer": "execution_control_plane",
+                    "reason": "needs follow-up",
+                },
+            },
+        )
+    )
+    for child_run_id in child_run_ids[2:]:
+        append_run_ledger_event(
+            AppendRunLedgerEventCommandV1(
+                workspace=str(tmp_path),
+                run_id=child_run_id,
+                event={
+                    "event_type": "gate_evaluated",
+                    "stage": "director",
+                    "gate": {"name": child_run_id, "ok": True, "summary": "director completed"},
+                    "job_token": {
+                        "token_id": f"{child_run_id}-token",
+                        "run_id": child_run_id,
+                        "project_id": project_id,
+                        "capability_audit": {"ok": True, "issues": []},
+                        "gate_policy": {},
+                    },
+                    "physical_evidence": {},
+                },
+            )
+        )
+    for unrelated_run_id in ("other-factory-director", "other-project-director"):
+        append_run_ledger_event(
+            AppendRunLedgerEventCommandV1(
+                workspace=str(tmp_path),
+                run_id=unrelated_run_id,
+                event={
+                    "event_type": "gate_evaluated",
+                    "stage": "director",
+                    "gate": {"name": f"{unrelated_run_id}-gate", "ok": True, "summary": "must exclude"},
+                    "job_token": {
+                        "token_id": f"{unrelated_run_id}-token",
+                        "run_id": unrelated_run_id,
+                        "project_id": project_id,
+                        "capability_audit": {"ok": True, "issues": []},
+                        "gate_policy": {},
+                    },
+                    "physical_evidence": {},
+                },
+            )
+        )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            run_id=parent_run_id,
+            factory_run_id=factory_run_id,
+            project_id=project_id,
+        )
+    ).projection
+
+    assert projection["query_scope"] == {
+        "run_id": parent_run_id,
+        "factory_run_id": factory_run_id,
+        "project_id": project_id,
+    }
+    assert projection["consumed_run_ids"] == [parent_run_id, *child_run_ids]
+    assert len(projection["projects"]) == 1
+    assert projection["projects"][0]["project_id"] == project_id
+    assert projection["run_projection"]["gate_count"] == 3
+    assert [gate["name"] for gate in projection["run_projection"]["gates"]] == [
+        "real_run_gate",
+        "director-3",
+        "director-4",
+    ]
+    assert projection["tool_lifecycle"]["dropped_count"] == 1
+    assert projection["task_boundary"]["latest"]["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
+    rendered = json.dumps(projection, sort_keys=True)
+    assert "other-factory-director-gate" not in rendered
+    assert "other-project-director-gate" not in rendered
+
+
+def test_read_run_ledger_projection_scoped_legacy_fallback_uses_selected_run_ids(tmp_path: Path) -> None:
+    _append_task_runtime_execution_fact(
+        tmp_path,
+        run_id="director-legacy",
+        factory_run_id="factory-r26",
+        project_id="L1-01",
+        task_id="TASK-LEGACY",
+    )
+    _append_task_runtime_execution_fact(
+        tmp_path,
+        run_id="director-legacy-unrelated",
+        factory_run_id="factory-r27",
+        project_id="L1-01",
+        task_id="TASK-UNRELATED",
+    )
+    for run_id, gate_name in (
+        ("director-legacy", "legacy-director-gate"),
+        ("director-legacy-unrelated", "unrelated-legacy-gate"),
+    ):
+        RunLedger(tmp_path, run_id=run_id).append_event(
+            {
+                "event_type": "gate_evaluated",
+                "gate": {"name": gate_name, "ok": True, "summary": "legacy event"},
+                "job_token": {
+                    "token_id": f"{run_id}-token",
+                    "run_id": run_id,
+                    "project_id": "L1-01",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            }
+        )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            factory_run_id="factory-r26",
+            project_id="L1-01",
+        )
+    ).projection
+
+    assert projection["consumed_run_ids"] == ["director-legacy"]
+    assert [gate["name"] for gate in projection["run_projection"]["gates"]] == ["legacy-director-gate"]
+
+
+def test_read_run_ledger_projection_scope_miss_does_not_widen_to_workspace(tmp_path: Path) -> None:
+    _append_task_runtime_execution_fact(
+        tmp_path,
+        run_id="other-factory-director",
+        factory_run_id="factory-r27",
+        project_id="L1-01",
+        task_id="TASK-OTHER",
+    )
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="other-factory-director",
+            event={
+                "event_type": "gate_evaluated",
+                "gate": {"name": "other-factory-gate", "ok": True, "summary": "must not leak"},
+                "job_token": {
+                    "token_id": "other-factory-token",
+                    "run_id": "other-factory-director",
+                    "project_id": "L1-01",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            },
+        )
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            factory_run_id="factory-r26",
+            project_id="L1-01",
+        )
+    ).projection
+
+    assert projection["available"] is False
+    assert projection["consumed_run_ids"] == []
+    assert projection["query_scope"] == {
+        "run_id": "",
+        "factory_run_id": "factory-r26",
+        "project_id": "L1-01",
+    }
 
 
 def test_read_run_ledger_projection_evidence_policy_failed_is_not_ok(tmp_path: Path) -> None:

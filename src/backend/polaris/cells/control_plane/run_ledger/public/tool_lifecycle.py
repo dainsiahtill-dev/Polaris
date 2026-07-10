@@ -79,6 +79,29 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _text_fallback_lifecycle_fields(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+    payload = _mapping(metadata)
+    audit = _mapping(payload.get("final_request_context_audit"))
+    surface = _mapping(audit.get("tool_execution_surface"))
+    text_fallback_requested = bool(
+        payload.get("text_fallback_requested")
+        or payload.get("required_tool_text_fallback")
+        or surface.get("text_fallback_requested")
+    )
+    compatibility_mode = _clean_string(payload.get("compatibility_mode") or surface.get("compatibility_mode")) or (
+        "required_tool_text_fallback" if text_fallback_requested else "native_tools"
+    )
+    return {
+        "compatibility_mode": compatibility_mode,
+        "text_fallback_requested": text_fallback_requested,
+        "parser_attempted": bool(payload.get("text_tool_parser_attempted") or surface.get("parser_attempted")),
+        "native_tool_surface_absent_because_text_fallback": bool(
+            payload.get("native_tool_surface_absent_because_text_fallback")
+            or surface.get("native_tool_surface_absent_because_text_fallback")
+        ),
+    }
+
+
 def _dropped_tool_call_refs(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, (list, tuple)):
         return []
@@ -336,6 +359,10 @@ class ToolCallLifecycleReceiptV1:
     effect_receipt_refs: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     dropped_tool_calls: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     reason: str = ""
+    compatibility_mode: str = "native_tools"
+    text_fallback_requested: bool = False
+    parser_attempted: bool = False
+    native_tool_surface_absent_because_text_fallback: bool = False
     schema_version: str = "tool_call_lifecycle_receipt.v1"
 
     def to_dict(self) -> dict[str, Any]:
@@ -360,6 +387,10 @@ class ToolCallLifecycleReceiptV1:
             "effect_receipt_refs": list(self.effect_receipt_refs),
             "dropped_tool_calls": list(self.dropped_tool_calls),
             "reason": self.reason,
+            "compatibility_mode": self.compatibility_mode,
+            "text_fallback_requested": self.text_fallback_requested,
+            "parser_attempted": self.parser_attempted,
+            "native_tool_surface_absent_because_text_fallback": (self.native_tool_surface_absent_because_text_fallback),
         }
 
 
@@ -379,6 +410,10 @@ def build_tool_call_lifecycle_receipt(
     dispatch_status: str = "",
     failure_class: str = "",
     reason: str = "",
+    compatibility_mode: str = "native_tools",
+    text_fallback_requested: bool = False,
+    parser_attempted: bool = False,
+    native_tool_surface_absent_because_text_fallback: bool = False,
 ) -> ToolCallLifecycleReceiptV1:
     receipt_rows = [dict(item) for item in receipts or [] if isinstance(item, dict)]
     native_envelope_refs = _native_tool_call_envelope_refs(native_tool_call_envelopes)
@@ -444,6 +479,10 @@ def build_tool_call_lifecycle_receipt(
         effect_receipt_refs=tuple(effect_refs),
         dropped_tool_calls=tuple(dropped),
         reason=_clean_string(reason),
+        compatibility_mode=_clean_string(compatibility_mode) or "native_tools",
+        text_fallback_requested=bool(text_fallback_requested),
+        parser_attempted=bool(parser_attempted),
+        native_tool_surface_absent_because_text_fallback=bool(native_tool_surface_absent_because_text_fallback),
     )
 
 
@@ -460,6 +499,10 @@ def build_tool_batch_lifecycle_receipt(
     dropped_tool_calls: list[Any] | tuple[Any, ...] | None = None,
     native_tool_call_envelopes: list[Any] | tuple[Any, ...] | None = None,
     missing_receipt_reason: str = "decoded_tool_batch_produced_no_authoritative_batch_receipt",
+    compatibility_mode: str = "native_tools",
+    text_fallback_requested: bool = False,
+    parser_attempted: bool = False,
+    native_tool_surface_absent_because_text_fallback: bool = False,
 ) -> ToolCallLifecycleReceiptV1:
     """Build the lifecycle receipt for a decoded transaction tool batch.
 
@@ -486,6 +529,11 @@ def build_tool_batch_lifecycle_receipt(
                 "reason": "decoded_tool_batch_without_authoritative_receipt",
             }
         )
+    fallback_failure_class = (
+        FailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value
+        if text_fallback_requested and result_count <= 0
+        else ""
+    )
 
     return build_tool_call_lifecycle_receipt(
         run_id=run_id,
@@ -498,7 +546,12 @@ def build_tool_batch_lifecycle_receipt(
         receipts=receipt_rows,
         dropped_tool_calls=dropped_refs,
         native_tool_call_envelopes=native_envelope_refs,
+        failure_class=fallback_failure_class,
         reason=missing_receipt_reason if decoded_count > 0 and result_count <= 0 else "",
+        compatibility_mode=compatibility_mode,
+        text_fallback_requested=text_fallback_requested,
+        parser_attempted=parser_attempted,
+        native_tool_surface_absent_because_text_fallback=native_tool_surface_absent_because_text_fallback,
     )
 
 
@@ -528,6 +581,7 @@ def build_tool_batch_lifecycle_receipt_from_sources(
     """
 
     native_facts = native_tool_call_facts_from_sources(metadata, native_tool_calls)
+    fallback_fields = _text_fallback_lifecycle_fields(metadata)
     return build_tool_batch_lifecycle_receipt(
         run_id=run_id,
         task_id=task_id,
@@ -540,6 +594,7 @@ def build_tool_batch_lifecycle_receipt_from_sources(
         dropped_tool_calls=dropped_tool_calls,
         native_tool_call_envelopes=native_tool_call_envelope_refs_from_metadata(metadata),
         missing_receipt_reason=missing_receipt_reason,
+        **fallback_fields,
     )
 
 
@@ -651,17 +706,25 @@ def build_missing_dispatch_lifecycle_receipt(
         return None
 
     native_envelopes: list[dict[str, Any]] = []
+    fallback_fields: dict[str, Any] = {
+        "compatibility_mode": "native_tools",
+        "text_fallback_requested": False,
+        "parser_attempted": False,
+        "native_tool_surface_absent_because_text_fallback": False,
+    }
     for candidate in metadata_candidates:
+        candidate_fallback_fields = _text_fallback_lifecycle_fields(candidate)
+        if candidate_fallback_fields["text_fallback_requested"]:
+            fallback_fields = candidate_fallback_fields
         envelopes = native_tool_call_envelope_refs_from_metadata(candidate)
         if envelopes:
             native_envelopes = [dict(item) for item in envelopes]
             break
 
     dropped_tool_calls = (
-        []
-        if native_envelopes
-        else [{"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in tools]
+        [] if native_envelopes else [{"tool_name": tool_name, "reason": "tool_dispatch_dropped"} for tool_name in tools]
     )
+    text_fallback_not_dispatched = bool(fallback_fields["text_fallback_requested"])
     return build_tool_call_lifecycle_receipt(
         run_id="",
         task_id="",
@@ -671,8 +734,13 @@ def build_missing_dispatch_lifecycle_receipt(
         dropped_tool_calls=dropped_tool_calls,
         native_tool_call_envelopes=native_envelopes,
         dispatch_status="dropped",
-        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-        reason=reason,
+        failure_class=(
+            FailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value
+            if text_fallback_not_dispatched
+            else FailureClassV1.TOOL_DISPATCH_DROPPED.value
+        ),
+        reason=("required_tool_text_fallback_not_dispatched" if text_fallback_not_dispatched else reason),
+        **fallback_fields,
     ).to_dict()
 
 
@@ -724,7 +792,9 @@ def build_tool_call_lifecycle_run_ledger_event(
             or normalized_task_id
             or "unknown"
         )
-        token_payload["stage"] = _clean_string(token_payload.get("stage")) or _clean_string(stage) or "director_tool_dispatch"
+        token_payload["stage"] = (
+            _clean_string(token_payload.get("stage")) or _clean_string(stage) or "director_tool_dispatch"
+        )
         if not isinstance(token_payload.get("capability_audit"), Mapping):
             token_payload["capability_audit"] = (
                 dict(capability_audit) if isinstance(capability_audit, Mapping) else {"ok": True, "issues": []}
@@ -759,6 +829,9 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
     payload = _mapping(value)
     if payload:
         payload.setdefault("schema_version", "tool_call_lifecycle_receipt.v1")
+        fallback_fields = _text_fallback_lifecycle_fields(payload)
+        for key, field_value in fallback_fields.items():
+            payload.setdefault(key, field_value)
         native_refs = _native_tool_call_envelope_refs(payload.get("native_tool_call_envelope_refs"))
         if not native_refs:
             native_refs = _native_tool_call_envelope_refs(payload.get("native_tool_call_envelopes"))
@@ -774,7 +847,9 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
         payload["effect_receipt_refs"] = effect_refs
         payload["dispatched_tool_calls_count"] = dispatched_count
         payload["tool_result_count"] = result_count
-        payload["effect_receipt_count"] = len(effect_refs) if effect_refs else _int_value(payload.get("effect_receipt_count"))
+        payload["effect_receipt_count"] = (
+            len(effect_refs) if effect_refs else _int_value(payload.get("effect_receipt_count"))
+        )
         dropped_tool_calls = _dropped_tool_call_refs(payload.get("dropped_tool_calls"))
         if native_count > 0 and dispatched_count <= 0 and not dropped_tool_calls:
             dropped_tool_calls = _dropped_tool_calls_from_native_envelopes(native_refs)
@@ -807,8 +882,7 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
             payload["failure_class"] = normalize_failure_class(payload.get("failure_class"))
         payload.setdefault(
             "ok",
-            payload["dispatch_status"] == "dispatched"
-            and not normalize_failure_class(payload.get("failure_class")),
+            payload["dispatch_status"] == "dispatched" and not normalize_failure_class(payload.get("failure_class")),
         )
         return payload
     return {
@@ -932,11 +1006,7 @@ def native_tool_call_facts_from_metadata(metadata: Mapping[str, Any] | None) -> 
         return {}
     envelopes = native_tool_call_envelope_refs_from_metadata(metadata)
     if envelopes:
-        names = [
-            name
-            for envelope in envelopes
-            if (name := _clean_string(envelope.get("tool_name")))
-        ]
+        names = [name for envelope in envelopes if (name := _clean_string(envelope.get("tool_name")))]
         return {
             "native_tool_calls_count": len(envelopes),
             "native_tool_call_names": names,
@@ -1337,18 +1407,27 @@ def task_boundary_tool_dispatch_from_lifecycle_receipt(lifecycle_receipt: Mappin
     lifecycle = normalize_tool_call_lifecycle_receipt(lifecycle_receipt)
     dispatch_status = _clean_string(lifecycle.get("dispatch_status"))
     failure_class = normalize_failure_class(lifecycle.get("failure_class"))
-    if dispatch_status != "dropped" and failure_class != FailureClassV1.TOOL_DISPATCH_DROPPED.value:
+    task_boundary_failures = {
+        FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        FailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value,
+        FailureClassV1.NO_MATERIALIZED_EFFECT.value,
+    }
+    if dispatch_status not in {"dropped", "blocked", "decode_failed", "failed"} and failure_class not in task_boundary_failures:
         return None
     native_facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
     return {
-        "status": "dropped",
-        "dropped": True,
+        "status": dispatch_status or "failed",
+        "dropped": dispatch_status == "dropped",
         "native_tool_calls_count": _int_value(native_facts.get("native_tool_calls_count")),
         "native_tool_call_names": list(native_facts.get("native_tool_call_names") or []),
         "decoded_tool_calls_count": _int_value(lifecycle.get("decoded_tool_calls_count")),
         "dispatched_tool_calls_count": _int_value(lifecycle.get("dispatched_tool_calls_count")),
         "provider_response_hash": _clean_string(lifecycle.get("provider_response_hash")),
+        "failure_class": failure_class,
         "reason": _clean_string(lifecycle.get("reason")),
+        "compatibility_mode": _clean_string(lifecycle.get("compatibility_mode")),
+        "text_fallback_requested": bool(lifecycle.get("text_fallback_requested")),
+        "parser_attempted": bool(lifecycle.get("parser_attempted")),
     }
 
 
@@ -1370,6 +1449,167 @@ def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, A
         if dispatch:
             return dispatch
     return None
+
+
+_TOOL_LIFECYCLE_OUTCOME_SCHEMA_VERSION = "polaris.tool_lifecycle_outcome_projection.v1"
+
+
+def _lifecycle_task_identity(value: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+    """Return the stable task identity for one lifecycle projection row."""
+
+    event = dict(value)
+    receipt = _mapping(event.get("receipt"))
+    task_id = _clean_string(event.get("task_id")) or _clean_string(receipt.get("task_id"))
+    run_id = _clean_string(event.get("run_id")) or _clean_string(receipt.get("run_id"))
+    turn_id = _clean_string(event.get("turn_id")) or _clean_string(receipt.get("turn_id"))
+    if task_id:
+        return task_id, task_id, run_id, turn_id, "task_id"
+    explicit_task_key = _clean_string(event.get("task_key"))
+    if explicit_task_key:
+        return (
+            explicit_task_key,
+            "",
+            run_id,
+            turn_id,
+            _clean_string(event.get("task_identity_source")) or "explicit_task_key",
+        )
+    return (
+        f"run:{run_id or 'unknown'}|turn:{turn_id or 'unknown'}",
+        "",
+        run_id,
+        turn_id,
+        "run_turn_fallback",
+    )
+
+
+def _lifecycle_event_is_unresolved(event: Mapping[str, Any]) -> bool:
+    """Return whether a canonical lifecycle row remains unresolved."""
+
+    return bool(event.get("dropped")) or bool(event.get("failed")) or event.get("ok") is False
+
+
+def _lifecycle_outcome_projection_from_events(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    source: str,
+    degraded: bool,
+    fallback: str = "",
+) -> dict[str, Any]:
+    """Project latest and unresolved lifecycle state once per task identity."""
+
+    latest_by_task: dict[str, dict[str, Any]] = {}
+    for raw_event in events:
+        if not isinstance(raw_event, Mapping):
+            continue
+        event = dict(raw_event)
+        task_key, task_id, run_id, turn_id, identity_source = _lifecycle_task_identity(event)
+        event["task_key"] = task_key
+        event["task_id"] = task_id
+        event["run_id"] = run_id
+        event["turn_id"] = turn_id
+        event["task_identity_source"] = identity_source
+        latest_by_task.pop(task_key, None)
+        latest_by_task[task_key] = event
+    unresolved_by_task = {
+        task_key: dict(event)
+        for task_key, event in latest_by_task.items()
+        if _lifecycle_event_is_unresolved(event)
+    }
+    return {
+        "ok": not unresolved_by_task,
+        "latest_by_task": latest_by_task,
+        "unresolved_by_task": unresolved_by_task,
+        "unresolved_count": len(unresolved_by_task),
+        "unresolved_dropped_count": sum(bool(event.get("dropped")) for event in unresolved_by_task.values()),
+        "unresolved_failed_count": sum(bool(event.get("failed")) for event in unresolved_by_task.values()),
+        "outcome_projection": {
+            "schema_version": _TOOL_LIFECYCLE_OUTCOME_SCHEMA_VERSION,
+            "source": source,
+            "degraded": degraded,
+            "fallback": fallback,
+        },
+    }
+
+
+def _canonical_lifecycle_outcome_projection(summary: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return a normalized canonical outcome projection when one is present."""
+
+    latest_raw = summary.get("latest_by_task")
+    unresolved_raw = summary.get("unresolved_by_task")
+    metadata_raw = summary.get("outcome_projection")
+    if not isinstance(latest_raw, Mapping) or not isinstance(unresolved_raw, Mapping):
+        return None
+    metadata = _mapping(metadata_raw)
+    if metadata.get("schema_version") != _TOOL_LIFECYCLE_OUTCOME_SCHEMA_VERSION:
+        return None
+    latest_by_task = {
+        _clean_string(task_key): dict(event)
+        for task_key, event in latest_raw.items()
+        if _clean_string(task_key) and isinstance(event, Mapping)
+    }
+    unresolved_by_task = {
+        _clean_string(task_key): dict(event)
+        for task_key, event in unresolved_raw.items()
+        if _clean_string(task_key) and isinstance(event, Mapping)
+    }
+    for task_key, event in latest_by_task.items():
+        event.setdefault("task_key", task_key)
+    for task_key, event in unresolved_by_task.items():
+        event.setdefault("task_key", task_key)
+    return {
+        "ok": not unresolved_by_task,
+        "latest_by_task": latest_by_task,
+        "unresolved_by_task": unresolved_by_task,
+        "unresolved_count": len(unresolved_by_task),
+        "unresolved_dropped_count": sum(bool(event.get("dropped")) for event in unresolved_by_task.values()),
+        "unresolved_failed_count": sum(bool(event.get("failed")) for event in unresolved_by_task.values()),
+        "outcome_projection": {
+            "schema_version": _TOOL_LIFECYCLE_OUTCOME_SCHEMA_VERSION,
+            "source": _clean_string(metadata.get("source")) or "canonical",
+            "degraded": bool(metadata.get("degraded")),
+            "fallback": _clean_string(metadata.get("fallback")),
+        },
+    }
+
+
+def _legacy_lifecycle_outcome_projection(
+    summary: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Project old lifecycle summaries with an explicit structured fallback."""
+
+    event_projection = _lifecycle_outcome_projection_from_events(
+        events,
+        source="legacy_event_rows",
+        degraded=True,
+        fallback="legacy_event_rows",
+    )
+    historical_failed = _int_value(summary.get("dropped_count")) > 0 or _int_value(summary.get("failed_count")) > 0
+    if event_projection["unresolved_count"] or (
+        not historical_failed and bool(summary.get("ok", True))
+    ):
+        return event_projection
+    dropped = _int_value(summary.get("dropped_count")) > 0
+    failure_class = (
+        FailureClassV1.TOOL_DISPATCH_DROPPED.value if dropped else FailureClassV1.TOOL_LIFECYCLE_FAILED.value
+    )
+    return _lifecycle_outcome_projection_from_events(
+        [
+            {
+                "task_key": "legacy:aggregate",
+                "task_identity_source": "legacy_aggregate_fallback",
+                "status": "dropped" if dropped else "failed",
+                "failure_class": failure_class,
+                "reason": failure_class,
+                "dropped": dropped,
+                "failed": True,
+                "ok": False,
+            }
+        ],
+        source="legacy_aggregate",
+        degraded=True,
+        fallback="historical_counts",
+    )
 
 
 def project_tool_lifecycle_event(
@@ -1405,6 +1645,7 @@ def project_tool_lifecycle_event(
         dropped = True
     failed = not bool(lifecycle.get("ok", False))
     failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
+    task_key, task_id, run_id, turn_id, identity_source = _lifecycle_task_identity(lifecycle)
     row = {
         "status": dispatch_status or ("dropped" if dropped else "ok"),
         "failure_class": _clean_string(lifecycle.get("failure_class")),
@@ -1423,6 +1664,11 @@ def project_tool_lifecycle_event(
         "batch_receipt_refs": _mapping_refs(lifecycle.get("batch_receipt_refs")),
         "effect_receipt_refs": _mapping_refs(lifecycle.get("effect_receipt_refs")),
         "receipt": lifecycle,
+        "task_key": task_key,
+        "task_id": task_id,
+        "run_id": run_id,
+        "turn_id": turn_id,
+        "task_identity_source": identity_source,
         "append_id": _clean_string(append_id),
         "content_id": _clean_string(content_id),
     }
@@ -1464,11 +1710,7 @@ def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict
         dispatched_count += _int_value(event.get("dispatched_tool_calls_count"))
         result_count += _int_value(event.get("tool_result_count"))
         effect_count += _int_value(event.get("effect_receipt_count"))
-        native_names.extend(
-            name
-            for item in event.get("native_tool_call_names") or []
-            if (name := _clean_string(item))
-        )
+        native_names.extend(name for item in event.get("native_tool_call_names") or [] if (name := _clean_string(item)))
         if bool(event.get("dropped")):
             dropped_count += 1
         if bool(event.get("failed")):
@@ -1476,8 +1718,13 @@ def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict
         evidence = event.get("failure_evidence")
         if isinstance(evidence, Mapping):
             failure_evidence.append(dict(evidence))
+    outcome_projection = _lifecycle_outcome_projection_from_events(
+        projected_events,
+        source="event_rows",
+        degraded=False,
+    )
     return {
-        "ok": failed_count == 0 and dropped_count == 0,
+        "ok": bool(outcome_projection["ok"]),
         "event_count": len(projected_events),
         "native_tool_calls_count": native_count,
         "decoded_tool_calls_count": decoded_count,
@@ -1489,6 +1736,7 @@ def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict
         "failed_count": failed_count,
         "failure_evidence": failure_evidence,
         "events": projected_events,
+        **outcome_projection,
     }
 
 
@@ -1517,8 +1765,11 @@ def project_tool_lifecycle_summary(summary: Mapping[str, Any] | None) -> dict[st
         else []
     )
     events = [dict(item) for item in events_raw if isinstance(item, Mapping)] if isinstance(events_raw, list) else []
+    outcome_projection = _canonical_lifecycle_outcome_projection(lifecycle)
+    if outcome_projection is None:
+        outcome_projection = _legacy_lifecycle_outcome_projection(lifecycle, events)
     return {
-        "ok": bool(lifecycle.get("ok", True)),
+        "ok": bool(outcome_projection["ok"]),
         "event_count": _int_value(lifecycle.get("event_count")),
         "native_tool_calls_count": _int_value(lifecycle.get("native_tool_calls_count")),
         "decoded_tool_calls_count": _int_value(lifecycle.get("decoded_tool_calls_count")),
@@ -1530,6 +1781,7 @@ def project_tool_lifecycle_summary(summary: Mapping[str, Any] | None) -> dict[st
         "failed_count": _int_value(lifecycle.get("failed_count")),
         "failure_evidence": failure_evidence,
         "events": events,
+        **outcome_projection,
     }
 
 
@@ -1546,40 +1798,37 @@ def project_tool_lifecycle_failure_status(summary: Mapping[str, Any] | None) -> 
     """
 
     lifecycle = summary if isinstance(summary, Mapping) else {}
-    if not lifecycle:
-        return {"failed": False, "status": "", "failure_class": "", "reason": ""}
-
-    events_raw = lifecycle.get("events")
-    events = [dict(item) for item in events_raw if isinstance(item, Mapping)] if isinstance(events_raw, list) else []
-    dropped_count = _int_value(lifecycle.get("dropped_count"))
-    failed_count = _int_value(lifecycle.get("failed_count"))
-    if dropped_count > 0:
-        dropped_events = [event for event in events if bool(event.get("dropped"))]
-        latest = dropped_events[-1] if dropped_events else {}
-        failure_class = normalize_failure_class(
-            _clean_string(latest.get("failure_class")) or FailureClassV1.TOOL_DISPATCH_DROPPED.value
-        )
+    projected = project_tool_lifecycle_summary(lifecycle)
+    unresolved_raw = projected.get("unresolved_by_task")
+    unresolved_by_task = unresolved_raw if isinstance(unresolved_raw, Mapping) else {}
+    metadata = _mapping(projected.get("outcome_projection"))
+    degraded = bool(metadata.get("degraded"))
+    fallback = _clean_string(metadata.get("fallback"))
+    if not unresolved_by_task:
         return {
-            "failed": True,
-            "status": _clean_string(latest.get("status")) or "dropped",
-            "failure_class": failure_class,
-            "reason": _clean_string(latest.get("reason")) or failure_class,
+            "failed": False,
+            "status": "",
+            "failure_class": "",
+            "reason": "",
+            "degraded": degraded,
+            "fallback": fallback,
         }
 
-    if failed_count > 0 or not bool(lifecycle.get("ok", True)):
-        failed_events = [event for event in events if bool(event.get("failed"))]
-        latest = failed_events[-1] if failed_events else {}
-        failure_class = normalize_failure_class(
-            _clean_string(latest.get("failure_class")) or FailureClassV1.TOOL_LIFECYCLE_FAILED.value
-        )
-        return {
-            "failed": True,
-            "status": _clean_string(latest.get("status")) or "failed",
-            "failure_class": failure_class,
-            "reason": _clean_string(latest.get("reason")) or failure_class,
-        }
-
-    return {"failed": False, "status": "", "failure_class": "", "reason": ""}
+    latest = next(reversed(unresolved_by_task.values()))
+    latest_event = dict(latest) if isinstance(latest, Mapping) else {}
+    dropped = bool(latest_event.get("dropped"))
+    failure_class = normalize_failure_class(
+        _clean_string(latest_event.get("failure_class"))
+        or (FailureClassV1.TOOL_DISPATCH_DROPPED.value if dropped else FailureClassV1.TOOL_LIFECYCLE_FAILED.value)
+    )
+    return {
+        "failed": True,
+        "status": _clean_string(latest_event.get("status")) or ("dropped" if dropped else "failed"),
+        "failure_class": failure_class,
+        "reason": _clean_string(latest_event.get("reason")) or failure_class,
+        "degraded": degraded,
+        "fallback": fallback,
+    }
 
 
 def empty_tool_lifecycle_summary() -> dict[str, Any]:
@@ -1598,6 +1847,17 @@ def empty_tool_lifecycle_summary() -> dict[str, Any]:
         "failed_count": 0,
         "failure_evidence": [],
         "events": [],
+        "latest_by_task": {},
+        "unresolved_by_task": {},
+        "unresolved_count": 0,
+        "unresolved_dropped_count": 0,
+        "unresolved_failed_count": 0,
+        "outcome_projection": {
+            "schema_version": _TOOL_LIFECYCLE_OUTCOME_SCHEMA_VERSION,
+            "source": "event_rows",
+            "degraded": False,
+            "fallback": "",
+        },
     }
 
 
@@ -1635,9 +1895,7 @@ def merge_tool_lifecycle_summaries(projects: Sequence[Mapping[str, Any]]) -> dic
         ):
             totals[key] = _int_value(totals.get(key)) + _int_value(lifecycle.get(key))
         native_names.extend(
-            name
-            for item in lifecycle.get("native_tool_call_names") or []
-            if (name := _clean_string(item))
+            name for item in lifecycle.get("native_tool_call_names") or [] if (name := _clean_string(item))
         )
         raw_failure_evidence = lifecycle.get("failure_evidence")
         if isinstance(raw_failure_evidence, list):
@@ -1648,6 +1906,19 @@ def merge_tool_lifecycle_summaries(projects: Sequence[Mapping[str, Any]]) -> dic
     totals["native_tool_call_names"] = list(dict.fromkeys(native_names))
     totals["failure_evidence"] = failure_evidence
     totals["events"] = events
+    canonical_event_rows = bool(events) and all(
+        isinstance(event, Mapping) and bool(_clean_string(event.get("task_key"))) for event in events
+    )
+    outcome_projection = (
+        _lifecycle_outcome_projection_from_events(
+            events,
+            source="merged_event_rows",
+            degraded=False,
+        )
+        if canonical_event_rows
+        else _legacy_lifecycle_outcome_projection(totals, events)
+    )
+    totals.update(outcome_projection)
     return totals
 
 
@@ -1677,9 +1948,7 @@ def project_native_tool_call_facts_to_metadata(
         return
     names = facts.get("native_tool_call_names")
     metadata["native_tool_call_names"] = [
-        name
-        for item in (names if isinstance(names, (list, tuple)) else [])
-        if (name := _clean_string(item))
+        name for item in (names if isinstance(names, (list, tuple)) else []) if (name := _clean_string(item))
     ]
 
 
@@ -1705,9 +1974,7 @@ def project_native_tool_call_envelopes_to_metadata(
         {
             "native_tool_calls_count": len(valid_envelopes),
             "native_tool_call_names": [
-                name
-                for envelope in valid_envelopes
-                if (name := _clean_string(envelope.get("tool_name")))
+                name for envelope in valid_envelopes if (name := _clean_string(envelope.get("tool_name")))
             ],
         },
     )
@@ -1992,10 +2259,7 @@ def tool_dispatch_dropped_error_message(anomaly: Mapping[str, Any] | None) -> st
         lifecycle = anomaly.get("tool_call_lifecycle_receipt")
         if count <= 0 and isinstance(lifecycle, Mapping):
             count = _int_value(lifecycle.get("native_tool_calls_count"))
-    return (
-        "tool_dispatch_dropped: provider emitted "
-        f"{count} tool call(s), but no executable tool batch was decoded"
-    )
+    return f"tool_dispatch_dropped: provider emitted {count} tool call(s), but no executable tool batch was decoded"
 
 
 def build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(

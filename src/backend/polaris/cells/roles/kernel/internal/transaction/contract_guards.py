@@ -1051,6 +1051,74 @@ def batch_write_results_all_failed_on_argument_shape(batch_receipt: Mapping[str,
     return write_seen
 
 
+_REPLANNABLE_WRITE_ERROR_TYPES = frozenset(
+    {
+        "director_write_policy_denied",
+        "invalid_arg",
+        "invalid_args",
+        "parameter_validation",
+        "stale_edit",
+        "syntax",
+        "validation",
+        "validation_error",
+    }
+)
+_TERMINAL_WRITE_ERROR_TYPES = frozenset(
+    {
+        "cancelled",
+        "execution_cancelled",
+        "session_not_active",
+        "timeout",
+        "tool_dispatch_dropped",
+    }
+)
+
+
+def batch_write_failure_error_types(batch_receipt: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return normalized structured error types from failed write results."""
+
+    error_types: list[str] = []
+    for item in list(batch_receipt.get("results") or []):
+        if not isinstance(item, Mapping) or not is_write_tool_name(str(item.get("tool_name") or "")):
+            continue
+        if str(item.get("status") or "").strip().lower() == "success":
+            continue
+        payload = item.get("result")
+        sources = (item, payload) if isinstance(payload, Mapping) else (item,)
+        for source in sources:
+            error_type = str(
+                source.get("error_type")
+                or source.get("handler_error_type")
+                or ""
+            ).strip().lower()
+            if error_type:
+                error_types.append(error_type)
+                break
+    return tuple(dict.fromkeys(error_types))
+
+
+def batch_write_failures_require_llm_replan(batch_receipt: Mapping[str, Any]) -> bool:
+    """Return whether a zero-effect write batch is safe to re-plan in this turn.
+
+    This decision consumes structured tool-result fields.  Runtime/session,
+    cancellation, timeout, and unknown failures remain fail-closed.  Policy,
+    argument, stale-edit, and syntax rejections are correctable only by asking
+    the model for a new invocation; the rejected invocation itself is never
+    replayed and no write authority is widened.
+    """
+
+    error_types = batch_write_failure_error_types(batch_receipt)
+    if any(error_type in _TERMINAL_WRITE_ERROR_TYPES for error_type in error_types):
+        return False
+    if batch_write_results_all_failed_on_argument_shape(batch_receipt):
+        return True
+    if receipts_have_stale_edit_failure([dict(batch_receipt)]):
+        return True
+    return bool(error_types) and all(
+        error_type in _REPLANNABLE_WRITE_ERROR_TYPES for error_type in error_types
+    )
+
+
 def has_successful_recon_execution(tool_executions: list[dict[str, Any]]) -> bool:
     """判定 ledger 工具执行记录中是否存在至少一次成功的侦察工具执行。
 

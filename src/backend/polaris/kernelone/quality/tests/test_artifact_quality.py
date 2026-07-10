@@ -1411,16 +1411,17 @@ def test_artifact_quality_evidence_uses_direct_npm_script_missing_entrypoint_iss
     )
     assert len(evidence.issues) == 1
     assert evidence.issues[0].code == "npm_script_missing_local_entrypoint"
-    assert evidence.issues[0].source == "npm_script_entrypoint_scanner"
+    assert evidence.issues[0].source == "package_scripts"
     assert evidence.issues[0].path == "package.json"
     assert evidence.issues[0].metadata == {
         "raw": evidence.errors[0],
         "manifest_path": "package.json",
         "script_issue": "missing_local_entrypoint",
-        "script_issue_source": "npm_script_entrypoint_scanner",
+        "script_issue_source": "package_scripts",
+        "package_script_issue_code": "npm_script_missing_local_entrypoint",
         "script_name": "start",
+        "command": "node src/index.js",
         "entrypoint": "src/index.js",
-        "diagnostic_kind": "npm_script_missing_local_entrypoint",
     }
 
 

@@ -5,6 +5,7 @@ import json
 import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, NamedTuple, NoReturn
@@ -12,18 +13,22 @@ from typing import Any, Callable, NamedTuple, NoReturn
 import pytest
 from polaris.cells.events.fact_stream.public.service import (
     AppendFactEventCommandV1,
-    FactStreamError,
-    FactStreamQueryResultV1,
     QueryFactEventsV1,
     append_fact_event,
     query_fact_events,
 )
+from polaris.cells.runtime.task_market.public.contracts import OwnerReworkHandoffV1
 from polaris.cells.runtime.task_runtime.internal import service as service_module
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
     terminal_session_timestamp,
 )
 from polaris.cells.runtime.task_runtime.internal.task_board import InvalidTaskStateTransitionError
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
+    OwnerReworkExecutionAuthorizationV1,
+    PrepareOwnerReworkExecutionCommandV1,
+)
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -49,6 +54,60 @@ _SESSION_WRITE_RECEIPT_FIELDS = frozenset(
         "preserved_terminal_session",
     }
 )
+
+
+def _owner_rework_prepare_command(
+    workspace: Path,
+    *,
+    task_role: str,
+    handoff_id: str = "owner-rework-handoff-1",
+) -> PrepareOwnerReworkExecutionCommandV1:
+    """Build public TaskMarket evidence for one owner/requester prepare call."""
+
+    handoff = OwnerReworkHandoffV1(
+        schema_version="task-market.owner-rework-route/1",
+        handoff_id=handoff_id,
+        owner_task_id="owner-task",
+        requester_task_id="requester-task",
+        owner_previous_status="resolved",
+        requester_previous_status="in_execution",
+        owner_reopened=True,
+        dependency_mode="resolved_only",
+        failure_metadata={"error_code": "SCOPE_CONFLICT"},
+        evidence_metadata={"source": "task-runtime-service-test"},
+        metadata={"test": True},
+        routed_at="2026-07-11T00:00:00+00:00",
+    )
+    task_id = "owner-task" if task_role == "owner" else "requester-task"
+    counterparty_task_id = "requester-task" if task_role == "owner" else "owner-task"
+    handoff_records = {"owner_rework_handoffs": {handoff_id: handoff.to_record()}}
+    claimed_item = {
+        "task_id": task_id,
+        "status": "in_execution",
+        "lease_token": "task-market-lease",
+        "claimed_by": "director-owner-rework",
+        "metadata": handoff_records,
+    }
+    counterparty_item = {
+        "task_id": counterparty_task_id,
+        "status": "pending_exec",
+        "metadata": handoff_records,
+    }
+    return PrepareOwnerReworkExecutionCommandV1(
+        authorization=OwnerReworkExecutionAuthorizationV1(
+            schema_version=OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
+            workspace=str(workspace),
+            task_id=task_id,
+            lease_token="task-market-lease",
+            worker_id="director-owner-rework",
+            worker_role="director",
+            task_role=task_role,
+            counterparty_task_id=counterparty_task_id,
+            handoff=handoff,
+            claimed_item=claimed_item,
+            counterparty_item=counterparty_item,
+        )
+    )
 
 
 def _execution_event_payload_for_result(
@@ -3216,7 +3275,7 @@ def test_create_task_row_reports_event_append_failure_with_row_receipt_without_p
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     row = service.create_task_row(
         subject="create with append evidence",
@@ -3248,7 +3307,7 @@ def test_update_task_row_reports_event_append_failure_with_row_receipt_without_p
     created = service.create_task_row(subject="update with append evidence")
     task_id = int(created["id"])
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     row = service.update_task_row(
         created["id"],
@@ -3298,7 +3357,7 @@ def test_claim_execution_fails_closed_on_execution_event_append_failure(
     created = service.create_task_row(subject="claim with append evidence")
     task_id = int(created["id"])
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     claimed = service.claim_execution(
         created["id"],
@@ -4026,7 +4085,7 @@ def test_complete_execution_fails_closed_on_execution_event_append_failure(
     )
     assert claimed["success"] is True
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     completed = service.complete_execution(
         created["id"],
@@ -4066,7 +4125,7 @@ def test_fail_execution_fails_closed_on_execution_event_append_failure(
     )
     assert claimed["success"] is True
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     failed = service.fail_execution(
         created["id"],
@@ -4106,7 +4165,7 @@ def test_suspend_execution_fails_closed_on_execution_event_append_failure(
     )
     assert claimed["success"] is True
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     suspended = service.suspend_execution(
         created["id"],
@@ -5721,7 +5780,7 @@ def test_ensure_task_row_reports_materialized_event_append_failure(
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
     append_count = 0
-    original_append_execution_fact = service._append_execution_fact_with_cas
+    original_append_execution_fact = service._append_execution_fact
 
     def fail_materialized_append(
         *,
@@ -5734,7 +5793,7 @@ def test_ensure_task_row_reports_materialized_event_append_failure(
             raise RuntimeError("fact stream unavailable")
         return original_append_execution_fact(event_type_str=event_type_str, payload=payload)
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", fail_materialized_append)
+    monkeypatch.setattr(service, "_append_execution_fact", fail_materialized_append)
 
     row = service.ensure_task_row(
         external_task_id="task-0-director",
@@ -6177,7 +6236,7 @@ def test_heartbeat_execution_fails_closed_on_event_append_failure(
     )
     assert claimed["success"] is True
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     heartbeat = service.heartbeat_execution(
         created_id,
@@ -6217,7 +6276,7 @@ def test_suspend_active_executions_for_run_fails_closed_on_event_append_failure(
     )
     assert claimed["success"] is True
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     suspended = service.suspend_active_executions_for_run(
         "run-cancel-append-failure",
@@ -6422,7 +6481,7 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert payload["lease_expires_at"]
 
 
-def test_task_runtime_execution_event_append_uses_fact_stream_expected_seq(
+def test_task_runtime_execution_event_append_delegates_sequence_authority_to_fact_stream(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6455,60 +6514,34 @@ def test_task_runtime_execution_event_append_uses_fact_stream_expected_seq(
     )
     assert completed["success"] is True
 
-    assert expected_seq_values[:3] == [1, 2, 3]
+    assert expected_seq_values[:3] == [None, None, None]
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
     assert [int(event["seq"]) for event in events[:3]] == [1, 2, 3]
 
 
-def test_task_runtime_execution_event_append_retries_expected_seq_drift(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_task_runtime_execution_event_append_is_concurrency_safe(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    real_append_fact_event = service_module.append_fact_event
-    expected_seq_values: list[int | None] = []
-    injected_race = False
-
-    def racing_append(command: AppendFactEventCommandV1) -> object:
-        nonlocal injected_race
-        expected_seq_values.append(command.expected_seq)
-        if not injected_race:
-            injected_race = True
-            real_append_fact_event(
-                AppendFactEventCommandV1(
-                    workspace=str(workspace),
-                    stream="task_runtime.execution",
-                    event_type="external_concurrent",
-                    payload={
-                        "event_type": "external_concurrent",
-                        "task_id": "external",
-                        "status": "in_progress",
-                    },
-                    source="test.concurrent_writer",
-                    expected_seq=command.expected_seq,
-                )
-            )
-            raise FactStreamError(
-                "simulated expected_seq drift",
-                code="expected_seq_drift",
-                details={"expected_seq": command.expected_seq},
-            )
-        return real_append_fact_event(command)
-
-    monkeypatch.setattr(service_module, "append_fact_event", racing_append)
     service = TaskRuntimeService(str(workspace))
 
-    created = service.create_task_row(subject="expected seq drift retry")
+    def append_probe(index: int) -> int | None:
+        appended = service._append_execution_fact(
+            event_type_str="probe",
+            payload={
+                "event_type": "probe",
+                "task_id": f"task-{index}",
+                "run_id": "run-concurrent",
+                "status": "in_progress",
+            },
+        )
+        return appended.appended_seq
 
-    assert created["id"] == 1
-    assert expected_seq_values[:2] == [1, 2]
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        sequences = list(executor.map(append_probe, range(16)))
+
+    assert sorted(sequence for sequence in sequences if sequence is not None) == list(range(1, 17))
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
-    assert [str(event.get("event_type") or "") for event in events[:2]] == [
-        "external_concurrent",
-        "created",
-    ]
-    assert [int(event["seq"]) for event in events[:2]] == [1, 2]
+    assert len(events) == 16
 
 
 def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) -> None:
@@ -6815,7 +6848,7 @@ def test_reopen_task_row_reports_event_append_failure_without_persisting_evidenc
     )
     assert completed["success"] is True
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     row = service.reopen_task_row(created_id, reason="qa_rework")
 
@@ -7077,7 +7110,7 @@ def test_execution_event_does_not_fabricate_fact_event_seq_on_append_failure(
     workspace.mkdir(parents=True, exist_ok=True)
     service = TaskRuntimeService(str(workspace))
 
-    monkeypatch.setattr(service, "_append_execution_fact_with_cas", _raise_fact_stream_unavailable)
+    monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
     row = service.create_task_row(subject="fail append seq projection")
     task_id = int(row["id"])
@@ -7409,37 +7442,6 @@ def test_find_latest_execution_fact_row_for_task_pages_backward_through_gateway(
     assert row["status"] == "completed"
     assert row["execution_state"] == "completed"
     assert row["fact_event_seq"] == 3
-
-
-def test_next_execution_fact_expected_seq_uses_gateway_total(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """CAS seq calculation must use the gateway result total, not storage internals."""
-
-    workspace = tmp_path / "workspace"
-    workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
-    gateway_calls: list[tuple[int, int]] = []
-
-    def query_execution_fact_events_spy(
-        *,
-        limit: int = 500,
-        offset: int = 0,
-    ) -> FactStreamQueryResultV1:
-        gateway_calls.append((int(limit), int(offset)))
-        return FactStreamQueryResultV1(
-            workspace=str(workspace),
-            stream="task_runtime.execution",
-            events=(),
-            total=41,
-            next_offset=0,
-        )
-
-    monkeypatch.setattr(service, "_query_execution_fact_events", query_execution_fact_events_spy)
-
-    assert service._next_execution_fact_expected_seq() == 42
-    assert gateway_calls == [(1, 0)]
 
 
 def test_list_task_rows_from_execution_facts_omits_fact_event_seq_when_wrapper_seq_invalid(
@@ -8986,3 +8988,134 @@ def test_task_has_unresolved_dependencies_returns_true_when_overlay_status_not_c
         "fact-overlay status for the parent is anything other than 'completed'; "
         "only a completed overlay status clears the blocker"
     )
+
+
+@pytest.mark.parametrize(
+    ("task_role", "terminal_outcome"),
+    (("owner", "completed"), ("requester", "failed")),
+)
+def test_prepare_owner_rework_execution_reopens_terminal_row_and_rotates_session(
+    tmp_path: Path,
+    task_role: str,
+    terminal_outcome: str,
+) -> None:
+    """Both owner and requester claims reopen only through TaskRuntime."""
+
+    workspace = tmp_path / task_role
+    workspace.mkdir()
+    service = TaskRuntimeService(str(workspace))
+    task_id = "owner-task" if task_role == "owner" else "requester-task"
+    created = service.ensure_task_row(external_task_id=task_id, subject=f"{task_role} task")
+    runtime_task_id = int(created["id"])
+    claimed = service.claim_execution(
+        runtime_task_id,
+        worker_id="prior-director",
+        role_id="director",
+        external_task_id=task_id,
+    )
+    assert claimed["success"] is True
+    session_id = str(claimed["session"]["session_id"])
+    if terminal_outcome == "completed":
+        terminal = service.complete_execution(runtime_task_id, session_id=session_id)
+    else:
+        terminal = service.fail_execution(runtime_task_id, session_id=session_id, error="owner rework required")
+    assert terminal["success"] is True
+
+    prepared = service.prepare_owner_rework_execution(_owner_rework_prepare_command(workspace, task_role=task_role))
+
+    assert prepared.ok is True
+    assert prepared.reopened is True
+    assert prepared.runtime_task_id == str(runtime_task_id)
+    persisted_session = service._read_session(runtime_task_id)
+    assert persisted_session is not None
+    assert persisted_session.status == "suspended"
+    assert prepared.execution_event["event_type"] == "owner_rework_execution_prepared"
+    facts = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="owner_rework_execution_prepared",
+        )
+    ).events
+    assert len(facts) == 1
+    assert facts[0]["payload"]["details"]["task_role"] == task_role
+
+    retried = service.claim_execution(
+        runtime_task_id,
+        worker_id="director-owner-rework",
+        role_id="director",
+        external_task_id=task_id,
+    )
+    assert retried["success"] is True
+    assert retried["reason"] == "claimed"
+
+
+def test_prepare_owner_rework_execution_is_idempotent_for_nonterminal_handoff(tmp_path: Path) -> None:
+    """A repeated matching authorization must not append a second prepare fact."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = TaskRuntimeService(str(workspace))
+    service.ensure_task_row(external_task_id="owner-task", subject="owner task")
+    command = _owner_rework_prepare_command(workspace, task_role="owner")
+
+    first = service.prepare_owner_rework_execution(command)
+    second = service.prepare_owner_rework_execution(command)
+
+    assert first.ok is True
+    assert first.idempotent is False
+    assert second.ok is True
+    assert second.idempotent is True
+    facts = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="owner_rework_execution_prepared",
+        )
+    ).events
+    assert len(facts) == 1
+
+
+def test_prepare_owner_rework_execution_rejects_conflicting_handoff(tmp_path: Path) -> None:
+    """A different handoff cannot reuse a non-terminal prepared runtime row."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = TaskRuntimeService(str(workspace))
+    service.ensure_task_row(external_task_id="owner-task", subject="owner task")
+
+    assert (
+        service.prepare_owner_rework_execution(_owner_rework_prepare_command(workspace, task_role="owner")).ok is True
+    )
+    conflict = service.prepare_owner_rework_execution(
+        _owner_rework_prepare_command(
+            workspace,
+            task_role="owner",
+            handoff_id="owner-rework-handoff-conflict",
+        )
+    )
+
+    assert conflict.ok is False
+    assert conflict.code == "owner_rework_authorization_conflict"
+
+
+def test_prepare_owner_rework_execution_rejects_malformed_handoff_and_missing_row(
+    tmp_path: Path,
+) -> None:
+    """Malformed authority and an absent local execution row both fail closed."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = TaskRuntimeService(str(workspace))
+    malformed = _owner_rework_prepare_command(workspace, task_role="owner")
+    object.__setattr__(malformed.authorization, "handoff", object())
+
+    malformed_result = service.prepare_owner_rework_execution(malformed)
+    missing_row_result = service.prepare_owner_rework_execution(
+        _owner_rework_prepare_command(workspace, task_role="requester")
+    )
+
+    assert malformed_result.ok is False
+    assert malformed_result.code == "owner_rework_authorization_malformed"
+    assert missing_row_result.ok is False
+    assert missing_row_result.code == "runtime_task_not_found"

@@ -161,7 +161,7 @@ def test_director_task_boundary_verdict_projects_verifier_policy(tmp_path: Path)
 
     assert verdict is not None
     assert verdict["status"] == "required_verifier_failed"
-    assert verdict["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert verdict["failure_class"] == "COMPILER_OR_TEST_FAILURE"
     assert verdict["failed_required_verifiers"] == ["npm test"]
 
 

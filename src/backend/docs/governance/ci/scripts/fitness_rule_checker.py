@@ -39,6 +39,9 @@ try:
     from docs.governance.ci.scripts.event_usage_policy import (
         evaluate_event_usage,
     )
+    from docs.governance.ci.scripts.execution_control_reconstruction_card_policy import (
+        evaluate_execution_control_reconstruction_card,
+    )
     from docs.governance.ci.scripts.legacy_coverage_policy import (
         evaluate_legacy_coverage,
     )
@@ -56,6 +59,9 @@ try:
     )
     from docs.governance.ci.scripts.shim_markers_policy import (
         evaluate_shim_markers,
+    )
+    from docs.governance.ci.scripts.skeptical_architecture_review_policy import (
+        evaluate_skeptical_architecture_review,
     )
     from docs.governance.ci.scripts.task_broker_policy import (
         evaluate_task_broker,
@@ -86,6 +92,9 @@ except ModuleNotFoundError:
     from event_usage_policy import (
         evaluate_event_usage,
     )
+    from execution_control_reconstruction_card_policy import (
+        evaluate_execution_control_reconstruction_card,
+    )
     from legacy_coverage_policy import (
         evaluate_legacy_coverage,
     )
@@ -103,6 +112,9 @@ except ModuleNotFoundError:
     )
     from shim_markers_policy import (
         evaluate_shim_markers,
+    )
+    from skeptical_architecture_review_policy import (
+        evaluate_skeptical_architecture_review,
     )
     from task_broker_policy import (
         evaluate_task_broker,
@@ -137,6 +149,8 @@ DEFAULT_RULE_IDS: tuple[str, ...] = (
     "llm_import",
     "role_call_hierarchy",
     "task_broker",
+    "skeptical_architecture_review",
+    "execution_control_reconstruction_card",
 )
 
 
@@ -334,6 +348,28 @@ class FitnessRuleChecker:
     def check_task_broker(self) -> FitnessCheckResult:
         """Check task broker ownership through the canonical policy module."""
         policy_result = evaluate_task_broker(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
+
+    def check_skeptical_architecture_review(self) -> FitnessCheckResult:
+        """Check skeptical architecture review report schema and proof rules."""
+        policy_result = evaluate_skeptical_architecture_review(self.workspace)
+        return FitnessCheckResult(
+            rule_id=policy_result.rule_id,
+            passed=policy_result.passed,
+            evidence=list(policy_result.evidence),
+            violations=list(policy_result.violations),
+            warnings=list(policy_result.warnings),
+        )
+
+    def check_execution_control_reconstruction_card(self) -> FitnessCheckResult:
+        """Check execution-control-plane reconstruction card schema and proof rules."""
+        policy_result = evaluate_execution_control_reconstruction_card(self.workspace)
         return FitnessCheckResult(
             rule_id=policy_result.rule_id,
             passed=policy_result.passed,

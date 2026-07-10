@@ -28,6 +28,17 @@ _LLM_RESPONSE_USAGE_METADATA_KEYS: tuple[str, ...] = (
     "usage_source",
     "tool_call_provider",
     "decision_caller_tool_call_provider",
+    "compatibility_mode",
+    "text_fallback_requested",
+    "native_tool_surface_absent_because_text_fallback",
+    "text_tool_parser_attempted",
+    "text_tool_parser_available",
+    "text_tool_parser_error",
+    "text_tool_decoded_calls_count",
+    "text_tool_recovery_used",
+    "text_tool_recovery_call_count",
+    "text_tool_recovery_provider",
+    "failure_class",
 )
 
 

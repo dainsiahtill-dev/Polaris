@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import polaris.cells.factory.pipeline.internal.run_ledger as run_ledger_module
 import pytest
 from polaris.cells.control_plane.run_ledger.public.projection import (
     summarize_run_ledger_projection as summarize_platform_run_ledger_projection,
@@ -388,6 +390,39 @@ def test_run_ledger_projection_is_canonical_read_model(tmp_path: Path) -> None:
     assert projection["evidence_policy"]["ok"] is True
     assert projection["evidence_policy"]["enabled_modalities"] == []
     assert projection["evidence_policy"]["required_modalities"] == ["code", "command"]
+
+
+def test_load_run_ledger_projection_forwards_factory_tree_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def read_projection(query: object) -> SimpleNamespace:
+        captured["query"] = query
+        return SimpleNamespace(
+            projection={
+                "run_projection": {
+                    "source": "run_ledger",
+                    "event_count": 0,
+                }
+            }
+        )
+
+    monkeypatch.setattr(run_ledger_module, "read_run_ledger_projection", read_projection)
+
+    projection = run_ledger_module.load_run_ledger_projection(
+        tmp_path,
+        run_id="bench-parent",
+        factory_run_id="factory-child-tree",
+        project_id="L1-01",
+    )
+
+    query = captured["query"]
+    assert query.run_id == "bench-parent"
+    assert query.factory_run_id == "factory-child-tree"
+    assert query.project_id == "L1-01"
+    assert projection == {"source": "run_ledger", "event_count": 0}
 
 
 def test_factory_projection_summary_delegates_to_control_plane_public_contract(tmp_path: Path) -> None:

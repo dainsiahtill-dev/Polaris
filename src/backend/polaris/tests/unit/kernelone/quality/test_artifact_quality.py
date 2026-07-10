@@ -750,7 +750,7 @@ def test_scan_detects_start_script_missing_local_entrypoint(tmp_path: Path) -> N
     assert len(entrypoint_issues) == 1
 
     entrypoint_issue: ArtifactQualityIssue = entrypoint_issues[0]
-    assert entrypoint_issue.source == "npm_script_entrypoint_scanner"
+    assert entrypoint_issue.source == "package_scripts"
     assert entrypoint_issue.path == "package.json"
     assert entrypoint_issue.severity == "error"
     assert entrypoint_issue.line is None
@@ -758,14 +758,14 @@ def test_scan_detects_start_script_missing_local_entrypoint(tmp_path: Path) -> N
 
     metadata = dict(entrypoint_issue.metadata or {})
     assert metadata["script_issue"] == "missing_local_entrypoint"
-    assert metadata["script_issue_source"] == "npm_script_entrypoint_scanner"
+    assert metadata["script_issue_source"] == "package_scripts"
     assert metadata["script_name"] == "start"
     assert metadata["entrypoint"] == "dist/main.js"
     assert metadata["manifest_path"] == "package.json"
     assert "references missing local entrypoint 'dist/main.js'" in str(metadata.get("raw") or "")
 
 
-def test_scan_detects_start_script_direct_tsc_then_missing_dist_entrypoint(tmp_path: Path) -> None:
+def test_scan_accepts_start_script_that_builds_dist_entrypoint_first(tmp_path: Path) -> None:
     target = tmp_path / "package.json"
     target.write_text(
         """
@@ -787,7 +787,7 @@ def test_scan_detects_start_script_direct_tsc_then_missing_dist_entrypoint(tmp_p
 
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
 
-    assert any("references missing local entrypoint 'dist/main.js'" in error for error in errors)
+    assert not any("references missing local entrypoint 'dist/main.js'" in error for error in errors)
 
 
 def test_scan_detects_bun_start_script_missing_local_entrypoint(tmp_path: Path) -> None:

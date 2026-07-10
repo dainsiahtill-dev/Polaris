@@ -42,8 +42,8 @@ class RunLedger:
         safe_run_id = _safe_token(run_id or "unknown")
         self.path = self.workspace / "runtime" / "control_plane" / "ledger" / f"{safe_run_id}.ndjson"
 
-    def append_event(self, event: dict[str, Any]) -> dict[str, Any]:
-        """Append one event and return the persisted event receipt."""
+    def prepare_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Build the deterministic projection row without writing it."""
 
         payload = dict(event)
         payload.setdefault("schema_version", 1)
@@ -61,6 +61,12 @@ class RunLedger:
                 }
             ),
         )
+        return payload
+
+    def append_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Append one rebuildable projection row and return its receipt."""
+
+        payload = self.prepare_event(event)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)

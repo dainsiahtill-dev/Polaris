@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import polaris.cells.chief_engineer.blueprint.public.service as blueprint_service_module
 import pytest
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     ChiefEngineerBlueprintErrorV1,
@@ -22,6 +23,11 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     generate_task_blueprint,
     get_blueprint_status,
 )
+from polaris.kernelone.quality.file_ownership_ledger import (
+    FileOwnershipLedgerError,
+    read_file_owners,
+)
+from polaris.kernelone.storage import resolve_storage_roots
 
 
 class TestGovernanceEnumFailClosed:
@@ -389,6 +395,133 @@ class TestChiefEngineerBlueprintErrorV1:
 
 
 class TestChiefEngineerBlueprintPublicService:
+    def test_generate_ready_blueprint_records_only_authoritative_file_owners(self, tmp_path) -> None:
+        command = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-OWNERS-READY",
+            workspace=str(tmp_path),
+            objective="Build task ownership projection",
+            llm_blueprint={
+                "construction_plan": {
+                    "files": [
+                        {"path": "src/advisory_only.py"},
+                    ],
+                },
+            },
+            context={
+                "task_title": "Task ownership projection",
+                "target_files": ["src/ownership.py", "tests/test_ownership.py"],
+                "acceptance_criteria": ["Ownership projection is durable"],
+                "execution_checklist": ["Register target-file ownership"],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "title": "Task ownership delivery plan",
+                    "user_journey": ["Generate blueprint", "Route Director handoff"],
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "behavior_contract": {
+                        "rule_matrix": ["Ready blueprints record only PM-authorized files"],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(command)
+
+        assert result.ok is True
+        owners = read_file_owners(
+            str(tmp_path),
+            str(resolve_storage_roots(str(tmp_path)).runtime_root),
+            ["src/ownership.py", "tests/test_ownership.py", "src/advisory_only.py"],
+        )
+        assert owners == {
+            "src/ownership.py": {
+                "owner_step_id": "TASK-OWNERS-READY",
+                "owner_parent": "TASK-OWNERS-READY",
+            },
+            "tests/test_ownership.py": {
+                "owner_step_id": "TASK-OWNERS-READY",
+                "owner_parent": "TASK-OWNERS-READY",
+            },
+        }
+
+    def test_generate_denied_blueprint_does_not_register_file_owners(self, tmp_path, monkeypatch) -> None:
+        def fail_if_called(*_args: object, **_kwargs: object) -> dict[str, dict[str, str]]:
+            raise AssertionError("denied CE handoff must not register file owners")
+
+        monkeypatch.setattr(blueprint_service_module, "record_task_file_owners", fail_if_called)
+        command = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-OWNERS-DENIED",
+            workspace=str(tmp_path),
+            objective="Build flavor recipe planner",
+            context={
+                "task_title": "Flavor recipe planner",
+                "target_files": ["src/models/flavor.rs", "src/engine/palette_rules.rs"],
+                "acceptance_criteria": ["cargo test passes", "recipe behavior tests pass"],
+                "execution_checklist": ["Implement flavor model", "Implement palette rules"],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "product_summary": {
+                        "intent": "Deliver a pirate treasure budget planner.",
+                        "core_terms": ["treasure", "budget", "port", "reef"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "product_intent": {
+                        "subject": "pirate treasure budget planner",
+                        "primary_entities": ["treasure", "budget", "port", "reef"],
+                    },
+                    "behavior_contract": {
+                        "rule_matrix": ["treasure cargo affects route budget"],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(command)
+
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["handoff_ready"] is False
+
+    def test_generate_fails_before_persisting_ready_blueprint_without_owner_evidence(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        def fail_registration(*_args: object, **_kwargs: object) -> dict[str, dict[str, str]]:
+            raise FileOwnershipLedgerError("simulated ownership write failure")
+
+        monkeypatch.setattr(blueprint_service_module, "record_task_file_owners", fail_registration)
+        command = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-OWNERS-FAIL",
+            workspace=str(tmp_path),
+            objective="Build task ownership projection",
+            context={
+                "task_title": "Task ownership projection",
+                "target_files": ["src/ownership.py"],
+                "acceptance_criteria": ["Ownership projection is durable"],
+                "execution_checklist": ["Register target-file ownership"],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "title": "Task ownership delivery plan",
+                    "user_journey": ["Generate blueprint", "Route Director handoff"],
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "behavior_contract": {
+                        "rule_matrix": ["Ready blueprints require ownership evidence"],
+                    },
+                },
+            },
+        )
+
+        with pytest.raises(FileOwnershipLedgerError, match="simulated ownership write failure"):
+            generate_task_blueprint(command)
+
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
     def test_generate_and_query_task_blueprint(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(
             task_id="PM-42",

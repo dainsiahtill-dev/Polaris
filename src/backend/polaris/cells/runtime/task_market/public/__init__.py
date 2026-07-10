@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from .contracts import (
+    OWNER_REWORK_HANDOFFS_METADATA_KEY,
+    OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE,
+    OWNER_REWORK_ROUTE_SCHEMA_V1,
     AcknowledgeTaskStageCommandV1,
     ChangeOrderResultV1,
     ClaimStage1Result,
@@ -11,6 +14,9 @@ from .contracts import (
     FailTaskStageCommandV1,
     HumanReviewResultV1,
     MoveTaskToDeadLetterCommandV1,
+    OwnerReworkHandoffV1,
+    OwnerReworkRouteReasonV1,
+    OwnerReworkRouteResultV1,
     PlanRevisionResultV1,
     PublishTaskWorkItemCommandV1,
     QueryChangeOrdersV1,
@@ -22,6 +28,7 @@ from .contracts import (
     RequestHumanReviewCommandV1,
     RequeueTaskCommandV1,
     ResolveHumanReviewCommandV1,
+    RouteOwnerReworkCommandV1,
     SubmitChangeOrderCommandV1,
     TaskLeaseRenewResultV1,
     TaskMarketError,
@@ -49,6 +56,9 @@ from .metrics import (
 from .service import TaskMarketService, get_task_market_service, reset_task_market_service
 
 __all__ = [
+    "OWNER_REWORK_HANDOFFS_METADATA_KEY",
+    "OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE",
+    "OWNER_REWORK_ROUTE_SCHEMA_V1",
     "AcknowledgeTaskStageCommandV1",
     "ChangeOrderResultV1",
     "ClaimStage1Result",
@@ -57,6 +67,9 @@ __all__ = [
     "FailTaskStageCommandV1",
     "HumanReviewResultV1",
     "MoveTaskToDeadLetterCommandV1",
+    "OwnerReworkHandoffV1",
+    "OwnerReworkRouteReasonV1",
+    "OwnerReworkRouteResultV1",
     "PlanRevisionResultV1",
     "PublishTaskWorkItemCommandV1",
     "QueryChangeOrdersV1",
@@ -68,6 +81,7 @@ __all__ = [
     "RequestHumanReviewCommandV1",
     "RequeueTaskCommandV1",
     "ResolveHumanReviewCommandV1",
+    "RouteOwnerReworkCommandV1",
     "SubmitChangeOrderCommandV1",
     "TaskLeaseRenewResultV1",
     "TaskMarketError",
