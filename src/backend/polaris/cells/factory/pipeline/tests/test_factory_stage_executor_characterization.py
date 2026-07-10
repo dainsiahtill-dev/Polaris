@@ -5001,8 +5001,18 @@ class TestDirectorDispatchLoop:
         )
         assert claim["success"] is True
 
-        await RunCompletionWaiter(tmp_path).cancel_active_run("run-1", reason="factory_stage_timeout")
+        result = await RunCompletionWaiter(tmp_path).cancel_active_run("run-1", reason="factory_stage_timeout")
 
+        assert result is not None
+        assert result.status == "timeout"
+        assert result.metadata == {
+            "cancel_signal_sent": False,
+            "cancel_reason": "factory_stage_timeout",
+            "inflight_run_continues": True,
+            "terminal_source": "task_runtime_active_execution_barrier",
+            "active_task_count": 1,
+            "active_task_ids": [str(task["id"])],
+        }
         assert fake_orchestration.cancelled == []
         assert fake_orchestration.active_task.cancelled() is False
         guarded_heartbeat = task_runtime.heartbeat_execution(

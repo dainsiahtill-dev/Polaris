@@ -7263,10 +7263,12 @@ class OrchestrationStageExecutor:
             )
             if barrier_result is not None:
                 return barrier_result
-            await self._run_completion_waiter.cancel_active_run(
+            barrier_result = await self._run_completion_waiter.cancel_active_run(
                 normalized_run_id,
                 reason="factory_stage_timeout",
             )
+            if barrier_result is not None:
+                return barrier_result
             return CommandResult(
                 run_id=normalized_run_id,
                 status="timeout",
@@ -7295,10 +7297,12 @@ class OrchestrationStageExecutor:
                 )
                 if barrier_result is not None:
                     return barrier_result
-                await self._run_completion_waiter.cancel_active_run(
+                barrier_result = await self._run_completion_waiter.cancel_active_run(
                     normalized_run_id,
                     reason="factory_cancelled",
                 )
+                if barrier_result is not None:
+                    return barrier_result
                 return CommandResult(
                     run_id=normalized_run_id,
                     status="cancelled",
@@ -7308,10 +7312,12 @@ class OrchestrationStageExecutor:
                 with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
                     abort_reason = await abort_checker()
                     if abort_reason:
-                        await self._run_completion_waiter.cancel_active_run(
+                        barrier_result = await self._run_completion_waiter.cancel_active_run(
                             normalized_run_id,
                             reason=abort_reason,
                         )
+                        if barrier_result is not None:
+                            return barrier_result
                         return CommandResult(
                             run_id=normalized_run_id,
                             status="cancelled",
@@ -7368,10 +7374,12 @@ class OrchestrationStageExecutor:
                 )
                 if barrier_result is not None:
                     return barrier_result
-                await self._run_completion_waiter.cancel_active_run(
+                barrier_result = await self._run_completion_waiter.cancel_active_run(
                     normalized_run_id,
                     reason="factory_stage_timeout",
                 )
+                if barrier_result is not None:
+                    return barrier_result
                 return CommandResult(
                     run_id=normalized_run_id,
                     status="timeout",

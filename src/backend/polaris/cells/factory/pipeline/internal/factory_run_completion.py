@@ -148,10 +148,10 @@ class RunCompletionWaiter:
         settings = context.get("settings") or Settings(workspace=Path(self.workspace))
         return OrchestrationCommandService(settings)
 
-    async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
+    async def cancel_active_run(self, run_id: str, *, reason: str) -> CommandResult | None:
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
-            return
+            return None
         barrier_result = self._active_task_runtime_barrier_result(run_id=normalized_run_id, reason=reason)
         if barrier_result is not None:
             logger.info(
@@ -159,7 +159,7 @@ class RunCompletionWaiter:
                 normalized_run_id,
                 barrier_result.metadata,
             )
-            return
+            return barrier_result
         try:
             from polaris.cells.orchestration.workflow_runtime.public import (
                 get_orchestration_service,
@@ -168,7 +168,7 @@ class RunCompletionWaiter:
             orchestration_service = await get_orchestration_service()
             cancel_run = getattr(orchestration_service, "cancel_run", None)
             if not callable(cancel_run):
-                return
+                return None
             try:
                 result = cancel_run(normalized_run_id, force=True)
             except TypeError:
@@ -209,6 +209,7 @@ class RunCompletionWaiter:
                 normalized_run_id,
                 exc,
             )
+        return None
 
     async def wait(
         self,
@@ -241,7 +242,9 @@ class RunCompletionWaiter:
                         run_id,
                     )
                 else:
-                    await self.cancel_active_run(run_id, reason=abort_reason)
+                    barrier_result = await self.cancel_active_run(run_id, reason=abort_reason)
+                    if barrier_result is not None:
+                        return barrier_result
                     return CommandResult(
                         run_id=run_id,
                         status="cancelled",
@@ -285,7 +288,9 @@ class RunCompletionWaiter:
                 )
                 if barrier_result is not None:
                     return barrier_result
-                await self.cancel_active_run(run_id, reason="factory_cancelled")
+                barrier_result = await self.cancel_active_run(run_id, reason="factory_cancelled")
+                if barrier_result is not None:
+                    return barrier_result
                 return CommandResult(
                     run_id=run_id,
                     status="cancelled",
@@ -300,7 +305,9 @@ class RunCompletionWaiter:
                     )
                     if barrier_result is not None:
                         return barrier_result
-                    await self.cancel_active_run(run_id, reason="factory_stage_timeout")
+                    barrier_result = await self.cancel_active_run(run_id, reason="factory_stage_timeout")
+                    if barrier_result is not None:
+                        return barrier_result
                 return CommandResult(
                     run_id=run_id,
                     status="timeout",
