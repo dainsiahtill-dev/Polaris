@@ -20,6 +20,10 @@ from polaris.cells.director.tasking.public.execution_guidance import (
     resolve_task_execution_profile,
     resolve_task_execution_strategy,
 )
+from polaris.kernelone.events.final_request_evidence import (
+    looks_like_ce_blueprint_payload,
+    looks_like_pm_contract_payload,
+)
 from polaris.kernelone.llm.budget_policy import (
     FORCED_WRITE_CONTEXT_KEYS,
     FORCED_WRITE_OUTPUT_TOKEN_FLOOR,
@@ -358,6 +362,23 @@ _STRUCTURED_TASK_CONTRACT_SLOT_KEYS = frozenset(
         "module_interface_contract",
     }
 )
+_ROLE_RUNTIME_METADATA_CONTEXT_EVIDENCE_KEYS = (
+    "pm_contract",
+    "task_contract",
+    "ce_blueprint",
+    "chief_engineer_blueprint",
+    "blueprint",
+    "task_blueprint",
+    "module_interface_contract",
+    "failed_gate_evidence",
+    "failure_evidence",
+    "workspace_quality_evidence",
+    "quality_evidence",
+    "target_files",
+    "scope_paths",
+    "context_files",
+    "required_evidence",
+)
 
 
 def _task_contract_sources(task: dict[str, Any]) -> list[dict[str, Any]]:
@@ -384,6 +405,37 @@ def _has_contract_value(payload: dict[str, Any], key: str) -> bool:
     return True
 
 
+def _looks_like_module_interface_contract_payload(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    schema_version = str(value.get("schema_version") or "").lower()
+    if "module_interface" in schema_version or "interface_contract" in schema_version:
+        return True
+    return any(
+        isinstance(value.get(key), (list, tuple, dict)) and bool(value.get(key))
+        for key in (
+            "modules",
+            "public_symbols",
+            "actual_public_symbols",
+            "exports",
+            "consumes_symbols",
+            "interfaces",
+        )
+    )
+
+
+def _structured_task_contract_slot_is_authoritative(key: str, value: Any) -> bool:
+    if not isinstance(value, dict) or not value:
+        return False
+    if key in {"pm_contract", "task_contract"}:
+        return looks_like_pm_contract_payload(value)
+    if key in {"ce_blueprint", "chief_engineer_blueprint", "blueprint", "task_blueprint"}:
+        return looks_like_ce_blueprint_payload(value)
+    if key == "module_interface_contract":
+        return _looks_like_module_interface_contract_payload(value)
+    return True
+
+
 def _set_structured_task_contract_slot(payload: dict[str, Any], key: str, value: Any) -> None:
     """Install structured evidence unless a structured value already exists."""
 
@@ -393,7 +445,7 @@ def _set_structured_task_contract_slot(payload: dict[str, Any], key: str, value:
     if not copied:
         return
     existing = payload.get(key)
-    if isinstance(existing, dict) and existing:
+    if _structured_task_contract_slot_is_authoritative(key, existing):
         return
     payload[key] = copied
 
@@ -1503,6 +1555,30 @@ class DirectorAdapter(BaseRoleAdapter):
             value = context.get(key)
             if value is not None and key not in metadata:
                 metadata[key] = value
+        for key in _ROLE_RUNTIME_METADATA_CONTEXT_EVIDENCE_KEYS:
+            if key in metadata:
+                continue
+            value = context.get(key)
+            if value is None:
+                continue
+            if isinstance(value, dict):
+                if value:
+                    metadata[key] = dict(value)
+                continue
+            if isinstance(value, list):
+                if value:
+                    metadata[key] = list(value)
+                continue
+            if isinstance(value, tuple):
+                if value:
+                    metadata[key] = list(value)
+                continue
+            if isinstance(value, str):
+                normalized = value.strip()
+                if normalized:
+                    metadata[key] = normalized
+                continue
+            metadata[key] = value
         metadata.setdefault("source", "roles.adapters.director")
         metadata.setdefault("domain", "code")
         metadata.setdefault("validate_output", False)

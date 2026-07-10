@@ -507,6 +507,59 @@ def test_failure_taxonomy_reads_director_provider_invalid_request_from_runtime_l
     assert "tool_choice" in taxonomy["evidence"][0]
 
 
+def test_failure_taxonomy_reads_director_provider_timeout_from_runtime_llm_events(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    events_dir = runtime_dir / "events"
+    events_dir.mkdir(parents=True)
+    (events_dir / "director.llm.events.jsonl").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "event_type": "llm_error",
+                    "role": "director",
+                    "model": "gemma-local",
+                    "error_category": "timeout",
+                    "error_message": (
+                        "HTTPConnectionPool(host='127.0.0.1', port=8000): "
+                        "Max retries exceeded with url: /v1/chat/completions "
+                        "(Caused by ConnectTimeoutError: Connection timed out)"
+                    ),
+                }
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "workspace": str(tmp_path),
+        "runtime_dir": str(runtime_dir),
+        "chain": {
+            "audit_bundle": {
+                "failure": {
+                    "code": "director_no_materialized_changes",
+                    "detail": "Director dispatch failed: error=director_no_materialized_changes",
+                }
+            }
+        },
+        "factory_gates": [
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            }
+        ],
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:director_provider_timeout"
+    assert "ConnectTimeoutError" in taxonomy["evidence"][0]
+
+
 def test_failure_taxonomy_does_not_mask_real_run_failure_when_ledger_projection_exists() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,

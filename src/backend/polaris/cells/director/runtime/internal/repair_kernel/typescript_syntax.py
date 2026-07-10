@@ -4278,6 +4278,13 @@ def _typescript_unused_parameter_operation(
             name=name,
             column=column if candidate_index == line_index else 0,
         )
+        if not repaired_line:
+            repaired_line = _typescript_unused_multiline_parameter_line_replacement(
+                lines=lines,
+                line_index=candidate_index,
+                name=name,
+                column=column if candidate_index == line_index else 0,
+            )
         if not repaired_line or repaired_line == original_line:
             continue
         return _line_text_replace_operation(
@@ -4311,6 +4318,37 @@ def _typescript_unused_parameter_line_replacement(*, line: str, name: str, colum
     return ""
 
 
+def _typescript_unused_multiline_parameter_line_replacement(
+    *,
+    lines: Sequence[str],
+    line_index: int,
+    name: str,
+    column: int,
+) -> str:
+    if name.startswith("_") or line_index < 0 or line_index >= len(lines):
+        return ""
+    line = lines[line_index]
+    if f"_{name}" in line:
+        return ""
+    occurrences = list(re.finditer(rf"\b{re.escape(name)}\b", line))
+    if not occurrences:
+        return ""
+    column_index = max(0, column - 1)
+    occurrences.sort(key=lambda match: abs(match.start() - column_index))
+    for match in occurrences:
+        if not _typescript_identifier_occurrence_has_parameter_shape(line, match.start(), match.end()):
+            continue
+        if not _typescript_identifier_occurrence_is_in_multiline_parameter_list(
+            lines=lines,
+            line_index=line_index,
+            start=match.start(),
+            end=match.end(),
+        ):
+            continue
+        return f"{line[: match.start()]}_{name}{line[match.end() :]}"
+    return ""
+
+
 def _typescript_identifier_occurrence_is_parameter(line: str, start: int, end: int) -> bool:
     open_index = line.rfind("(", 0, start)
     close_index = line.find(")", end)
@@ -4325,6 +4363,38 @@ def _typescript_identifier_occurrence_is_parameter(line: str, start: int, end: i
         return False
     tail = segment_after.lstrip()
     return not tail or tail.startswith((":", "?", "=", ","))
+
+
+def _typescript_identifier_occurrence_has_parameter_shape(line: str, start: int, end: int) -> bool:
+    before = line[:start].strip()
+    if before:
+        modifier_tokens = before.split()
+        allowed_modifiers = {"public", "private", "protected", "readonly", "override"}
+        if any(token not in allowed_modifiers for token in modifier_tokens):
+            return False
+    tail = line[end:].lstrip()
+    return not tail or tail.startswith((":", "?", "=", ","))
+
+
+def _typescript_identifier_occurrence_is_in_multiline_parameter_list(
+    *,
+    lines: Sequence[str],
+    line_index: int,
+    start: int,
+    end: int,
+) -> bool:
+    window_start = max(0, line_index - 20)
+    window_end = min(len(lines), line_index + 21)
+    before = "".join(lines[window_start:line_index]) + lines[line_index][:start]
+    after = lines[line_index][end:] + "".join(lines[line_index + 1 : window_end])
+    open_index = before.rfind("(")
+    if open_index < 0:
+        return False
+    segment_since_open = before[open_index + 1 :]
+    if ")" in segment_since_open or ";" in segment_since_open:
+        return False
+    close_index = after.find(")")
+    return close_index >= 0
 
 
 def _typescript_object_literal_missing_member_operations(

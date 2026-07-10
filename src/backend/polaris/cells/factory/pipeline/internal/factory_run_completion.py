@@ -67,7 +67,11 @@ class RunCompletionWaiter:
         row_run_ids = {
             str(row.get("workflow_run_id") or "").strip(),
             str(row.get("run_id") or "").strip(),
+            str(row.get("factory_run_id") or "").strip(),
+            str(metadata_map.get("factory_run_id") or "").strip(),
+            str(metadata_map.get("factory_bench_factory_run_id") or "").strip(),
             str(runtime_execution_map.get("run_id") or "").strip(),
+            str(runtime_execution_map.get("factory_run_id") or "").strip(),
         }
         if normalized_run_id not in row_run_ids:
             return False

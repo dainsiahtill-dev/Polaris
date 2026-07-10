@@ -4131,6 +4131,57 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         assert isinstance(context["metadata"]["task_contract"], dict)
         assert isinstance(context["metadata"]["ce_blueprint"], dict)
 
+    def test_promote_task_contract_replaces_non_authoritative_dict_slots(self, tmp_path: Any) -> None:
+        BlueprintPersistence(str(tmp_path)).save(
+            "ce_TASK-1",
+            {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-1",
+                "task_id": "TASK-1",
+                "target_files": ["package.json", "src/index.ts"],
+                "scope_paths": ["package.json", "src/index.ts"],
+                "execution_checklist": ["Create package.json", "Create src/index.ts"],
+                "module_interface_contract": {
+                    "schema_version": "chief_engineer.module_interface_contract.v1",
+                    "modules": [{"path": "src/index.ts", "role": "entrypoint"}],
+                },
+            },
+        )
+        task = {
+            "subject": "Implement project entrypoint",
+            "metadata": {
+                "task_id": "TASK-1",
+                "pm_task_id": "TASK-1",
+                "blueprint_id": "ce_TASK-1",
+                "target_files": ["package.json", "src/index.ts"],
+                "scope_paths": ["package.json", "src/index.ts"],
+                "acceptance_criteria": ["Entrypoint compiles"],
+            },
+        }
+        context: dict[str, Any] = {
+            "pm_contract": {"summary": "non-authoritative prompt projection"},
+            "ce_blueprint": {"summary": "non-authoritative prompt projection"},
+            "module_interface_contract": {"summary": "non-authoritative prompt projection"},
+            "metadata": {
+                "pm_contract": {"summary": "non-authoritative prompt projection"},
+                "ce_blueprint": {"summary": "non-authoritative prompt projection"},
+                "module_interface_contract": {"summary": "non-authoritative prompt projection"},
+            },
+        }
+
+        DirectorAdapter._promote_task_contract_to_runtime_context(
+            task=task,
+            context=context,
+            workspace=str(tmp_path),
+        )
+
+        assert looks_like_pm_contract_payload(context["pm_contract"])
+        assert looks_like_ce_blueprint_payload(context["ce_blueprint"])
+        assert context["module_interface_contract"]["modules"][0]["path"] == "src/index.ts"
+        assert looks_like_pm_contract_payload(context["metadata"]["pm_contract"])
+        assert looks_like_ce_blueprint_payload(context["metadata"]["ce_blueprint"])
+        assert context["metadata"]["module_interface_contract"]["modules"][0]["path"] == "src/index.ts"
+
     def test_ce_blueprint_does_not_expand_claimed_task_write_boundary(self, tmp_path: Any) -> None:
         BlueprintPersistence(str(tmp_path)).save(
             "ce_TASK-1-source-core",
@@ -4745,6 +4796,39 @@ class TestBuildDirectorMessage:
         assert task_metadata["scope_paths"] == ["src/index.ts"]
         assert execute_method_module._declared_write_retry_target_files(task) == ["src/index.ts"]
         assert metadata["ce_blueprint"]["blueprint_id"] == blueprint_id
+
+    def test_role_runtime_metadata_carries_quality_repair_evidence(self) -> None:
+        failed_gate_evidence = _build_materialization_quality_failure_evidence_context(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: TypeScript project typecheck failed: "
+                "src/models/Humidity.ts(77,3): error TS6133: 'flower' is declared but its value is never read."
+            ],
+            missing_target_files=[],
+            repair_target_files=["src/models/Humidity.ts"],
+            changed_files=["src/models/Humidity.ts"],
+            repair_attempt=1,
+        )
+        workspace_quality_evidence = _build_materialization_quality_workspace_evidence_context(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: TypeScript project typecheck failed: "
+                "src/models/Humidity.ts(77,3): error TS6133: 'flower' is declared but its value is never read."
+            ],
+            missing_target_files=[],
+            repair_target_files=["src/models/Humidity.ts"],
+            changed_files=["src/models/Humidity.ts"],
+            repair_attempt=1,
+        )
+        context = {
+            "task_id": "factory-quality-gate:run-1:llm-repair",
+            "failed_gate_evidence": failed_gate_evidence,
+            "workspace_quality_evidence": workspace_quality_evidence,
+            "metadata": {"task_id": "factory-quality-gate:run-1:llm-repair"},
+        }
+
+        metadata = DirectorAdapter._build_role_runtime_metadata(context, max_retries=0)
+
+        assert looks_like_failed_gate_evidence_context_payload(metadata["failed_gate_evidence"])
+        assert looks_like_workspace_quality_evidence_payload(metadata["workspace_quality_evidence"])
 
     def test_message_requires_unittest_and_contract_scoped_python_tests(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -5537,6 +5621,66 @@ class TestDirectorFailureClosure:
             "latest_failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
         }
 
+    def test_no_materialized_changes_preserves_primary_llm_provider_timeout(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            MaterializationState,
+            _phase_no_materialized_changes,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_runtime.create_task_row(
+            subject="Bootstrap package manifest",
+            description="Create only package.json.",
+            metadata={"target_files": ["package.json"], "scope_paths": ["package.json"]},
+        )
+        task_id = str(task["id"])
+        state = MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=[],
+            all_affected_files=[],
+            tool_results=[],
+        )
+
+        result = _phase_no_materialized_changes(
+            adapter,
+            baseline_files={},
+            board_claim_applied=False,
+            can_accept_existing_scope=False,
+            context={},
+            direct_fallback_summary=None,
+            empty_write_content_retry_summary=None,
+            no_write_materialization_retry_summary=None,
+            existing_contract_evidence={},
+            primary_llm_summary={
+                "success": False,
+                "provider": "openai_compat-local",
+                "model": "gemma-local",
+                "error_category": "timeout",
+                "error": ("HTTPConnectionPool(host='127.0.0.1', port=8000): ConnectTimeoutError: Connection timed out"),
+            },
+            requires_fresh_materialization=True,
+            run_id="run-provider-timeout",
+            target_task_id=task_id,
+            task={"target_files": ["package.json"], "scope_paths": ["package.json"]},
+            task_claim_session_id="",
+            workspace_name=tmp_path.name,
+            write_tool_evidence=False,
+            state=state,
+        )
+
+        assert result is not None
+        assert result["success"] is False
+        assert result["error"] == "model_provider_timeout"
+        assert result["error_code"] == "model_provider_timeout"
+        assert result["failure_class"] == QaFailureClassV1.MODEL_PROVIDER_TIMEOUT.value
+        assert result["responsible_layer"] == "model_provider"
+        assert result["failure_stage"] == "director_llm_call"
+        failure_evidence = result["failure_evidence"][0]
+        assert failure_evidence["failure_class"] == QaFailureClassV1.MODEL_PROVIDER_TIMEOUT.value
+        assert failure_evidence["responsible_layer"] == "model_provider"
+        assert failure_evidence["metadata"]["materialization_mode"] == "llm_call_failed"
+
     def test_primary_tool_dispatch_failure_does_not_substring_match_error_text(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _primary_llm_tool_dispatch_failure,
@@ -5648,6 +5792,35 @@ class TestDirectorFailureClosure:
         assert result["error"] == "tool_dispatch_dropped"
         assert result["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
         assert result["failure_stage"] == "director_tool_lifecycle"
+
+    def test_llm_stage_summary_carries_provider_failure_fields(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _summarize_llm_stage_result,
+        )
+
+        summary = _summarize_llm_stage_result(
+            {
+                "success": False,
+                "error": "ConnectTimeoutError: Connection timed out",
+                "raw_response": {
+                    "provider": "openai_compat-local",
+                    "model": "gemma-local",
+                    "metadata": {
+                        "error_category": "timeout",
+                        "last_transport_error": "connect timeout",
+                        "platform_retry_exhausted": True,
+                    },
+                },
+            },
+            stage="first_call",
+        )
+
+        assert summary["success"] is False
+        assert summary["provider"] == "openai_compat-local"
+        assert summary["model"] == "gemma-local"
+        assert summary["error_category"] == "timeout"
+        assert summary["last_transport_error"] == "connect timeout"
+        assert summary["platform_retry_exhausted"] is True
 
     def test_llm_stage_summary_carries_tool_lifecycle_evidence(self) -> None:
         """Stage summary must preserve lifecycle evidence for later attribution.

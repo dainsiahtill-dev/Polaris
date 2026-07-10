@@ -3093,11 +3093,19 @@ _MODEL_PROVIDER_RATE_LIMIT_TOKENS = (
 )
 _MODEL_PROVIDER_UNAVAILABLE_TOKENS = (
     "director.provider_unavailable",
+    "circuit_open",
+    "circuit breaker is open",
+)
+_MODEL_PROVIDER_TIMEOUT_TOKENS = (
+    "director.provider_timeout",
+    "model_provider_timeout",
     "provider_timeout",
     "request timeout",
     "transport timeout",
-    "circuit_open",
-    "circuit breaker is open",
+    "connecttimeouterror",
+    "readtimeouterror",
+    "timed out",
+    "connect timeout",
 )
 _MODEL_PROVIDER_INVALID_REQUEST_TOKENS = (
     "invalid_request_error",
@@ -3193,6 +3201,7 @@ def _record_has_model_provider_failure(record: dict[str, Any]) -> bool:
     text = _record_model_provider_failure_text(record)
     return (
         any(token in text for token in _MODEL_PROVIDER_RATE_LIMIT_TOKENS)
+        or any(token in text for token in _MODEL_PROVIDER_TIMEOUT_TOKENS)
         or any(token in text for token in _MODEL_PROVIDER_UNAVAILABLE_TOKENS)
         or _has_model_provider_invalid_request(text)
     )
@@ -3202,6 +3211,8 @@ def _model_provider_failure_reason(record: dict[str, Any]) -> str:
     text = _record_model_provider_failure_text(record)
     if any(token in text for token in _MODEL_PROVIDER_RATE_LIMIT_TOKENS):
         return "director_provider_rate_limit"
+    if any(token in text for token in _MODEL_PROVIDER_TIMEOUT_TOKENS):
+        return "director_provider_timeout"
     if any(token in text for token in _MODEL_PROVIDER_UNAVAILABLE_TOKENS):
         return "director_provider_unavailable"
     if _has_model_provider_invalid_request(text):
@@ -3217,6 +3228,7 @@ def _model_provider_failure_evidence(record: dict[str, Any]) -> str:
         lowered = error_text.lower()
         if (
             any(token in lowered for token in _MODEL_PROVIDER_RATE_LIMIT_TOKENS)
+            or any(token in lowered for token in _MODEL_PROVIDER_TIMEOUT_TOKENS)
             or any(token in lowered for token in _MODEL_PROVIDER_UNAVAILABLE_TOKENS)
             or _has_model_provider_invalid_request(lowered)
         ):

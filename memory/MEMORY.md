@@ -288,3 +288,506 @@ Runs:
     - `pytest test_repair_kernel_coverage_gate.py test_repair_kernel_javascript_python_runtime.py -q`: `47 passed`.
     - Re-running r06 diagnostic through public plan probe now returns `covered_plannable` with plannable source tool `deterministic_typescript_unresolved_identifier_repair` and one patch to `src/main.ts`.
   - legacy regression: none found; no Factory/QA/bench gate/legacy deterministic repair path edited; no target project code edited as a fix.
+- `L1-01 r07`: FAIL after 388.2s; MiniMax-M3 route was available, but TASK-1 stopped after partial materialization.
+  - requested_project_id: `L1-01`
+  - canonical_project_id: `L1-01`
+  - instance_id: `factory-bench-l1-01-r07-l1-01` (deleted after audit through `/v2/instances/{id}`, DELETE returned `{"ok": true}`)
+  - workspace: `/tmp/factory-bench-L1-01-r07/L1-01`
+  - backend_port: `49978`
+  - frontend_port: `5174`
+  - factory_run_id: `factory_c8032ef43d18`
+  - director_run_id: `director-d96dd3d4c3e5`
+  - runtime_dir: `/home/dains/.cache/kernelone/.polaris/projects/l1-01-3eba42077e09/runtime`
+  - pass rate: `0/1`; cumulative pass rate after reset: `0/7`; runnable rate: `0%`; source files `1`; code files `5`; QA ran `true`, QA passed `false`.
+  - wall clock: `388.2s`.
+  - final outcome:
+    - chain: `partial`; chain_exit: `1`.
+    - failed gates included `min_files:3`, `implementation_depth`, `feature_keyword_structure`, `chain_clean`, `integration_qa_passed`, `real_run_gate`, `run_ledger_projection`, `llm_route_audit`, and `delivery_depth_gate`.
+    - corrected root attribution: do not classify this as integration QA or delivery-depth root cause. Upstream TASK-1 did not complete, so downstream QA/test gates are secondary.
+  - final provider/context audit:
+    - CE final request snapshots existed and role identity was correct, but CE evidence coverage still reported missing structured `pm_contract` and `target_files`; text contained target file strings, but not as strong structured refs. This is a context evidence projection gap, not truncation (`context_window_utilization` about `0.014` to `0.0174`).
+    - Director final request snapshot `2beb48d576dcf9090cc9bc05` was healthy: `role=director`, provider `anthropic_compat-1782212251463`, model `MiniMax-M3`, `tool_choice=write_file`, tool schema count `1`, evidence coverage passed with `pm_contract`, `ce_blueprint`, `target_files`, `module_interface_contract`, `execution_profile`, `execution_strategy`, and `execution_envelope`.
+  - tool lifecycle / effect evidence:
+    - MiniMax-M3 produced `3` native `write_file` tool calls.
+    - Transaction truthlog showed `native_tool_calls_count=3`, `tool_batch_started tool_count=3`, `tool_batch_completed receipt_count=3`, and completion `tool_batch_with_receipt`.
+    - Effect receipts wrote `package.json`, `tsconfig.json`, and `src/index.ts`; no `tool_dispatch_dropped`.
+  - task boundary verdict:
+    - `polaris.task_boundary_verdict.v1` status `incomplete_materialization`, failure_class `INCOMPLETE_MATERIALIZATION`, responsible_layer `director`.
+    - TASK-1 target files: `package.json`, `tsconfig.json`, `src/index.ts`, `src/main.ts`, `src/models/Firefly.ts`, `src/models/Flower.ts`, `src/models/MoonPhase.ts`, `src/models/Humidity.ts`, `src/web.ts`.
+    - Missing target files after the first turn: `src/main.ts`, `src/models/Firefly.ts`, `src/models/Flower.ts`, `src/models/MoonPhase.ts`, `src/models/Humidity.ts`, `src/web.ts`.
+    - Downstream pending artifacts included `index.html`, `src/engine/simulation.ts`, `src/engine/renderer.ts`, `tests/simulation.test.ts`, `src/verify.ts`, `tests/verify.test.ts`, `README.md`.
+  - corrected root causes:
+    - `orchestration:partial_materialization_not_continued`: valid effect receipts existed, but the task was failed instead of being continued/requeued with the remaining missing target files.
+    - `task_boundary:dependency_not_unlocked`: downstream test/QA tasks did not get a fair execution path because TASK-1 remained incomplete.
+    - `context_evidence_projection_gap`: CE structured evidence coverage missed PM contract/target files even though the plan artifact and text paths existed.
+    - `bench_projection_misattribution`: final bench gates surfaced QA/delivery-depth/LLM route failures, but the primary blocker is task-boundary continuation.
+  - new classification rule accepted:
+    - If a diagnostic is `covered_plannable` but final audit still fails, classify as `repair_convergence:covered_plannable_not_converged`.
+    - If upstream task non-completion prevents downstream QA/test task execution, classify as `task_boundary:dependency_not_unlocked`.
+  - legacy regression: none found; no target project code edited as a fix, and no legacy deterministic repair/bench-gate bypass introduced.
+- `L1-01 r07 post-audit fix`: current-task missing target files no longer get misrouted as interface-discrepancy triage.
+  - root cause:
+    - `quality_gate.py` treated any materialization plan probe status `coverage_matched_but_unplannable` with no plannable source tool as task-boundary interface discrepancy and stopped before the LLM materialization repair turn.
+    - In r07 the unplannable diagnostics were downstream symptoms of current TASK-1 missing target files, not CE interface-owner conflict.
+    - Valid tool/effect receipts existed (`3/3`), but the remaining missing TASK-1 target files were not continued.
+  - Polaris fix:
+    - `src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py`: annotates runtime materialization boundary summaries with `task_boundary_director_continuation_allowed=true` when the unplannable status is caused by missing target files owned by the current task.
+    - `_materialization_plan_probe_requires_task_boundary_triage(...)` now respects that annotation, so cross-task/interface discrepancies still fail closed while in-scope missing target files proceed to governed Director continuation.
+  - tests:
+    - `src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py`: added coverage that current-task missing targets bypass interface triage and that true unplannable without current missing targets stays fail-closed.
+  - validation:
+    - `ruff check quality_gate.py test_director_adapter_pure.py --fix`: pass.
+    - `ruff format quality_gate.py test_director_adapter_pure.py`: pass.
+    - `mypy quality_gate.py test_director_adapter_pure.py`: pass.
+    - `PYTHONPATH=src/backend .venv/bin/python -m pytest test_director_adapter_pure.py -k "current_task_missing_target_continuation or fail_closed_without_current_missing_targets or materialization_task_boundary_triage_summary_preserves_director_retry_evidence or package_manifest_repair_prompt_combines_missing_targets_and_existing_manifest" -q`: `3 passed`.
+    - `PYTHONPATH=src/backend .venv/bin/python -m pytest test_director_materialization_quality_runtime_ports.py test_quality_repair_target_ordering.py -q`: `8 passed`.
+  - next action:
+    - Run L1-01 r08. Expected improvement is not guaranteed PASS; expected first signal is that TASK-1 performs a quality-repair continuation instead of stopping after 3 files.
+- `L1-01 r08`: FAIL after `525.7s`; r07 partial-materialization blocker improved, but the run exposed a new timeout/dependency boundary gap.
+  - requested_project_id: `L1-01`
+  - canonical_project_id: `L1-01`
+  - instance_id: `factory-bench-l1-01-r08-l1-01`
+  - workspace: `/tmp/factory-bench-L1-01-r08/L1-01`
+  - backend_port: `49978`
+  - frontend_port: `5174`
+  - factory_run_id: `factory_8f76ab1e40b9`
+  - director_run_ids: `director-1d35ca52c709` for TASK-1, `director-35d1cde3e5a1` for TASK-2/TASK-3
+  - runtime_dir: `/home/dains/.cache/kernelone/.polaris/projects/l1-01-0b6e7e964179/runtime`
+  - pass rate: `0/1`; cumulative pass rate after reset: `0/8`; runnable rate: `0%`.
+  - wall clock: `525.7s`; source files `7`; code files `11`.
+  - step/gate result:
+    - `ts_syntax`: ok, 7 TypeScript files parse.
+    - `real_run_gate`: ok, `npm run build`, `npm run test`, and `npm run start` completed.
+    - `package_scripts`: FAIL, `start:src` local entrypoint `src/main.ts` imports `./index` but the static checker did not resolve it.
+    - `implementation_depth`: FAIL because test files/assertions were `0`.
+    - `qa_verdict_artifact_present`: FAIL; `qa_ran=false`.
+    - `chain_clean`: FAIL, `chain=partial`.
+  - final provider/context audit:
+    - Director TASK-2 final request snapshots `ad070211016f590c447e8be3` and `00726e9ef9d40e5f8e23974a` used provider `anthropic_compat-1782212251463`, model `MiniMax-M3`.
+    - Context was not truncated: `message_count=11`, `tool_schema_count=1`, `final_request_token_estimate≈21319`, `context_window_utilization≈0.0213`.
+    - Tool surface was correct: `tool_choice=write_file`, available/required tools contained `write_file`, missing required refs/tools were empty, role identity was Director.
+    - TASK-2 context included target files `index.html`, `src/engine/simulation.ts`, `src/engine/renderer.ts`, `src/web.ts`, `tests/simulation.test.ts`.
+  - tool lifecycle / effect evidence:
+    - TASK-1: truthlog showed `tool_batch_started tool_count=9`, `tool_batch_completed receipt_count=9`, completion `tool_batch_with_receipt`; no `tool_dispatch_dropped`.
+    - TASK-1 effect receipts wrote all 9 scoped files.
+    - TASK-2: truthlog had `decision_requested` only, with no `decision_completed`, no tool batch, no effect receipt.
+  - task runtime facts:
+    - TASK-1 completed: `changed_files=9; tools_executed=9`.
+    - TASK-2 was claimed and heartbeated, then failed with `last_error=director_no_materialized_changes`, adapter `failure_class=INCOMPLETE_MATERIALIZATION`.
+    - TASK-2 primary LLM evidence reported `director_first_call_llm_timeout`; `tools_executed=0`, `write_tool_evidence=false`.
+    - TASK-3 was `blocked_by_failed_dependency: 2`.
+  - corrected root causes:
+    - `orchestration:director_first_call_timeout_no_materialization`: TASK-2 had correct context and write tool schema, but MiniMax-M3 timed out before returning any tool call.
+    - `task_boundary:dependency_not_unlocked`: downstream TASK-3/QA/test work did not execute because TASK-2 failed.
+    - `projection:mismatched_failure_taxonomy`: factory audit reported `director_tool_execution:director_execution_failed`, but task_runtime/adapter facts show `INCOMPLETE_MATERIALIZATION` caused by first-call timeout.
+    - `projection:task_boundary_mismatch`: project-level run ledger boundary showed PASSED, while Director task-level ledger showed TASK-1 `MISSING_ENTRYPOINT_TARGET` for `dist/main.js`; the report must prefer task-level failure facts for root cause.
+    - `orchestration:deadline_budget_collapse`: CE consumed most of the factory timeout; TASK-2 entered Director with an 85s LLM timeout window, too small for a 5-file HTML/TS materialization turn.
+  - legacy regression: none found; no target project code edited as a fix, no legacy deterministic repair or `execute_method.py` branch added.
+  - next fix direction:
+    - Use new execution architecture facts to harden Director/Factory budget handling and failure projection. Covered/plannable diagnostics are not involved in this run; if a future covered/plannable diagnostic still fails, classify as `repair_convergence:covered_plannable_not_converged`.
+- `L1-01 r08 post-audit fix`: factory bench failure taxonomy now consumes runtime Director result facts before falling back to broad director execution buckets.
+  - root cause:
+    - `factory_audits.json` exposed `director_tool_execution:director_execution_failed`, but task_runtime and Director adapter evidence showed TASK-2 `INCOMPLETE_MATERIALIZATION` caused by `director_first_call_llm_timeout`, and TASK-3 was blocked by failed dependency.
+    - Existing taxonomy had `task_boundary` and `repair_convergence` branches, but the generic nested scan could miss structured `task_results[].adapter_result` inside large records and did not read runtime Director result facts directly.
+  - Polaris fix:
+    - `src/backend/polaris/cells/factory/pipeline/internal/bench_gates.py`: added runtime director-result evidence ingestion from `runtime/results/director.result.json` and `runtime/runs/*/results/director.result.json`.
+    - `director_no_materialized_changes` is projected as synthetic `polaris.task_boundary_verdict.synthetic_from_director_result.v1` with status `incomplete_materialization`.
+    - `blocked_by_failed_dependency` is projected as `dependency_not_unlocked`.
+    - This only changes root-cause attribution; it does not make any failing gate pass.
+  - tests:
+    - `src/backend/polaris/cells/factory/pipeline/tests/test_bench_gates.py`: added coverage for runtime Director `INCOMPLETE_MATERIALIZATION` and blocked dependency attribution.
+  - validation:
+    - `ruff check bench_gates.py test_bench_gates.py --fix`: pass.
+    - `ruff format bench_gates.py test_bench_gates.py`: pass.
+    - `mypy bench_gates.py test_bench_gates.py`: pass.
+    - targeted taxonomy pytest: `5 passed`.
+    - full `test_bench_gates.py`: `181 passed`.
+  - remaining platform gap:
+    - Execution budget and task decomposition still need hardening: CE plus TASK-1 can consume enough of the factory deadline that downstream Director tasks start with an insufficient LLM timeout window and fail before any tool call.
+- `L1-01 r08 package_scripts diagnostic fix`: package script local-module resolution now handles TypeScript entrypoints correctly.
+  - root cause:
+    - r08 failed `package_scripts` with `script 'start:src' local entrypoint 'src/main.ts' requires missing local module: ./index`, even though `src/index.ts` existed and `node --import tsx ./src/main.ts` is a valid TS source-entry script.
+    - `kernelone/quality/package_scripts.py` only resolved Node local modules using JS/JSON/native extensions. It did not distinguish TS entrypoints from plain JS entrypoints.
+  - Polaris fix:
+    - `src/backend/polaris/kernelone/quality/package_scripts.py`: local module resolution is now entrypoint-aware. TS/TSX/MTS/CTS entrypoints can resolve extensionless imports to TS module extensions; plain JS entrypoints keep Node's conservative JS/JSON/native extension set.
+  - tests:
+    - `src/backend/polaris/kernelone/quality/tests/test_package_scripts.py`: added coverage that `node --import tsx ./src/main.ts` accepts `import './index'` when `src/index.ts` exists, while plain `node ./src/main.js` still rejects a TS-only target.
+  - validation:
+    - `ruff check package_scripts.py test_package_scripts.py --fix`: pass.
+    - `ruff format package_scripts.py test_package_scripts.py`: pass.
+    - `mypy package_scripts.py test_package_scripts.py`: pass.
+    - `pytest test_package_scripts.py -q`: `10 passed`.
+- `L1-01 r09`: rerun after package-script fix; package scripts and TS syntax passed, but the execution-control lifecycle still failed.
+  - requested_project_id: `L1-01`
+  - canonical_project_id: `L1-01`
+  - instance_id: `factory-bench-l1-01-r09-l1-01`
+  - workspace: `/tmp/factory-bench-L1-01-r09/L1-01`
+  - backend_port: `49978`
+  - frontend_port: `5174`
+  - factory_run_id: `factory_d5a72c1f905e`
+  - run_id: `6f88d06164cd`
+  - director_run_id: `director-9318c364fc93`
+  - runtime_dir: `/home/dains/.cache/kernelone/.polaris/projects/l1-01-757f7b188514/runtime`
+  - wall clock: `540.2s`
+  - run rate after reset: `0/9` passed; runnable rate `0%`.
+  - gate result:
+    - `ts_syntax`: ok, 9 TypeScript files parse.
+    - `package_scripts`: ok, 4 package scripts have valid local entrypoints.
+    - `min_files`, `content_any`, `source_target_coverage`, `feature_keyword_structure`: ok.
+    - `implementation_depth`: FAIL, `test_files=0`, `test_assertions=0`.
+    - `qa_verdict_artifact_present`: FAIL.
+    - `chain_clean`: FAIL, `event_wait_timeout`.
+    - `real_run_gate`: FAIL because chain did not reach terminal state.
+    - `run_ledger_projection`: FAIL, project-level `IMPLEMENTATION_DEFECT`.
+  - final request / tool lifecycle evidence:
+    - TASK-2 first tool batch wrote 4 files successfully: `src/engine/simulation.ts`, `src/engine/renderer.ts`, `src/web.ts`, `index.html`.
+    - TASK-2 attempted `tests/simulation.test.ts`, but tool validation rejected the write with TypeScript syntax error: `SyntaxError: '}' expected`.
+    - Subsequent Director repair/continuation requests had final provider request snapshots `ae68f68e09d9409ff271c42d`, `e90039fddab129578a12db58`, `90eabb51ca1a68a607b7f504`, `4e522982191b1e474f21c495`, `e800e0cb91b4ca8a8665161a`, `2b84a46dcf4c6b04d26960ed`; role identity was Director, MiniMax-M3 route used, tools present, context utilization low and not truncated.
+    - TruthLog shows no `tool_dispatch_dropped`: native tool calls were decoded and tool batches started/completed.
+    - The later batches were cancelled by `director_tool_execution_cancelled: task_runtime_guard_blocked reason=session_not_active`.
+  - TaskRuntime fact stream:
+    - TASK-2 heartbeat remained active through `15:49:58Z`.
+    - TASK-2 was then `suspended` at `15:50:17Z` with `last_error=run_not_found`, source `runtime.task_runtime.suspend_active_executions_for_run`, run_id `director-9318c364fc93`.
+    - After suspension, continuation tool writes at `15:51:17Z` and `15:51:38Z` were blocked because the session was no longer active.
+    - TASK-2 finally failed with `director_materialization_quality_failed`; downstream TASK-3/QA/test work was not unlocked.
+  - corrected root cause:
+    - Primary: `execution_control_plane:factory_abort_run_not_found_cancelled_child_director_session`.
+    - TASK-2 materialization status: `task_boundary:incomplete_materialization` because `tests/simulation.test.ts` was never successfully materialized.
+    - Downstream status: `task_boundary:dependency_not_unlocked` because upstream TASK-2 failed before TASK-3/QA/test task could run.
+    - Not a QA root cause, not a model-generalization root cause, not `tool_dispatch_dropped`.
+    - Apply classification rule: if a future TS2304 `dayOfYear`-style diagnostic is `covered_plannable` but still fails final audit, classify as `repair_convergence:covered_plannable_not_converged`; do not call it integration QA or delivery depth.
+  - Polaris fix:
+    - `src/backend/polaris/cells/factory/pipeline/internal/factory_run_completion.py`: `RunCompletionWaiter.wait()` now treats abort checker `run_not_found` as an ambiguous factory-run store projection and continues waiting instead of cancelling the child Director run and suspending its TaskRuntime session.
+    - Explicit cancel and timeout still call `cancel_active_run`; fail-closed behavior remains for real cancellation.
+  - regression coverage:
+    - `src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py`: added `test_run_completion_waiter_run_not_found_abort_preserves_child_director_session`, proving `run_not_found` does not cancel the child run and TaskRuntime heartbeat remains accepted.
+  - validation:
+    - `ruff check factory_run_completion.py test_factory_stage_executor_characterization.py --fix`: pass.
+    - `ruff format factory_run_completion.py test_factory_stage_executor_characterization.py`: pass.
+    - `mypy factory_run_completion.py test_factory_stage_executor_characterization.py`: pass.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend python -m pytest polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py -k "run_completion_waiter_run_not_found_abort_preserves_child_director_session or run_completion_waiter_timeout_propagates_to_active_orchestration_run or run_completion_waiter_soft_timeout_preserves_active_director_session" -q`: `3 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend python -m pytest polaris/cells/factory/pipeline/tests/test_bench_gates.py -q`: `181 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend python -m pytest polaris/kernelone/quality/tests/test_package_scripts.py -q`: `10 passed`.
+- `L1-01 r10`: rerun after factory `run_not_found` session-cancellation fix; r09 `session_not_active` did not recur, but first Director task still failed before materialization.
+  - requested_project_id: `L1-01`
+  - canonical_project_id: `L1-01`
+  - instance_id: `factory-bench-l1-01-r10-l1-01`
+  - workspace: `/tmp/factory-bench-L1-01-r10/L1-01`
+  - backend_port: `49978`
+  - frontend_port: `5174`
+  - factory_run_id: `factory_3e3b6f4dc391`
+  - run_id: `fd4eac8f7db5`
+  - director_run_id: `director-6ee663201bc4`
+  - runtime_dir: `/home/dains/.cache/kernelone/.polaris/projects/l1-01-6ff267bc2495/runtime`
+  - wall clock: `510.6s`
+  - run rate after reset: `0/10` passed; runnable rate `0%`.
+  - gate result:
+    - `ts_syntax`: FAIL because no `.ts/.tsx` files were materialized.
+    - `package_scripts`: FAIL because `package.json` was not materialized.
+    - `min_files`, `source_target_coverage`, `implementation_depth`, `qa_verdict_artifact_present`, `real_run_gate`: FAIL.
+    - `llm_route_audit`: ok; Director route used `MiniMax-M3`.
+  - final provider request / context snapshot evidence:
+    - context snapshots: `9a9464c2efc2943a7e88cb70`, `1a1ed0a5f9e7a5357384e60e`, `3b2b54149059f56061e9da0d`, `46f3dfcf18dbc93da66a25b7`.
+    - Director role identity was correct.
+    - PM contract, CE blueprint, target files, `package.json`, `tsconfig.json`, `src/index.ts`, `src/main.ts`, and `src/models/Firefly.ts` were present.
+    - `write_file` schema was present on native requests; context utilization was low and not truncated.
+    - Kimi text fallback context had no native tool schema by design and requested JSON write-file envelopes.
+  - TaskRuntime / ledger evidence:
+    - `runtime/results/director.result.json`: failed with `director_failed`.
+    - `runtime/dispatch/log.json`: first round timed out after `303s`; second round found no claimable work after the failed first task.
+    - TaskRuntime fact stream: TASK-1 failed `director_no_materialized_changes`; TASK-2/TASK-3 remained blocked by dependency.
+    - TruthLog had `decision_requested` but no completed Director tool batch.
+  - corrected root cause:
+    - Primary: `tool_calling:required_tool_not_called_deadline_exhausted`.
+    - Orchestration projection: `director_first_call_timeout_no_materialization`.
+    - Downstream: `task_boundary:dependency_not_unlocked`.
+    - Not context truncation, not missing Director tools, not integration QA, not package script validation, and not the r09 `session_not_active` regression.
+  - new classification rule to preserve:
+    - If TS2304 `dayOfYear`-style diagnostics are `covered_plannable` but final audit still fails, classify as `repair_convergence:covered_plannable_not_converged`.
+    - If upstream task failure prevents downstream QA/test tasks from running, classify as `task_boundary:dependency_not_unlocked`.
+  - next Polaris fix:
+    - Treat MiniMax as unreliable for forced native `tool_choice` retry after a required tool is missing, so the invoker goes directly to the structured text fallback instead of spending another long native forced-tool retry.
+    - This stays in `roles.kernel` provider compatibility and does not modify legacy repair, `execute_method.py`, bench pass/fail gates, or target project code.
+  - cleanup:
+    - `factory-bench-l1-01-r10-l1-01` was deleted through Launcher API with registry token; registry no longer contains the instance.
+- `L1-01 r10 follow-up fix`: MiniMax required-tool retry compatibility.
+  - Polaris fix:
+    - `src/backend/polaris/cells/roles/kernel/internal/llm_caller/invoker.py`: `_profile_lacks_forced_tool_choice()` now treats MiniMax profiles like Kimi/DeepSeek for missing-required-tool retry decisions.
+    - Effect: first MiniMax native tool call is still allowed, but if the provider returns prose without the required tool call, Polaris goes directly to structured text fallback instead of spending another long forced native `tool_choice` retry.
+    - This is a provider capability compatibility fix in `roles.kernel`, not a deterministic repair rule, not a bench gate bypass, and not target project code.
+  - regression coverage:
+    - `src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py`: added `test_minimax_uses_required_tool_text_fallback_after_missing_tool_call`.
+  - validation:
+    - `ruff check src/backend/polaris/cells/roles/kernel/internal/llm_caller/invoker.py src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py --fix`: pass.
+    - `ruff format src/backend/polaris/cells/roles/kernel/internal/llm_caller/invoker.py src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py`: pass.
+    - `mypy src/backend/polaris/cells/roles/kernel/internal/llm_caller/invoker.py src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py`: pass.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py -k "minimax_uses_required_tool_text_fallback_after_missing_tool_call or required_tool_not_called" -q`: `6 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py -q`: `12 passed`.
+- `L1-01 r11`: rerun after MiniMax forced-tool fallback compatibility fix.
+  - requested_project_id: `L1-01`
+  - canonical_project_id: `L1-01`
+  - instance_id: `factory-bench-l1-01-r11-l1-01`
+  - workspace: `/tmp/factory-bench-L1-01-r11/L1-01`
+  - backend_port: `49978`
+  - frontend_port: `5174`
+  - factory_run_id: `factory_2de70368e0b3`
+  - run_id: `f3375bb4189d`
+  - runtime_dir: `/home/dains/.cache/kernelone/.polaris/projects/l1-01-81875cdecd19/runtime`
+  - wall clock: `541.8s`
+  - run rate after reset: `0/11` passed; runnable rate `0%`.
+  - gate result:
+    - `ts_syntax`: ok, 8 TypeScript files pass parser.
+    - `package_scripts`: ok, 3 scripts have valid local entrypoint references.
+    - `min_files`, `content_any`, `source_target_coverage`, `feature_keyword_structure`: ok.
+    - `implementation_depth`: FAIL, `prod_files=8`, `prod_lines=565`, `test_files=0`, `test_assertions=0`.
+    - `qa_verdict_artifact_present`, `chain_clean`, `integration_qa_passed`, `real_run_gate`, `run_ledger_projection`, `delivery_depth_gate`: FAIL.
+  - final provider request evidence:
+    - TASK-2 context refs include `03d6eef02e587e6aeaf03705`, `58353a96fd11f2d38247205d`, `8676dea475141d991767a9a4`, `4cb4e593a822bc39f21b4f07`.
+    - Director role identity was correct.
+    - PM contract, CE blueprint, target files, module interface contract, actual sibling exports, execution profile, execution strategy, and execution envelope were present.
+    - `write_file` schema was present; context utilization was about `0.019`.
+    - No context truncation or tool schema omission was observed.
+  - execution facts:
+    - TASK-1 succeeded after runtime repair. It wrote 9 files, environment prep ran `npm install --ignore-scripts --no-audit --no-fund`, and current `npm run build` / `npm run test` both exit 0.
+    - The earlier TASK-1 TS2304 diagnostics (`Firefly`, `Flower`, `MoonPhase`, `Humidity`) were repaired; this is not a final `covered_plannable_not_converged` root.
+    - Current `npm run test` is still hollow: Node test runner reports `0` tests because no `tests/*.test.ts` file exists.
+    - TASK-2 was unblocked and claimed, then wrote `src/engine/simulation.ts`.
+    - Later TASK-2 turns produced native `write_file` tool calls, but all tool results failed with `director_tool_execution_cancelled: task_runtime_guard_blocked reason=session_not_active`.
+    - TaskRuntime suspended TASK-2 with `last_error=factory_cancelled`; TASK-3 stayed blocked.
+  - corrected root cause:
+    - Primary: `execution_control_plane:tool_batch_all_results_failed_hidden_success`.
+    - Secondary: `execution_control_plane:deadline_cancel_before_tool_dispatch` / `session_not_active`.
+    - Downstream: `task_boundary:dependency_not_unlocked` for QA/final test task.
+    - Not context truncation, not missing tools, not integration QA, and not TS repair convergence for the final state.
+  - additional platform bug:
+    - TruthLog `CompletionEvent` recorded `status=success` for a tool batch whose `success_count=0`, `failure_count>0`, and `effect_receipts=[]`.
+    - This caused upper layers to see a successful turn even though no authoritative write effect was committed.
+  - Polaris fix:
+    - `src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py`: added `_batch_has_authoritative_success()` and a fail-closed guard before finalization. A decoded tool batch with invocations, receipts, no successful result, no pending async, and no effect receipt now raises `tool_dispatch_failed` instead of completing successfully.
+    - `src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_tool_batch_executor_metadata.py`: added coverage for all-error, success, effect-receipt, and pending-async batch shapes.
+  - validation:
+    - `ruff check src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_tool_batch_executor_metadata.py --fix`: pass.
+    - `ruff format src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_tool_batch_executor_metadata.py`: pass.
+    - `mypy src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_tool_batch_executor_metadata.py`: pass.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend python -m pytest src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_tool_batch_executor_metadata.py -q`: `11 passed`.
+  - additional validation after this fix:
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend python -m pytest src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_decision_pipeline.py src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_tool_batch_executor_metadata.py -q`: `20 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py -q`: `41 passed`.
+- `Architecture recap after L1-01 r06-r11 reset`:
+  - Quantitative baseline:
+    - L1-01 reset runs: `0/11` pass; runnable rate `0%`.
+    - r10: `0` source files, first Director materialization failed.
+    - r11: `12` files, `8` TypeScript source files, `565` prod lines, `0` test files, `0` test assertions; `npm run build` exits `0`; `npm run test` exits `0` but reports `0` tests.
+    - r11 wall clock: `541.8s`; chain failed by event wait timeout.
+  - Fixed or improved:
+    - MiniMax required-tool compatibility: native tool calls now progress; r11 reached real file materialization.
+    - Environment prep plane helped: npm install receipt succeeded and build artifacts were generated.
+    - TASK-1 TS2304 import diagnostics were repaired by runtime repair; final state is not TS repair convergence failure.
+    - Tool batch all-error hidden success is now guarded fail-closed in `roles.kernel`.
+  - Remaining base/platform gaps:
+    1. Execution control plane still lacks an atomic barrier between LLM decision, tool dispatch, effect receipt, and TaskRuntime session state. r11 produced native `write_file` calls after Factory cancellation had invalidated the session, so tool results failed `session_not_active`.
+    2. Factory deadline/cancel propagation is too blunt. Stage timeout/factory cancel can suspend an active Director task while a turn is between `decision_completed` and `tool_batch_completed`.
+    3. Run Ledger / bench projection still misclassifies platform failures as generic `IMPLEMENTATION_DEFECT`, `runtime_environment:event_wait_timeout`, or delivery depth failures unless deeper evidence is manually audited.
+    4. TaskBoundary entrypoint gate treats generated build outputs such as `dist/main.js` as missing local entrypoint targets too early. It must distinguish source targets from generated verifier outputs.
+    5. Delivery-depth and QA gates are downstream symptoms when upstream task boundary/deadline failures leave test files unmaterialized. These should be projected as `task_boundary:dependency_not_unlocked` or `execution_control_plane:*`, not QA or model quality.
+    6. Context quality audit works for final provider request, but some continuation turns still show missing `has_failure_feedback` / `has_workspace_quality_evidence`; that is not the main r11 failure, but it reduces repair/continuation precision.
+    7. Step success rate and runnable rate remain poor despite materialization improvement, so the architecture is directionally better but not yet fully converged.
+- `Pre-r12 execution-control-plane audit`:
+  - User requested a fresh L1-01 restart and reports must use the new Execution Ledger / TaskRuntime facts as source of truth, not raw TaskBoard/session files.
+  - Current worktree contains external/uncommitted changes in `execute_method.py`, `failure_evidence.py`, `qa/audit_verdict/contracts.py`, bench gates/tests, and memory. The `execute_method.py` diff classifies structured LLM provider failures; it is not a deterministic repair branch, and this bench agent did not extend it.
+  - Codegraph audit of `RunCompletionWaiter`, `TaskRuntimeService.list_observable_task_rows()`, and `cancel_active_run()` found the current code already has a TaskRuntime active execution barrier for cancel-event and timeout paths. Existing unit coverage verifies active Director sessions are preserved.
+  - Validation before L1-01 r12:
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py -k "run_completion_waiter_cancel_event_preserves_active_director_session or run_completion_waiter_timeout_preserves_active_director_session_by_default or run_completion_waiter_run_not_found_abort_preserves_child_director_session or director_timeout_settle_cancel_event_preserves_active_task_runtime_barrier" -q`: `4 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/roles/kernel/internal/transaction/tests/test_tool_batch_executor_metadata.py -q`: `11 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/factory/pipeline/tests/test_bench_gates.py -q`: `185 passed`.
+  - Current quantitative baseline before r12 remains `0/11` pass after reset, runnable rate `0%`; r11 wall clock was `541.8s`.
+- `L1-01 r12`:
+  - requested_project_id: `L1-01`
+  - canonical_project_id: `L1-01`
+  - instance_id: `factory-bench-l1-01-r12-l1-01`
+  - workspace: `/tmp/factory-bench-L1-01-r12/L1-01`
+  - backend_port: `49980`
+  - frontend_port: `5176`
+  - factory_run_id: `factory_d4769ca4c362`
+  - orchestration/director run_id: `director-a2789bd43e0e`
+  - runtime_dir: `/home/dains/.cache/kernelone/.polaris/projects/l1-01-e293f8cd4c27/runtime`
+  - wall clock: `349.3s`
+  - run rate after reset: `0/12` passed; runnable rate `0%`.
+  - gate result:
+    - PASS: `ts_syntax`, `package_scripts`, `min_files:3`, `content_any`, `source_target_coverage`, `feature_keyword_structure`, plan artifact, blueprint artifact, QA artifact, backend freshness, LLM route audit.
+    - FAIL: `implementation_depth`, `chain_clean`, `integration_qa_passed`, `real_run_gate`, `run_ledger_projection`, `delivery_depth_gate`.
+  - quantitative artifact state:
+    - `files=11`, `source=7`, `prod_files=7`, `prod_lines=368`, `test_files=0`, `test_assertions=0`, `behavior_symbols=43`, `branches=44`.
+    - `npm run build`, `npm test`, and `npm run start` all failed with `src/models/Humidity.ts(77,3): error TS6133: 'flower' is declared but its value is never read.`
+    - `delivery_depth_contract` failed because no test file/assertions were materialized.
+  - final provider request audit:
+    - Director initial materialization request context ref: `02d3a6d1cbd3c401cf0f0d3e`.
+      - role identity ok, PM contract ok, CE blueprint ok, target files ok, module interface contract ok, architecture/file plan ok, execution envelope/profile/strategy ok.
+      - tools: 1 forced `write_file`; context utilization `0.016`; no truncation.
+    - Director quality-gate repair request context ref: `0dcb8b3c5e59f53da700b313`.
+      - role identity ok and tools present, but final request evidence gate failed before model dispatch.
+      - missing required refs: `pm_contract`, `ce_blueprint`, `failed_gate_evidence`, `architecture_or_file_plan`, `module_interface_contract`.
+      - This is a platform context assembly gap in quality-gate repair requests, not a target project issue.
+    - QA request context ref: `3b7f604e1a4303911cc3bfcc`.
+      - role identity ok and tools present, but evidence coverage missed PM contract, CE blueprint, module interface contract, architecture/file plan, target files, failed gate evidence, and workspace quality evidence.
+      - The prompt text did contain workspace validation evidence, so the coverage projection/audit is also incomplete.
+  - tool lifecycle:
+    - Director initial LLM returned 10 native tool calls; 9 were dispatched and succeeded with effect receipts.
+    - No `session_not_active` recurrence was observed in r12.
+    - TruthLog has `decision_completed`, `tool_batch_started`, `tool_batch_completed`, and `CompletionEvent(status=success)` with successful effect receipts for the initial batch.
+  - repair coverage / plan probe:
+    - Plan probe status: `coverage_gap_uncovered_diagnostics`.
+    - `covered_unplannable_diagnostic_count=7`, all TS6133 variants for `src/models/Humidity.ts(77,3)`.
+    - Matched source tool: `deterministic_typescript_unused_import_repair`, but `patch_count=0` before fix.
+    - `coverage_gap_count=2`: `workspace_validation_failed` for delivery depth and `typescript_project_typecheck_failed`.
+  - root cause classification:
+    1. `repair_convergence:coverage_matched_but_unplannable` for TS6133 unused parameter on a multi-line function signature.
+    2. `context_assembly:quality_gate_repair_final_request_missing_required_refs`.
+    3. `context_assembly:qa_final_request_evidence_projection_missing_required_refs`.
+    4. `task_boundary:dependency_not_unlocked` because TASK-2/TASK-3 remained blocked after TASK-1 failed materialization quality.
+    5. `orchestration_contract:package_test_script_references_future_tests` because TASK-1 wrote a `test` script that requires future `dist-tests` outputs while no test target existed yet.
+  - Polaris repair implemented after r12:
+    - `src/backend/polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py`: enhanced TS6133 unused-parameter planner to recognize multi-line parameter lists and emit a span-based `_parameter` text replacement.
+    - `src/backend/polaris/cells/director/runtime/tests/test_repair_kernel_contract.py`: added public plan-probe coverage for a multi-line unused parameter and fixed existing optional-content/replacement mypy assertions in the touched file.
+  - validation:
+    - Local r12 diagnostic reproduction now returns `plan=True`, `operations=1`, `rule_id=typescript.unused_parameter`, `composition ok=True`, patching `flower` to `_flower`.
+    - `ruff check ... --fix`: pass.
+    - `ruff format ...`: pass.
+    - `mypy polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax.py polaris/cells/director/runtime/tests/test_repair_kernel_contract.py`: pass.
+    - `pytest polaris/cells/director/runtime/tests/test_repair_kernel_contract.py -k "typescript_ts6133" -q`: `6 passed`.
+    - `pytest polaris/cells/director/runtime/tests/test_repair_kernel_contract.py -q`: `434 passed`.
+    - `pytest polaris/cells/director/runtime/tests/test_repair_kernel_convergence_scheduler.py -q`: `11 passed`.
+    - `pytest polaris/cells/factory/pipeline/tests/test_bench_gates.py -q`: `185 passed`.
+- `Post-r12 context assembly hardening`:
+  - New audit finding from final provider requests:
+    - Director initial materialization context was healthy, but the Director quality-repair reentry request (`0dcb8b3c5e59f53da700b313`) lost structured PM/CE/module-interface/failure evidence even though prompt text still contained fragments.
+    - QA request (`3b7f604e1a4303911cc3bfcc`) carried workspace-validation evidence in messages but not in structured evidence slots.
+  - Root cause:
+    1. `_set_structured_task_contract_slot` preserved any non-empty dict, so a non-authoritative summary/projection dict could block replacement by real PM contract, CE blueprint, or module-interface payload.
+    2. `DirectorAdapter._build_role_runtime_metadata` did not project quality-repair evidence slots from context into metadata, making `failed_gate_evidence` / `workspace_quality_evidence` vulnerable to ContextOS message filtering.
+  - Polaris fix:
+    - `src/backend/polaris/cells/roles/adapters/internal/director/adapter.py`
+      - Added evidence-predicate based replacement for non-authoritative dict slots.
+      - Added RoleRuntime metadata projection for structured contract and quality evidence keys.
+    - `src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py`
+      - Added regression coverage for non-authoritative dict slot replacement.
+      - Added regression coverage for quality-repair evidence projection into RoleRuntime metadata.
+  - Validation:
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -k "promote_task_contract_replaces_non_authoritative_dict_slots or role_runtime_metadata_carries_quality_repair_evidence or promote_task_contract_replaces_summary_slots" -q`: `3 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk mypy polaris/cells/roles/adapters/internal/director/adapter.py polaris/cells/roles/adapters/tests/test_director_adapter_pure.py`: pass.
+    - `rtk ruff check src/backend/polaris/cells/roles/adapters/internal/director/adapter.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py --fix`: pass.
+    - `rtk ruff format src/backend/polaris/cells/roles/adapters/internal/director/adapter.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py`: pass.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/roles/adapters/tests/ -k "repair" -q`: `342 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/factory/pipeline/tests/test_bench_gates.py -q`: `185 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/director/runtime/tests/test_repair_kernel_contract.py -q`: `434 passed`.
+- `L1-01 r13`:
+  - requested_project_id: `L1-01`
+  - canonical_project_id: `L1-01`
+  - instance_id: `factory-bench-l1-01-r13-l1-01`
+  - workspace: `/tmp/factory-bench-L1-01-r13/L1-01`
+  - backend_port: `49981`
+  - frontend_port: `5178`
+  - factory_run_id: `factory_2d54e027b0b2`
+  - run_id: `2d613ce41368`
+  - runtime_dir: `/home/dains/.cache/kernelone/.polaris/projects/l1-01-27be78f83c40/runtime`
+  - wall clock: `540.5s`
+  - run rate after reset: `0/13` passed; runnable rate `0%`.
+  - instance cleanup: stopped via Launcher API after audit; backend/frontend alive false.
+  - quantitative improvement:
+    - `files=15`, `source=10`, `prod_files=9`, `prod_lines=776`, `test_files=1`, `test_assertions=25`, `behavior_symbols=63`, `branches=55`.
+    - PASS: `ts_syntax`, `package_scripts`, `min_files`, `content_any`, `source_target_coverage`, `implementation_depth`, `feature_keyword_structure`, plan artifact, blueprint artifact, backend freshness, LLM route audit, delivery depth.
+    - FAIL: QA verdict missing, chain clean, integration QA, real run gate, run ledger projection.
+  - final provider request audit:
+    - Director requests for TASK-1/TASK-2/TASK-3 had `missing_required_refs=[]`.
+    - TASK-3 Director context ref `b4c7320b214f5b9e49ac1316`: included PM contract, CE blueprint, target files, module interface contract, architecture/file plan, execution profile/strategy/envelope, language guidance; utilization `0.0237`.
+    - Chief Engineer requests still showed missing structured `pm_contract` and `target_files` refs in final provider request audit despite task text being in messages. This is a CE context assembly/evidence-slot gap.
+  - control-plane timeline:
+    - Project ledger wrote `event_wait_timeout` and project-level `MISSING_ENTRYPOINT_TARGET` at `2026-07-09T23:43:16Z`.
+    - TASK-3 Director write receipts for `src/verify.ts`, `tests/verify.test.ts`, `README.md`, `index.html`, and `package.json` were committed after that, around `23:43:29Z` to `23:43:32Z`.
+    - Director status after run: `IDLE`, tasks total 3; TASK-1 and TASK-2 completed, TASK-3 failed.
+    - TASK-3 `last_error=director_missing_write_receipt`; adapter_result claimed `tools_executed=0`, `write_tool_evidence=false`, `primary_llm.error=director_first_call_llm_timeout`, while Run Ledger contained 5 successful `write_file` tool receipts for the same `director-923db7d73cd3` run.
+  - physical verifier audit from workspace:
+    - `npm run build`: exit 2; `src/verify.ts` uses nonexistent `SourceFile.parseDiagnostics` and has implicit-any parameter `d`.
+    - `npm test`: exit 2 via build failure.
+    - `npm run start`: exit 1; package has `"type": "module"` while `tsconfig.module` is `commonjs`, so Node rejects CommonJS `exports` in ESM scope.
+  - root cause classification:
+    1. `execution_control_plane:adapter_result_effect_receipt_split_brain`: committed tool receipts exist in Run Ledger, but adapter result/TaskRuntime still finalized TASK-3 as `director_missing_write_receipt`.
+    2. `execution_control_plane:event_wait_timeout_before_active_director_settled`: project-level gate/TaskBoundary evaluated before active TASK-3 receipts landed, producing stale `src/web.js` missing-entrypoint evidence.
+    3. `implementation_defect:typescript_verify_api_and_esm_cjs_mismatch`: final artifact is still not runnable.
+    4. `context_assembly:chief_engineer_final_request_missing_pm_contract_target_files`: CE final provider requests lack structured PM/target slots even though task prose is visible.
+  - current conclusion:
+    - r13 shows real progress in materialization/depth, but the base architecture is not fully converged.
+    - The dominant remaining gap is not deterministic repair coverage; it is execution transaction consistency across provider response, tool receipts, adapter result, TaskRuntime, project-level Run Ledger, and QA gating.
+- `Post-r13 factory timeout barrier hardening`:
+  - Root cause refined:
+    - `RunCompletionWaiter._active_task_runtime_barrier_result()` only matched observable TaskRuntime rows by child Director run id (`workflow_run_id`, `run_id`, `runtime_execution.run_id`).
+    - Factory/bench timeout uses the parent Factory run id (`factory_2d54e027b0b2` in r13), while the active child row uses a `director-*` run id. The shared parent id is stored in task metadata as `factory_run_id`.
+    - Therefore the active-run barrier missed an in-flight Director task and allowed project-level timeout / stale task-boundary evaluation while TASK-3 receipts were still landing.
+  - Polaris fix:
+    - `src/backend/polaris/cells/factory/pipeline/internal/factory_run_completion.py`
+      - `_row_matches_active_run()` now treats top-level or metadata `factory_run_id` / `factory_bench_factory_run_id` as run linkage evidence, still via `TaskRuntimeService.list_observable_task_rows()`.
+    - `src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py`
+      - Added regression: parent factory run timeout preserves an active child Director session when the observable row metadata carries the same `factory_run_id`.
+  - Validation:
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py -k "run_completion_waiter_timeout_matches_active_director_by_factory_run_id or run_completion_waiter_timeout_preserves_active_director_session_by_default or run_completion_waiter_cancel_event_preserves_active_director_session or run_completion_waiter_run_not_found_abort_preserves_child_director_session" -q`: `4 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk mypy polaris/cells/factory/pipeline/internal/factory_run_completion.py`: pass.
+    - Full mypy of `test_factory_stage_executor_characterization.py` still fails with pre-existing unrelated type debt outside this change.
+    - `rtk ruff check src/backend/polaris/cells/factory/pipeline/internal/factory_run_completion.py src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py --fix`: pass.
+    - `rtk ruff format src/backend/polaris/cells/factory/pipeline/internal/factory_run_completion.py src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py`: pass.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/factory/pipeline/tests/test_bench_gates.py -q`: `185 passed`.
+    - `PYTHONPATH=/home/dains/Documents/polaris/src/backend rtk pytest polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py -k "active_task_runtime_barrier or run_completion_waiter" -q`: `9 passed`.
+- `L1-01 r14`:
+  - requested_project_id: `L1-01`
+  - canonical_project_id: `L1-01`
+  - instance_id: `factory-bench-l1-01-r14-l1-01`
+  - workspace: `/tmp/factory-bench-L1-01-r14/L1-01`
+  - backend_port: `49982`
+  - frontend_port: `5179`
+  - factory_run_id: `factory_91d00d454911`
+  - run_id: `a30da56fa1dc`
+  - runtime_dir: `/home/dains/.cache/kernelone/.polaris/projects/l1-01-647b09df49ef/runtime`
+  - wall clock: `540.4s`
+  - run rate after reset: `0/14` passed; runnable rate `0%`.
+  - instance cleanup: stopped via Launcher API after audit; backend/frontend alive false.
+  - quantitative state:
+    - `files=15`, `source=10`, `prod_files=9`, `prod_lines=675`, `test_files=1`, `test_assertions=44`, `behavior_symbols=51`, `branches=42`.
+    - PASS: `ts_syntax`, `package_scripts`, `min_files`, `content_any`, `source_target_coverage`, `implementation_depth`, `feature_keyword_structure`, plan artifact, blueprint artifact, backend freshness, LLM route audit, delivery depth.
+    - FAIL: QA verdict missing, chain clean, integration QA, real run gate, run ledger projection.
+  - task/runtime state:
+    - Live Director status after runner exit: IDLE.
+    - Task rows: TASK-1 completed; TASK-2 failed with `director_materialization_quality_failed`; TASK-3 blocked by task 2.
+    - Director summary in bench: `total=3`, `successes=1`, `failures=1`, `blocked=1`.
+  - ledger / timing:
+    - TASK-1 `director-b6f899d349d1`: 9 write_file receipts, task-boundary `completed_verified`.
+    - TASK-2 `director-f652da6a287a`: multiple write_file receipts and final task-boundary `completed_verified` at `2026-07-09T23:59:13Z`, but TaskRuntime row still ended failed with `director_materialization_quality_failed`.
+    - Project ledger still emitted `event_wait_timeout` and project boundary `MISSING_ENTRYPOINT_TARGET` for stale `src/web.js` at `2026-07-10T00:00:37Z`.
+    - Factory workspace validation did run after that and committed command evidence at `2026-07-10T00:00:40Z`.
+  - physical verifier evidence:
+    - `npm run build`: exit 2; `GardenReading` lacks `fireflies`, `moonBrightness`, `flowerCount`; `src/index.ts` had missing names in earlier validation pass.
+    - `npm test`: exit 1; tests use `describe` with Node `node --test` without importing a test API / using Vitest.
+    - `npm run start`: exit 2 through build failure.
+  - final provider request / context audit:
+    - r14 did not reproduce r12 Director final-request missing refs for the main Director tasks.
+    - Remaining CE final-request evidence gap from r13 still applies unless separately fixed: CE requests can miss structured `pm_contract` and `target_files` refs while carrying task prose in messages.
+  - root cause classification:
+    1. `task_runtime_projection:task_boundary_pass_not_promoted_to_task_success`: TASK-2 has a final task-boundary PASS but row status remains failed, blocking TASK-3.
+    2. `factory_terminalization:failed_blocked_task_set_not_marked_terminal`: Factory runner waits until timeout instead of converting completed/failed/blocked task rows plus workspace validation evidence into terminal failed.
+    3. `implementation_defect:cross_file_type_contract_mismatch`: `GardenReading` shape and renderer/index usage diverge.
+    4. `implementation_defect:test_runner_contract_mismatch`: test file uses Mocha/Vitest-style globals while package script runs Node's built-in test runner.
+    5. `run_ledger_projection:stale_project_boundary_entrypoint_evidence`: project-level boundary still reports stale `src/web.js` despite later/current validation pointing to real TS errors.
+  - current conclusion:
+    - r14 improved evidence capture: workspace validation command evidence now exists.
+    - The system still cannot automatically complete one L1 project because task-boundary verdict, TaskRuntime row status, Factory terminalization, Run Ledger projection, and QA verdict remain split.
+
+## 2026-07-10T00:06:18.905111+00:00 - Architecture risk recap
+- User asked whether we are in a legacy/spaghetti trap. Current evidence supports a migration-complexity trap: Factory run events, TaskRuntime observable rows, Execution Ledger, Run Ledger, bench WS wait, and QA verdict can still diverge on terminal state and failure class.
+- Fresh L1-01 reset state remains 0/14 pass, runnable 0%. r14 passed materialization/depth/blueprint/backend/route gates but timed out at 540.4s with QA/chain/real-run/run-ledger projection failures.
+- Current working hypothesis: language repair is no longer the primary blocker. The primary platform gap is execution-control terminalization/projection: failed+blocked task sets and quality-gate handoff evidence are not consistently promoted into factory-level terminal failure and final root-cause projection.
+- Next fix target: factory/TaskRuntime terminal projection and bench event wait evidence path, not execute_method.py or legacy deterministic repair.
+
+## 2026-07-10T00:14:59.143098+00:00 - Deadline budget fix before L1-01 r15
+- Root cause refined from L1-01 r14: Director entered materialization-quality handoff at 23:59:33Z; quality_gate started with ~62s left, then workspace validation/repair consumed the remaining bench deadline. Bench cancelled at 00:00:35Z; QA report was written only after cancellation, causing qa_verdict missing, chain timeout, and stale run-ledger projection.
+- Production fix: factory_stage_executor now preserves quality gate reserve even when materialization_pending=True, raises QA min start budget to FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS, and caps every workspace validation command/repair rerun by remaining deadline while preserving QA budget.
+- Verification passed: ruff, mypy(factory_stage_executor), pytest budget subset 6 passed, bench_gates 185 passed, factory stage timeout/quality/run_completion subset 24 passed, roles adapter repair 342 passed.
+- Next action: rerun isolated L1-01 r15 with fresh work dir and audit final provider requests plus terminal projection.
+

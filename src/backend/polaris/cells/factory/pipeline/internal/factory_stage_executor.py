@@ -203,7 +203,7 @@ _QUALITY_GATE_RESERVED_BUDGET_ENV = "KERNELONE_FACTORY_QUALITY_GATE_RESERVED_BUD
 _QUALITY_GATE_RESERVED_BUDGET_SECONDS = 120.0
 _QUALITY_GATE_MIN_PASS_SCORE = 70
 _QUALITY_GATE_MIN_START_BUDGET_SECONDS = 15.0
-_QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = 15.0
+_QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
 # Bench r46 evidence: 45.0 -> 40.0; single-sourced in budget_policy together
 # with the workspace-quality-repair sibling above.
@@ -2123,8 +2123,9 @@ class OrchestrationStageExecutor:
                 if remaining_seconds > quality_gate_reserve
                 else _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
             )
-            if materialization_pending:
-                safety_budget = float(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS)
+            # Even first materialization may not consume the quality gate reserve:
+            # the factory contract requires runnable proof, not just files on disk.
+            del materialization_pending
             deadline_timeout = int(max(1.0, remaining_seconds - safety_budget))
             return max(1, min(resolved_timeout, deadline_timeout))
 
@@ -2685,22 +2686,22 @@ class OrchestrationStageExecutor:
                             message="Run cancelled: factory_cancelled",
                         )
 
-                    status_probe: CommandResult | None = None
+                    loop_status_probe: CommandResult | None = None
                     with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                        status_probe = await service.query_run_status(run_id)
-                    if status_probe is None:
+                        loop_status_probe = await service.query_run_status(run_id)
+                    if loop_status_probe is None:
                         taskboard_terminal = _workspace_taskboard_terminal_result(queried_status="unavailable")
                         if taskboard_terminal is not None:
                             wait_task.cancel()
                             return binding, taskboard_terminal
                         continue
 
-                    probed_status = str(status_probe.status or "").strip().lower()
+                    probed_status = str(loop_status_probe.status or "").strip().lower()
                     if probed_status in terminal_statuses:
                         wait_task.cancel()
-                        return binding, status_probe
+                        return binding, loop_status_probe
 
-                    metadata = status_probe.metadata if isinstance(status_probe.metadata, dict) else {}
+                    metadata = loop_status_probe.metadata if isinstance(loop_status_probe.metadata, dict) else {}
                     count_status = self._terminal_status_from_task_counts(metadata.get("task_status_counts"))
                     if count_status:
                         wait_task.cancel()
@@ -6254,69 +6255,10 @@ class OrchestrationStageExecutor:
         if not commands and depth_result is None:
             return True, ""
 
-        timeout_seconds = float(
+        configured_timeout_seconds = float(
             context.get("workspace_validation_timeout_seconds") or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
         )
         results: list[dict[str, Any]] = []
-        prepare_commands = self._workspace_quality_prepare_commands(commands, context)
-        prepare_failed = False
-        for command in prepare_commands:
-            result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
-            result["phase"] = "prepare"
-            results.append(result)
-            if not bool(result.get("passed")):
-                # If npm install failed due to hallucinated dependencies, repair and retry.
-                is_npm_install = (
-                    isinstance(command, list)
-                    and command
-                    and str(command[0]).strip().lower() == "npm"
-                    and any(str(part).strip().lower() == "install" for part in command)
-                )
-                if is_npm_install:
-                    stderr_text = str(result.get("stderr_tail") or "")
-                    removed = self._workspace_quality.repair_hallucinated_npm_dependencies(stderr_text)
-                    if removed:
-                        result["repair"] = {"action": "remove_hallucinated_deps", "removed": removed}
-                        result["repair_receipts"] = self._workspace_quality.consume_repair_receipts()
-                        retry_result = await asyncio.to_thread(
-                            self._run_workspace_quality_command, command, timeout_seconds
-                        )
-                        retry_result["phase"] = "prepare"
-                        retry_result["repair_retry"] = True
-                        results.append(retry_result)
-                        if bool(retry_result.get("passed")):
-                            result["passed"] = True  # Mark original as repaired
-                        else:
-                            prepare_failed = True
-                    else:
-                        prepare_failed = True
-                else:
-                    prepare_failed = True
-
-        run_commands = [] if prepare_failed else commands
-        for command in run_commands:
-            result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
-            result["phase"] = "check"
-            results.append(result)
-        if not prepare_failed and depth_result is not None:
-            depth_result["phase"] = "check"
-            results.append(depth_result)
-        if prepare_failed:
-            for command in commands:
-                results.append(
-                    {
-                        "command": command,
-                        "phase": "check",
-                        "exit_code": None,
-                        "passed": False,
-                        "error": "skipped because workspace validation preparation failed",
-                        "stdout_tail": "",
-                        "stderr_tail": "",
-                    }
-                )
-
-        repair_errors: list[str] = []
-        repair_results: list[dict[str, Any]] = []
         repair_summary: dict[str, Any] = {
             "attempted": False,
             "success": False,
@@ -6352,6 +6294,45 @@ class OrchestrationStageExecutor:
             artifact = self._write_workspace_validation_artifact(run, context, payload)
             return False, artifact
 
+        def workspace_checks_deadline_blocker(phase: str) -> str:
+            remaining_seconds = self._factory_deadline_remaining_seconds(context)
+            if remaining_seconds is None:
+                return ""
+            minimum_remaining = _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS + _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS
+            if remaining_seconds >= minimum_remaining:
+                return ""
+            return (
+                f"Workspace quality checks stopped at {phase} because the factory run deadline has only "
+                f"{remaining_seconds:.1f}s remaining and QA requires at least {minimum_remaining:.1f}s"
+            )
+
+        def workspace_quality_command_timeout_seconds() -> float:
+            remaining_seconds = self._factory_deadline_remaining_seconds(context)
+            if remaining_seconds is None:
+                return configured_timeout_seconds
+            reserved_for_qa = _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS + _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS
+            available_for_command = max(1.0, remaining_seconds - reserved_for_qa)
+            return max(1.0, min(configured_timeout_seconds, available_for_command))
+
+        async def run_workspace_quality_command_with_deadline(
+            command: list[str],
+            phase: str,
+            *,
+            repair_retry: bool = False,
+        ) -> tuple[dict[str, Any], str]:
+            deadline_detail = workspace_checks_deadline_blocker(f"before_{phase}")
+            if deadline_detail:
+                return {}, deadline_detail
+            command_timeout = workspace_quality_command_timeout_seconds()
+            result = await asyncio.to_thread(self._run_workspace_quality_command, command, command_timeout)
+            result["phase"] = phase
+            if repair_retry:
+                result["repair_retry"] = True
+            if command_timeout < configured_timeout_seconds:
+                result["deadline_capped_timeout_seconds"] = command_timeout
+                result["configured_timeout_seconds"] = configured_timeout_seconds
+            return result, ""
+
         def workspace_repair_deadline_blocker(phase: str) -> str:
             remaining_seconds = self._factory_deadline_remaining_seconds(context)
             if remaining_seconds is None:
@@ -6362,6 +6343,86 @@ class OrchestrationStageExecutor:
                 f"Workspace quality repair skipped at {phase} because the factory run deadline has only "
                 f"{remaining_seconds:.1f}s remaining"
             )
+
+        initial_deadline_detail = workspace_checks_deadline_blocker("before_prepare")
+        if initial_deadline_detail:
+            return write_workspace_validation_failure(
+                "factory_quality_gate_workspace_checks_deadline_insufficient",
+                initial_deadline_detail,
+            )
+
+        prepare_commands = self._workspace_quality_prepare_commands(commands, context)
+        prepare_failed = False
+        for command in prepare_commands:
+            result, deadline_detail = await run_workspace_quality_command_with_deadline(command, "prepare")
+            if deadline_detail:
+                return write_workspace_validation_failure(
+                    "factory_quality_gate_workspace_checks_deadline_insufficient",
+                    deadline_detail,
+                )
+            results.append(result)
+            if not bool(result.get("passed")):
+                # If npm install failed due to hallucinated dependencies, repair and retry.
+                is_npm_install = (
+                    isinstance(command, list)
+                    and command
+                    and str(command[0]).strip().lower() == "npm"
+                    and any(str(part).strip().lower() == "install" for part in command)
+                )
+                if is_npm_install:
+                    stderr_text = str(result.get("stderr_tail") or "")
+                    removed = self._workspace_quality.repair_hallucinated_npm_dependencies(stderr_text)
+                    if removed:
+                        result["repair"] = {"action": "remove_hallucinated_deps", "removed": removed}
+                        result["repair_receipts"] = self._workspace_quality.consume_repair_receipts()
+                        retry_result, deadline_detail = await run_workspace_quality_command_with_deadline(
+                            command,
+                            "prepare",
+                            repair_retry=True,
+                        )
+                        if deadline_detail:
+                            return write_workspace_validation_failure(
+                                "factory_quality_gate_workspace_checks_deadline_insufficient",
+                                deadline_detail,
+                            )
+                        results.append(retry_result)
+                        if bool(retry_result.get("passed")):
+                            result["passed"] = True  # Mark original as repaired
+                        else:
+                            prepare_failed = True
+                    else:
+                        prepare_failed = True
+                else:
+                    prepare_failed = True
+
+        run_commands = [] if prepare_failed else commands
+        for command in run_commands:
+            result, deadline_detail = await run_workspace_quality_command_with_deadline(command, "check")
+            if deadline_detail:
+                return write_workspace_validation_failure(
+                    "factory_quality_gate_workspace_checks_deadline_insufficient",
+                    deadline_detail,
+                )
+            results.append(result)
+        if not prepare_failed and depth_result is not None:
+            depth_result["phase"] = "check"
+            results.append(depth_result)
+        if prepare_failed:
+            for command in commands:
+                results.append(
+                    {
+                        "command": command,
+                        "phase": "check",
+                        "exit_code": None,
+                        "passed": False,
+                        "error": "skipped because workspace validation preparation failed",
+                        "stdout_tail": "",
+                        "stderr_tail": "",
+                    }
+                )
+
+        repair_errors: list[str] = []
+        repair_results: list[dict[str, Any]] = []
 
         rerun_results: list[dict[str, Any]] = []
         if run_commands and not prepare_failed and not all(bool(item.get("passed")) for item in results):
@@ -6387,10 +6448,16 @@ class OrchestrationStageExecutor:
                 # Re-run check commands after deterministic repairs
                 det_rerun: list[dict[str, Any]] = []
                 for command in run_commands:
-                    rerun_result = await asyncio.to_thread(
-                        self._run_workspace_quality_command, command, timeout_seconds
+                    rerun_result, deadline_detail = await run_workspace_quality_command_with_deadline(
+                        command,
+                        "check_after_deterministic_repair",
                     )
-                    rerun_result["phase"] = "check_after_deterministic_repair"
+                    if deadline_detail:
+                        return write_workspace_validation_failure(
+                            "factory_quality_gate_workspace_checks_deadline_insufficient",
+                            deadline_detail,
+                            repair_override=repair_summary,
+                        )
                     det_rerun.append(rerun_result)
                 det_depth_result = self._workspace_quality.delivery_depth_contract_result(context)
                 if det_depth_result is not None:
@@ -6625,8 +6692,13 @@ class OrchestrationStageExecutor:
                     "prepare_after_repair" if round_index == 0 else f"prepare_after_repair_{round_index + 1}"
                 )
                 for command in prepare_commands:
-                    result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
-                    result["phase"] = prepare_phase
+                    result, deadline_detail = await run_workspace_quality_command_with_deadline(command, prepare_phase)
+                    if deadline_detail:
+                        return write_workspace_validation_failure(
+                            "factory_quality_gate_workspace_checks_deadline_insufficient",
+                            deadline_detail,
+                            repair_override=current_workspace_repair_summary(residual_errors=repair_errors),
+                        )
                     results.append(result)
                     if not bool(result.get("passed")):
                         round_prepare_failed = True
@@ -6648,8 +6720,13 @@ class OrchestrationStageExecutor:
                     break
                 else:
                     for command in run_commands:
-                        result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
-                        result["phase"] = phase
+                        result, deadline_detail = await run_workspace_quality_command_with_deadline(command, phase)
+                        if deadline_detail:
+                            return write_workspace_validation_failure(
+                                "factory_quality_gate_workspace_checks_deadline_insufficient",
+                                deadline_detail,
+                                repair_override=current_workspace_repair_summary(residual_errors=repair_errors),
+                            )
                         results.append(result)
                         latest_check_results.append(result)
                         rerun_results.append(result)
@@ -7241,14 +7318,14 @@ class OrchestrationStageExecutor:
                             message=f"Run cancelled: {abort_reason}",
                         )
 
-            status_probe: CommandResult | None = None
+            settle_status_probe: CommandResult | None = None
             with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                status_probe = await service.query_run_status(normalized_run_id)
-            if status_probe is not None:
-                probed_status = str(status_probe.status or "").strip().lower()
+                settle_status_probe = await service.query_run_status(normalized_run_id)
+            if settle_status_probe is not None:
+                probed_status = str(settle_status_probe.status or "").strip().lower()
                 if probed_status in terminal_statuses:
-                    return status_probe
-                metadata = status_probe.metadata if isinstance(status_probe.metadata, dict) else {}
+                    return settle_status_probe
+                metadata = settle_status_probe.metadata if isinstance(settle_status_probe.metadata, dict) else {}
                 count_status = self._terminal_status_from_task_counts(metadata.get("task_status_counts"))
                 if count_status:
                     return CommandResult(

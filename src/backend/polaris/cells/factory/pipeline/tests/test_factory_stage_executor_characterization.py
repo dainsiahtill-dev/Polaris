@@ -2692,7 +2692,7 @@ class TestQualityGateDeadlineHandling:
 
         assert 150 <= timeout <= 180
 
-    def test_director_dispatch_timeout_prioritizes_first_materialization_budget(self) -> None:
+    def test_director_dispatch_timeout_preserves_quality_budget_during_materialization(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
         timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
             {
@@ -2704,7 +2704,7 @@ class TestQualityGateDeadlineHandling:
             materialization_pending=True,
         )
 
-        assert 180 <= timeout <= 185
+        assert 65 <= timeout <= 70
 
     def test_director_dispatch_timeout_keeps_quality_reserve_after_materialization(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
@@ -2965,7 +2965,7 @@ class TestQualityGateDeadlineHandling:
         assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
 
     @pytest.mark.asyncio
-    async def test_workspace_quality_repair_deadline_insufficient_writes_validation_failure(
+    async def test_workspace_quality_deadline_insufficient_writes_validation_failure(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -3016,8 +3016,58 @@ class TestQualityGateDeadlineHandling:
         assert artifact == "runtime/qa/workspace-validation.json"
         payload = json.loads(Path(resolve_logical_path(tmp_path, artifact)).read_text(encoding="utf-8"))
         assert payload["passed"] is False
-        assert "factory_quality_gate_workspace_repair_deadline_insufficient" in payload["warnings"]
+        assert "factory_quality_gate_workspace_checks_deadline_insufficient" in payload["warnings"]
         assert "remaining" in payload["error"]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_command_timeout_preserves_qa_budget(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-workspace-command-deadline",
+            config=FactoryConfig(name="workspace-command-deadline-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+        observed_timeouts: list[float] = []
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            observed_timeouts.append(timeout_seconds)
+            return {
+                "command": command,
+                "exit_code": 0,
+                "passed": True,
+                "stdout_tail": "build passed",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 70.0
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "factory_run_timeout_seconds": 540.0,
+                "factory_run_deadline_source": "test",
+            },
+        )
+
+        assert passed is True
+        assert observed_timeouts
+        assert 1.0 <= observed_timeouts[0] <= 26.0
+        payload = json.loads(Path(resolve_logical_path(tmp_path, artifact)).read_text(encoding="utf-8"))
+        command = payload["commands"][0]
+        assert command["deadline_capped_timeout_seconds"] <= 26.0
+        assert command["configured_timeout_seconds"] == 240.0
 
 
 # ---------------------------------------------------------------------------
@@ -4972,6 +5022,77 @@ class TestDirectorDispatchLoop:
         }
         assert fake_orchestration.cancelled == []
         await asyncio.sleep(0)
+        assert fake_orchestration.active_task.cancelled() is False
+        guarded_heartbeat = task_runtime.heartbeat_execution(
+            task["id"],
+            session_id=str(claim["session"]["session_id"]),
+        )
+        assert guarded_heartbeat["success"] is True
+
+        fake_orchestration.active_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await fake_orchestration.active_task
+
+    @pytest.mark.asyncio
+    async def test_run_completion_waiter_timeout_matches_active_director_by_factory_run_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeOrchestrationService:
+            def __init__(self) -> None:
+                self.active_task = asyncio.create_task(asyncio.sleep(60))
+                self._active_runs = {"factory-run-1": self.active_task}
+                self.cancelled: list[tuple[str, bool]] = []
+
+            async def cancel_run(self, run_id: str, force: bool = False) -> object:
+                self.cancelled.append((run_id, force))
+                self.active_task.cancel()
+                return object()
+
+        class _FakeCommandService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="running", message="still running")
+
+        fake_orchestration = _FakeOrchestrationService()
+
+        async def _fake_get_orchestration_service() -> _FakeOrchestrationService:
+            return fake_orchestration
+
+        monkeypatch.setattr(
+            "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+            _fake_get_orchestration_service,
+        )
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.create_task_row(
+            subject="active director task owned by a factory run",
+            metadata={"factory_run_id": "factory-run-1"},
+        )
+        claim = task_runtime.claim_execution(
+            task["id"],
+            worker_id="director",
+            role_id="director",
+            run_id="director-run-1",
+            selection_source="unit",
+        )
+        assert claim["success"] is True
+
+        result = await RunCompletionWaiter(tmp_path).wait(
+            _FakeCommandService(),
+            CommandResult(run_id="factory-run-1", status="running", message="submitted"),
+            timeout_seconds=0,
+        )
+
+        assert result.status == "timeout"
+        assert result.metadata == {
+            "cancel_signal_sent": False,
+            "cancel_reason": "factory_stage_timeout",
+            "inflight_run_continues": True,
+            "terminal_source": "task_runtime_active_execution_barrier",
+            "active_task_count": 1,
+            "active_task_ids": [str(task["id"])],
+        }
+        assert fake_orchestration.cancelled == []
         assert fake_orchestration.active_task.cancelled() is False
         guarded_heartbeat = task_runtime.heartbeat_execution(
             task["id"],

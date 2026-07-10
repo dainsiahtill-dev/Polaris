@@ -3916,6 +3916,7 @@ def test_typescript_string_literal_suggestion_runtime_uses_editor_without_write_
         original = file_path.read_text(encoding="utf-8")
         assert operation.span_start is not None
         assert operation.span_end is not None
+        assert operation.replacement is not None
         assert original[operation.span_start : operation.span_end] == operation.expected
         updated = original[: operation.span_start] + operation.replacement + original[operation.span_end :]
         file_path.write_text(updated, encoding="utf-8")
@@ -4040,6 +4041,7 @@ def test_typescript_number_property_call_and_shorthand_scope_runtime_use_editor_
         original = file_path.read_text(encoding="utf-8")
         assert operation.span_start is not None
         assert operation.span_end is not None
+        assert operation.replacement is not None
         assert original[operation.span_start : operation.span_end] == operation.expected
         updated = original[: operation.span_start] + operation.replacement + original[operation.span_end :]
         file_path.write_text(updated, encoding="utf-8")
@@ -5154,6 +5156,50 @@ def test_typescript_ts6133_unused_import_and_local_declaration_are_covered_plann
     assert "const inv" not in patches["src/models/Inventory.test.ts"]
 
 
+def test_typescript_ts6133_multiline_unused_parameter_is_covered_plannable() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL
+    diagnostic = "src/models/Humidity.ts(7,3): error TS6133: 'flower' is declared but its value is never read."
+    source = (
+        "export interface Humidity { readonly value: number }\n"
+        "function humidityMultiplierForFlower(humidity: Humidity): number {\n"
+        "  return humidity.value > 0.7 ? 1 : 0.8;\n"
+        "}\n"
+        "export function humidityEffectOnFlower(\n"
+        "  flower: { openness: number; health: number; species: string },\n"
+        "  humidity: Humidity,\n"
+        "): number {\n"
+        "  const factor = humidityMultiplierForFlower(humidity);\n"
+        "  return factor > 0.9 ? 0.02 : -0.01;\n"
+        "}\n"
+    )
+
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files={"src/models/Humidity.ts": source},
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=(diagnostic,),
+            base_files={"src/models/Humidity.ts": source},
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
+    assert result.items[0].patch_count == 1
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "_flower: { openness: number; health: number; species: string }," in repaired
+    assert "  flower: { openness" not in repaired
+    assert "humidityMultiplierForFlower(humidity)" in repaired
+
+
 def test_typescript_ts6133_unused_function_declaration_is_covered_plannable() -> None:
     source_tool = ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL
     diagnostic = "src/models/Market.ts(7,10): error TS6133: 'findFairy' is declared but its value is never read."
@@ -5406,8 +5452,10 @@ def test_java_test_dependency_rule_builds_whole_file_fallback_runtime_plan() -> 
     assert plan.operations[0].kind == "write_file"
     assert plan.operations[0].metadata["edit_strategy"] == "whole_file_fallback"
     assert plan.operations[0].metadata["adapter_transform_migrated"] is True
-    assert "org.junit" not in plan.operations[0].content
-    assert "public static void main" in plan.operations[0].content
+    operation_content = plan.operations[0].content
+    assert operation_content is not None
+    assert "org.junit" not in operation_content
+    assert "public static void main" in operation_content
     assert coverage["items"][0]["executable_runtime_plan_matched"] is True
     assert "java.junit_test_dependency" in coverage["items"][0]["runtime_plan_rule_ids"]
     assert "deterministic_java_test_dependency_repair" in coverage["items"][0]["matched_source_tools"]
@@ -9174,6 +9222,7 @@ def test_go_error_string_helper_rule_uses_typed_identifier_metadata() -> None:
     operation = plan.operations[0]
     assert operation.path == relative_path
     assert operation.metadata["identifier"] == "errString"
+    assert operation.replacement is not None
     assert "type errString string" in operation.replacement
 
 

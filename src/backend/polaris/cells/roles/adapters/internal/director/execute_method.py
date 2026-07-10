@@ -3801,6 +3801,91 @@ def _tool_dispatch_dropped_failure_payload() -> dict[str, str]:
     }
 
 
+def _primary_llm_summary_text(primary_llm_summary: dict[str, Any]) -> str:
+    """Return compact, structured LLM failure text for deterministic matching."""
+
+    metadata_raw = primary_llm_summary.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    parts: list[str] = []
+    for source in (primary_llm_summary, metadata):
+        for key in (
+            "error",
+            "error_code",
+            "error_category",
+            "last_transport_error",
+            "retry_decision",
+            "provider",
+            "model",
+        ):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+    return "\n".join(parts)
+
+
+def _primary_llm_provider_failure_payload(primary_llm_summary: dict[str, Any] | None) -> dict[str, str] | None:
+    """Classify a failed primary role LLM call before materialization fallback.
+
+    This only consumes structured LLM-stage summary fields. It deliberately does
+    not infer provider failure from generic no-output/no-file symptoms; those
+    still belong to the materialization boundary.
+    """
+
+    if not isinstance(primary_llm_summary, dict) or bool(primary_llm_summary.get("success")):
+        return None
+
+    error_text = _primary_llm_summary_text(primary_llm_summary)
+    lowered = error_text.lower()
+    error_category = str(primary_llm_summary.get("error_category") or "").strip().lower()
+    if not error_text:
+        return None
+
+    timeout_markers = (
+        "connecttimeouterror",
+        "readtimeouterror",
+        "timed out",
+        "timeout",
+        "time out",
+    )
+    if error_category == "timeout" or any(marker in lowered for marker in timeout_markers):
+        return {
+            "error": "model_provider_timeout",
+            "error_code": "model_provider_timeout",
+            "failure_class": QaFailureClassV1.MODEL_PROVIDER_TIMEOUT.value,
+            "responsible_layer": "model_provider",
+            "materialization_mode": "llm_call_failed",
+            "failure_stage": "director_llm_call",
+            "root_cause_hint": "provider_timeout",
+            "detail": "Director primary LLM provider call timed out before tool dispatch or materialization.",
+        }
+
+    provider_markers = (
+        "rate_limit",
+        "429",
+        "invalid_request",
+        "provider_unavailable",
+        "connection refused",
+        "connection reset",
+        "max retries exceeded",
+        "httpconnectionpool",
+    )
+    if error_category in {"rate_limit", "provider", "provider_error", "unavailable"} or any(
+        marker in lowered for marker in provider_markers
+    ):
+        return {
+            "error": "model_provider_failure",
+            "error_code": "model_provider_failure",
+            "failure_class": QaFailureClassV1.MODEL_PROVIDER_FAILURE.value,
+            "responsible_layer": "model_provider",
+            "materialization_mode": "llm_call_failed",
+            "failure_stage": "director_llm_call",
+            "root_cause_hint": "provider_failure",
+            "detail": "Director primary LLM provider call failed before tool dispatch or materialization.",
+        }
+
+    return None
+
+
 def _lifecycle_tool_dispatch_failure_from_summary(
     primary_llm_summary: dict[str, Any],
 ) -> dict[str, str] | None:
@@ -3977,6 +4062,15 @@ def _phase_no_materialized_changes(
             failure_stage = lifecycle_failure["failure_stage"]
             root_cause_hint = lifecycle_failure["root_cause_hint"]
             failure_detail = lifecycle_failure["detail"]
+        elif (provider_failure := _primary_llm_provider_failure_payload(primary_llm_summary)) is not None:
+            error = provider_failure["error"]
+            materialization_mode = provider_failure["materialization_mode"]
+            public_error_code = provider_failure["error_code"]
+            failure_class = provider_failure["failure_class"]
+            responsible_layer = provider_failure["responsible_layer"]
+            failure_stage = provider_failure["failure_stage"]
+            root_cause_hint = provider_failure["root_cause_hint"]
+            failure_detail = provider_failure["detail"]
         elif out_of_scope_files and (write_tool_evidence or direct_side_effect_success):
             error = "director_materialized_out_of_scope"
             materialization_mode = "materialized_out_of_scope"

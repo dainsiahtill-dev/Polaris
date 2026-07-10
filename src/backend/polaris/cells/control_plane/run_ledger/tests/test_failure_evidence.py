@@ -26,6 +26,7 @@ def test_normalize_failure_class_canonicalizes_known_values() -> None:
         FailureClassV1.PATCH_FILE_PROTOCOL_DISABLED.value
     )
     assert normalize_failure_class("text-tool-protocol-disabled") == FailureClassV1.TEXT_TOOL_PROTOCOL_DISABLED.value
+    assert normalize_failure_class("model_provider_timeout") == FailureClassV1.MODEL_PROVIDER_TIMEOUT.value
     assert normalize_failure_class("pm_quality_gate_blocked") == FailureClassV1.QUALITY_GATE_BLOCKED.value
     assert normalize_failure_class("pm-runtime-exception") == FailureClassV1.ROLE_ADAPTER_EXCEPTION.value
 

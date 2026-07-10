@@ -118,6 +118,20 @@ def _summarize_llm_stage_result(result: dict[str, Any], *, stage: str) -> dict[s
         "model": model,
         "content_length": len(content),
         "error": str(result.get("error") or raw_payload.get("error") or "").strip(),
+        "error_category": str(
+            result.get("error_category") or raw_payload.get("error_category") or metadata.get("error_category") or ""
+        ).strip(),
+        "last_transport_error": str(
+            result.get("last_transport_error")
+            or raw_payload.get("last_transport_error")
+            or metadata.get("last_transport_error")
+            or ""
+        ).strip(),
+        "platform_retry_exhausted": bool(
+            result.get("platform_retry_exhausted")
+            or raw_payload.get("platform_retry_exhausted")
+            or metadata.get("platform_retry_exhausted")
+        ),
         "llm_calls": _safe_int(execution_stats.get("llm_calls")),
     }
     # Carry lifecycle evidence forward so downstream attribution can consume
