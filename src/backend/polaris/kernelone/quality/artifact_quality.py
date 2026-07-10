@@ -80,6 +80,9 @@ _DETERMINISTIC_SCAFFOLD_MARKERS = (
     "TypeScript scaffold",
     "TypeScript project scaffold",
 )
+_REMOVED_TYPESCRIPT_COMPILER_OPTIONS = {
+    "charset": "TS5102",
+}
 _NUMERIC_HELPER_FILLER_RE = re.compile(
     r"export\s+function\s+\w+Helper\d+\s*"
     r"\(\s*value\s*:\s*number\s*\)\s*:\s*number\s*"
@@ -128,6 +131,7 @@ _DIAGNOSTIC_KIND_SOURCE_RULES: Mapping[str, frozenset[str]] = {
     "typescript_node_types_missing": frozenset(("typescript_import_scanner",)),
     "typescript_escaped_newline_line_comment": frozenset(("typescript_syntax_red_flag_scanner",)),
     "typescript_return_object_semicolon_property": frozenset(("typescript_syntax_red_flag_scanner",)),
+    "tsconfig_removed_compiler_option": frozenset(("typescript_tsconfig_scanner",)),
     "typescript_isolated_modules_type_reexport": frozenset(("typescript_syntax_red_flag_scanner",)),
     "typescript_zod_type_class_collision": frozenset(("typescript_syntax_red_flag_scanner",)),
     "typescript_import_unresolved_symbol": frozenset(("typescript_symbol_coherence_scanner",)),
@@ -1631,7 +1635,7 @@ def _iter_target_files(root_full: Path, relative_paths: Iterable[str] | None) ->
 
 
 def _is_source_artifact(path: Path) -> bool:
-    return path.name.lower() == "package.json" or path.suffix.lower() in _ARTIFACT_QUALITY_SOURCE_EXTS
+    return path.name.lower() in {"package.json", "tsconfig.json"} or path.suffix.lower() in _ARTIFACT_QUALITY_SOURCE_EXTS
 
 
 def _tool_receipt_contamination_error(relative_path: str, text: str) -> str:
@@ -1780,6 +1784,10 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         manifest_evidence = _scan_package_manifest_evidence(root_full, text, relative_path)
         errors.extend(manifest_evidence.errors)
         issues.extend(manifest_evidence.issues)
+    if os.path.basename(relative_path).lower() == "tsconfig.json":
+        tsconfig_evidence = _scan_typescript_tsconfig_evidence(text, relative_path)
+        errors.extend(tsconfig_evidence.errors)
+        issues.extend(tsconfig_evidence.issues)
     typescript_import_evidence = _scan_typescript_import_evidence(root_full, full_path, text, relative_path)
     errors.extend(typescript_import_evidence.errors)
     issues.extend(typescript_import_evidence.issues)
@@ -1844,6 +1852,48 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         errors=tuple(errors),
         issues=(*issues, *string_projected_issues),
     )
+
+
+def _scan_typescript_tsconfig_evidence(text: str, relative_path: str) -> _FileArtifactQualityEvidence:
+    """Return typed tsconfig findings that can be repaired without parsing tsc prose."""
+
+    try:
+        payload = json.loads(str(text or "{}"))
+    except json.JSONDecodeError:
+        return _FileArtifactQualityEvidence()
+    if not isinstance(payload, Mapping):
+        return _FileArtifactQualityEvidence()
+    compiler_options = payload.get("compilerOptions")
+    if not isinstance(compiler_options, Mapping):
+        return _FileArtifactQualityEvidence()
+
+    errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
+    for option_name, diagnostic_code in _REMOVED_TYPESCRIPT_COMPILER_OPTIONS.items():
+        if option_name not in compiler_options:
+            continue
+        error = (
+            "Artifact quality scan failed: tsconfig "
+            f"compilerOptions.{option_name} is removed by TypeScript 5 ({diagnostic_code}); "
+            f"remove it from {relative_path}"
+        )
+        errors.append(error)
+        issues.append(
+            _file_artifact_quality_issue(
+                error,
+                relative_path,
+                code="tsconfig_removed_compiler_option",
+                source="typescript_tsconfig_scanner",
+                metadata={
+                    "diagnostic_kind": "tsconfig_removed_compiler_option",
+                    "diagnostic_code": diagnostic_code,
+                    "config_path": relative_path,
+                    "compiler_option": option_name,
+                    "json_path": ("compilerOptions", option_name),
+                },
+            )
+        )
+    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
 def _typescript_syntax_red_flag_issue(

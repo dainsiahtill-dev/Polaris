@@ -8312,6 +8312,58 @@ def test_public_typescript_tsconfig_repair_plans_import_meta_module_option() -> 
     assert '"module": "ES2020"' in payload["composition_summary"]["patches"][0]["content_after"]
 
 
+def test_public_typescript_tsconfig_repair_removes_removed_compiler_option() -> None:
+    source_tool = "deterministic_typescript_tsconfig_lib_repair"
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={
+                "tsconfig.json": (
+                    '{"compilerOptions":{"target":"ES2020","module":"ES2020",'
+                    '"moduleResolution":"node","charset":"utf8","strict":true}}\n'
+                )
+            },
+            artifact_quality_issues=(
+                {
+                    "source": "typescript_tsconfig_scanner",
+                    "code": "tsconfig_removed_compiler_option",
+                    "message": (
+                        "Artifact quality scan failed: tsconfig compilerOptions.charset "
+                        "is removed by TypeScript 5 (TS5102); remove it from tsconfig.json"
+                    ),
+                    "severity": "error",
+                    "path": "tsconfig.json",
+                    "metadata": {
+                        "raw": (
+                            "Artifact quality scan failed: tsconfig compilerOptions.charset "
+                            "is removed by TypeScript 5 (TS5102); remove it from tsconfig.json"
+                        ),
+                        "diagnostic_kind": "tsconfig_removed_compiler_option",
+                        "diagnostic_code": "TS5102",
+                        "compiler_option": "charset",
+                        "json_path": ("compilerOptions", "charset"),
+                    },
+                },
+            ),
+            mode="shadow",
+        )
+    )
+    payload = planning_result.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["source_tool"] == source_tool
+    assert payload["plan_summary"]["rule_id"] == "typescript.tsconfig_lib"
+    assert payload["plan_summary"]["operation_count"] == 1
+    assert payload["composition_summary"]["ok"] is True
+    assert payload["composition_summary"]["changed_paths"] == ["tsconfig.json"]
+    content_after = payload["composition_summary"]["patches"][0]["content_after"]
+    assert '"charset"' not in content_after
+    assert '"strict": true' in content_after
+    assert '"moduleResolution": "node"' in content_after
+
+
 def test_public_typescript_tsconfig_repair_plans_dom_lib_for_console() -> None:
     source_tool = "deterministic_typescript_tsconfig_lib_repair"
 

@@ -61,6 +61,8 @@ TYPESCRIPT_ZOD_TYPE_CLASS_COLLISION_SOURCE_TOOL = "deterministic_typescript_zod_
 TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL = "deterministic_typescript_html_container_selector_repair"
 TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL = "deterministic_typescript_dom_local_shim_cleanup_repair"
 
+_REMOVED_TYPESCRIPT_COMPILER_OPTIONS = frozenset({"charset"})
+
 _TS_INLINE_OBJECT_MISSING_COMMA_RE = re.compile(
     r"(?P<value>\b[A-Za-z_$][A-Za-z0-9_$]*\b|\)|\]|\}|['\"][^'\"]*['\"]|-?\d+(?:\.\d+)?)"
     r"(?P<gap>[ \t]{2,})"
@@ -2934,13 +2936,29 @@ def _build_typescript_tsconfig_lib_plan(
     needs_dom_lib = _typescript_errors_require_dom_lib(diagnostics)
     needs_import_meta_module = _typescript_errors_require_import_meta_module(diagnostics)
     needs_es2021_lib = _typescript_errors_require_es2021_lib(diagnostics)
-    if not needs_dom_lib and not needs_import_meta_module and not needs_es2021_lib:
+    removed_options = _typescript_removed_compiler_options(diagnostics)
+    if not needs_dom_lib and not needs_import_meta_module and not needs_es2021_lib and not removed_options:
         return None
     payload = _json_object(tsconfig_text)
     compiler_options = payload.get("compilerOptions")
     if not isinstance(compiler_options, dict):
         compiler_options = {}
     operations: list[RepairOperation] = []
+    for option_name in removed_options:
+        if option_name not in compiler_options:
+            continue
+        operations.append(
+            RepairOperation(
+                kind="json_delete",
+                path="tsconfig.json",
+                json_path=("compilerOptions", option_name),
+                before_hash=sha256_text(tsconfig_text),
+                metadata={
+                    "repair_kind": "typescript_tsconfig_removed_compiler_option",
+                    "removed_option": option_name,
+                },
+            )
+        )
     libs_raw = compiler_options.get("lib")
     libs = [str(item) for item in libs_raw] if isinstance(libs_raw, list) else []
     normalized_libs = {item.lower() for item in libs}
@@ -3005,6 +3023,7 @@ def _build_typescript_tsconfig_lib_plan(
             "libs": libs,
             "module": "ES2020" if needs_import_meta_module else module_value,
             "target": "ES2021" if needs_es2021_lib else compiler_options.get("target"),
+            "removed_options": removed_options,
         },
     )
 
@@ -3413,6 +3432,32 @@ def _typescript_errors_require_rootdir_widening(diagnostics: Sequence[RepairDiag
         or 'is not under "rootDir"' in str(diagnostic.raw or diagnostic.message)
         for diagnostic in diagnostics
     )
+
+
+def _typescript_removed_compiler_options(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
+    """Return removed tsconfig compiler options explicitly present in diagnostics."""
+
+    removed: list[str] = []
+    for diagnostic in diagnostics:
+        metadata = diagnostic.metadata if isinstance(diagnostic.metadata, Mapping) else {}
+        metadata_option = str(metadata.get("compiler_option") or "").strip().lower()
+        diagnostic_kind = str(metadata.get("diagnostic_kind") or diagnostic.code or "").strip().lower()
+        diagnostic_code = str(metadata.get("diagnostic_code") or diagnostic.code or "").strip().upper()
+        text = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+        for option_name in _REMOVED_TYPESCRIPT_COMPILER_OPTIONS:
+            if (
+                metadata_option == option_name
+                and diagnostic_kind == "tsconfig_removed_compiler_option"
+            ) or (
+                diagnostic_code == "TS5102"
+                and (
+                    f"compileroptions.{option_name}" in text
+                    or f"option '{option_name}' has been removed" in text
+                    or f'option "{option_name}" has been removed' in text
+                )
+            ):
+                removed.append(option_name)
+    return tuple(dict.fromkeys(removed))
 
 
 def _typescript_rootdir_outside_paths(diagnostics: Sequence[RepairDiagnostic], *, root_dir: str) -> list[str]:

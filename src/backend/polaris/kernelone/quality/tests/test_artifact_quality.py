@@ -67,6 +67,47 @@ def test_artifact_quality_evidence_projects_typed_issues(tmp_path: Path) -> None
     assert evidence.to_dict()["issues"][0]["code"] == "npm_manifest_invalid"
 
 
+def test_artifact_quality_evidence_reports_removed_tsconfig_compiler_option(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "target": "ES2020",
+                    "module": "ES2020",
+                    "charset": "utf8",
+                },
+                "include": ["src/**/*.ts"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["tsconfig.json", "src/main.ts"])
+
+    assert evidence.errors == (
+        "Artifact quality scan failed: tsconfig compilerOptions.charset is removed by "
+        "TypeScript 5 (TS5102); remove it from tsconfig.json",
+    )
+    assert len(evidence.issues) == 1
+    issue = evidence.issues[0]
+    assert issue.code == "tsconfig_removed_compiler_option"
+    assert issue.path == "tsconfig.json"
+    assert issue.source == "typescript_tsconfig_scanner"
+    assert dict(issue.metadata) == {
+        "raw": evidence.errors[0],
+        "artifact_path": "tsconfig.json",
+        "diagnostic_kind": "tsconfig_removed_compiler_option",
+        "diagnostic_code": "TS5102",
+        "config_path": "tsconfig.json",
+        "compiler_option": "charset",
+        "json_path": ("compilerOptions", "charset"),
+    }
+
+
 def _assert_file_marker_issue(
     tmp_path: Path,
     *,
