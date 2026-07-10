@@ -3018,6 +3018,61 @@ def test_failure_taxonomy_prefers_task_boundary_dependency_before_integration_qa
     ]
 
 
+def test_failure_taxonomy_prefers_specific_task_boundary_failure_over_downstream_dependency(
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    results_dir = runtime_dir / "results"
+    results_dir.mkdir(parents=True)
+    (results_dir / "director.result.json").write_text(
+        json.dumps(
+            {
+                "task_results": [
+                    {
+                        "task_id": "TASK-3",
+                        "status": "blocked",
+                        "error": "blocked_by_failed_dependency",
+                        "blocked_by": ["TASK-2"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    record = {
+        "all_checks_passed": False,
+        "runtime_dir": str(runtime_dir),
+        "factory_gates": [
+            {"gate": "chain_clean", "ok": False, "detail": "chain_state=partial exit_code=1"},
+            {"gate": "integration_qa_passed", "ok": False, "detail": "qa_ran=False qa_passed=False"},
+        ],
+        "run_ledger_projection": {
+            "task_boundary_verdict": {
+                "schema_version": "task_boundary.verdict.v1",
+                "ok": False,
+                "status": "missing_entrypoint_target",
+                "failure_class": "MISSING_ENTRYPOINT_TARGET",
+                "responsible_layer": "task_boundary",
+                "reason": "index.html references src/web.js",
+            }
+        },
+        "real_run_gate": {"ok": False, "summary": "entrypoint smoke failed"},
+        "chain_state": "partial",
+        "checks": [],
+        "has_plan_doc": True,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "task_boundary"
+    assert taxonomy["root_cause_signature"] == "task_boundary:missing_entrypoint_target"
+    assert taxonomy["evidence"] == [
+        "failure_class=MISSING_ENTRYPOINT_TARGET;responsible_layer=task_boundary;index.html references src/web.js"
+    ]
+
+
 def test_failure_taxonomy_classifies_missing_toolchain_check_as_runtime_environment() -> None:
     record = {
         "all_checks_passed": False,

@@ -2801,8 +2801,9 @@ def _record_repair_convergence_attribution(record: dict[str, Any]) -> tuple[str,
 def _first_task_boundary_verdict(record: dict[str, Any]) -> dict[str, Any]:
     """Find a failed TaskBoundary verdict projected anywhere in a bench record."""
 
+    candidates: list[dict[str, Any]] = []
     for payload in _runtime_director_task_boundary_payloads(record):
-        return payload
+        candidates.append(payload)
 
     for payload in _iter_mapping_payloads(record):
         schema = str(payload.get("schema_version") or "").strip()
@@ -2817,8 +2818,13 @@ def _first_task_boundary_verdict(record: dict[str, Any]) -> dict[str, Any]:
             or status in _TASK_BOUNDARY_FAILURE_STATUSES
             or failure_class.lower() in _TASK_BOUNDARY_FAILURE_CLASSES
         ):
+            candidates.append(payload)
+    for payload in candidates:
+        status = str(payload.get("status") or payload.get("verdict_status") or "").strip().lower()
+        failure_class = str(payload.get("failure_class") or "").strip().lower()
+        if status != "dependency_not_unlocked" and failure_class != "dependency_not_unlocked":
             return payload
-    return {}
+    return candidates[0] if candidates else {}
 
 
 def _record_task_boundary_attribution(record: dict[str, Any]) -> tuple[str, str, str] | None:
