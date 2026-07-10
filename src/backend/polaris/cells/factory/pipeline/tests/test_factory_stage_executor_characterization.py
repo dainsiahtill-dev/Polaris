@@ -2734,6 +2734,112 @@ class TestQualityGateDeadlineHandling:
 
         assert 210 <= timeout <= 240
 
+    def test_director_dispatch_deadline_admission_blocks_short_materialization_budget(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
+        decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 90,
+                "quality_gate_reserved_budget_seconds": 60,
+            },
+            requested_timeout_seconds=1800,
+            materialization_pending=True,
+        )
+
+        assert decision["allow_dispatch"] is False
+        assert decision["reason"] == "insufficient_factory_deadline_for_director_dispatch"
+        assert decision["llm_timeout_seconds"] == 0
+        assert decision["minimum_start_budget_seconds"] == 90.0
+        assert 50 <= decision["available_for_director_seconds"] <= 55
+
+    def test_director_dispatch_deadline_admission_allows_sufficient_budget(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
+        decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 90,
+                "quality_gate_reserved_budget_seconds": 60,
+            },
+            requested_timeout_seconds=1800,
+            materialization_pending=True,
+        )
+
+        assert decision["allow_dispatch"] is True
+        assert decision["reason"] == ""
+        assert decision["minimum_start_budget_seconds"] == 90.0
+        assert 230 <= decision["llm_timeout_seconds"] <= 235
+
+    @pytest.mark.asyncio
+    async def test_director_dispatch_deadline_admission_stops_before_llm_turn(self, tmp_path: Path) -> None:
+        class _DeadlineAdmissionExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.execute_calls = 0
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return {
+                    "total": 1,
+                    "pending": 1,
+                    "ready": 1,
+                    "in_progress": 0,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+
+            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+                del limit
+                return ["TASK-1"]
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                executor = self
+
+                class _Service:
+                    async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                        del kwargs
+                        executor.execute_calls += 1
+                        return CommandResult(run_id="director-started", status="running", message="submitted")
+
+                return _Service()
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _DeadlineAdmissionExecutor(tmp_path)
+        tasks = [{"id": "TASK-1", "target_files": ["src/index.ts"]}]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
+        run = FactoryRun(
+            id="run-director-deadline",
+            config=FactoryConfig(name="director-deadline"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-22T00:00:00+00:00",
+        )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {
+                "director_max_rounds": 1,
+                "execution_mode": "parallel",
+                "max_workers": 1,
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 90,
+                "quality_gate_reserved_budget_seconds": 60,
+            },
+        )
+
+        assert result.status == "failed"
+        assert executor.execute_calls == 0
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert payload["error_code"] == "director.dispatch_deadline_blocker"
+        signal = next(item for item in payload["signals"] if item.get("code") == "director.dispatch_deadline_blocker")
+        assert signal["responsible_layer"] == "execution_control_plane"
+        assert signal["allow_dispatch"] is False
+        assert signal["llm_timeout_seconds"] == 0
+
     @pytest.mark.asyncio
     async def test_quality_gate_deadline_insufficient_writes_fail_report(
         self,

@@ -2132,6 +2132,59 @@ class OrchestrationStageExecutor:
         return resolved_timeout
 
     @staticmethod
+    def _director_dispatch_deadline_admission_decision(
+        context: dict[str, Any],
+        *,
+        requested_timeout_seconds: int,
+        materialization_pending: bool,
+    ) -> dict[str, Any]:
+        """Return whether there is enough factory deadline to start a Director turn."""
+
+        normalized_timeout = max(1, int(requested_timeout_seconds))
+        remaining_seconds = OrchestrationStageExecutor._factory_deadline_remaining_seconds(context)
+        if remaining_seconds is None:
+            return {
+                "allow_dispatch": True,
+                "reason": "",
+                "remaining_seconds": None,
+                "available_for_director_seconds": None,
+                "minimum_start_budget_seconds": None,
+                "llm_timeout_seconds": normalized_timeout,
+            }
+
+        reserved_downstream_seconds = (
+            OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context)
+            + _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
+        )
+        available_for_director = remaining_seconds - reserved_downstream_seconds
+        minimum_start_budget = (
+            OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context)
+            if materialization_pending
+            else FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
+        )
+        if available_for_director < minimum_start_budget:
+            return {
+                "allow_dispatch": False,
+                "reason": "insufficient_factory_deadline_for_director_dispatch",
+                "remaining_seconds": remaining_seconds,
+                "reserved_downstream_seconds": reserved_downstream_seconds,
+                "available_for_director_seconds": available_for_director,
+                "minimum_start_budget_seconds": minimum_start_budget,
+                "llm_timeout_seconds": 0,
+                "materialization_pending": materialization_pending,
+            }
+        return {
+            "allow_dispatch": True,
+            "reason": "",
+            "remaining_seconds": remaining_seconds,
+            "reserved_downstream_seconds": reserved_downstream_seconds,
+            "available_for_director_seconds": available_for_director,
+            "minimum_start_budget_seconds": minimum_start_budget,
+            "llm_timeout_seconds": max(1, min(normalized_timeout, int(available_for_director))),
+            "materialization_pending": materialization_pending,
+        }
+
+    @staticmethod
     def _director_first_materialization_min_budget_seconds(context: dict[str, Any]) -> float:
         raw_value = context.get("director_first_materialization_min_budget_seconds")
         if raw_value is None:
@@ -4429,9 +4482,43 @@ class OrchestrationStageExecutor:
                     task_count=len(pm_tasks),
                     materialization_pending=materialization_pending,
                 )
+                admission_decision = self._director_dispatch_deadline_admission_decision(
+                    context,
+                    requested_timeout_seconds=director_timeout_seconds,
+                    materialization_pending=materialization_pending,
+                )
+                if not bool(admission_decision.get("allow_dispatch")):
+                    stage_signals.append(
+                        {
+                            "code": "director.dispatch_deadline_blocker",
+                            "severity": "error",
+                            "detail": (
+                                "Factory deadline does not leave enough budget to start another Director "
+                                "LLM turn while preserving downstream quality-gate time"
+                            ),
+                            "round": round_index,
+                            "failure_class": QaFailureClassV1.TASKBOARD_DEADLOCK.value,
+                            "responsible_layer": "execution_control_plane",
+                            "repairable_by_director": False,
+                            "requires_ce_replan": False,
+                            "requires_pm_revision": False,
+                            **admission_decision,
+                        }
+                    )
+                    final_result = CommandResult(
+                        run_id="",
+                        status="timeout",
+                        message="Director dispatch skipped because factory deadline budget is exhausted",
+                        metadata={
+                            "deadline_admission": admission_decision,
+                            "task_status_counts": dict(before_stats),
+                        },
+                    )
+                    break
                 base_options["metadata"].update(
                     {
                         "director_dispatch_timeout_seconds": director_timeout_seconds,
+                        "director_deadline_admission": admission_decision,
                         "director_first_materialization_pending": materialization_pending,
                         "director_missing_declared_target_count": len(missing_declared_targets),
                         "director_missing_declared_target_sample": missing_declared_targets[:12],
