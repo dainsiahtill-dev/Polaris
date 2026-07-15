@@ -15,9 +15,13 @@ import asyncio
 import contextlib
 import inspect
 import json
+import logging
 import os
 import sys
 import textwrap
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -29,7 +33,17 @@ from polaris.cells.chief_engineer.blueprint.public import (
     generate_task_blueprint,
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.cells.events.fact_stream.public.service import (
+    QueryFactEventsV1,
+    query_fact_events,
+)
 from polaris.cells.factory.pipeline.internal import factory_stage_executor as stage_executor_module
+from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
+    FactoryDeadlineBudgetPolicyV1,
+    FactoryDeadlineDispositionV1,
+    build_task_dependency_schedule,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
@@ -38,12 +52,21 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
+from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
+from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
+    evaluate_canonical_factory_authority,
+)
 from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
-from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 from polaris.cells.roles.adapters.public import (
     build_director_materialization_quality_repair_message,
     extract_workspace_quality_summary,
     resolve_director_semantic_quality_repair_target_files,
+)
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    ObservableTaskRowsProjectionV1,
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
@@ -53,52 +76,647 @@ def _executor(workspace: Path) -> OrchestrationStageExecutor:
     return OrchestrationStageExecutor(workspace)
 
 
+def _write_minimal_chief_engineer_plan(executor: OrchestrationStageExecutor) -> None:
+    executor._write_json_artifact(
+        "tasks/plan.json",
+        {
+            "tasks": [
+                {
+                    "id": "TASK-CANCEL",
+                    "title": "Implement cancellation coverage",
+                    "goal": "Exercise the Chief Engineer cancellation path.",
+                    "target_files": ["src/cancel.py"],
+                    "scope_paths": ["src/cancel.py"],
+                    "acceptance_criteria": ["cancellation is observable"],
+                    "execution_checklist": ["Suspend the claimed attempt"],
+                }
+            ]
+        },
+    )
+
+
+def _single_task_chief_engineer_result() -> SimpleNamespace:
+    payload = {
+        "construction_plan": {
+            "project_design_intent": "Keep cancellation behavior behind one stable module boundary.",
+            "project_interface_contract": {
+                "provider_declarations": [
+                    {
+                        "path": "src/cancel.py",
+                        "name": "build_cancellation_plan",
+                        "symbol_kind": "function",
+                        "signature": "build_cancellation_plan() -> dict[str, object]",
+                        "semantic_role": "build cancellation behavior",
+                    }
+                ],
+                "consumer_declarations": [],
+            },
+            "task_plans": {
+                "TASK-CANCEL": {
+                    "implementation": ["Implement cancellation behavior"],
+                    "verification": ["Verify cancellation behavior"],
+                }
+            },
+        },
+        "scope_for_apply": ["src/cancel.py"],
+        "risk_flags": [],
+    }
+    return SimpleNamespace(
+        ok=True,
+        output=json.dumps(payload),
+        error_message="",
+        error_code="",
+        metadata={
+            "provider_id": "test-provider",
+            "model": "test-model",
+            "structured_output": payload,
+            "final_request_context_audit": {"context_window_utilization": 0.25},
+            "context_snapshot_ref": "abcdef123456abcdef123456",
+        },
+        usage={},
+    )
+
+
+def _capture_chief_engineer_lease_keepers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[Any]:
+    keepers: list[Any] = []
+    keeper_type = stage_executor_module._ChiefEngineerExecutionAttemptLeaseKeeper
+    original_start = keeper_type.start
+
+    def _tracked_start(keeper: Any) -> None:
+        keepers.append(keeper)
+        original_start(keeper)
+
+    monkeypatch.setattr(keeper_type, "start", _tracked_start)
+    return keepers
+
+
+def _assert_no_chief_engineer_lease_keeper_threads() -> None:
+    leaked_threads = [
+        thread.name for thread in threading.enumerate() if thread.name.startswith("polaris-ce-attempt-lease-")
+    ]
+    assert leaked_threads == []
+
+
+def _authoritative_task_projection(
+    workspace: Path,
+    rows: tuple[dict[str, Any], ...],
+) -> ObservableTaskRowsProjectionV1:
+    return ObservableTaskRowsProjectionV1(
+        workspace=str(workspace),
+        source="task_runtime.execution_fact",
+        authoritative=True,
+        degraded=False,
+        rows=rows,
+        readiness={"ready": True, "blocking_reasons": []},
+    )
+
+
+def _with_task_runtime_authority(
+    projection: dict[str, Any],
+    *,
+    task_ids: tuple[str, ...] = ("TASK-1",),
+    incomplete_task_ids: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Attach the canonical TaskRuntime authority required by Factory gates."""
+
+    incomplete = set(incomplete_task_ids)
+    return {
+        **projection,
+        "task_runtime_projection": {
+            "schema_version": "task_runtime.observable_task_rows_authority.v1",
+            "source": "task_runtime.execution_fact",
+            "authoritative": True,
+            "degraded": False,
+            "row_count": len(task_ids),
+            "rows": [
+                {
+                    "task_id": task_id,
+                    "status": "pending" if task_id in incomplete else "completed",
+                    "execution_state": ("pending" if task_id in incomplete else "completed"),
+                    "fact_event_seq": index,
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                }
+                for index, task_id in enumerate(task_ids, start=1)
+            ],
+            "readiness": {"ready": True, "blocking_reasons": []},
+        },
+    }
+
+
+def _factory_workspace_run_lease(
+    workspace: Path,
+    *,
+    run_id: str,
+    fencing_token: int,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "factory.workspace-run-lease.v1",
+        "workspace": str(workspace.resolve()),
+        "run_id": run_id,
+        "state": "active",
+        "version": 3,
+        "fencing_token": fencing_token,
+        "acquired_at": "2026-07-13T00:00:00+00:00",
+        "updated_at": "2026-07-13T00:01:00+00:00",
+        "expires_at": "2026-07-13T01:00:00+00:00",
+        "stage_execution_claim": {"nonce": "lease-projection-original"},
+    }
+
+
+def test_materialize_pm_task_projects_current_factory_workspace_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    executor = _executor(workspace)
+    run_id = "factory-run-lease-current"
+    current_lease = _factory_workspace_run_lease(
+        workspace,
+        run_id=run_id,
+        fencing_token=41,
+    )
+    expected_lease = json.loads(json.dumps(current_lease, ensure_ascii=False))
+    forged_task_lease = _factory_workspace_run_lease(
+        workspace,
+        run_id="factory-run-forged",
+        fencing_token=999,
+    )
+    monkeypatch.setattr(
+        TaskRuntimeService,
+        "_publish_factory_execution_event",
+        lambda _service, _payload: True,
+    )
+    tasks = [
+        {
+            "id": "PM-LEASE-1",
+            "objective": "Preserve Factory workspace authority provenance",
+            "metadata": {
+                "factory_workspace_run_lease": forged_task_lease,
+            },
+        }
+    ]
+
+    summary = executor._materialize_pm_plan_taskboard(
+        tasks,
+        run_id=run_id,
+        source_stage="pm_planning",
+        run_metadata={"factory_workspace_run_lease": current_lease},
+    )
+    current_lease["fencing_token"] = 88
+    current_lease["stage_execution_claim"]["nonce"] = "mutated-after-materialization"
+
+    row = TaskRuntimeService(str(workspace)).get_task("PM-LEASE-1")
+
+    assert summary["ensured_count"] == 1
+    assert summary["bound_count"] == 1
+    assert row is not None
+    assert row["metadata"]["factory_run_id"] == run_id
+    assert row["metadata"]["factory_workspace_run_lease"] == expected_lease
+
+    refreshed_lease = _factory_workspace_run_lease(
+        workspace,
+        run_id=run_id,
+        fencing_token=41,
+    )
+    refreshed_lease["version"] = 4
+    refreshed_lease["updated_at"] = "2026-07-13T00:03:00+00:00"
+    expected_refreshed_lease = json.loads(json.dumps(refreshed_lease, ensure_ascii=False))
+    refresh_summary = executor._materialize_pm_plan_taskboard(
+        tasks,
+        run_id=run_id,
+        source_stage="director_dispatch",
+        run_metadata={"factory_workspace_run_lease": refreshed_lease},
+    )
+    refreshed_lease["stage_execution_claim"]["nonce"] = "mutated-after-refresh"
+    row = TaskRuntimeService(str(workspace)).get_task("PM-LEASE-1")
+
+    assert refresh_summary["binding_failures"] == []
+    assert row is not None
+    assert row["status"] == "pending"
+    assert row["metadata"]["factory_workspace_run_lease"] == expected_refreshed_lease
+    metadata_refresh_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="updated",
+        )
+    ).events
+    assert len(metadata_refresh_events) == 1
+    metadata_refresh_payload = metadata_refresh_events[0]["payload"]
+    assert metadata_refresh_payload["status"] == "pending"
+    assert metadata_refresh_payload["details"]["status"] == ""
+    assert metadata_refresh_payload["details"]["metadata_updated"] is True
+
+    task_runtime = TaskRuntimeService(str(workspace))
+    claimed = task_runtime.claim_execution(
+        row["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="director-child-run",
+        selection_source="task_id_lookup",
+    )
+    identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(claimed["execution_attempt"])
+    completed = task_runtime.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="completed",
+            summary="fenced terminal fact committed",
+        )
+    )
+    assert completed["success"] is True
+    terminal_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="completed",
+        )
+    ).events
+    assert len(terminal_events) == 1
+
+    terminal_payload = terminal_events[0]["payload"]
+    assert terminal_payload["factory_run_id"] == run_id
+    assert _fencing_token(terminal_payload) == 41
+    assert terminal_payload["factory_workspace_run_lease"] == expected_refreshed_lease
+
+
+@pytest.mark.parametrize(
+    "run_metadata",
+    [
+        None,
+        {},
+        {"factory_workspace_run_lease": "not-a-lease-mapping"},
+    ],
+)
+def test_materialize_pm_task_never_trusts_task_supplied_workspace_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run_metadata: dict[str, Any] | None,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        TaskRuntimeService,
+        "_publish_factory_execution_event",
+        lambda _service, _payload: True,
+    )
+
+    _executor(workspace)._materialize_pm_plan_taskboard(
+        [
+            {
+                "id": "PM-LEASE-UNTRUSTED",
+                "objective": "Reject task-supplied Factory authority",
+                "metadata": {
+                    "factory_workspace_run_lease": {
+                        "run_id": "forged-run",
+                        "fencing_token": 777,
+                    }
+                },
+            }
+        ],
+        run_id="factory-run-without-lease-projection",
+        source_stage="pm_planning",
+        run_metadata=run_metadata,
+    )
+
+    row = TaskRuntimeService(str(workspace)).get_task("PM-LEASE-UNTRUSTED")
+
+    assert row is not None
+    assert "factory_workspace_run_lease" not in row["metadata"]
+
+
+@pytest.mark.parametrize(
+    ("sequence_ready", "boundary_status", "qa_ok", "policy_ok", "expected", "reason_code"),
+    [
+        (False, "completed_verified", True, True, False, "canonical_sequence_barrier_unsatisfied"),
+        (True, "incomplete_materialization", True, True, False, "task_boundary_not_completed_verified"),
+        (True, "completed_verified", False, True, False, "qa_verdict_failed"),
+        (True, "completed_verified", True, False, False, "evidence_policy_failed"),
+        (True, "completed_verified", True, True, True, "canonical_projection_authorized"),
+    ],
+)
+def test_canonical_factory_authority_conflict_matrix(
+    sequence_ready: bool,
+    boundary_status: str,
+    qa_ok: bool,
+    policy_ok: bool,
+    expected: bool,
+    reason_code: str,
+) -> None:
+    boundary_ok = boundary_status == "completed_verified"
+    projection = _with_task_runtime_authority(
+        {
+            "source": "run_ledger",
+            "integrity_ok": policy_ok,
+            "outcome_ok": policy_ok and boundary_ok and qa_ok,
+            "task_boundary": {
+                "latest_by_task": {
+                    "TASK-1": {
+                        "task_id": "TASK-1",
+                        "status": boundary_status,
+                        "ok": boundary_ok,
+                        "failure_class": "PASSED" if boundary_ok else "INCOMPLETE_MATERIALIZATION",
+                        "responsible_layer": "execution_control_plane",
+                    }
+                }
+            },
+            "gates": [
+                {
+                    "name": "qa_verdict",
+                    "ok": qa_ok,
+                    "append_id": "qa-append-1",
+                    "content_id": "qa-content-1",
+                }
+            ],
+            "evidence_policy": {
+                "integrity_ok": policy_ok,
+                "outcome_ok": policy_ok,
+                "missing_required_modalities": [] if policy_ok else ["command"],
+                "failed_required_modalities": [],
+            },
+        }
+    )
+
+    authority = evaluate_canonical_factory_authority(
+        projection,
+        sequence_barrier_satisfied=sequence_ready,
+    )
+
+    assert authority.quality_stage_authorized is expected
+    assert authority.reason_code == reason_code
+
+
+def test_run_completion_blocks_degraded_task_runtime_projection(tmp_path: Path) -> None:
+    waiter = RunCompletionWaiter(tmp_path)
+    degraded = ObservableTaskRowsProjectionV1(
+        workspace=str(tmp_path),
+        source="task_runtime.transitional_file_fallback",
+        authoritative=False,
+        degraded=True,
+        rows=(
+            {
+                "id": "TASK-1",
+                "workflow_run_id": "run-1",
+                "execution_state": "completed",
+                "fact_event_seq": 9,
+            },
+        ),
+        readiness={"ready": False, "blocking_reasons": ["task_row_file_fallback_required"]},
+    )
+    waiter._observable_task_rows_projection = lambda: degraded  # type: ignore[method-assign]
+
+    result = waiter.canonical_terminal_result(run_id="run-1", process_terminal=True)
+
+    assert result is not None
+    assert result.status == "blocked"
+    assert result.reason_code == "task_runtime_fact_projection_not_ready"
+    assert result.metadata["canonical_authoritative"] is False
+    assert result.metadata["degraded"] is True
+
+
+def test_run_completion_conflict_matrix_prefers_failure(tmp_path: Path) -> None:
+    waiter = RunCompletionWaiter(tmp_path)
+    projection = _authoritative_task_projection(tmp_path, ())
+    waiter._observable_task_rows_projection = lambda: projection  # type: ignore[method-assign]
+    waiter._task_runtime_terminal_result = lambda **_kwargs: CommandResult(  # type: ignore[method-assign]
+        run_id="run-1",
+        status="completed",
+        message="task runtime complete",
+        metadata={"canonical_authoritative": True, "fact_event_seq": 11},
+    )
+    waiter._committed_turn_outcome_result = lambda **_kwargs: CommandResult(  # type: ignore[method-assign]
+        run_id="run-1",
+        status="failed",
+        message="turn outcome failed",
+        metadata={"canonical_authoritative": True, "fact_event_seq": 7},
+    )
+
+    result = waiter.canonical_terminal_result(run_id="run-1", process_terminal=True)
+
+    assert result is not None
+    assert result.status == "failed"
+    assert result.metadata["terminal_source"] == "canonical_conflict_matrix"
+    assert result.metadata["canonical_conflict"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_completion_cancel_during_dispatch_waits_for_canonical_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _FakeOrchestrationService:
+        def __init__(self) -> None:
+            self.active_task = asyncio.create_task(asyncio.sleep(60))
+            self._active_runs = {"run-1": self.active_task}
+            self.cancelled: list[str] = []
+
+        async def cancel_run(self, run_id: str, force: bool = False) -> None:
+            del force
+            self.cancelled.append(run_id)
+
+    class _FakeCommandService:
+        async def query_run_status(self, run_id: str) -> CommandResult:
+            return CommandResult(run_id=run_id, status="running", message="dispatching")
+
+    fake_orchestration = _FakeOrchestrationService()
+
+    async def _get_orchestration_service() -> _FakeOrchestrationService:
+        return fake_orchestration
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+        _get_orchestration_service,
+    )
+    reads = 0
+
+    def _projection() -> ObservableTaskRowsProjectionV1:
+        nonlocal reads
+        reads += 1
+        status = "in_execution" if reads < 4 else "completed"
+        return _authoritative_task_projection(
+            tmp_path,
+            (
+                {
+                    "id": "TASK-1",
+                    "task_id": "TASK-1",
+                    "workflow_run_id": "run-1",
+                    "execution_state": status,
+                    "running": status == "in_execution",
+                    "fact_event_seq": reads,
+                    "metadata": {
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                    },
+                },
+            ),
+        )
+
+    waiter = RunCompletionWaiter(tmp_path)
+    waiter._observable_task_rows_projection = _projection  # type: ignore[method-assign]
+    cancel_event = asyncio.Event()
+    cancel_event.set()
+
+    result = await waiter.wait(
+        _FakeCommandService(),
+        CommandResult(run_id="run-1", status="running", message="submitted"),
+        timeout_seconds=1,
+        cancel_event=cancel_event,
+    )
+
+    assert result.status == "completed"
+    assert result.metadata["canonical_authoritative"] is True
+    assert result.metadata["terminal_source"] == "task_runtime.execution_fact"
+    assert fake_orchestration.cancelled == []
+    fake_orchestration.active_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await fake_orchestration.active_task
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_authority_ignores_report_and_workspace_display_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    executor = _executor(tmp_path)
+    run = FactoryRun(
+        id="factory-authority",
+        config=FactoryConfig(name="authority"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-07-13T00:00:00+00:00",
+    )
+    executor._write_json_artifact(
+        "runtime/qa/report.json",
+        {
+            "passed": False,
+            "score": 0,
+            "critical_issue_count": 9,
+            "warnings": ["display_only"],
+        },
+    )
+
+    async def _workspace_checks(
+        _run: FactoryRun,
+        _context: dict[str, Any],
+    ) -> tuple[bool, str]:
+        return False, ""
+
+    class _Service:
+        async def execute_qa_run(self, **_kwargs: Any) -> CommandResult:
+            return CommandResult(run_id="qa-run", status="running", message="submitted")
+
+    async def _wait(*_args: Any, **_kwargs: Any) -> CommandResult:
+        return CommandResult(
+            run_id="qa-run",
+            status="completed",
+            message="committed",
+            metadata={
+                "canonical_authoritative": True,
+                "terminal_source": "task_runtime.execution_fact",
+                "fact_event_seq": 19,
+            },
+        )
+
+    projection = _with_task_runtime_authority(
+        {
+            "source": "run_ledger",
+            "integrity_ok": True,
+            "outcome_ok": True,
+            "task_boundary": {
+                "latest_by_task": {
+                    "TASK-1": {
+                        "task_id": "TASK-1",
+                        "status": "completed_verified",
+                        "ok": True,
+                        "failure_class": "PASSED",
+                        "responsible_layer": "execution_control_plane",
+                    }
+                }
+            },
+            "gates": [
+                {
+                    "name": "qa_verdict",
+                    "ok": True,
+                    "append_id": "qa-append-2",
+                    "content_id": "qa-content-2",
+                }
+            ],
+            "evidence_policy": {
+                "integrity_ok": True,
+                "outcome_ok": True,
+                "missing_required_modalities": [],
+                "failed_required_modalities": [],
+            },
+        }
+    )
+    monkeypatch.setattr(executor, "_run_workspace_quality_checks", _workspace_checks)
+    monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: _Service())
+    monkeypatch.setattr(executor, "_wait_run_completion", _wait)
+    monkeypatch.setattr(executor, "_canonical_factory_projection", lambda _run, _context: projection)
+
+    result = await executor._execute_quality_gate(run, {"qa_target": "Quality gate"})
+
+    assert result.status == "success"
+    assert "canonical_authorized=True" in str(result.output)
+    assert "report_consistent=False" in str(result.output)
+
+
 def test_read_claimable_director_task_ids_uses_observable_rows(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    class _ProjectionOnlyTaskRuntime:
-        def __init__(self, workspace: str) -> None:
-            assert workspace == str(tmp_path)
-
-        def list_observable_task_rows(self) -> list[dict[str, Any]]:
-            return [
+    monkeypatch.setattr(
+        TaskRuntimeService,
+        "query_observable_task_rows_projection",
+        lambda runtime: _authoritative_task_projection(
+            Path(runtime.workspace),
+            (
                 {"id": 1, "status": "pending", "metadata": {"pm_task_id": "TASK-1"}},
                 {"id": 2, "status": "ready", "metadata": {"external_task_id": "TASK-2"}},
                 {"id": 3, "status": "pending", "blocked_by": [1]},
                 {"id": 4, "status": "completed", "metadata": {"pm_task_id": "TASK-4"}},
-            ]
-
-        def list_task_rows(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-            raise AssertionError("Factory stage executor must read observable task rows")
-
-    monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ProjectionOnlyTaskRuntime)
+            ),
+        ),
+    )
 
     claimable = _executor(tmp_path)._read_claimable_director_task_ids(limit=10)
 
     assert claimable == ["TASK-1", "TASK-2"]
 
 
+def test_unresolved_task_ids_use_same_external_identity_as_claims() -> None:
+    rows = [
+        {"id": 1, "status": "pending", "metadata": {"external_task_id": "TASK-1"}},
+        {"id": 2, "status": "ready", "metadata": {"pm_task_id": "TASK-2"}},
+        {"id": 3, "status": "in_progress", "metadata": {"source_task_id": "TASK-3"}},
+        {"id": 4, "status": "completed", "metadata": {"external_task_id": "TASK-4"}},
+    ]
+
+    unresolved = OrchestrationStageExecutor._unresolved_task_ids_from_rows(rows)
+
+    assert unresolved == ("TASK-1", "TASK-2", "TASK-3")
+
+
 def test_read_claimable_director_task_ids_skips_execution_owned_states(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    class _ProjectionOnlyTaskRuntime:
-        def __init__(self, workspace: str) -> None:
-            assert workspace == str(tmp_path)
-
-        def list_observable_task_rows(self) -> list[dict[str, Any]]:
-            return [
+    monkeypatch.setattr(
+        TaskRuntimeService,
+        "query_observable_task_rows_projection",
+        lambda runtime: _authoritative_task_projection(
+            Path(runtime.workspace),
+            (
                 {"id": 1, "status": "pending", "metadata": {"external_task_id": "TASK-PENDING"}},
                 {"id": 2, "status": "in_progress", "metadata": {"external_task_id": "TASK-IN-PROGRESS"}},
                 {"id": 3, "status": "running", "metadata": {"external_task_id": "TASK-RUNNING"}},
                 {"id": 4, "status": "claimed", "metadata": {"external_task_id": "TASK-CLAIMED"}},
-            ]
-
-        def list_task_rows(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-            raise AssertionError("Factory stage executor must not read raw task rows")
-
-    monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ProjectionOnlyTaskRuntime)
+            ),
+        ),
+    )
 
     claimable = _executor(tmp_path)._read_claimable_director_task_ids(limit=10)
 
@@ -202,41 +820,6 @@ def test_read_taskboard_stats_ast_does_not_list_rows() -> None:
         "that method is for claimable-row inspection, not stats aggregation; "
         "use get_observable_task_row_stats() instead"
     )
-
-
-def test_failed_quality_handoff_reads_observable_task_rows(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    class _ProjectionOnlyTaskRuntime:
-        def __init__(self, workspace: str) -> None:
-            assert workspace == str(tmp_path)
-
-        def list_observable_task_rows(self) -> list[dict[str, Any]]:
-            return [
-                {
-                    "id": "TASK-1",
-                    "status": "failed",
-                    "metadata": {
-                        "runtime_execution": {
-                            "last_error": "director_materialization_quality_failed",
-                        },
-                        "adapter_result": {
-                            "materialization_error": "director_materialization_quality_failed",
-                            "materialization_mode": "workspace_diff_without_write_tool",
-                        },
-                    },
-                }
-            ]
-
-        def list_task_rows(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-            raise AssertionError("Factory stage executor must read observable task rows")
-
-    monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ProjectionOnlyTaskRuntime)
-    executor = _executor(tmp_path)
-
-    assert executor._failed_task_records_indicate_materialization_quality_handoff() is True
-    assert executor._failed_task_records_indicate_quality_handoff() is True
 
 
 def test_materialization_quality_target_filter_prefers_ts_source_over_compiled_outputs(tmp_path: Path) -> None:
@@ -703,9 +1286,33 @@ class TestChiefEngineerHandoffGuards:
                 captured_commands.append(command)
                 ce_output = {
                     "construction_plan": {
-                        "preparation": ["Confirm Go module boundary"],
-                        "implementation": ["Model mood palette", "Render wheel report"],
-                        "verification": ["go test ./...", "go run ."],
+                        "project_design_intent": "Keep rendering behind a stable wheel report interface.",
+                        "project_interface_contract": {
+                            "provider_declarations": [
+                                {
+                                    "path": "engine/wheel.go",
+                                    "name": "BuildWheelReport",
+                                    "symbol_kind": "function",
+                                    "signature": "BuildWheelReport(mood Mood) WheelReport",
+                                    "semantic_role": "build a color wheel report",
+                                }
+                            ],
+                            "consumer_declarations": [
+                                {
+                                    "path": "main.go",
+                                    "name": "BuildWheelReport",
+                                    "provider_path": "engine/wheel.go",
+                                    "semantic_role": "render the CLI report",
+                                }
+                            ],
+                        },
+                        "task_plans": {
+                            "TASK-1": {
+                                "preparation": ["Confirm Go module boundary"],
+                                "implementation": ["Model mood palette", "Render wheel report"],
+                                "verification": ["go test ./...", "go run ."],
+                            }
+                        },
                     },
                     "scope_for_apply": ["models/mood.go", "engine/wheel.go", "main.go"],
                     "risk_flags": [
@@ -758,6 +1365,7 @@ class TestChiefEngineerHandoffGuards:
         assert blueprint["ce_handoff"]["llm_blueprint_consumed"] is True
         assert len(captured_commands) == 1
         command = captured_commands[0]
+        assert command.context["llm_max_tokens"] == 128_000
         assert command.context["temperature"] == 0.2
         assert command.context["response_format_mode"] == "json"
         assert command.context["chief_engineer_json_contract_required"] is True
@@ -765,13 +1373,613 @@ class TestChiefEngineerHandoffGuards:
         assert command.metadata["temperature"] == 0.2
         assert command.metadata["response_format_mode"] == "json"
         assert command.metadata["chief_engineer_json_contract_required"] is True
+        assert command.execution_attempt is not None
+        assert command.execution_attempt.session_id.startswith("tx-")
+        assert command.execution_attempt.attempt == 1
+        assert command.execution_attempt.external_task_id == f"CE-PORTFOLIO-{run.id}"
+        assert command.execution_attempt.role_id == "chief_engineer"
+        assert command.execution_attempt.run_id == run.id
 
-    def test_chief_engineer_review_projects_blueprint_after_llm_timeout(
+    def test_chief_engineer_execution_attempt_reuses_claim_on_replay_and_rotates_after_requeue(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        objective = "Produce one durable Chief Engineer portfolio."
+        lease_budget = executor._chief_engineer_execution_attempt_lease_budget(240)
+
+        task_id, first_attempt = executor._claim_chief_engineer_execution_attempt(
+            run_id="factory-run-identity",
+            portfolio_task_id="CE-PORTFOLIO-factory-run-identity",
+            objective=objective,
+            lease_budget=lease_budget,
+        )
+        replay_task_id, replay_attempt = executor._claim_chief_engineer_execution_attempt(
+            run_id="factory-run-identity",
+            portfolio_task_id="CE-PORTFOLIO-factory-run-identity",
+            objective=objective,
+            lease_budget=lease_budget,
+        )
+
+        assert replay_task_id == task_id
+        assert replay_attempt.session_id == first_attempt.session_id
+        assert replay_attempt.attempt == first_attempt.attempt
+
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        suspended = task_runtime.settle_execution_attempt(
+            SettleTaskRuntimeExecutionAttemptCommandV1(
+                workspace=str(tmp_path),
+                identity=replay_attempt,
+                outcome="suspended",
+                summary="retry the CE portfolio claim",
+            )
+        )
+        assert suspended["success"] is True
+
+        requeued_task_id, requeued_attempt = executor._claim_chief_engineer_execution_attempt(
+            run_id="factory-run-identity",
+            portfolio_task_id="CE-PORTFOLIO-factory-run-identity",
+            objective=objective,
+            lease_budget=lease_budget,
+        )
+
+        assert requeued_task_id == task_id
+        assert requeued_attempt.session_id != first_attempt.session_id
+        assert requeued_attempt.attempt == first_attempt.attempt + 1
+
+    def test_chief_engineer_execution_attempt_lease_covers_admitted_long_call(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        pm_tasks = [
+            {
+                "id": "TASK-LONG-CE",
+                "title": "Plan a long Chief Engineer review",
+                "goal": "Exercise an admitted CE timeout above the historical 240 second lease.",
+            }
+        ]
+        configured_timeout = executor._chief_engineer_llm_timeout_seconds({"chief_engineer_llm_timeout_seconds": 300})
+        admission = executor._chief_engineer_deadline_projection_decision(
+            {},
+            requested_timeout_seconds=configured_timeout,
+            dependency_schedule=build_task_dependency_schedule(pm_tasks),
+        )
+        assert admission.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert admission.timeout_seconds == 300
+        lease_budget = executor._chief_engineer_execution_attempt_lease_budget(admission.timeout_seconds)
+
+        task_id, attempt = executor._claim_chief_engineer_execution_attempt(
+            run_id="factory-run-long-ce",
+            portfolio_task_id="CE-PORTFOLIO-factory-run-long-ce",
+            objective="Produce a long-running Chief Engineer portfolio.",
+            lease_budget=lease_budget,
+        )
+        session_path = Path(resolve_logical_path(tmp_path, f"runtime/tasks/task_{task_id}.session.json"))
+        claimed_session = json.loads(session_path.read_text(encoding="utf-8"))
+        lease_seconds = (
+            datetime.fromisoformat(claimed_session["lease_expires_at"])
+            - datetime.fromisoformat(claimed_session["claimed_at"])
+        ).total_seconds()
+        assert lease_seconds == 330
+        assert lease_seconds > admission.timeout_seconds
+
+        executor._settle_chief_engineer_execution_attempt(
+            task_id=task_id,
+            execution_attempt=attempt,
+            stage_status="success",
+            summary="long CE review completed within admitted budget",
+        )
+
+        settled_session = json.loads(session_path.read_text(encoding="utf-8"))
+        assert settled_session["status"] == "completed"
+        assert settled_session["resumable"] is False
+        completed_events = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(tmp_path),
+                stream="task_runtime.execution",
+                event_type="completed",
+            )
+        ).events
+        assert len(completed_events) == 1
+
+    def test_chief_engineer_execution_attempt_lease_budget_is_bounded(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        for env_key in stage_executor_module._CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS:
+            monkeypatch.delenv(env_key, raising=False)
+
+        maximum = stage_executor_module.MAX_LLM_PROVIDER_TIMEOUT_SECONDS
+        grace = stage_executor_module._CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS
+        assert (
+            OrchestrationStageExecutor._chief_engineer_llm_timeout_seconds(
+                {"chief_engineer_llm_timeout_seconds": maximum + 1}
+            )
+            == maximum
+        )
+        assert (
+            OrchestrationStageExecutor._chief_engineer_llm_timeout_seconds(
+                {"chief_engineer_llm_timeout_seconds": "1e100000"}
+            )
+            == maximum
+        )
+        assert (
+            OrchestrationStageExecutor._chief_engineer_llm_timeout_seconds(
+                {"chief_engineer_llm_timeout_seconds": "inf"}
+            )
+            == stage_executor_module._DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS
+        )
+        maximum_budget = OrchestrationStageExecutor._chief_engineer_execution_attempt_lease_budget(maximum)
+        assert maximum_budget.lease_ttl_seconds == maximum + grace
+        assert 0 < maximum_budget.heartbeat_interval_seconds < maximum_budget.lease_ttl_seconds
+        with pytest.raises(ValueError, match="chief_engineer_execution_timeout_seconds_out_of_bounds"):
+            OrchestrationStageExecutor._chief_engineer_execution_attempt_lease_budget(0)
+        with pytest.raises(ValueError, match="chief_engineer_execution_timeout_seconds_out_of_bounds"):
+            OrchestrationStageExecutor._chief_engineer_execution_attempt_lease_budget(maximum + 1)
+
+    def test_chief_engineer_lease_renews_during_synchronous_post_processing(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         executor = _executor(tmp_path)
+        _write_minimal_chief_engineer_plan(executor)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        heartbeat_calls: list[dict[str, Any]] = []
+        post_processing_heartbeats_ready = threading.Event()
+        original_heartbeat = stage_executor_module.heartbeat_task_runtime_execution_attempt
+        original_extract = executor._ce_extract_llm_evidence
+        fast_budget = stage_executor_module._ChiefEngineerExecutionAttemptLeaseBudget(
+            lease_ttl_seconds=1,
+            heartbeat_interval_seconds=0.05,
+        )
+        renewals_to_cross_initial_lease = (
+            int(fast_budget.lease_ttl_seconds / fast_budget.heartbeat_interval_seconds) + 2
+        )
+        monkeypatch.setattr(
+            executor,
+            "_chief_engineer_execution_attempt_lease_budget",
+            lambda _timeout: fast_budget,
+        )
+
+        def _record_heartbeat(command: Any) -> Any:
+            result = original_heartbeat(command)
+            heartbeat_calls.append(
+                {
+                    "task_id": command.identity.task_id,
+                    "session_id": command.identity.session_id,
+                    "lease_ttl_seconds": command.lease_ttl_seconds,
+                }
+            )
+            if len(heartbeat_calls) >= renewals_to_cross_initial_lease:
+                post_processing_heartbeats_ready.set()
+            return result
+
+        def _blocking_extract(ce_result: Any, *, task_id: str, run_id: str) -> dict[str, Any]:
+            assert post_processing_heartbeats_ready.wait(timeout=2.0)
+            return original_extract(ce_result, task_id=task_id, run_id=run_id)
+
+        class _SuccessfulRoleRuntimeService:
+            async def execute_role_task(self, _command: Any) -> Any:
+                return _single_task_chief_engineer_result()
+
+        monkeypatch.setattr(stage_executor_module, "heartbeat_task_runtime_execution_attempt", _record_heartbeat)
+        monkeypatch.setattr(executor, "_ce_extract_llm_evidence", _blocking_extract)
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _SuccessfulRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-ce-heartbeat-post-processing",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+
+        assert result.status == "success"
+        assert len(keepers) == 1
+        keeper = keepers[0]
+        assert keeper.heartbeat_count >= renewals_to_cross_initial_lease
+        assert keeper.is_alive is False
+        _assert_no_chief_engineer_lease_keeper_threads()
+        assert len(heartbeat_calls) >= renewals_to_cross_initial_lease
+        assert len(heartbeat_calls) * fast_budget.heartbeat_interval_seconds > fast_budget.lease_ttl_seconds
+        assert all(call["task_id"] == keeper.task_id for call in heartbeat_calls)
+        assert all(call["session_id"] == keeper.execution_attempt.session_id for call in heartbeat_calls)
+        assert all(call["lease_ttl_seconds"] == fast_budget.lease_ttl_seconds for call in heartbeat_calls)
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.get_task(f"CE-PORTFOLIO-{run.id}")
+        assert task is not None
+        session_path = Path(resolve_logical_path(tmp_path, f"runtime/tasks/task_{task['id']}.session.json"))
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        assert session["status"] == "completed"
+
+    def test_chief_engineer_heartbeat_failure_fails_closed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        executor = _executor(tmp_path)
+        _write_minimal_chief_engineer_plan(executor)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        heartbeat_failed = threading.Event()
+        heartbeat_recovered = threading.Event()
+        heartbeat_calls = 0
+        original_heartbeat = stage_executor_module.heartbeat_task_runtime_execution_attempt
+        fast_budget = stage_executor_module._ChiefEngineerExecutionAttemptLeaseBudget(
+            lease_ttl_seconds=2,
+            heartbeat_interval_seconds=0.01,
+        )
+        monkeypatch.setattr(
+            executor,
+            "_chief_engineer_execution_attempt_lease_budget",
+            lambda _timeout: fast_budget,
+        )
+
+        def _fail_then_renew_heartbeat(command: Any) -> Any:
+            nonlocal heartbeat_calls
+            heartbeat_calls += 1
+            if heartbeat_calls == 1:
+                heartbeat_failed.set()
+                return TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
+                    success=False,
+                    code="file_lock_timeout",
+                    workspace=command.workspace,
+                    identity=command.identity,
+                    evidence_anchor={"synthetic": True},
+                )
+            result = original_heartbeat(command)
+            heartbeat_recovered.set()
+            return result
+
+        class _SuccessfulRoleRuntimeService:
+            async def execute_role_task(self, _command: Any) -> Any:
+                assert await asyncio.to_thread(heartbeat_failed.wait, 2.0)
+                assert await asyncio.to_thread(heartbeat_recovered.wait, 2.0)
+                return _single_task_chief_engineer_result()
+
+        monkeypatch.setattr(
+            stage_executor_module,
+            "heartbeat_task_runtime_execution_attempt",
+            _fail_then_renew_heartbeat,
+        )
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _SuccessfulRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-ce-heartbeat-failed",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        with caplog.at_level(logging.ERROR, logger=stage_executor_module.__name__):
+            result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+
+        assert result.status == "success"
+        assert "code=chief_engineer.execution_attempt_heartbeat_failed" in caplog.text
+        assert "file_lock_timeout" in caplog.text
+        assert len(keepers) == 1
+        assert keepers[0].is_alive is False
+        _assert_no_chief_engineer_lease_keeper_threads()
+        assert keepers[0].heartbeat_count >= 1
+        assert heartbeat_calls >= 2
+        assert keepers[0].failure is None
+        assert keepers[0].incidents[0].reason == "file_lock_timeout"
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.get_task(f"CE-PORTFOLIO-{run.id}")
+        assert task is not None
+        session_path = Path(resolve_logical_path(tmp_path, f"runtime/tasks/task_{task['id']}.session.json"))
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        assert session["status"] == "completed"
+        completed_events = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(tmp_path),
+                stream="task_runtime.execution",
+                event_type="completed",
+            )
+        ).events
+        assert len(completed_events) == 1
+
+    def test_chief_engineer_lease_keeper_records_system_exit_as_fail_closed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A BaseException cannot silently terminate the keeper thread."""
+
+        entered = threading.Event()
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=91,
+            external_task_id="CE-PORTFOLIO-system-exit",
+            session_id="system-exit-session",
+            attempt=1,
+            role_id="chief_engineer",
+            worker_id="factory-chief-engineer",
+            run_id="system-exit-run",
+            lease_expires_at="2026-07-14T00:05:00+00:00",
+        )
+        keeper = stage_executor_module._ChiefEngineerExecutionAttemptLeaseKeeper(
+            workspace=str(tmp_path),
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            budget=stage_executor_module._ChiefEngineerExecutionAttemptLeaseBudget(
+                lease_ttl_seconds=2,
+                heartbeat_interval_seconds=0.01,
+            ),
+        )
+
+        def _raise_system_exit(_command: Any) -> Any:
+            entered.set()
+            raise SystemExit("synthetic keeper boundary")
+
+        monkeypatch.setattr(stage_executor_module, "heartbeat_task_runtime_execution_attempt", _raise_system_exit)
+        keeper.start()
+        assert entered.wait(timeout=2)
+        stopped = keeper.stop()
+
+        assert stopped.thread_exited is True
+        assert keeper.failure is not None
+        assert keeper.failure.error_type == "SystemExit"
+        assert keeper.incidents[-1].reason == "heartbeat_exception"
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_blocked_heartbeat_blocks_settlement_without_deadlock(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unresolved heartbeat makes settlement fail closed rather than race it."""
+
+        entered = threading.Event()
+        release = threading.Event()
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=92,
+            external_task_id="CE-PORTFOLIO-blocked",
+            session_id="blocked-session",
+            attempt=1,
+            role_id="chief_engineer",
+            worker_id="factory-chief-engineer",
+            run_id="blocked-run",
+            lease_expires_at="2026-07-14T00:05:00+00:00",
+        )
+        keeper = stage_executor_module._ChiefEngineerExecutionAttemptLeaseKeeper(
+            workspace=str(tmp_path),
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            budget=stage_executor_module._ChiefEngineerExecutionAttemptLeaseBudget(
+                lease_ttl_seconds=2,
+                heartbeat_interval_seconds=0.02,
+            ),
+        )
+        scope = stage_executor_module._ChiefEngineerExecutionAttemptLeaseScope()
+        scope.bind_claim(task_id=identity.task_id, execution_attempt=identity)
+
+        def _block_heartbeat(command: Any) -> Any:
+            entered.set()
+            assert release.wait(timeout=2)
+            return TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
+                success=True,
+                code="heartbeat_renewed",
+                workspace=command.workspace,
+                identity=command.identity,
+                renewed_identity=command.identity,
+            )
+
+        monkeypatch.setattr(stage_executor_module, "heartbeat_task_runtime_execution_attempt", _block_heartbeat)
+        scope.start_keeper(keeper)
+        assert entered.wait(timeout=2)
+        started_at = time.monotonic()
+        should_settle, failure = scope.begin_settlement()
+        elapsed_seconds = time.monotonic() - started_at
+        assert should_settle is False
+        assert failure is not None
+        assert failure.reason == "heartbeat_thread_stop_timeout"
+        assert elapsed_seconds < 0.5
+
+        release.set()
+        assert keeper.stop().thread_exited is True
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_heartbeat_failure_does_not_mask_cancellation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        executor = _executor(tmp_path)
+        _write_minimal_chief_engineer_plan(executor)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        heartbeat_failed = threading.Event()
+        cancellation = asyncio.CancelledError("canonical cancellation after heartbeat failure")
+        fast_budget = stage_executor_module._ChiefEngineerExecutionAttemptLeaseBudget(
+            lease_ttl_seconds=2,
+            heartbeat_interval_seconds=0.01,
+        )
+        monkeypatch.setattr(
+            executor,
+            "_chief_engineer_execution_attempt_lease_budget",
+            lambda _timeout: fast_budget,
+        )
+
+        def _raise_heartbeat(_command: Any) -> Any:
+            heartbeat_failed.set()
+            raise RuntimeError("heartbeat_failed_before_cancellation")
+
+        class _CancelledRoleRuntimeService:
+            async def execute_role_task(self, _command: Any) -> Any:
+                assert await asyncio.to_thread(heartbeat_failed.wait, 2.0)
+                raise cancellation
+
+        monkeypatch.setattr(stage_executor_module, "heartbeat_task_runtime_execution_attempt", _raise_heartbeat)
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _CancelledRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-ce-heartbeat-failed-cancelled",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        with (
+            caplog.at_level(logging.ERROR, logger=stage_executor_module.__name__),
+            pytest.raises(asyncio.CancelledError) as raised,
+        ):
+            asyncio.run(executor._execute_chief_engineer_review(run, {}))
+
+        assert raised.value is cancellation
+        assert "heartbeat_failed_before_cancellation" in caplog.text
+        assert len(keepers) == 1
+        assert keepers[0].is_alive is False
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_review_uses_one_portfolio_call_for_multiple_tasks(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        delivery_plan_document = {
+            "schema_version": "polaris.delivery_plan_document.v1",
+            "product_summary": {
+                "intent": "Deliver a coherent weather engine and CLI.",
+                "core_terms": ["planet", "weather", "cloud", "wind"],
+            },
+        }
+        delivery_depth_contract = {
+            "schema_version": "polaris.delivery_depth_contract.v1",
+            "product_intent": {
+                "subject": "planet weather",
+                "primary_entities": ["planet", "weather", "cloud", "wind"],
+            },
+        }
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "Build weather models",
+                        "goal": "Implement weather and wind domain models.",
+                        "target_files": ["src/models/weather.py"],
+                        "scope_paths": ["src/models/weather.py"],
+                        "acceptance_criteria": ["weather model validates cloud and wind"],
+                        "execution_checklist": ["Implement immutable weather model"],
+                        "delivery_plan_document": delivery_plan_document,
+                        "delivery_depth_contract": delivery_depth_contract,
+                    },
+                    {
+                        "id": "TASK-2",
+                        "title": "Build forecast engine",
+                        "goal": "Use the weather model from a forecast engine.",
+                        "depends_on": ["TASK-1"],
+                        "target_files": ["src/engine/forecast.py"],
+                        "scope_paths": ["src/engine/forecast.py"],
+                        "acceptance_criteria": ["forecast consumes the shared weather model"],
+                        "execution_checklist": ["Implement forecast rules"],
+                        "delivery_plan_document": delivery_plan_document,
+                        "delivery_depth_contract": delivery_depth_contract,
+                    },
+                ]
+            },
+        )
+        calls: list[Any] = []
+
+        class _PortfolioRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                calls.append(command)
+                ce_output = {
+                    "construction_plan": {
+                        "project_design_intent": "Keep domain state independent from forecast orchestration.",
+                        "project_interface_contract": {
+                            "provider_declarations": [
+                                {
+                                    "path": "src/models/weather.py",
+                                    "name": "WeatherReport",
+                                    "symbol_kind": "class",
+                                    "signature": "WeatherReport(cloud: float, wind: float)",
+                                }
+                            ],
+                            "consumer_declarations": [
+                                {
+                                    "path": "src/engine/forecast.py",
+                                    "name": "WeatherReport",
+                                    "provider_path": "src/models/weather.py",
+                                }
+                            ],
+                        },
+                        "task_plans": {
+                            "TASK-1": {
+                                "implementation": ["Define WeatherReport and validation boundaries"],
+                                "verification": ["Validate cloud and wind boundaries"],
+                            },
+                            "TASK-2": {
+                                "implementation": [
+                                    "Import WeatherReport and map planet weather, cloud, and wind forecast rules"
+                                ],
+                                "verification": [
+                                    "Exercise the planet weather provider-consumer contract for cloud and wind"
+                                ],
+                            },
+                        },
+                    },
+                    "scope_for_apply": ["src/models/weather.py", "src/engine/forecast.py"],
+                    "risk_flags": [],
+                }
+                return SimpleNamespace(
+                    ok=True,
+                    output=json.dumps(ce_output),
+                    error_message="",
+                    error_code="",
+                    metadata={
+                        "provider_id": "test-provider",
+                        "model": "test-model",
+                        "structured_output": ce_output,
+                        "final_request_context_audit": {"context_window_utilization": 0.35},
+                        "context_snapshot_ref": "abcdef123456abcdef123456",
+                    },
+                    usage={},
+                )
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _PortfolioRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-portfolio",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+
+        assert result.status == "success"
+        assert len(calls) == 1
+        assert calls[0].task_id == "CE-PORTFOLIO-factory-run-portfolio"
+        assert calls[0].context["llm_max_tokens"] == 128_000
+        assert calls[0].context["task_count"] == 2
+        assert len(calls[0].context["pm_task_contract"]["tasks"]) == 2
+        review_path = Path(resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-portfolio.review.json"))
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        assert review["llm_call_count"] == 1
+        assert review["generated_blueprints"] == 2
+        assert review["portfolio"]["portfolio_hash"]
+        assert review["project_interface_contract"]["project_interface_contract_hash"]
+        blueprints = [
+            BlueprintPersistence(str(tmp_path), ensure_directory=False).load(row["blueprint_id"])
+            for row in review["blueprints"]
+        ]
+        assert all(isinstance(blueprint, dict) for blueprint in blueprints)
+        portfolio_hashes = {str(blueprint["blueprint_portfolio_hash"]) for blueprint in blueprints if blueprint}
+        interface_hashes = {str(blueprint["project_interface_contract_hash"]) for blueprint in blueprints if blueprint}
+        assert portfolio_hashes == {review["portfolio"]["portfolio_hash"]}
+        assert interface_hashes == {review["project_interface_contract"]["project_interface_contract_hash"]}
+
+    def test_chief_engineer_review_fails_closed_after_llm_timeout(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
         delivery_plan_document = {
             "schema_version": "polaris.delivery_plan_document.v1",
             "language": "javascript",
@@ -835,33 +2043,133 @@ class TestChiefEngineerHandoffGuards:
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
 
-        assert result.status == "success"
+        assert result.status == "failed"
         review_path = Path(
             resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-timeout-projection.review.json")
         )
         review = json.loads(review_path.read_text(encoding="utf-8"))
-        assert review["generated_blueprints"] == 1
-        assert [signal["severity"] for signal in review["signals"]] == ["warning", "warning"]
+        assert review["generated_blueprints"] == 0
+        assert [signal["severity"] for signal in review["signals"]] == ["error"]
         signal = review["signals"][0]
         assert signal["code"] == "chief_engineer.llm_review_failed"
-        assert signal["severity"] == "warning"
-        assert signal["recoverable"] is True
-        assert signal["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"
-        missing_signal = review["signals"][1]
-        assert missing_signal["code"] == "chief_engineer.final_request_audit_missing"
-        assert missing_signal["severity"] == "warning"
-        assert missing_signal["recoverable"] is True
-        assert missing_signal["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"
-        row = review["blueprints"][0]
-        assert row["llm_blueprint_consumed"] is False
-        assert row["llm_evidence"]["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"
-        blueprint = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(row["blueprint_id"])
-        assert isinstance(blueprint, dict)
-        semantic_alignment = blueprint["contract_completeness"]["semantic_alignment"]
-        assert semantic_alignment["ready"] is True
-        assert set(semantic_alignment["planning_text_matches"]) >= {"meteor", "queue", "wish"}
+        assert signal["severity"] == "error"
+        assert signal["recoverable"] is False
+        assert review["portfolio"] == {}
+        assert review["llm_call_count"] == 1
+        assert len(keepers) == 1
+        assert keepers[0].is_alive is False
+        _assert_no_chief_engineer_lease_keeper_threads()
 
-    def test_chief_engineer_review_uses_deadline_projection_without_llm_call(
+    def test_chief_engineer_cancellation_suspends_claimed_attempt_once(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+
+        class _CancelledRoleRuntimeService:
+            async def execute_role_task(self, _command: Any) -> Any:
+                raise asyncio.CancelledError("test CE cancellation")
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _CancelledRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-ce-cancelled",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        with pytest.raises(asyncio.CancelledError, match="test CE cancellation"):
+            asyncio.run(executor._execute_chief_engineer_review(run, {}))
+
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.get_task(f"CE-PORTFOLIO-{run.id}")
+        assert task is not None
+        session_path = Path(resolve_logical_path(tmp_path, f"runtime/tasks/task_{task['id']}.session.json"))
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        assert session["status"] == "suspended"
+        assert session["resumable"] is True
+
+        suspended_events = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(tmp_path),
+                stream="task_runtime.execution",
+                event_type="suspended",
+            )
+        ).events
+        terminal_events = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(tmp_path),
+                stream="task_runtime.execution",
+            )
+        ).events
+        assert len(suspended_events) == 1
+        assert [event["event_type"] for event in terminal_events].count("suspended") == 1
+        assert all(event["event_type"] not in {"completed", "failed"} for event in terminal_events)
+        assert len(keepers) == 1
+        assert keepers[0].is_alive is False
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_cancellation_survives_settlement_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+        cancellation = asyncio.CancelledError("original CE cancellation")
+        settlement_calls: list[dict[str, Any]] = []
+
+        class _CancelledRoleRuntimeService:
+            async def execute_role_task(self, _command: Any) -> Any:
+                raise cancellation
+
+        def _fail_settlement(**kwargs: Any) -> None:
+            settlement_calls.append(dict(kwargs))
+            raise RuntimeError("synthetic settlement failure")
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _CancelledRoleRuntimeService)
+        monkeypatch.setattr(executor, "_settle_chief_engineer_execution_attempt", _fail_settlement)
+        run = FactoryRun(
+            id="factory-run-ce-cancelled-settlement-failure",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        with (
+            caplog.at_level(logging.ERROR, logger=stage_executor_module.__name__),
+            pytest.raises(asyncio.CancelledError) as raised,
+        ):
+            asyncio.run(executor._execute_chief_engineer_review(run, {}))
+
+        assert raised.value is cancellation
+        assert len(settlement_calls) == 1
+        assert "Chief Engineer cancellation settlement failed" in caplog.text
+        assert "synthetic settlement failure" in caplog.text
+
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.get_task(f"CE-PORTFOLIO-{run.id}")
+        assert task is not None
+        session_path = Path(resolve_logical_path(tmp_path, f"runtime/tasks/task_{task['id']}.session.json"))
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        assert session["status"] == "active"
+        execution_events = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(tmp_path),
+                stream="task_runtime.execution",
+            )
+        ).events
+        assert all(event["event_type"] not in {"completed", "failed", "suspended"} for event in execution_events)
+        assert len(keepers) == 1
+        assert keepers[0].is_alive is False
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_review_blocks_without_deadline_projection_or_llm_call(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -935,28 +2243,17 @@ class TestChiefEngineerHandoffGuards:
             )
         )
 
-        assert result.status == "success"
+        assert result.status == "failed"
         review_path = Path(
             resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-projection.review.json")
         )
         review = json.loads(review_path.read_text(encoding="utf-8"))
         assert [signal["code"] for signal in review["signals"]] == [
-            "chief_engineer.deadline_projection_used",
-            "chief_engineer.deadline_projection_used",
+            "chief_engineer.deadline_admission_blocked",
         ]
-        assert len(review["blueprints"]) == 2
-        first_row, second_row = review["blueprints"]
-        assert first_row["handoff_ready"] is True
-        assert second_row["handoff_ready"] is True
-        assert first_row["llm_blueprint_consumed"] is False
-        assert first_row["llm_evidence"]["llm_call_skipped"] is True
-        assert first_row["llm_evidence"]["deadline_projection"]["use_deadline_projection"] is True
-        assert first_row["llm_evidence"]["provider"] == "deterministic_projection"
-        assert second_row["llm_evidence"]["llm_call_skipped"] is True
-        assert second_row["llm_evidence"]["deadline_projection"]["projection_lock"] is True
-        first_blueprint = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(first_row["blueprint_id"])
-        assert isinstance(first_blueprint, dict)
-        assert any("meteor, wish, queue, priority" in item for item in first_blueprint["execution_checklist"])
+        assert review["blueprints"] == []
+        assert review["portfolio"] == {}
+        assert review["llm_call_count"] == 0
 
     def test_director_handoff_guard_allows_ready_blueprint(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -2614,15 +3911,37 @@ class TestMirrorHelpers:
 
 
 class TestQualityGateDeadlineHandling:
+    def test_default_deadline_policy_preserves_ce_and_full_five_task_chain(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 508.0
+        tasks = [
+            {
+                "id": f"TASK-{index}",
+                "depends_on": [] if index == 1 else [f"TASK-{index - 1}"],
+            }
+            for index in range(1, 6)
+        ]
+
+        decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
+            {"factory_run_deadline_epoch_seconds": deadline_epoch},
+            requested_timeout_seconds=240,
+            dependency_schedule=build_task_dependency_schedule(tasks),
+        )
+
+        assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert decision.reserved_downstream_seconds == 400.0
+        assert 105 <= decision.timeout_seconds <= 108
+        assert decision.budget_plan.conserved is True
+
     def test_chief_engineer_deadline_projection_not_used_without_factory_deadline(self) -> None:
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {},
             requested_timeout_seconds=123,
+            dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
-        assert decision["use_deadline_projection"] is False
-        assert decision["remaining_seconds"] is None
-        assert decision["llm_timeout_seconds"] == 123
+        assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert decision.remaining_seconds is None
+        assert decision.timeout_seconds == 123
 
     def test_chief_engineer_deadline_projection_caps_llm_timeout_to_available_budget(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 180.0
@@ -2633,11 +3952,12 @@ class TestQualityGateDeadlineHandling:
                 "quality_gate_reserved_budget_seconds": 30,
             },
             requested_timeout_seconds=240,
+            dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
-        assert decision["use_deadline_projection"] is False
-        assert decision["reserved_downstream_seconds"] == 120.0
-        assert 55 <= decision["llm_timeout_seconds"] <= 60
+        assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert decision.reserved_downstream_seconds == 125.0
+        assert 50 <= decision.timeout_seconds <= 55
 
     def test_chief_engineer_deadline_projection_skips_llm_when_downstream_budget_is_at_risk(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
@@ -2648,14 +3968,22 @@ class TestQualityGateDeadlineHandling:
                 "quality_gate_reserved_budget_seconds": 30,
             },
             requested_timeout_seconds=240,
+            dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
-        assert decision["use_deadline_projection"] is True
-        assert decision["reason"] == "insufficient_factory_deadline_for_remaining_ce_tasks"
-        assert decision["llm_timeout_seconds"] == 0
+        assert decision.disposition is FactoryDeadlineDispositionV1.BLOCK
+        assert decision.reason == "insufficient_factory_deadline_for_chief_engineer_portfolio"
+        assert decision.timeout_seconds == 0
 
     def test_chief_engineer_deadline_projection_accounts_for_remaining_ce_fanout(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 360.0
+        tasks = [
+            {
+                "id": f"TASK-{index}",
+                "depends_on": [] if index == 1 else [f"TASK-{index - 1}"],
+            }
+            for index in range(1, 9)
+        ]
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {
                 "factory_run_deadline_epoch_seconds": deadline_epoch,
@@ -2663,12 +3991,12 @@ class TestQualityGateDeadlineHandling:
                 "quality_gate_reserved_budget_seconds": 120,
             },
             requested_timeout_seconds=240,
-            remaining_task_count=8,
+            dependency_schedule=build_task_dependency_schedule(tasks),
         )
 
-        assert decision["use_deadline_projection"] is True
-        assert decision["remaining_task_count"] == 8
-        assert 10 <= decision["available_for_this_task_seconds"] <= 11
+        assert decision.disposition is FactoryDeadlineDispositionV1.BLOCK
+        assert decision.critical_path_task_count == 8
+        assert -237 <= float(decision.available_for_stage_seconds or 0.0) <= -235
 
     def test_director_dispatch_timeout_caps_to_factory_deadline(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 12.0
@@ -2747,15 +4075,15 @@ class TestQualityGateDeadlineHandling:
                 "quality_gate_reserved_budget_seconds": 60,
             },
             requested_timeout_seconds=1800,
-            materialization_pending=True,
             first_materialization_pending=True,
+            dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
-        assert decision["allow_dispatch"] is False
-        assert decision["reason"] == "insufficient_factory_deadline_for_director_dispatch"
-        assert decision["llm_timeout_seconds"] == 0
-        assert decision["minimum_start_budget_seconds"] == 90.0
-        assert 50 <= decision["available_for_director_seconds"] <= 55
+        assert decision.disposition is FactoryDeadlineDispositionV1.BLOCK
+        assert decision.reason == "insufficient_factory_deadline_for_director_dispatch"
+        assert decision.timeout_seconds == 0
+        assert decision.minimum_start_budget_seconds == 90.0
+        assert 50 <= float(decision.available_for_stage_seconds or 0.0) <= 55
 
     def test_director_dispatch_deadline_admission_allows_sufficient_budget(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
@@ -2766,14 +4094,14 @@ class TestQualityGateDeadlineHandling:
                 "quality_gate_reserved_budget_seconds": 60,
             },
             requested_timeout_seconds=1800,
-            materialization_pending=True,
             first_materialization_pending=True,
+            dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
-        assert decision["allow_dispatch"] is True
-        assert decision["reason"] == ""
-        assert decision["minimum_start_budget_seconds"] == 90.0
-        assert 230 <= decision["llm_timeout_seconds"] <= 235
+        assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert decision.reason == ""
+        assert decision.minimum_start_budget_seconds == 90.0
+        assert 230 <= decision.timeout_seconds <= 235
 
     def test_director_dispatch_deadline_admission_uses_standard_budget_after_first_round(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 213.0
@@ -2784,18 +4112,13 @@ class TestQualityGateDeadlineHandling:
                 "quality_gate_reserved_budget_seconds": 120,
             },
             requested_timeout_seconds=1800,
-            materialization_pending=True,
             first_materialization_pending=False,
+            dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
-        assert decision["allow_dispatch"] is True
-        assert decision["materialization_pending"] is True
-        assert decision["first_materialization_pending"] is False
-        assert (
-            decision["minimum_start_budget_seconds"]
-            == stage_executor_module.FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
-        )
-        assert 87 <= decision["llm_timeout_seconds"] <= 88
+        assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert decision.minimum_start_budget_seconds == stage_executor_module.FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
+        assert 87 <= decision.timeout_seconds <= 88
 
     @pytest.mark.asyncio
     async def test_director_dispatch_deadline_admission_stops_before_llm_turn(self, tmp_path: Path) -> None:
@@ -2815,8 +4138,8 @@ class TestQualityGateDeadlineHandling:
                     "blocked": 0,
                 }
 
-            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
-                del limit
+            def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
+                del limit, factory_run_id
                 return ["TASK-1"]
 
             def _build_orchestration_service(self, context: dict) -> object:
@@ -2865,8 +4188,8 @@ class TestQualityGateDeadlineHandling:
         assert payload["error_code"] == "director.dispatch_deadline_blocker"
         signal = next(item for item in payload["signals"] if item.get("code") == "director.dispatch_deadline_blocker")
         assert signal["responsible_layer"] == "execution_control_plane"
-        assert signal["allow_dispatch"] is False
-        assert signal["llm_timeout_seconds"] == 0
+        assert signal["disposition"] == FactoryDeadlineDispositionV1.BLOCK.value
+        assert signal["timeout_seconds"] == 0
 
     @pytest.mark.asyncio
     async def test_quality_gate_deadline_insufficient_writes_fail_report(
@@ -2958,11 +4281,58 @@ class TestQualityGateDeadlineHandling:
                 ),
                 encoding="utf-8",
             )
-            return SimpleNamespace(status="completed", message="qa complete")
+            return CommandResult(
+                run_id="qa-run",
+                status="completed",
+                message="qa complete",
+                metadata={
+                    "canonical_authoritative": True,
+                    "terminal_source": "task_runtime.execution_fact",
+                    "fact_event_seq": 23,
+                },
+            )
+
+        canonical_projection = _with_task_runtime_authority(
+            {
+                "source": "run_ledger",
+                "integrity_ok": True,
+                "outcome_ok": True,
+                "task_boundary": {
+                    "latest_by_task": {
+                        "TASK-1": {
+                            "task_id": "TASK-1",
+                            "status": "completed_verified",
+                            "ok": True,
+                            "failure_class": "PASSED",
+                            "responsible_layer": "execution_control_plane",
+                        }
+                    }
+                },
+                "gates": [
+                    {
+                        "name": "qa_verdict",
+                        "ok": True,
+                        "append_id": "qa-append-3",
+                        "content_id": "qa-content-3",
+                    }
+                ],
+                "evidence_policy": {
+                    "integrity_ok": True,
+                    "outcome_ok": True,
+                    "missing_required_modalities": [],
+                    "failed_required_modalities": [],
+                },
+            }
+        )
 
         monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
         monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: _FakeQaService())
         monkeypatch.setattr(executor, "_wait_run_completion", fake_wait_run_completion)
+        monkeypatch.setattr(
+            executor,
+            "_canonical_factory_projection",
+            lambda _run, _context: canonical_projection,
+        )
 
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 44.4
         result = await executor._execute_quality_gate(
@@ -2981,7 +4351,7 @@ class TestQualityGateDeadlineHandling:
         assert "deadline_insufficient" not in str(result.output)
 
     @pytest.mark.asyncio
-    async def test_quality_gate_report_missing_becomes_failed_report(
+    async def test_quality_gate_report_missing_does_not_replace_canonical_verdict(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -3012,13 +4382,11 @@ class TestQualityGateDeadlineHandling:
         result = await executor._execute_quality_gate(run, {"qa_target": "Quality gate"})
 
         assert result.status == "failed"
-        assert "factory_quality_gate_report_missing" in result.output
+        assert "canonical_reason=task_runtime_tasks_missing" in result.output
+        assert "report_ready=False" in result.output
         report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-        assert report["critical_issue_count"] == 1
-        assert report["workspace_checks_passed"] is True
-        assert report["workspace_checks_artifact"] == "runtime/qa/workspace-validation.json"
-        assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
+        assert report_path.exists() is False
+        assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).exists() is False
 
     @pytest.mark.asyncio
     async def test_quality_gate_workspace_validation_failure_still_runs_qa_judgement(
@@ -3086,7 +4454,8 @@ class TestQualityGateDeadlineHandling:
         result = await executor._execute_quality_gate(run, {"qa_target": "Quality gate"})
 
         assert result.status == "failed"
-        assert "workspace_checks_passed=False" in result.output
+        assert "workspace_checks_diagnostic=False" in result.output
+        assert "canonical_authorized=False" in result.output
         assert qa_calls
         qa_input = str(qa_calls[0]["options"]["input"])
         assert "Workspace quality evidence collected before QA judgement" in qa_input
@@ -3130,6 +4499,24 @@ class TestQualityGateDeadlineHandling:
             "_apply_workspace_quality_repairs",
             lambda **_kwargs: ([], {"attempted": True, "source_tools": [], "tool_results": 0}),
         )
+        monkeypatch.setattr(
+            executor,
+            "_canonical_factory_projection",
+            lambda _run, _context: _with_task_runtime_authority(
+                {
+                    "source": "run_ledger",
+                    "task_boundary": {
+                        "latest_by_task": {
+                            "TASK-1": {
+                                "task_id": "TASK-1",
+                                "status": "completed_verified",
+                                "ok": True,
+                            }
+                        }
+                    },
+                }
+            ),
+        )
 
         async def fail_if_llm_repair_started(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             raise AssertionError("workspace quality LLM repair should not start when deadline is insufficient")
@@ -3171,6 +4558,24 @@ class TestQualityGateDeadlineHandling:
         monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["npm", "run", "build"]])
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(
+            executor,
+            "_canonical_factory_projection",
+            lambda _run, _context: _with_task_runtime_authority(
+                {
+                    "source": "run_ledger",
+                    "task_boundary": {
+                        "latest_by_task": {
+                            "TASK-1": {
+                                "task_id": "TASK-1",
+                                "status": "completed_verified",
+                                "ok": True,
+                            }
+                        }
+                    },
+                }
+            ),
+        )
 
         def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
             observed_timeouts.append(timeout_seconds)
@@ -3236,24 +4641,6 @@ class TestQualityGateDeadlineHandling:
             created_at="2026-06-25T00:00:00+00:00",
         )
 
-        class _ProjectionOnlyTaskRuntime:
-            def __init__(self, workspace: str) -> None:
-                assert workspace == str(tmp_path)
-
-            def list_observable_task_rows(self) -> list[dict[str, Any]]:
-                return [
-                    {
-                        "id": 1,
-                        "status": "failed",
-                        "metadata": {"target_files": ["package.json", "tsconfig.json"]},
-                    },
-                    {
-                        "id": 2,
-                        "status": "blocked",
-                        "metadata": {"target_files": ["src/index.ts", "tests/index.test.ts"]},
-                    },
-                ]
-
         def fail_if_command_runs(command: list[str], timeout_seconds: float) -> dict[str, object]:
             del command, timeout_seconds
             raise AssertionError("workspace quality commands must not run before source tasks unlock")
@@ -3267,7 +4654,33 @@ class TestQualityGateDeadlineHandling:
         async def fail_if_llm_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             raise AssertionError("LLM repair must not run before source tasks unlock")
 
-        monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ProjectionOnlyTaskRuntime)
+        monkeypatch.setattr(
+            executor,
+            "_canonical_factory_projection",
+            lambda _run, _context: _with_task_runtime_authority(
+                {
+                    "source": "run_ledger",
+                    "task_boundary": {
+                        "latest_by_task": {
+                            "TASK-1": {
+                                "task_id": "TASK-1",
+                                "status": "completed_verified",
+                                "ok": True,
+                            },
+                            "TASK-2": {
+                                "task_id": "TASK-2",
+                                "status": "dependency_not_unlocked",
+                                "ok": False,
+                                "failure_class": "DEPENDENCY_NOT_UNLOCKED",
+                                "responsible_layer": "task_boundary",
+                            },
+                        }
+                    },
+                },
+                task_ids=("TASK-1", "TASK-2"),
+                incomplete_task_ids=("TASK-2",),
+            ),
+        )
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", fail_if_depth_runs)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fail_if_command_runs)
         monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fail_if_runtime_repair_runs)
@@ -3280,11 +4693,11 @@ class TestQualityGateDeadlineHandling:
         assert payload["commands"] == []
         assert payload["commands_skipped"] is True
         assert payload["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
-        assert payload["responsible_layer"] == "execution_control_plane"
+        assert payload["responsible_layer"] == "task_boundary"
         assert payload["repair"]["attempted"] is False
         assert payload["repair"]["reason"] == "task_boundary_not_ready"
-        assert payload["task_boundary_blocker"]["blocked_source_task_count"] == 1
-        assert "factory_quality_gate_task_boundary_dependency_not_unlocked" in payload["warnings"]
+        assert payload["task_boundary_blocker"]["incomplete_task_ids"] == ["TASK-2"]
+        assert "task_boundary_not_completed_verified" in payload["warnings"]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_skips_checks_when_declared_test_targets_not_unlocked(
@@ -3321,29 +4734,6 @@ class TestQualityGateDeadlineHandling:
             created_at="2026-06-25T00:00:00+00:00",
         )
 
-        class _ProjectionOnlyTaskRuntime:
-            def __init__(self, workspace: str) -> None:
-                assert workspace == str(tmp_path)
-
-            def list_observable_task_rows(self) -> list[dict[str, Any]]:
-                return [
-                    {
-                        "id": 1,
-                        "status": "completed",
-                        "metadata": {"target_files": ["src/index.ts"]},
-                    },
-                    {
-                        "id": 2,
-                        "status": "failed",
-                        "metadata": {"target_files": ["index.html", "tests/simulation.test.ts"]},
-                    },
-                    {
-                        "id": 3,
-                        "status": "blocked",
-                        "metadata": {"target_files": ["src/verify.ts", "tests/verify.test.ts"]},
-                    },
-                ]
-
         def fail_if_command_runs(command: list[str], timeout_seconds: float) -> dict[str, object]:
             del command, timeout_seconds
             raise AssertionError("workspace quality commands must not run before declared test targets unlock")
@@ -3357,7 +4747,40 @@ class TestQualityGateDeadlineHandling:
         async def fail_if_llm_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             raise AssertionError("LLM repair must not run before declared test targets unlock")
 
-        monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", _ProjectionOnlyTaskRuntime)
+        monkeypatch.setattr(
+            executor,
+            "_canonical_factory_projection",
+            lambda _run, _context: _with_task_runtime_authority(
+                {
+                    "source": "run_ledger",
+                    "task_boundary": {
+                        "latest_by_task": {
+                            "TASK-1": {
+                                "task_id": "TASK-1",
+                                "status": "completed_verified",
+                                "ok": True,
+                            },
+                            "TASK-2": {
+                                "task_id": "TASK-2",
+                                "status": "dependency_not_unlocked",
+                                "ok": False,
+                                "failure_class": "DEPENDENCY_NOT_UNLOCKED",
+                                "responsible_layer": "task_boundary",
+                            },
+                            "TASK-3": {
+                                "task_id": "TASK-3",
+                                "status": "dependency_not_unlocked",
+                                "ok": False,
+                                "failure_class": "DEPENDENCY_NOT_UNLOCKED",
+                                "responsible_layer": "task_boundary",
+                            },
+                        }
+                    },
+                },
+                task_ids=("TASK-1", "TASK-2", "TASK-3"),
+                incomplete_task_ids=("TASK-2", "TASK-3"),
+            ),
+        )
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", fail_if_depth_runs)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fail_if_command_runs)
         monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fail_if_runtime_repair_runs)
@@ -3370,16 +4793,9 @@ class TestQualityGateDeadlineHandling:
         assert payload["commands"] == []
         assert payload["commands_skipped"] is True
         assert payload["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
-        assert payload["responsible_layer"] == "execution_control_plane"
-        assert payload["task_boundary_blocker"]["source_files_present"] is True
-        assert payload["task_boundary_blocker"]["project_source_file_count"] == 1
-        assert payload["task_boundary_blocker"]["missing_target_files"] == [
-            "index.html",
-            "tests/simulation.test.ts",
-            "src/verify.ts",
-            "tests/verify.test.ts",
-        ]
-        assert "factory_quality_gate_task_boundary_missing_target_dependency_not_unlocked" in payload["warnings"]
+        assert payload["responsible_layer"] == "task_boundary"
+        assert payload["task_boundary_blocker"]["incomplete_task_ids"] == ["TASK-2", "TASK-3"]
+        assert "task_boundary_not_completed_verified" in payload["warnings"]
 
 
 # ---------------------------------------------------------------------------
@@ -3709,6 +5125,29 @@ class TestRunWorkspaceQualityCommand:
 
 
 class TestRunWorkspaceQualityChecks:
+    @pytest.fixture(autouse=True)
+    def canonical_task_boundary(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Start workspace-quality tests after the canonical task boundary."""
+
+        monkeypatch.setattr(
+            OrchestrationStageExecutor,
+            "_canonical_factory_projection",
+            lambda _executor, _run, _context: _with_task_runtime_authority(
+                {
+                    "source": "run_ledger",
+                    "task_boundary": {
+                        "latest_by_task": {
+                            "TASK-1": {
+                                "task_id": "TASK-1",
+                                "status": "completed_verified",
+                                "ok": True,
+                            }
+                        }
+                    },
+                }
+            ),
+        )
+
     @pytest.mark.asyncio
     async def test_repairs_typescript_failures_and_reruns_commands(
         self,
@@ -4960,49 +6399,6 @@ class TestDirectorEvidenceStatics:
         assert OrchestrationStageExecutor._has_director_progress(before, before) is False
         assert OrchestrationStageExecutor._has_director_progress({"in_execution": 1}, {"in_execution": 0}) is True
 
-    def test_metadata_indicates_execution(self) -> None:
-        assert (
-            OrchestrationStageExecutor._metadata_indicates_execution({"task_status_counts": {"completed": 1}}) is True
-        )
-        assert OrchestrationStageExecutor._metadata_indicates_execution({"task_status_counts": {"pending": 5}}) is False
-        assert OrchestrationStageExecutor._metadata_indicates_execution({}) is False
-
-    def test_workspace_materialized_delivery_evidence_recognizes_rust_fallback(self, tmp_path: Path) -> None:
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "lib.rs").write_text("pub fn budget_total() -> u64 { 1 }\n", encoding="utf-8")
-        (tmp_path / "Cargo.toml").write_text(
-            '[package]\nname = "budget-map"\nversion = "0.1.0"\nedition = "2021"\n',
-            encoding="utf-8",
-        )
-
-        executor = _executor(tmp_path)
-
-        assert executor._workspace_has_materialized_delivery_evidence([]) is True
-
-    def test_has_execution_evidence_from_completed_delta(self) -> None:
-        assert OrchestrationStageExecutor._has_director_execution_evidence(
-            attempts=[],
-            initial_stats={"completed": 0, "failed": 0},
-            final_stats={"completed": 2, "failed": 0},
-            converged=False,
-        )
-
-    def test_has_execution_evidence_from_attempt_progress(self) -> None:
-        assert OrchestrationStageExecutor._has_director_execution_evidence(
-            attempts=[{"progress_made": True}],
-            initial_stats={"completed": 0, "failed": 0},
-            final_stats={"completed": 0, "failed": 0},
-            converged=False,
-        )
-
-    def test_no_execution_evidence(self) -> None:
-        assert not OrchestrationStageExecutor._has_director_execution_evidence(
-            attempts=[{"progress_made": False, "metadata": {}}],
-            initial_stats={"completed": 0, "failed": 0},
-            final_stats={"completed": 0, "failed": 0},
-            converged=False,
-        )
-
     def test_workspace_delivery_delta_counts_added_and_changed_files(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         (tmp_path / "src").mkdir()
@@ -5039,29 +6435,13 @@ class TestDirectorEvidenceStatics:
         assert delta["delta_file_count"] == 0
         assert OrchestrationStageExecutor._workspace_delta_indicates_materialization_progress(delta) is False
 
-    def test_is_director_no_materialized_changes_from_message(self) -> None:
-        result = CommandResult(run_id="r", status="failed", message="error=director_no_materialized_changes")
-        assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is True
-
-    def test_is_director_no_materialized_changes_from_structured_metadata(self) -> None:
-        result = CommandResult(
-            run_id="r",
-            status="failed",
-            metadata={"materialization_error": "director_no_materialized_changes"},
-        )
-        assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is True
-
-    def test_is_director_no_materialized_changes_ignores_unstructured_note(self) -> None:
-        result = CommandResult(
-            run_id="r",
-            status="failed",
-            message="unrelated failure note mentions director_no_materialized_changes for history only",
-        )
-        assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is False
-
-    def test_is_director_no_materialized_changes_false_when_completed(self) -> None:
-        result = CommandResult(run_id="r", status="completed", message="director_no_materialized_changes")
-        assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is False
+    def test_legacy_text_and_metadata_authority_helpers_are_removed(self) -> None:
+        for helper_name in (
+            "_failed_task_records_indicate_materialization_quality_handoff",
+            "_failed_task_records_indicate_quality_handoff",
+            "_is_director_no_materialized_changes",
+        ):
+            assert not hasattr(OrchestrationStageExecutor, helper_name)
 
     def test_director_provider_rate_limit_signal_from_llm_error_event(self) -> None:
         signal = OrchestrationStageExecutor._director_provider_health_failure_signal_from_events(
@@ -5149,6 +6529,29 @@ class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
             return dict(self.stats.pop(0))
         return dict(self.stats[0])
 
+    def _canonical_factory_projection(
+        self,
+        _run: FactoryRun,
+        _context: dict[str, Any],
+    ) -> dict[str, Any]:
+        completed = not self.results
+        return _with_task_runtime_authority(
+            {
+                "source": "run_ledger",
+                "task_boundary": {
+                    "latest_by_task": {
+                        task_id: {
+                            "task_id": task_id,
+                            "status": "completed_verified" if completed else "in_execution",
+                            "ok": completed,
+                        }
+                        for task_id in ("TASK-1", "TASK-2")
+                    }
+                },
+            },
+            task_ids=("TASK-1", "TASK-2"),
+        )
+
     async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
         del kwargs
         return self.results.pop(0)
@@ -5159,6 +6562,73 @@ class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
 
 
 class TestDirectorDispatchLoop:
+    @pytest.fixture(autouse=True)
+    def _use_short_fake_dispatch_budget(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Keep fake dispatch tests fast without weakening production policy."""
+
+        def _policy(context: dict[str, Any]) -> FactoryDeadlineBudgetPolicyV1:
+            settlement_seconds = min(
+                5,
+                max(
+                    0,
+                    int(
+                        context.get(
+                            "director_dispatch_timeout_settle_grace_seconds",
+                            0,
+                        )
+                    ),
+                ),
+            )
+            return FactoryDeadlineBudgetPolicyV1(
+                chief_engineer_min_start_seconds=1,
+                director_first_task_min_seconds=1,
+                director_followup_task_min_seconds=1,
+                quality_gate_reserved_seconds=0,
+                safety_seconds=0,
+                director_settlement_barrier_seconds=settlement_seconds,
+            )
+
+        monkeypatch.setattr(
+            OrchestrationStageExecutor,
+            "_factory_deadline_budget_policy",
+            staticmethod(_policy),
+        )
+
+    @pytest.mark.asyncio
+    async def test_dependency_settle_barrier_exposes_new_claimable_task(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        claim_reads = iter(([], ["TASK-2"]))
+        stats = {
+            "total": 2,
+            "pending": 1,
+            "ready": 1,
+            "in_progress": 0,
+            "completed": 1,
+            "failed": 0,
+            "blocked": 0,
+        }
+        monkeypatch.setattr(
+            executor,
+            "_read_claimable_director_task_ids",
+            lambda *, limit, factory_run_id="": list(next(claim_reads)),
+        )
+        monkeypatch.setattr(executor, "_read_taskboard_stats", lambda: dict(stats))
+
+        task_ids, observed_stats = await executor._wait_for_claimable_director_tasks(
+            limit=1,
+            grace_seconds=0.2,
+        )
+
+        assert task_ids == ["TASK-2"]
+        assert observed_stats == stats
+
     @pytest.mark.asyncio
     async def test_run_completion_waiter_cancel_event_propagates_to_active_orchestration_run(
         self,
@@ -5256,14 +6726,13 @@ class TestDirectorDispatchLoop:
         )
 
         assert result.status == "cancelled"
-        assert result.metadata == {
-            "cancel_signal_sent": False,
-            "cancel_reason": "factory_cancelled",
-            "inflight_run_continues": True,
-            "terminal_source": "task_runtime_active_execution_barrier",
-            "active_task_count": 1,
-            "active_task_ids": [str(task["id"])],
-        }
+        assert result.metadata["cancel_signal_sent"] is False
+        assert result.metadata["cancel_reason"] == "factory_cancelled"
+        assert result.metadata["inflight_run_continues"] is True
+        assert result.metadata["terminal_source"] == "task_runtime_active_execution_barrier"
+        assert result.metadata["active_task_count"] == 1
+        assert result.metadata["active_task_ids"] == [str(task["id"])]
+        assert result.metadata["barrier_cancel_deferred"] is True
         assert fake_orchestration.cancelled == []
         assert fake_orchestration.active_task.cancelled() is False
         guarded_heartbeat = task_runtime.heartbeat_execution(
@@ -5526,11 +6995,10 @@ class TestDirectorDispatchLoop:
         )
 
         assert result.status == "timeout"
-        assert result.metadata == {
-            "cancel_signal_sent": False,
-            "cancel_reason": "factory_stage_timeout",
-            "inflight_run_continues": True,
-        }
+        assert result.metadata["cancel_signal_sent"] is False
+        assert result.metadata["cancel_reason"] == "factory_stage_timeout"
+        assert result.metadata["inflight_run_continues"] is True
+        assert result.metadata["canonical_authoritative"] is False
         assert fake_orchestration.cancelled == []
         assert fake_orchestration.active_task.cancelled() is False
         guarded_heartbeat = task_runtime.heartbeat_execution(
@@ -5594,7 +7062,8 @@ class TestDirectorDispatchLoop:
             abort_checker=_run_not_found_abort_checker,
         )
 
-        assert result.status == "completed"
+        assert result.status == "failed"
+        assert result.reason_code == "canonical_terminal_projection_missing"
         assert fake_orchestration.cancelled == []
         guarded_heartbeat = task_runtime.heartbeat_execution(
             task["id"],
@@ -5610,6 +7079,15 @@ class TestDirectorDispatchLoop:
         class _FakeRunCompletionWaiter:
             def __init__(self) -> None:
                 self.cancelled: list[tuple[str, str]] = []
+
+            def canonical_terminal_result(
+                self,
+                *,
+                run_id: str,
+                process_terminal: bool = False,
+            ) -> CommandResult | None:
+                del run_id, process_terminal
+                return None
 
             async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
                 self.cancelled.append((run_id, reason))
@@ -5633,13 +7111,30 @@ class TestDirectorDispatchLoop:
         assert fake_waiter.cancelled == [("run-2", "factory_cancelled")]
 
     @pytest.mark.asyncio
-    async def test_director_timeout_settle_cancel_event_prefers_terminal_run_status(
+    async def test_director_timeout_settle_cancel_event_prefers_canonical_terminal_outcome(
         self,
         tmp_path: Path,
     ) -> None:
         class _FakeRunCompletionWaiter:
             def __init__(self) -> None:
                 self.cancelled: list[tuple[str, str]] = []
+
+            def canonical_terminal_result(
+                self,
+                *,
+                run_id: str,
+                process_terminal: bool = False,
+            ) -> CommandResult | None:
+                del process_terminal
+                return CommandResult(
+                    run_id=run_id,
+                    status="completed",
+                    message="canonical outcome committed",
+                    metadata={
+                        "canonical_authoritative": True,
+                        "fact_event_seq": 31,
+                    },
+                )
 
             async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
                 self.cancelled.append((run_id, reason))
@@ -5675,7 +7170,7 @@ class TestDirectorDispatchLoop:
 
         assert result is not None
         assert result.status == "completed"
-        assert result.message == "done"
+        assert result.message == "canonical outcome committed"
         assert fake_waiter.cancelled == []
 
     @pytest.mark.asyncio
@@ -5686,6 +7181,24 @@ class TestDirectorDispatchLoop:
         class _FakeRunCompletionWaiter:
             def __init__(self) -> None:
                 self.cancelled: list[tuple[str, str]] = []
+
+            def canonical_terminal_result(
+                self,
+                *,
+                run_id: str,
+                process_terminal: bool = False,
+            ) -> CommandResult | None:
+                if not process_terminal:
+                    return None
+                return CommandResult(
+                    run_id=run_id,
+                    status="completed",
+                    message="canonical outcome committed",
+                    metadata={
+                        "canonical_authoritative": True,
+                        "fact_event_seq": 32,
+                    },
+                )
 
             def active_execution_barrier_result(self, *, run_id: str, reason: str) -> CommandResult:
                 return CommandResult(
@@ -5730,15 +7243,15 @@ class TestDirectorDispatchLoop:
 
         assert result is not None
         assert result.status == "completed"
-        assert result.metadata == {
-            "cancel_signal_sent": False,
-            "barrier_cancel_deferred": True,
-            "deferred_cancel_reason": "factory_cancelled",
-        }
+        assert result.metadata["canonical_authoritative"] is True
+        assert result.metadata["fact_event_seq"] == 32
+        assert result.metadata["cancel_signal_sent"] is False
+        assert result.metadata["barrier_cancel_deferred"] is True
+        assert result.metadata["deferred_cancel_reason"] == "factory_cancelled"
         assert fake_waiter.cancelled == []
 
     @pytest.mark.asyncio
-    async def test_director_timeout_settle_renews_idle_window_from_task_runtime_progress(
+    async def test_director_timeout_settle_records_progress_without_extending_hard_deadline(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -5747,6 +7260,24 @@ class TestDirectorDispatchLoop:
             def __init__(self) -> None:
                 self.marker_index = 0
                 self.cancelled: list[tuple[str, str]] = []
+
+            def canonical_terminal_result(
+                self,
+                *,
+                run_id: str,
+                process_terminal: bool = False,
+            ) -> CommandResult | None:
+                if not process_terminal:
+                    return None
+                return CommandResult(
+                    run_id=run_id,
+                    status="completed",
+                    message="canonical outcome committed",
+                    metadata={
+                        "canonical_authoritative": True,
+                        "fact_event_seq": 33,
+                    },
+                )
 
             def active_execution_progress_marker(
                 self,
@@ -5788,7 +7319,7 @@ class TestDirectorDispatchLoop:
         assert result.status == "completed"
         assert result.metadata["barrier_progress_extensions"] == 2
         assert result.metadata["barrier_progress_source"] == "task_runtime_execution_fact"
-        assert result.metadata["barrier_max_total_seconds"] == 4.0
+        assert result.metadata["barrier_max_total_seconds"] == 1.0
         assert fake_waiter.cancelled == []
 
     @pytest.mark.asyncio
@@ -5799,6 +7330,15 @@ class TestDirectorDispatchLoop:
         class _FakeRunCompletionWaiter:
             def __init__(self) -> None:
                 self.cancelled: list[tuple[str, str]] = []
+
+            def canonical_terminal_result(
+                self,
+                *,
+                run_id: str,
+                process_terminal: bool = False,
+            ) -> CommandResult | None:
+                del run_id, process_terminal
+                return None
 
             def active_execution_barrier_result(self, *, run_id: str, reason: str) -> CommandResult:
                 return CommandResult(
@@ -5834,7 +7374,7 @@ class TestDirectorDispatchLoop:
 
         assert result is not None
         assert result.status == "timeout"
-        assert result.metadata == {
+        expected_metadata = {
             "cancel_signal_sent": False,
             "cancel_reason": "factory_stage_timeout",
             "inflight_run_continues": True,
@@ -5844,10 +7384,83 @@ class TestDirectorDispatchLoop:
             "active_task_ids": ["TASK-1"],
             "barrier_state": "timeout",
             "barrier_timeout": True,
-            "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+            "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
             "responsible_layer": "execution_control_plane",
         }
+        assert {key: result.metadata[key] for key in expected_metadata} == expected_metadata
+        assert result.metadata["barrier_max_total_seconds"] == 1.0
+        assert 0.0 <= result.metadata["barrier_elapsed_seconds"] <= 1.0
         assert fake_waiter.cancelled == []
+
+    @pytest.mark.asyncio
+    async def test_director_timeout_status_query_cannot_outlive_settlement_lease(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _BoundedWaiter:
+            def canonical_terminal_result(
+                self,
+                *,
+                run_id: str,
+                process_terminal: bool = False,
+            ) -> CommandResult | None:
+                del run_id, process_terminal
+                return None
+
+            def active_execution_progress_marker(
+                self,
+                *,
+                run_id: str,
+            ) -> tuple[tuple[str, str, str, str], ...]:
+                del run_id
+                return (("TASK-1", "lease-1", "active", "in_progress"),)
+
+            def active_execution_barrier_result(
+                self,
+                *,
+                run_id: str,
+                reason: str,
+            ) -> CommandResult:
+                return CommandResult(
+                    run_id=run_id,
+                    status="timeout",
+                    message=reason,
+                    metadata={
+                        "cancel_signal_sent": False,
+                        "inflight_run_continues": True,
+                    },
+                )
+
+            async def cancel_active_run(
+                self,
+                run_id: str,
+                *,
+                reason: str,
+            ) -> CommandResult | None:
+                del run_id, reason
+                raise AssertionError("active TaskRuntime barrier must defer cancellation")
+
+        class _BlockingStatusService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                await asyncio.sleep(60)
+                return CommandResult(run_id=run_id, status="running", message="late")
+
+        executor = OrchestrationStageExecutor(tmp_path)
+        executor._run_completion_waiter = _BoundedWaiter()  # type: ignore[assignment]
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+
+        result = await executor._settle_inflight_director_run_after_timeout(
+            service=_BlockingStatusService(),  # type: ignore[arg-type]
+            run_id="run-bounded-query",
+            grace_seconds=1,
+        )
+
+        assert loop.time() - started_at < 1.25
+        assert result is not None
+        assert result.status == "timeout"
+        assert result.metadata["barrier_max_total_seconds"] == 1.0
+        assert result.metadata["inflight_run_continues"] is True
 
     @pytest.mark.asyncio
     async def test_director_binding_fanout_waits_submitted_runs_concurrently(self, tmp_path: Path) -> None:
@@ -5929,9 +7542,12 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
-                await asyncio.sleep(60)
-                return CommandResult(run_id="run-active", status="completed", message="late")
+                del service, timeout_seconds, abort_checker, cancel_on_timeout
+                assert cancel_event is not None and cancel_event.is_set()
+                return self._run_completion_waiter.active_execution_barrier_result(
+                    run_id=initial_result.run_id,
+                    reason="factory_cancelled",
+                )
 
         class _RunScopedBarrierWaiter:
             def active_execution_barrier_result(self, *, run_id: str, reason: str) -> CommandResult:
@@ -5985,14 +7601,13 @@ class TestDirectorDispatchLoop:
                 "cancel_reason": "factory_cancelled",
                 "inflight_run_continues": True,
                 "terminal_source": "task_runtime_active_execution_barrier",
-                "timeout_settle_grace_seconds": 0,
                 "active_task_count": 1,
                 "active_task_ids": ["TASK-1"],
             }
         ]
 
     @pytest.mark.asyncio
-    async def test_director_binding_fanout_cancel_event_prefers_terminal_run_status(
+    async def test_director_binding_fanout_cancel_event_prefers_canonical_terminal_outcome(
         self,
         tmp_path: Path,
     ) -> None:
@@ -6016,8 +7631,15 @@ class TestDirectorDispatchLoop:
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
                 del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
-                await asyncio.sleep(60)
-                return CommandResult(run_id="run-done", status="completed", message="late")
+                return CommandResult(
+                    run_id="run-done",
+                    status="completed",
+                    message="canonical outcome committed",
+                    metadata={
+                        "canonical_authoritative": True,
+                        "fact_event_seq": 34,
+                    },
+                )
 
             def _read_taskboard_stats(self) -> dict[str, int]:
                 return {
@@ -6052,11 +7674,11 @@ class TestDirectorDispatchLoop:
         per_binding = (result.metadata or {}).get("per_binding")
         assert isinstance(per_binding, list)
         assert per_binding[0]["status"] == "completed"
-        assert per_binding[0]["message"] == "done"
+        assert per_binding[0]["message"] == "canonical outcome committed"
         assert "inflight_run_continues" not in per_binding[0]
 
     @pytest.mark.asyncio
-    async def test_director_binding_fanout_terminal_counts_end_wait_even_when_run_status_running(
+    async def test_director_binding_fanout_ignores_command_result_task_status_counts(
         self,
         tmp_path: Path,
     ) -> None:
@@ -6117,17 +7739,16 @@ class TestDirectorDispatchLoop:
             timeout=1.0,
         )
 
-        assert service.queries >= 1
-        assert result.status == "failed"
+        assert service.queries == 0
+        assert result.status == "completed"
         per_binding = (result.metadata or {}).get("per_binding")
         assert isinstance(per_binding, list)
-        assert per_binding[0]["status"] == "failed"
-        assert per_binding[0]["terminal_source"] == "task_status_counts"
-        assert per_binding[0]["queried_status"] == "running"
-        assert "cancel_signal_sent" not in per_binding[0]
+        assert per_binding[0]["status"] == "completed"
+        assert per_binding[0]["message"] == "actual run completed"
+        assert "task_status_counts" not in per_binding[0]
 
     @pytest.mark.asyncio
-    async def test_director_binding_fanout_workspace_terminal_failed_taskboard_ends_wait(
+    async def test_director_binding_fanout_ignores_workspace_taskboard_counts_for_terminal_state(
         self,
         tmp_path: Path,
     ) -> None:
@@ -6199,14 +7820,13 @@ class TestDirectorDispatchLoop:
             timeout=1.0,
         )
 
-        assert service.queries >= 1
-        assert result.status == "failed"
+        assert service.queries == 0
+        assert result.status == "completed"
         per_binding = (result.metadata or {}).get("per_binding")
         assert isinstance(per_binding, list)
-        assert per_binding[0]["status"] == "failed"
-        assert per_binding[0]["terminal_source"] == "workspace_taskboard_counts"
-        assert per_binding[0]["queried_status"] == "running"
-        assert "cancel_signal_sent" not in per_binding[0]
+        assert per_binding[0]["status"] == "completed"
+        assert per_binding[0]["message"] == "actual run completed"
+        assert "task_status_counts" not in per_binding[0]
 
     @pytest.mark.asyncio
     async def test_director_binding_fanout_counts_newly_quarantined_timeouts(
@@ -6375,6 +7995,28 @@ class TestDirectorDispatchLoop:
                     return dict(self.stats.pop(0))
                 return dict(self.stats[0])
 
+            def _canonical_factory_projection(
+                self,
+                _run: FactoryRun,
+                _context: dict[str, Any],
+            ) -> dict[str, Any]:
+                return _with_task_runtime_authority(
+                    {
+                        "source": "run_ledger",
+                        "task_boundary": {
+                            "latest_by_task": {
+                                task_id: {
+                                    "task_id": task_id,
+                                    "status": "completed_verified",
+                                    "ok": True,
+                                }
+                                for task_id in ("TASK-1", "TASK-2")
+                            }
+                        },
+                    },
+                    task_ids=("TASK-1", "TASK-2"),
+                )
+
             async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
                 tasks = kwargs.get("tasks")
                 self.captured_tasks = list(tasks) if isinstance(tasks, list) else None
@@ -6542,15 +8184,13 @@ class TestDirectorDispatchLoop:
         assert result.status == "failed"
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
         assert payload["failure_stage"] == "director_dispatch"
-        assert payload["error_code"] == "director.binding_fanout_all_failed"
+        assert payload["error_code"] == "director.canonical_task_boundary_missing"
         codes = [item.get("code") for item in payload["signals"]]
-        assert "director.binding_fanout_all_failed" in codes
+        assert "director.canonical_task_boundary_missing" in codes
         assert "director.dispatch_converged_after_partial_failure" in codes
 
     @pytest.mark.asyncio
-    async def test_materialization_quality_failure_with_artifacts_enters_quality_gate_handoff(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_materialization_quality_failure_with_artifacts_stays_failed(self, tmp_path: Path) -> None:
         class _MaterializationQualityHandoffExecutor(OrchestrationStageExecutor):
             def __init__(self, workspace: Path) -> None:
                 super().__init__(workspace)
@@ -6671,17 +8311,17 @@ class TestDirectorDispatchLoop:
             {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1},
         )
 
-        assert result.status == "success"
+        assert result.status == "failed"
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
-        assert payload["quality_gate_handoff"] is True
-        assert payload["failure_stage"] == ""
-        assert payload["error_code"] is None
+        assert payload["quality_gate_handoff"] is False
+        assert payload["failure_stage"] == "director_dispatch"
+        assert payload["error_code"] == "director.canonical_task_boundary_missing"
         codes = [item.get("code") for item in payload["signals"]]
-        assert "director.materialization_quality_handoff" in codes
-        assert "director.binding_fanout_all_failed" not in codes
+        assert "director.materialization_quality_handoff" not in codes
+        assert "director.canonical_task_boundary_missing" in codes
 
     @pytest.mark.asyncio
-    async def test_single_binding_materialization_quality_handoff_stops_before_no_claim_retry(
+    async def test_single_binding_materialization_failure_stops_before_no_claim_retry(
         self,
         tmp_path: Path,
     ) -> None:
@@ -6733,8 +8373,8 @@ class TestDirectorDispatchLoop:
                     return dict(self.stats.pop(0))
                 return dict(self.stats[0])
 
-            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
-                del limit
+            def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
+                del limit, factory_run_id
                 return ["TASK-1"] if self.execute_calls == 0 else []
 
             def _build_orchestration_service(self, context: dict) -> object:
@@ -6818,19 +8458,21 @@ class TestDirectorDispatchLoop:
             {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1},
         )
 
-        assert result.status == "success"
+        assert result.status == "failed"
         assert executor.execute_calls == 1
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
-        assert len(payload["attempts"]) == 1
-        assert payload["quality_gate_handoff"] is True
-        assert payload["failure_stage"] == ""
+        assert payload["attempts"]
+        assert payload["attempts"][0]["run_id"] == "director-quality-single"
+        assert payload["quality_gate_handoff"] is False
+        assert payload["failure_stage"] == "director_dispatch"
+        assert payload["error_code"] == "director.canonical_task_boundary_missing"
         codes = [item.get("code") for item in payload["signals"]]
-        assert "director.materialization_quality_handoff_ready" in codes
-        assert "director.materialization_quality_handoff" in codes
-        assert "director.partial_failure_progress_continued" not in codes
+        assert "director.materialization_quality_handoff_ready" not in codes
+        assert "director.materialization_quality_handoff" not in codes
+        assert "director.canonical_task_boundary_missing" in codes
 
     @pytest.mark.asyncio
-    async def test_idle_blocked_materialization_quality_failure_with_missing_targets_enters_quality_gate_handoff(
+    async def test_idle_blocked_materialization_quality_failure_with_missing_targets_stays_failed(
         self,
         tmp_path: Path,
     ) -> None:
@@ -6898,8 +8540,8 @@ class TestDirectorDispatchLoop:
                     return dict(self.stats.pop(0))
                 return dict(self.stats[0])
 
-            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
-                del limit
+            def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
+                del limit, factory_run_id
                 return ["TASK-1"] if self.execute_calls == 0 else []
 
             def _build_orchestration_service(self, context: dict) -> object:
@@ -6970,20 +8612,19 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1},
+            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "serial", "max_workers": 1},
         )
 
-        assert result.status == "success"
+        assert result.status == "failed"
         assert executor.execute_calls == 1
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
-        assert payload["quality_gate_handoff"] is True
-        assert payload["failure_stage"] == ""
+        assert payload["quality_gate_handoff"] is False
+        assert payload["failure_stage"] == "director_dispatch"
         assert payload["taskboard"]["converged"] is False
         codes = [item.get("code") for item in payload["signals"]]
-        assert "director.materialization_quality_handoff_ready" in codes
-        assert "director.materialization_quality_handoff" in codes
-        assert "director.taskboard_unresolved_quality_handoff" in codes
-        assert "director.taskboard_not_converged" not in codes
+        assert "director.materialization_quality_handoff_ready" not in codes
+        assert "director.materialization_quality_handoff" not in codes
+        assert "director.canonical_task_boundary_missing" in codes
 
     @pytest.mark.asyncio
     async def test_no_claimable_tasks_after_attempt_does_not_replay_requested_pm_tasks(self, tmp_path: Path) -> None:
@@ -7036,8 +8677,8 @@ class TestDirectorDispatchLoop:
                     return dict(self.stats.pop(0))
                 return dict(self.stats[0])
 
-            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
-                del limit
+            def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
+                del limit, factory_run_id
                 return ["TASK-1"] if self.execute_calls == 0 else []
 
             def _build_orchestration_service(self, context: dict) -> object:
@@ -7107,7 +8748,7 @@ class TestDirectorDispatchLoop:
         assert "director.run_status_non_success" not in codes
 
     @pytest.mark.asyncio
-    async def test_missing_write_receipt_with_artifacts_enters_quality_gate_handoff(self, tmp_path: Path) -> None:
+    async def test_missing_write_receipt_with_artifacts_stays_failed(self, tmp_path: Path) -> None:
         class _MissingWriteReceiptHandoffExecutor(OrchestrationStageExecutor):
             def __init__(self, workspace: Path) -> None:
                 super().__init__(workspace)
@@ -7265,14 +8906,14 @@ class TestDirectorDispatchLoop:
             {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
         )
 
-        assert result.status == "success"
+        assert result.status == "failed"
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
-        assert payload["quality_gate_handoff"] is True
-        assert payload["failure_stage"] == ""
-        assert payload["error_code"] is None
+        assert payload["quality_gate_handoff"] is False
+        assert payload["failure_stage"] == "director_dispatch"
+        assert payload["error_code"] == "director.canonical_task_boundary_missing"
         codes = [item.get("code") for item in payload["signals"]]
-        assert "director.materialization_quality_handoff" in codes
-        assert "director.binding_fanout_all_failed" not in codes
+        assert "director.materialization_quality_handoff" not in codes
+        assert "director.canonical_task_boundary_missing" in codes
 
     @pytest.mark.asyncio
     async def test_idle_claimable_unresolved_artifacts_do_not_enter_quality_gate_handoff(
@@ -7455,12 +9096,12 @@ class TestDirectorDispatchLoop:
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
         assert payload["quality_gate_handoff"] is False
         assert payload["failure_stage"] == "director_dispatch"
-        assert payload["error_code"] == "director.binding_fanout_all_failed"
+        assert payload["error_code"] == "director.canonical_task_boundary_missing"
         assert payload["taskboard"]["converged"] is False
         codes = [item.get("code") for item in payload["signals"]]
         assert "director.materialization_quality_handoff" not in codes
         assert "director.taskboard_unresolved_quality_handoff" not in codes
-        assert "director.binding_fanout_all_failed" in codes
+        assert "director.canonical_task_boundary_missing" in codes
 
     @pytest.mark.asyncio
     async def test_fails_when_taskboard_not_converged_after_max_rounds(self, tmp_path: Path) -> None:
@@ -7552,7 +9193,7 @@ class TestDirectorDispatchLoop:
         assert payload["taskboard"]["converged"] is False
         codes = [item.get("code") for item in payload["signals"]]
         assert "director.taskboard_not_converged" in codes
-        assert "director.run_status_non_success" not in codes
+        assert "director.canonical_task_boundary_missing" in codes
 
     @pytest.mark.asyncio
     async def test_dynamic_director_rounds_cover_blocked_taskboard_total(self, tmp_path: Path) -> None:
@@ -7586,6 +9227,31 @@ class TestDirectorDispatchLoop:
                 if len(self.stats) > 1:
                     return dict(self.stats.pop(0))
                 return dict(self.stats[0])
+
+            def _canonical_factory_projection(
+                self,
+                _run: FactoryRun,
+                _context: dict[str, Any],
+            ) -> dict[str, Any]:
+                completed = self.rounds >= 5
+                task_ids = tuple(f"TASK-{index}" for index in range(1, 6))
+                return _with_task_runtime_authority(
+                    {
+                        "source": "run_ledger",
+                        "task_boundary": {
+                            "latest_by_task": {
+                                f"TASK-{index}": {
+                                    "task_id": f"TASK-{index}",
+                                    "status": "completed_verified" if completed else "in_execution",
+                                    "ok": completed,
+                                }
+                                for index in range(1, 6)
+                            }
+                        },
+                    },
+                    task_ids=task_ids,
+                    incomplete_task_ids=() if completed else task_ids,
+                )
 
             async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
                 del kwargs
@@ -7688,7 +9354,7 @@ class TestDirectorDispatchLoop:
         assert "timed out" in (payload.get("root_cause_hint") or "").lower()
 
     @pytest.mark.asyncio
-    async def test_timeout_after_workspace_delta_records_progress_evidence(self, tmp_path: Path) -> None:
+    async def test_timeout_after_workspace_delta_keeps_delta_diagnostic_only(self, tmp_path: Path) -> None:
         class _MockService:
             async def execute_director_run(self, **kwargs: object) -> CommandResult:
                 del kwargs
@@ -7755,8 +9421,8 @@ class TestDirectorDispatchLoop:
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
         codes = [item.get("code") for item in payload["signals"]]
         assert "director.workspace_delta_progress_detected" in codes
-        assert "director.dispatch_timeout" not in codes
-        assert payload["attempts"][0]["progress_made"] is True
+        assert "director.dispatch_timeout" in codes
+        assert payload["attempts"][0]["progress_made"] is False
         assert payload["attempts"][0]["workspace_delta_progress"] is True
         assert payload["attempts"][0]["workspace_delta"]["added_sample"] == ["src/index.ts"]
 
@@ -7807,13 +9473,35 @@ class TestDirectorDispatchLoop:
                 del context
                 return [{"binding_id": "director:test", "provider_id": "test", "model": "test"}]
 
-            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
-                del limit
+            def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
+                del limit, factory_run_id
                 self.claim_count += 1
                 return ["TASK-1"] if self.claim_count == 1 else []
 
             def _read_taskboard_stats(self) -> dict[str, int]:
                 return dict(self.taskboard_state)
+
+            def _canonical_factory_projection(
+                self,
+                _run: FactoryRun,
+                _context: dict[str, Any],
+            ) -> dict[str, Any]:
+                completed = int(self.taskboard_state.get("completed") or 0) == 1
+                return _with_task_runtime_authority(
+                    {
+                        "source": "run_ledger",
+                        "task_boundary": {
+                            "latest_by_task": {
+                                "TASK-1": {
+                                    "task_id": "TASK-1",
+                                    "status": "completed_verified" if completed else "in_execution",
+                                    "ok": completed,
+                                }
+                            }
+                        },
+                    },
+                    incomplete_task_ids=() if completed else ("TASK-1",),
+                )
 
             async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
                 del kwargs
@@ -7837,6 +9525,39 @@ class TestDirectorDispatchLoop:
                 return True, []
 
         executor = _LateSuccessExecutor(tmp_path)
+
+        class _CommittedOutcomeWaiter:
+            def canonical_terminal_result(
+                self,
+                *,
+                run_id: str,
+                process_terminal: bool = False,
+            ) -> CommandResult | None:
+                del process_terminal
+                if int(executor.taskboard_state.get("completed") or 0) != 1:
+                    return None
+                return CommandResult(
+                    run_id=run_id,
+                    status="completed",
+                    message="committed outcome visible",
+                    metadata={
+                        "canonical_authoritative": True,
+                        "fact_event_seq": 35,
+                    },
+                )
+
+            def active_execution_progress_marker(
+                self,
+                *,
+                run_id: str,
+            ) -> tuple[tuple[str, str, str, str], ...]:
+                del run_id
+                return ()
+
+            async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
+                del run_id, reason
+
+        executor._run_completion_waiter = _CommittedOutcomeWaiter()  # type: ignore[assignment]
         tasks = [{"id": "TASK-1", "target_files": ["src/index.ts"]}]
         executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
@@ -7851,7 +9572,7 @@ class TestDirectorDispatchLoop:
             run,
             {
                 "director_max_rounds": 2,
-                "timeout": 1,
+                "timeout": 2,
                 "execution_mode": "parallel",
                 "max_workers": 1,
                 "director_dispatch_timeout_settle_grace_seconds": 1,
@@ -7879,6 +9600,8 @@ class TestDirectorDispatchLoop:
                 self.execute_calls = 0
                 self.claim_calls = 0
                 self.settle_calls = 0
+                self.execution_timeout_seconds = 0
+                self.settlement_timeout_seconds = 0
                 self.taskboard_state = {
                     "total": 1,
                     "pending": 1,
@@ -7900,8 +9623,8 @@ class TestDirectorDispatchLoop:
                 del context
                 return []
 
-            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
-                del limit
+            def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
+                del limit, factory_run_id
                 self.claim_calls += 1
                 if self.claim_calls > 1:
                     raise AssertionError("a second Director round started before the inflight child settled")
@@ -7910,9 +9633,32 @@ class TestDirectorDispatchLoop:
             def _read_taskboard_stats(self) -> dict[str, int]:
                 return dict(self.taskboard_state)
 
+            def _canonical_factory_projection(
+                self,
+                _run: FactoryRun,
+                _context: dict[str, Any],
+            ) -> dict[str, Any]:
+                completed = int(self.taskboard_state.get("completed") or 0) == 1
+                return _with_task_runtime_authority(
+                    {
+                        "source": "run_ledger",
+                        "task_boundary": {
+                            "latest_by_task": {
+                                "TASK-1": {
+                                    "task_id": "TASK-1",
+                                    "status": "completed_verified" if completed else "in_execution",
+                                    "ok": completed,
+                                }
+                            }
+                        },
+                    },
+                    incomplete_task_ids=() if completed else ("TASK-1",),
+                )
+
             async def _wait_run_completion(self, *args: object, **kwargs: object) -> CommandResult:
-                del args, kwargs
+                del args
                 self.execute_calls += 1
+                self.execution_timeout_seconds = int(kwargs["timeout_seconds"])
                 self.taskboard_state.update({"pending": 0, "ready": 0, "in_progress": 1})
                 return CommandResult(
                     run_id="director-inflight",
@@ -7925,9 +9671,12 @@ class TestDirectorDispatchLoop:
                     },
                 )
 
-            async def _settle_inflight_director_run_after_timeout(self, *args: object, **kwargs: object) -> CommandResult:
-                del args, kwargs
+            async def _settle_inflight_director_run_after_timeout(
+                self, *args: object, **kwargs: object
+            ) -> CommandResult:
+                del args
                 self.settle_calls += 1
+                self.settlement_timeout_seconds = int(kwargs["grace_seconds"])
                 self.taskboard_state.update({"in_progress": 0, "completed": 1})
                 target = self.workspace / "src/index.ts"
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -7936,7 +9685,11 @@ class TestDirectorDispatchLoop:
                     run_id="director-inflight",
                     status="completed",
                     message="settled",
-                    metadata={"task_status_counts": dict(self.taskboard_state)},
+                    metadata={
+                        "canonical_authoritative": True,
+                        "fact_event_seq": 36,
+                        "task_status_counts": dict(self.taskboard_state),
+                    },
                 )
 
             def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
@@ -7956,7 +9709,12 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 2, "execution_mode": "serial", "max_workers": 1},
+            {
+                "director_max_rounds": 2,
+                "execution_mode": "serial",
+                "max_workers": 1,
+                "director_dispatch_timeout_settle_grace_seconds": 5,
+            },
         )
 
         assert result.status == "success"
@@ -7966,9 +9724,15 @@ class TestDirectorDispatchLoop:
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
         assert payload["attempts"][0]["settlement_attempted"] is True
         assert payload["attempts"][0]["settled_after_timeout"] is True
-        assert "director.inflight_timeout_settled" in {
-            str(item.get("code") or "") for item in payload["signals"]
-        }
+        assert executor.execution_timeout_seconds > 0
+        assert executor.settlement_timeout_seconds == 5
+        assert executor.execution_timeout_seconds <= payload["attempts"][0]["execution_timeout_seconds"]
+        assert (
+            payload["attempts"][0]["execution_timeout_seconds"] + payload["attempts"][0]["settlement_timeout_seconds"]
+            == payload["attempts"][0]["timeout_seconds"]
+        )
+        assert payload["attempts"][0]["settlement_timeout_seconds"] == executor.settlement_timeout_seconds
+        assert "director.inflight_timeout_settled" in {str(item.get("code") or "") for item in payload["signals"]}
 
     @pytest.mark.asyncio
     async def test_soft_timeout_barrier_expiry_fails_without_replaying_director(self, tmp_path: Path) -> None:
@@ -8002,8 +9766,8 @@ class TestDirectorDispatchLoop:
                 del context
                 return []
 
-            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
-                del limit
+            def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
+                del limit, factory_run_id
                 return ["TASK-1"]
 
             def _read_taskboard_stats(self) -> dict[str, int]:
@@ -8022,7 +9786,9 @@ class TestDirectorDispatchLoop:
                     metadata={"inflight_run_continues": True, "cancel_signal_sent": False},
                 )
 
-            async def _settle_inflight_director_run_after_timeout(self, *args: object, **kwargs: object) -> CommandResult:
+            async def _settle_inflight_director_run_after_timeout(
+                self, *args: object, **kwargs: object
+            ) -> CommandResult:
                 del args, kwargs
                 return CommandResult(
                     run_id="director-inflight",
@@ -8053,7 +9819,12 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 2, "execution_mode": "serial", "max_workers": 1},
+            {
+                "director_max_rounds": 2,
+                "execution_mode": "serial",
+                "max_workers": 1,
+                "director_dispatch_timeout_settle_grace_seconds": 5,
+            },
         )
 
         assert result.status == "failed"

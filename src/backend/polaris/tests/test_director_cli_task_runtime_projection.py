@@ -2,15 +2,37 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.events.fact_stream.public.contracts import QueryFactEventsV1
 from polaris.cells.events.fact_stream.public.service import query_fact_events
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.cli.director.director_service import DirectorService
+
+
+def _bootstrap_workspace(workspace: Path) -> None:
+    """Explicitly provision FactStream before direct low-level TaskRuntime I/O."""
+
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="director_cli_task_runtime_projection_test_setup",
+        )
+    )
 
 
 def test_director_cli_status_check_does_not_write_sessionless_terminal_event(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace)
     task_runtime = TaskRuntimeService(str(workspace))
     task = task_runtime.create_task_row(subject="Director CLI execution projection")
     claim = task_runtime.claim_execution(
@@ -21,15 +43,18 @@ def test_director_cli_status_check_does_not_write_sessionless_terminal_event(tmp
         selection_source="test",
     )
     assert claim["success"] is True
-    session = claim["session"]
-    completed = task_runtime.complete_execution(
-        task["id"],
-        session_id=session["session_id"],
-        result_summary="director public execution completed",
-        metadata={
-            "adapter": "director.execution.public",
-            "changed_files": ["src/main.py"],
-        },
+    identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(claim["execution_attempt"])
+    completed = task_runtime.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="completed",
+            summary="director public execution completed",
+            metadata={
+                "adapter": "director.execution.public",
+                "changed_files": ["src/main.py"],
+            },
+        )
     )
     assert completed["success"] is True
     service = DirectorService(workspace=workspace)
@@ -65,6 +90,7 @@ def test_director_cli_status_check_does_not_write_sessionless_terminal_event(tmp
 def test_director_cli_ready_tasks_use_task_runtime_projection(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace)
     task_runtime = TaskRuntimeService(str(workspace))
     ready = task_runtime.create_task_row(subject="ready task")
     blocked = task_runtime.create_task_row(subject="blocked task", blocked_by=[ready["id"]])

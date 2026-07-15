@@ -32,7 +32,7 @@ from typing import Any, Iterable
 
 from polaris.kernelone.fs.text_ops import append_text_atomic, write_json_atomic, write_text_atomic
 
-from .run_ledger import summarize_run_ledger_projection
+from .bench_gates import CANONICAL_BENCH_PROJECTION_SOURCE, LEGACY_BENCH_ARTIFACT_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +60,15 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     write_json_atomic(str(path), payload)
 
 
+def _mapping_value(value: object) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _empty_control_plane_projection(*, session_status: str, audit_path: Path | None = None) -> dict[str, Any]:
     state = "pending" if session_status == "running" else "missing"
     return {
         "schema_version": 1,
-        "source": "run_ledger_projection",
+        "source": CANONICAL_BENCH_PROJECTION_SOURCE,
         "available": False,
         "ok": False,
         "status": state,
@@ -136,42 +140,94 @@ def _merge_project_evidence_modalities(projects: list[dict[str, Any]]) -> dict[s
     return dict(sorted(merged.items()))
 
 
-def _modality_summary_is_present_failed(summary: Any) -> bool:
-    if not isinstance(summary, dict):
-        return False
-    present = int(summary.get("present") or 0)
-    ok = int(summary.get("ok") or 0)
-    failed = int(summary.get("failed") or 0)
-    return present > 0 and ok == 0 and failed > 0
+def _legacy_project_view(record: dict[str, Any], *, index: int) -> dict[str, Any]:
+    """Expose old audit records as degraded, non-authoritative evidence."""
+
+    legacy = record.get("legacy_artifacts")
+    legacy_map = dict(legacy) if isinstance(legacy, dict) else {}
+    legacy_map.update(
+        {
+            "source": LEGACY_BENCH_ARTIFACT_SOURCE,
+            "authoritative": False,
+            "degraded": True,
+        }
+    )
+    return {
+        "project_id": str(record.get("project_id") or record.get("id") or f"record-{index + 1}"),
+        "requested_project_id": str(record.get("requested_project_id") or record.get("project_id") or ""),
+        "canonical_project_id": str(record.get("canonical_project_id") or record.get("project_id") or ""),
+        "instance_id": str(record.get("instance_id") or ""),
+        "workspace": str(record.get("workspace") or ""),
+        "backend_port": record.get("backend_port"),
+        "frontend_port": record.get("frontend_port"),
+        "run_id": str(record.get("run_id") or ""),
+        "factory_run_id": str(record.get("factory_run_id") or ""),
+        "source": LEGACY_BENCH_ARTIFACT_SOURCE,
+        "authoritative": False,
+        "degraded": True,
+        "ok": False,
+        "detail": "canonical projection unavailable; legacy artifacts are display-only",
+        "legacy_artifacts": legacy_map,
+    }
 
 
-def _normalize_legacy_evidence_policy(
-    evidence_policy: dict[str, Any],
-    evidence_modalities: dict[str, Any],
-) -> dict[str, Any]:
-    """Normalize old audit snapshots without mutating the stored audit file."""
+def _canonical_project_view(record: dict[str, Any], *, index: int) -> dict[str, Any]:
+    """Return one validated canonical project projection or a legacy view."""
 
-    if not evidence_policy:
-        return evidence_policy
-    raw_missing = evidence_policy.get("missing_required_modalities")
-    missing = [str(item) for item in raw_missing] if isinstance(raw_missing, list) else []
-    raw_failed = evidence_policy.get("failed_required_modalities")
-    failed = [str(item) for item in raw_failed] if isinstance(raw_failed, list) else []
-    normalized_missing: list[str] = []
-    for modality in missing:
-        if _modality_summary_is_present_failed(evidence_modalities.get(modality)):
-            failed.append(modality)
-        else:
-            normalized_missing.append(modality)
-    normalized = dict(evidence_policy)
-    normalized["missing_required_modalities"] = list(dict.fromkeys(normalized_missing))
-    normalized["failed_required_modalities"] = list(dict.fromkeys(failed))
-    normalized["ok"] = not normalized["missing_required_modalities"] and not normalized["failed_required_modalities"]
-    return normalized
+    raw_projection = record.get("canonical_projection")
+    if not isinstance(raw_projection, dict):
+        return _legacy_project_view(record, index=index)
+    projection = dict(raw_projection)
+    if projection.get("source") != CANONICAL_BENCH_PROJECTION_SOURCE or not bool(projection.get("authoritative")):
+        return _legacy_project_view(record, index=index)
+
+    execution = projection.get("execution")
+    execution_map = execution if isinstance(execution, dict) else {}
+    ledger = projection.get("ledger")
+    ledger_map = ledger if isinstance(ledger, dict) else {}
+    capability = ledger_map.get("capability")
+    capability_map = capability if isinstance(capability, dict) else {}
+    evidence_policy = ledger_map.get("evidence_policy")
+    evidence_policy_map = evidence_policy if isinstance(evidence_policy, dict) else {}
+    evidence_modalities = ledger_map.get("evidence_modalities")
+    evidence_modalities_map = evidence_modalities if isinstance(evidence_modalities, dict) else {}
+    return {
+        "project_id": str(record.get("project_id") or record.get("id") or f"record-{index + 1}"),
+        "requested_project_id": str(projection.get("requested_project_id") or ""),
+        "canonical_project_id": str(projection.get("canonical_project_id") or ""),
+        "instance_id": str(projection.get("instance_id") or ""),
+        "instance": _mapping_value(projection.get("instance")),
+        "workspace": str(projection.get("workspace") or ""),
+        "backend_port": projection.get("backend_port"),
+        "frontend_port": projection.get("frontend_port"),
+        "ports": _mapping_value(projection.get("ports")),
+        "run_id": str(projection.get("run_id") or ""),
+        "factory_run_id": str(projection.get("factory_run_id") or ""),
+        "run_ids": _mapping_value(projection.get("run_ids")),
+        "source": CANONICAL_BENCH_PROJECTION_SOURCE,
+        "authoritative": True,
+        "degraded": False,
+        "ok": bool(execution_map.get("ok")),
+        "detail": str(execution_map.get("reason_code") or "canonical execution status missing"),
+        "final_request_refs": list(projection.get("final_request_refs") or []),
+        "lifecycle": _mapping_value(projection.get("lifecycle")),
+        "effect": _mapping_value(projection.get("effect")),
+        "boundary": _mapping_value(projection.get("boundary")),
+        "runtime": _mapping_value(projection.get("runtime")),
+        "ledger": ledger_map,
+        "qa": _mapping_value(projection.get("qa")),
+        "barrier": _mapping_value(projection.get("barrier")),
+        "fallback": _mapping_value(projection.get("fallback")),
+        "execution": execution_map,
+        "latest_token_id": str(capability_map.get("latest_token_id") or ""),
+        "evidence_policy": evidence_policy_map,
+        "evidence_modalities": evidence_modalities_map,
+        "legacy_artifacts": _mapping_value(projection.get("legacy_artifacts")),
+    }
 
 
 def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, Any]:
-    """Build a read-only control-plane projection from factory_audits.json."""
+    """Build a read-only projection from canonical per-project records."""
 
     work_dir = str(status.get("work_dir") or "").strip()
     session_status = str(status.get("status") or "").strip().lower()
@@ -196,65 +252,16 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
             "detail": "factory audit ledger projection missing records",
         }
 
-    projects: list[dict[str, Any]] = []
-    projected = 0
-    ready_count = 0
-    failed = 0
-    for index, item in enumerate(records):
-        record: dict[str, Any] = item if isinstance(item, dict) else {}
-        projection = record.get("run_ledger_projection")
-        projection_map: dict[str, Any] = projection if isinstance(projection, dict) else {}
-        has_projection = bool(projection_map)
-        capability = projection_map.get("capability")
-        capability_map: dict[str, Any] = capability if isinstance(capability, dict) else {}
-        evidence_policy = projection_map.get("evidence_policy")
-        evidence_policy_map: dict[str, Any] = evidence_policy if isinstance(evidence_policy, dict) else {}
-        evidence_modalities = projection_map.get("evidence_modalities")
-        evidence_modalities_map: dict[str, Any] = evidence_modalities if isinstance(evidence_modalities, dict) else {}
-        evidence_policy_map = _normalize_legacy_evidence_policy(evidence_policy_map, evidence_modalities_map)
-        projection_for_summary = dict(projection_map)
-        if evidence_policy_map:
-            projection_for_summary["evidence_policy"] = evidence_policy_map
-            if int(projection_for_summary.get("gate_count") or 0) > 0:
-                projection_for_summary["integrity_ok"] = bool(capability_map.get("ok")) and not bool(
-                    evidence_policy_map.get("missing_required_modalities")
-                )
-                if evidence_policy_map.get("failed_required_modalities"):
-                    projection_for_summary["outcome_ok"] = False
-                    projection_for_summary["ok"] = False
-        projection_status = summarize_run_ledger_projection(projection_for_summary)
-        ok = bool(projection_status.get("ok"))
-        if has_projection:
-            projected += 1
-        if ok:
-            ready_count += 1
-        elif has_projection:
-            failed += 1
-        projects.append(
-            {
-                "project_id": str(record.get("project_id") or record.get("id") or f"record-{index + 1}"),
-                "requested_project_id": str(record.get("requested_project_id") or record.get("project_id") or ""),
-                "canonical_project_id": str(record.get("canonical_project_id") or record.get("project_id") or ""),
-                "instance_id": str(record.get("instance_id") or ""),
-                "workspace": str(record.get("workspace") or ""),
-                "backend_port": record.get("backend_port"),
-                "frontend_port": record.get("frontend_port"),
-                "run_id": str(record.get("run_id") or ""),
-                "factory_run_id": str(record.get("factory_run_id") or ""),
-                "ok": ok,
-                "integrity_ok": bool(projection_for_summary.get("integrity_ok")),
-                "outcome_ok": bool(projection_for_summary.get("outcome_ok")),
-                "gate_count": int(projection_map.get("gate_count") or 0),
-                "failed_gate_count": int(projection_status.get("failed_gate_count") or 0),
-                "latest_token_id": str(capability_map.get("latest_token_id") or ""),
-                "detail": str(projection_status.get("detail") or ""),
-                "missing": list(projection_status.get("missing") or []),
-                "failed_required_modalities": list(projection_status.get("failed_required_modalities") or []),
-                "evidence_policy": evidence_policy_map,
-                "evidence_modalities": evidence_modalities_map,
-                "run_ledger_projection": projection_map,
-            }
-        )
+    projects = [
+        _canonical_project_view(item if isinstance(item, dict) else {}, index=index)
+        for index, item in enumerate(records)
+    ]
+    projected = sum(project.get("source") == CANONICAL_BENCH_PROJECTION_SOURCE for project in projects)
+    ready_count = sum(bool(project.get("ok")) for project in projects)
+    failed = sum(
+        project.get("source") == CANONICAL_BENCH_PROJECTION_SOURCE and not bool(project.get("ok"))
+        for project in projects
+    )
 
     total = len(records)
     missing = max(0, total - projected)
@@ -263,7 +270,7 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
     goal_ledger = goal_audit.get("run_ledger") if isinstance(goal_audit, dict) else None
     return {
         "schema_version": 1,
-        "source": "run_ledger_projection",
+        "source": CANONICAL_BENCH_PROJECTION_SOURCE,
         "available": True,
         "ok": ready,
         "status": "ready" if ready else "degraded",

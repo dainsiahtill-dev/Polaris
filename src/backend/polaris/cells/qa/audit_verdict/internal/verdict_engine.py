@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
@@ -29,10 +31,10 @@ from polaris.cells.control_plane.run_ledger.public.service import (
 )
 from polaris.cells.qa.audit_verdict.public.contracts import (
     QaFailureClassificationV1,
-    QaFailureClassV1,
     QaVerdictEnvelopeV1,
     QaVerdictLineageV1,
     build_qa_failure_classification_v1,
+    build_qa_pass_classification_v1,
     normalize_qa_failure_class,
 )
 from polaris.kernelone.quality.artifact_quality import (
@@ -119,11 +121,7 @@ def _artifact_quality_issues(value: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _artifact_quality_issue_codes(value: dict[str, Any]) -> set[str]:
-    return {
-        code
-        for issue in _artifact_quality_issues(value)
-        if (code := str(issue.get("code") or "").strip())
-    }
+    return {code for issue in _artifact_quality_issues(value) if (code := str(issue.get("code") or "").strip())}
 
 
 def _artifact_quality_issue_reason(value: dict[str, Any], *, fallback: str) -> str:
@@ -140,12 +138,382 @@ def _artifact_quality_issue_reason(value: dict[str, Any], *, fallback: str) -> s
     return f"Artifact quality issue {code}{location}"
 
 
-def _failure_text(*values: Any) -> str:
-    return "\n".join(str(value or "") for value in values).lower()
+_EXECUTION_EVIDENCE_MISSING_METRICS = frozenset(
+    {
+        "missing_director_changed_files_evidence",
+    }
+)
+
+
+def classify_qa_audit_failure(
+    audit_result: dict[str, Any],
+) -> tuple[str, str]:
+    """Classify local QA observations before they are committed as evidence.
+
+    Execution-receipt gaps are control-plane failures even when the local
+    scanner represents them as ordinary error findings. Exact metric keys are
+    used deliberately so implementation findings cannot be reclassified by
+    incidental message text.
+
+    Returns:
+        A ``(failure_class, responsible_layer)`` pair. The failure class is
+        empty when the local observation passed.
+    """
+
+    metrics = _mapping(audit_result.get("metrics"))
+    if any(metrics.get(key) is True for key in _EXECUTION_EVIDENCE_MISSING_METRICS):
+        return (
+            FailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+            "execution_control_plane",
+        )
+
+    explicit_failure_class = str(audit_result.get("failure_class") or "").strip()
+    if explicit_failure_class:
+        return (
+            normalize_qa_failure_class(explicit_failure_class),
+            str(audit_result.get("responsible_layer") or "qa").strip() or "qa",
+        )
+
+    verdict = str(audit_result.get("verdict") or "").strip().upper()
+    if verdict in {"REQUEUE_DESIGN", "RETRY_DESIGN"}:
+        return FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value, "chief_engineer"
+    if verdict in {"REQUEUE_QA", "RETRY_QA"}:
+        return FailureClassV1.TEST_ENVIRONMENT_FAILURE.value, "qa_infra"
+    if verdict in {"NEEDS_REVIEW", "WAITING_HUMAN", "HITL"}:
+        return FailureClassV1.CONTRACT_AMBIGUOUS.value, "pm"
+    if verdict != "PASS":
+        return FailureClassV1.IMPLEMENTATION_DEFECT.value, "director"
+    return "", "qa"
+
+
+class QaVerdictConflictV1(StrEnum):
+    """Canonical evidence conflicts that must block a QA verdict."""
+
+    MISSING_RUN_ID = "missing_run_id"
+    LEDGER_UNAVAILABLE = "ledger_projection_unavailable"
+    LEDGER_SOURCE_INVALID = "ledger_projection_source_invalid"
+    LEDGER_RUN_SCOPE_MISMATCH = "ledger_projection_run_scope_mismatch"
+    BARRIER_MISSING = "projection_barrier_missing"
+    BARRIER_UNSATISFIED = "projection_barrier_unsatisfied"
+    BARRIER_SCOPE_MISMATCH = "projection_barrier_scope_mismatch"
+    TASK_BOUNDARY_MISSING = "task_boundary_missing"
+    TASK_BOUNDARY_NON_AUTHORITATIVE = "task_boundary_non_authoritative"
+
+
+@dataclass(frozen=True)
+class QaVerdictConflictRuleV1:
+    """One deterministic conflict-resolution rule.
+
+    The tuple order is the precedence order. This makes combinations such as a
+    local PASS plus an unavailable ledger deterministic and inspectable.
+    """
+
+    conflict: QaVerdictConflictV1
+    reason: str
+    responsible_layer: str = "execution_control_plane"
+
+
+QA_VERDICT_CONFLICT_MATRIX_V1: tuple[QaVerdictConflictRuleV1, ...] = (
+    QaVerdictConflictRuleV1(
+        QaVerdictConflictV1.MISSING_RUN_ID,
+        "QA verdict requires an explicit run_id bound to the canonical Run Ledger",
+    ),
+    QaVerdictConflictRuleV1(
+        QaVerdictConflictV1.LEDGER_UNAVAILABLE,
+        "Canonical Run Ledger projection is missing or unavailable",
+    ),
+    QaVerdictConflictRuleV1(
+        QaVerdictConflictV1.LEDGER_SOURCE_INVALID,
+        "QA received a ledger projection from a non-canonical source",
+    ),
+    QaVerdictConflictRuleV1(
+        QaVerdictConflictV1.LEDGER_RUN_SCOPE_MISMATCH,
+        "Canonical Run Ledger projection is not bound to the requested run_id",
+    ),
+    QaVerdictConflictRuleV1(
+        QaVerdictConflictV1.BARRIER_MISSING,
+        "QA requires a projection barrier for the referenced ledger effect",
+    ),
+    QaVerdictConflictRuleV1(
+        QaVerdictConflictV1.BARRIER_UNSATISFIED,
+        "Run Ledger projection barrier was not satisfied before QA verdict",
+    ),
+    QaVerdictConflictRuleV1(
+        QaVerdictConflictV1.BARRIER_SCOPE_MISMATCH,
+        "Run Ledger projection barrier is not bound to the requested run_id",
+    ),
+    QaVerdictConflictRuleV1(
+        QaVerdictConflictV1.TASK_BOUNDARY_MISSING,
+        "Canonical Run Ledger projection has no TaskBoundary verdict for this task",
+    ),
+    QaVerdictConflictRuleV1(
+        QaVerdictConflictV1.TASK_BOUNDARY_NON_AUTHORITATIVE,
+        "TaskBoundary has no authoritative terminal verdict for this task and run",
+    ),
+)
+
+_CONFLICT_RULE_BY_CODE = {rule.conflict: rule for rule in QA_VERDICT_CONFLICT_MATRIX_V1}
+_TASK_BOUNDARY_SCHEMA = "polaris.task_boundary_verdict.v1"
+_TASK_BOUNDARY_TERMINAL_STATUSES = frozenset(
+    {
+        "artifact_semantic_mismatch",
+        "completed_verified",
+        "deferred_followup_required",
+        "dependency_not_unlocked",
+        "execution_evidence_missing",
+        "incomplete_materialization",
+        "missing_entrypoint_target",
+        "no_materialized_effect",
+        "required_evidence_failed",
+        "required_tool_text_fallback_not_dispatched",
+        "required_verifier_failed",
+        "required_verifier_missing",
+        "tool_dispatch_dropped",
+        "unresolved_local_import",
+    }
+)
+
+
+def _task_boundary_for_task(ledger: dict[str, Any], task_id: str) -> dict[str, Any]:
+    task_boundary = _mapping(ledger.get("task_boundary"))
+    latest_by_task = _mapping(task_boundary.get("latest_by_task"))
+    by_task = latest_by_task.get(task_id)
+    if isinstance(by_task, dict):
+        return dict(by_task)
+
+    latest = _mapping(task_boundary.get("latest"))
+    if str(latest.get("task_id") or "").strip() == task_id:
+        return latest
+
+    failed = task_boundary.get("failed")
+    if isinstance(failed, list):
+        for item in reversed(failed):
+            if isinstance(item, dict) and str(item.get("task_id") or "").strip() == task_id:
+                return dict(item)
+    return {}
+
+
+def _task_boundary_is_authoritative(
+    boundary: dict[str, Any],
+    *,
+    task_id: str,
+    run_id: str,
+) -> bool:
+    if str(boundary.get("schema_version") or "").strip() != _TASK_BOUNDARY_SCHEMA:
+        return False
+    if str(boundary.get("task_id") or "").strip() != task_id:
+        return False
+    if str(boundary.get("run_id") or "").strip() != run_id:
+        return False
+    status = str(boundary.get("status") or "").strip()
+    if status not in _TASK_BOUNDARY_TERMINAL_STATUSES:
+        return False
+    ok = boundary.get("ok")
+    failure_class = str(boundary.get("failure_class") or "").strip().upper()
+    if not isinstance(ok, bool) or not failure_class:
+        return False
+    if status == "completed_verified":
+        return ok is True and failure_class == TaskBoundaryFailureClassV1.PASSED.value
+    return ok is False and failure_class != TaskBoundaryFailureClassV1.PASSED.value
+
+
+def _canonical_evidence_conflicts(
+    *,
+    task_id: str,
+    run_id: str,
+    payload: dict[str, Any],
+    ledger: dict[str, Any],
+    barrier: dict[str, Any],
+) -> tuple[tuple[QaVerdictConflictV1, ...], dict[str, Any]]:
+    conflicts: set[QaVerdictConflictV1] = set()
+    if not run_id:
+        conflicts.add(QaVerdictConflictV1.MISSING_RUN_ID)
+
+    if not ledger or ledger.get("available") is not True:
+        conflicts.add(QaVerdictConflictV1.LEDGER_UNAVAILABLE)
+    if ledger and (
+        str(ledger.get("source") or "").strip() != "run_ledger_projection" or ledger.get("schema_version") != 1
+    ):
+        conflicts.add(QaVerdictConflictV1.LEDGER_SOURCE_INVALID)
+    consumed_run_ids = set(_string_list(ledger.get("consumed_run_ids")))
+    if run_id and run_id not in consumed_run_ids:
+        conflicts.add(QaVerdictConflictV1.LEDGER_RUN_SCOPE_MISMATCH)
+
+    requires_barrier = bool(
+        str(payload.get("last_effect_append_id") or payload.get("min_append_id") or "").strip()
+        or str(
+            payload.get("last_effect_receipt_hash")
+            or payload.get("last_effect_event_hash")
+            or payload.get("min_event_hash")
+            or ""
+        ).strip()
+    )
+    if requires_barrier and not barrier:
+        conflicts.add(QaVerdictConflictV1.BARRIER_MISSING)
+    if barrier:
+        requested_append_id = str(payload.get("last_effect_append_id") or payload.get("min_append_id") or "").strip()
+        requested_event_hash = str(
+            payload.get("last_effect_receipt_hash")
+            or payload.get("last_effect_event_hash")
+            or payload.get("min_event_hash")
+            or ""
+        ).strip()
+        consumed_append_ids = set(_string_list(barrier.get("consumed_append_ids")))
+        consumed_event_hashes = set(_string_list(barrier.get("consumed_event_hashes")))
+        barrier_claim_is_complete = (
+            barrier.get("barrier_satisfied") is True
+            and (not requested_append_id or requested_append_id in consumed_append_ids)
+            and (not requested_event_hash or requested_event_hash in consumed_event_hashes)
+        )
+        if not barrier_claim_is_complete:
+            conflicts.add(QaVerdictConflictV1.BARRIER_UNSATISFIED)
+        if str(barrier.get("schema_version") or "").strip() != "run_ledger.projection_barrier.v1" or (
+            run_id and str(barrier.get("run_id") or "").strip() != run_id
+        ):
+            conflicts.add(QaVerdictConflictV1.BARRIER_SCOPE_MISMATCH)
+
+    boundary = _task_boundary_for_task(ledger, task_id)
+    if not boundary:
+        conflicts.add(QaVerdictConflictV1.TASK_BOUNDARY_MISSING)
+    elif not _task_boundary_is_authoritative(boundary, task_id=task_id, run_id=run_id):
+        conflicts.add(QaVerdictConflictV1.TASK_BOUNDARY_NON_AUTHORITATIVE)
+
+    ordered = tuple(rule.conflict for rule in QA_VERDICT_CONFLICT_MATRIX_V1 if rule.conflict in conflicts)
+    return ordered, boundary
+
+
+def _blocked_conflict_classification(
+    conflicts: tuple[QaVerdictConflictV1, ...],
+    *,
+    evidence_refs: tuple[str, ...],
+) -> QaFailureClassificationV1:
+    primary = conflicts[0]
+    rule = _CONFLICT_RULE_BY_CODE[primary]
+    detail = ", ".join(conflict.value for conflict in conflicts)
+    return build_qa_failure_classification_v1(
+        failure_class=FailureClassV1.LEDGER_PROJECTION_INCOMPLETE.value,
+        route="pending_qa",
+        reason=f"{rule.reason} (conflicts: {detail})",
+        repairable_by_director=False,
+        owner="qa_infra",
+        responsible_layer=rule.responsible_layer,
+        evidence_refs=evidence_refs,
+    )
+
+
+def _execution_evidence_missing_outcome(
+    *,
+    reason: str,
+    evidence_refs: tuple[str, ...],
+) -> tuple[str, bool, str, str, QaFailureClassificationV1]:
+    """Build the canonical non-Director route for missing execution evidence."""
+
+    classification = build_qa_failure_classification_v1(
+        failure_class=FailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+        route="pending_qa",
+        reason=reason,
+        repairable_by_director=False,
+        severity="high",
+        owner="execution_control_plane",
+        responsible_layer="execution_control_plane",
+        evidence_refs=evidence_refs,
+    )
+    return "BLOCKED", False, "pending_qa", "", classification
+
+
+def _route_committed_qa_failure(
+    *,
+    failure_class: str,
+    reason: str,
+    responsible_layer: str,
+    evidence_refs: tuple[str, ...],
+) -> tuple[str, bool, str, str, QaFailureClassificationV1]:
+    """Route a typed QA finding only after its ledger barrier is satisfied."""
+
+    normalized = normalize_qa_failure_class(failure_class)
+    layer = responsible_layer or "qa"
+    if normalized == FailureClassV1.EXECUTION_EVIDENCE_MISSING.value:
+        return _execution_evidence_missing_outcome(
+            reason=reason,
+            evidence_refs=evidence_refs,
+        )
+    if normalized in {
+        FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+        FailureClassV1.NO_MATERIALIZED_EFFECT.value,
+        FailureClassV1.COMPILER_OR_TEST_FAILURE.value,
+        FailureClassV1.IMPLEMENTATION_DEFECT.value,
+        FailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value,
+    }:
+        classification = build_qa_failure_classification_v1(
+            failure_class=normalized,
+            route="pending_exec",
+            reason=reason,
+            repairable_by_director=True,
+            owner="director",
+            responsible_layer=layer,
+            evidence_refs=evidence_refs,
+        )
+        return "FAIL", False, "pending_exec", "", classification
+    if normalized in {
+        FailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
+        FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
+        FailureClassV1.BLUEPRINT_VERIFY_INVALID.value,
+    }:
+        classification = build_qa_failure_classification_v1(
+            failure_class=normalized,
+            route="pending_design",
+            reason=reason,
+            repairable_by_director=False,
+            requires_ce_replan=True,
+            owner="chief_engineer",
+            responsible_layer=layer,
+            evidence_refs=evidence_refs,
+        )
+        return "FAIL", False, "pending_design", "", classification
+    if normalized in {
+        FailureClassV1.CONTRACT_AMBIGUOUS.value,
+        FailureClassV1.ACCEPTANCE_INVALID.value,
+    }:
+        classification = build_qa_failure_classification_v1(
+            failure_class=normalized,
+            route="waiting_human",
+            reason=reason,
+            repairable_by_director=False,
+            requires_pm_revision=True,
+            owner="pm",
+            responsible_layer=layer,
+            evidence_refs=evidence_refs,
+        )
+        return "NEEDS_REVIEW", False, "waiting_human", "", classification
+    if normalized == FailureClassV1.TEST_ENVIRONMENT_FAILURE.value:
+        classification = build_qa_failure_classification_v1(
+            failure_class=normalized,
+            route="pending_qa",
+            reason=reason,
+            repairable_by_director=False,
+            owner="qa_infra",
+            responsible_layer=layer,
+            evidence_refs=evidence_refs,
+        )
+        return "BLOCKED", False, "pending_qa", "", classification
+    classification = build_qa_failure_classification_v1(
+        failure_class=normalized,
+        route="waiting_human",
+        reason=reason,
+        repairable_by_director=False,
+        severity="critical",
+        owner="platform",
+        responsible_layer=layer,
+        evidence_refs=evidence_refs,
+    )
+    return "BLOCKED", False, "waiting_human", "", classification
 
 
 def _route_classification(
     *,
+    task_id: str,
+    run_id: str,
+    payload: dict[str, Any],
     gate_name: str,
     gate_summary: str,
     audit_result: dict[str, Any],
@@ -156,21 +524,28 @@ def _route_classification(
 ) -> tuple[str, bool, str, str, QaFailureClassificationV1]:
     """Return verdict, ok, next_stage, terminal_status, classification."""
 
-    text = _failure_text(gate_name, gate_summary, audit_result, artifact_quality)
+    conflicts, boundary = _canonical_evidence_conflicts(
+        task_id=task_id,
+        run_id=run_id,
+        payload=payload,
+        ledger=ledger,
+        barrier=barrier,
+    )
+    if conflicts:
+        return (
+            "BLOCKED",
+            False,
+            "pending_qa",
+            "",
+            _blocked_conflict_classification(
+                conflicts,
+                evidence_refs=evidence_refs,
+            ),
+        )
+
     evidence_policy = _mapping(ledger.get("evidence_policy"))
     missing_required = _string_list(evidence_policy.get("missing_required_modalities"))
     failed_required = _string_list(evidence_policy.get("failed_required_modalities"))
-    if barrier and not bool(barrier.get("barrier_satisfied", True)):
-        classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
-            route="pending_qa",
-            reason="Run Ledger projection barrier was not satisfied before QA verdict",
-            repairable_by_director=False,
-            owner="qa_infra",
-            responsible_layer="qa_infra",
-            evidence_refs=evidence_refs,
-        )
-        return "BLOCKED", False, "pending_qa", "", classification
     lifecycle_failure = project_tool_lifecycle_failure_status(_mapping(ledger.get("tool_lifecycle")))
     lifecycle_failure_class = normalize_failure_class(
         lifecycle_failure.get("failure_class"),
@@ -204,12 +579,6 @@ def _route_classification(
             evidence_refs=evidence_refs,
         )
         return "BLOCKED", False, "waiting_human", "", classification
-    task_boundary = _mapping(ledger.get("task_boundary"))
-    failed_boundaries_raw = task_boundary.get("failed")
-    failed_boundaries = [
-        _mapping(item) for item in failed_boundaries_raw if isinstance(item, Mapping)
-    ] if isinstance(failed_boundaries_raw, list) else []
-    boundary = failed_boundaries[-1] if failed_boundaries else _mapping(task_boundary.get("latest"))
     if boundary and not bool(boundary.get("ok", True)):
         boundary_failure_class = normalize_qa_failure_class(
             str(boundary.get("failure_class") or TaskBoundaryFailureClassV1.TASK_BOUNDARY_FAILED.value).strip()
@@ -218,7 +587,7 @@ def _route_classification(
         responsible_layer = str(boundary.get("responsible_layer") or "execution_control_plane").strip()
         if boundary_failure_class == TaskBoundaryFailureClassV1.INCOMPLETE_MATERIALIZATION.value:
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+                failure_class=FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
                 route="pending_exec",
                 reason=boundary_reason,
                 repairable_by_director=True,
@@ -229,7 +598,7 @@ def _route_classification(
             return "FAIL", False, "pending_exec", "", classification
         if boundary_failure_class == TaskBoundaryFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value:
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value,
+                failure_class=FailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value,
                 route="pending_exec",
                 reason=boundary_reason,
                 repairable_by_director=True,
@@ -240,19 +609,13 @@ def _route_classification(
             )
             return "FAIL", False, "pending_exec", "", classification
         if boundary_failure_class == TaskBoundaryFailureClassV1.EXECUTION_EVIDENCE_MISSING.value:
-            classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
-                route="pending_exec",
+            return _execution_evidence_missing_outcome(
                 reason=boundary_reason,
-                repairable_by_director=True,
-                owner="director",
-                responsible_layer=responsible_layer or "director",
                 evidence_refs=evidence_refs,
             )
-            return "FAIL", False, "pending_exec", "", classification
         if boundary_failure_class == TaskBoundaryFailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value:
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value,
+                failure_class=FailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value,
                 route="waiting_human",
                 reason=boundary_reason,
                 repairable_by_director=False,
@@ -264,7 +627,7 @@ def _route_classification(
             return "BLOCKED", False, "waiting_human", "", classification
         if boundary_failure_class == TaskBoundaryFailureClassV1.NO_MATERIALIZED_EFFECT.value:
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.NO_MATERIALIZED_EFFECT.value,
+                failure_class=FailureClassV1.NO_MATERIALIZED_EFFECT.value,
                 route="pending_exec",
                 reason=boundary_reason,
                 repairable_by_director=True,
@@ -276,7 +639,7 @@ def _route_classification(
             return "FAIL", False, "pending_exec", "", classification
         if boundary_failure_class == TaskBoundaryFailureClassV1.COMPILER_OR_TEST_FAILURE.value:
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.COMPILER_OR_TEST_FAILURE.value,
+                failure_class=FailureClassV1.COMPILER_OR_TEST_FAILURE.value,
                 route="pending_exec",
                 reason=boundary_reason,
                 repairable_by_director=True,
@@ -287,7 +650,7 @@ def _route_classification(
             return "FAIL", False, "pending_exec", "", classification
         if boundary_failure_class == TaskBoundaryFailureClassV1.IMPLEMENTATION_DEFECT.value:
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
+                failure_class=FailureClassV1.IMPLEMENTATION_DEFECT.value,
                 route="pending_exec",
                 reason=boundary_reason,
                 repairable_by_director=True,
@@ -298,7 +661,7 @@ def _route_classification(
             return "FAIL", False, "pending_exec", "", classification
         if boundary_failure_class == TaskBoundaryFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value:
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value,
+                failure_class=FailureClassV1.DEPENDENCY_NOT_UNLOCKED.value,
                 route="pending_exec",
                 reason=boundary_reason,
                 repairable_by_director=False,
@@ -310,7 +673,7 @@ def _route_classification(
             return "BLOCKED", False, "pending_exec", "", classification
         if boundary_failure_class == TaskBoundaryFailureClassV1.MISSING_ENTRYPOINT_TARGET.value:
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
+                failure_class=FailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
                 route="pending_design",
                 reason=boundary_reason,
                 repairable_by_director=False,
@@ -334,7 +697,7 @@ def _route_classification(
             return "BLOCKED", False, "waiting_human", "", classification
         if boundary_failure_class == TaskBoundaryFailureClassV1.TASKBOARD_DEADLOCK.value:
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.TASKBOARD_DEADLOCK.value,
+                failure_class=FailureClassV1.TASKBOARD_DEADLOCK.value,
                 route="waiting_human",
                 reason=boundary_reason,
                 repairable_by_director=False,
@@ -354,9 +717,27 @@ def _route_classification(
             evidence_refs=evidence_refs,
         )
         return "BLOCKED", False, "waiting_human", "", classification
+    if (
+        str(boundary.get("status") or "").strip() != "completed_verified"
+        or normalize_qa_failure_class(
+            str(boundary.get("failure_class") or TaskBoundaryFailureClassV1.PASSED.value)
+        )
+        != TaskBoundaryFailureClassV1.PASSED.value
+    ):
+        classification = build_qa_failure_classification_v1(
+            failure_class=FailureClassV1.LEDGER_PROJECTION_INCOMPLETE.value,
+            route="pending_qa",
+            reason="QA success requires TaskBoundary status=completed_verified with failure_class=PASSED",
+            repairable_by_director=False,
+            severity="critical",
+            owner="control_plane",
+            responsible_layer="execution_control_plane",
+            evidence_refs=evidence_refs,
+        )
+        return "BLOCKED", False, "pending_qa", "", classification
     if artifact_quality.get("contract_amendment_request"):
         classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
+            failure_class=FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
             route="pending_design",
             reason="Artifact quality requires a CE interface contract amendment",
             repairable_by_director=False,
@@ -367,19 +748,13 @@ def _route_classification(
         )
         return "FAIL", False, "pending_design", "", classification
     if missing_required:
-        classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
-            route="pending_exec",
+        return _execution_evidence_missing_outcome(
             reason="Missing required QA evidence modalities: " + ", ".join(missing_required),
-            repairable_by_director=True,
-            owner="director",
-            responsible_layer="director",
             evidence_refs=evidence_refs,
         )
-        return "FAIL", False, "pending_exec", "", classification
     if failed_required:
         classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.COMPILER_OR_TEST_FAILURE.value,
+            failure_class=FailureClassV1.COMPILER_OR_TEST_FAILURE.value,
             route="pending_exec",
             reason="Required QA evidence modalities failed: " + ", ".join(failed_required),
             repairable_by_director=True,
@@ -388,58 +763,24 @@ def _route_classification(
             evidence_refs=evidence_refs,
         )
         return "FAIL", False, "pending_exec", "", classification
-    if "scope mismatch" in text or "outside scope" in text or "scope expansion" in text:
-        classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
-            route="pending_design",
-            reason="QA failure indicates CE scope or blueprint mismatch",
-            repairable_by_director=False,
-            requires_ce_replan=True,
-            owner="chief_engineer",
-            responsible_layer="chief_engineer",
+    observed_failure_class, observed_responsible_layer = classify_qa_audit_failure(audit_result)
+    if observed_failure_class == FailureClassV1.EXECUTION_EVIDENCE_MISSING.value:
+        return _execution_evidence_missing_outcome(
+            reason=gate_summary or str(audit_result.get("summary") or "Required execution evidence is missing").strip(),
             evidence_refs=evidence_refs,
         )
-        return "FAIL", False, "pending_design", "", classification
-    if "contract ambiguous" in text or "missing acceptance" in text or "clarification" in text:
-        classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.CONTRACT_AMBIGUOUS.value,
-            route="waiting_human",
-            reason="QA failure requires PM or human contract clarification",
-            repairable_by_director=False,
-            requires_pm_revision=True,
-            owner="pm",
-            responsible_layer="pm",
+    explicit_failure_class = str(audit_result.get("failure_class") or "").strip()
+    if explicit_failure_class:
+        return _route_committed_qa_failure(
+            failure_class=observed_failure_class or explicit_failure_class,
+            reason=gate_summary or str(audit_result.get("summary") or "QA evidence rejected").strip(),
+            responsible_layer=observed_responsible_layer,
             evidence_refs=evidence_refs,
         )
-        return "NEEDS_REVIEW", False, "waiting_human", "", classification
-    if "security policy" in text or "policy violation" in text or "path traversal" in text or "unauthorized" in text:
-        classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.SECURITY_POLICY_VIOLATION.value,
-            route="waiting_human",
-            reason="QA failure indicates security or authorization policy violation",
-            repairable_by_director=False,
-            severity="critical",
-            owner="security",
-            responsible_layer="security_policy",
-            evidence_refs=evidence_refs,
-        )
-        return "BLOCKED", False, "waiting_human", "", classification
     verdict = str(audit_result.get("verdict") or "").strip().upper()
-    if bool(audit_result.get("qa_findings_bounce_limit_reached")):
-        classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.IMPLEMENTATION_DEFECT_BOUNCE_LIMIT.value,
-            route="rejected",
-            reason="QA findings already exhausted the bounded Director feedback loop",
-            repairable_by_director=False,
-            severity="high",
-            owner="director",
-            responsible_layer="director",
-            evidence_refs=evidence_refs,
-        )
-        return "FAIL", False, "", "rejected", classification
     if verdict in {"REQUEUE_EXEC", "RETRY_EXEC"}:
         classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
+            failure_class=FailureClassV1.IMPLEMENTATION_DEFECT.value,
             route="pending_exec",
             reason=gate_summary or "QA requested Director execution repair",
             repairable_by_director=True,
@@ -450,7 +791,7 @@ def _route_classification(
         return "FAIL", False, "pending_exec", "", classification
     if verdict in {"REQUEUE_DESIGN", "RETRY_DESIGN"}:
         classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
+            failure_class=FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
             route="pending_design",
             reason=gate_summary or "QA requested Chief Engineer design repair",
             repairable_by_director=False,
@@ -462,7 +803,7 @@ def _route_classification(
         return "FAIL", False, "pending_design", "", classification
     if verdict in {"REQUEUE_QA", "RETRY_QA"}:
         classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
+            failure_class=FailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
             route="pending_qa",
             reason=gate_summary or "QA requested verification retry",
             repairable_by_director=False,
@@ -472,34 +813,16 @@ def _route_classification(
         )
         return "BLOCKED", False, "pending_qa", "", classification
     if audit_result.get("ok") is False and verdict not in {"FAIL", "REJECT", "REJECTED", "NEEDS_REVIEW"}:
-        classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
-            route="pending_exec",
+        return _execution_evidence_missing_outcome(
             reason=gate_summary or f"QA audit result was not ok: {verdict or 'unknown'}",
-            repairable_by_director=True,
-            owner="director",
-            responsible_layer="director",
             evidence_refs=evidence_refs,
         )
-        return "FAIL", False, "pending_exec", "", classification
     artifact_issue_codes = _artifact_quality_issue_codes(artifact_quality)
     if gate_name or artifact_quality.get("errors") or artifact_issue_codes or verdict in {"FAIL", "REJECT", "REJECTED"}:
-        if "step verify command rejected" in text:
-            classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.BLUEPRINT_VERIFY_INVALID.value,
-                route="pending_design",
-                reason="CE step verify command is invalid or unsafe",
-                repairable_by_director=False,
-                requires_ce_replan=True,
-                owner="chief_engineer",
-                responsible_layer="chief_engineer",
-                evidence_refs=evidence_refs,
-            )
-            return "FAIL", False, "pending_design", "", classification
         if artifact_issue_codes:
             if "declared_target_missing" in artifact_issue_codes:
                 classification = build_qa_failure_classification_v1(
-                    failure_class=QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+                    failure_class=FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
                     route="pending_exec",
                     reason=_artifact_quality_issue_reason(
                         artifact_quality,
@@ -512,7 +835,7 @@ def _route_classification(
                 )
                 return "FAIL", False, "pending_exec", "", classification
             classification = build_qa_failure_classification_v1(
-                failure_class=QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
+                failure_class=FailureClassV1.IMPLEMENTATION_DEFECT.value,
                 route="pending_exec",
                 reason=_artifact_quality_issue_reason(
                     artifact_quality,
@@ -525,7 +848,7 @@ def _route_classification(
             )
             return "FAIL", False, "pending_exec", "", classification
         classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
+            failure_class=FailureClassV1.IMPLEMENTATION_DEFECT.value,
             route="pending_exec",
             reason=gate_summary or "QA failed with implementation defects",
             repairable_by_director=True,
@@ -536,7 +859,7 @@ def _route_classification(
         return "FAIL", False, "pending_exec", "", classification
     if verdict == "NEEDS_REVIEW":
         classification = build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.CONTRACT_AMBIGUOUS.value,
+            failure_class=FailureClassV1.CONTRACT_AMBIGUOUS.value,
             route="waiting_human",
             reason="QA review requested human judgement",
             repairable_by_director=False,
@@ -546,14 +869,8 @@ def _route_classification(
             evidence_refs=evidence_refs,
         )
         return "NEEDS_REVIEW", False, "waiting_human", "", classification
-    classification = build_qa_failure_classification_v1(
-        failure_class=QaFailureClassV1.PASSED.value,
-        route="resolved",
+    classification = build_qa_pass_classification_v1(
         reason="QA evidence accepted",
-        repairable_by_director=False,
-        severity="info",
-        owner="qa",
-        responsible_layer="qa",
         evidence_refs=evidence_refs,
     )
     return "PASS", True, "", "resolved", classification
@@ -578,7 +895,7 @@ class QAVerdictEngine:
             or ""
         ).strip()
         if min_append_id or min_event_hash:
-            result = read_run_ledger_projection_barrier(
+            barrier_result = read_run_ledger_projection_barrier(
                 ReadRunLedgerProjectionBarrierQueryV1(
                     workspace=self.workspace,
                     run_id=run_id,
@@ -587,9 +904,11 @@ class QAVerdictEngine:
                     timeout_ms=0,
                 )
             )
-            return dict(result.projection), dict(result.barrier)
-        result = read_run_ledger_projection(ReadRunLedgerProjectionQueryV1(workspace=self.workspace, run_id=run_id))
-        return dict(result.projection), {}
+            return dict(barrier_result.projection), dict(barrier_result.barrier)
+        projection_result = read_run_ledger_projection(
+            ReadRunLedgerProjectionQueryV1(workspace=self.workspace, run_id=run_id)
+        )
+        return dict(projection_result.projection), {}
 
     def scan_artifact_quality(self, payload: dict[str, Any]) -> dict[str, Any]:
         targets = _target_files(payload)
@@ -627,7 +946,19 @@ class QAVerdictEngine:
         ledger = dict(ledger_projection or {})
         barrier_map = dict(barrier or {})
         if not ledger and run_id:
-            ledger, barrier_map = self.read_ledger_with_barrier(payload)
+            try:
+                ledger, barrier_map = self.read_ledger_with_barrier(payload)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                ledger = {
+                    "schema_version": 1,
+                    "source": "run_ledger_projection",
+                    "available": False,
+                    "ok": False,
+                    "status": "read_error",
+                    "consumed_run_ids": [run_id],
+                    "detail": f"canonical Run Ledger projection read failed: {exc}",
+                }
+                barrier_map = {}
         artifact = _artifact_quality_dict(artifact_quality)
         if not artifact:
             artifact = self.scan_artifact_quality(payload)
@@ -639,7 +970,17 @@ class QAVerdictEngine:
             )
             if item
         )
+        conflicts, boundary = _canonical_evidence_conflicts(
+            task_id=task_id,
+            run_id=run_id,
+            payload=payload,
+            ledger=ledger,
+            barrier=barrier_map,
+        )
         verdict, ok, next_stage, terminal_status, classification = _route_classification(
+            task_id=task_id,
+            run_id=run_id,
+            payload=payload,
             gate_name=gate_name,
             gate_summary=gate_summary,
             audit_result=audit,
@@ -666,6 +1007,11 @@ class QAVerdictEngine:
             "missing_required_modalities": _string_list(evidence_policy.get("missing_required_modalities")),
             "failed_required_modalities": _string_list(evidence_policy.get("failed_required_modalities")),
             "barrier": barrier_map,
+            "conflict_matrix": {
+                "schema_version": "qa.verdict_conflict_matrix.v1",
+                "conflicts": [conflict.value for conflict in conflicts],
+                "selected_task_boundary": boundary,
+            },
         }
         content_without_hash = {
             "workspace": self.workspace,

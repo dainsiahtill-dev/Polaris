@@ -134,8 +134,12 @@ class TestTurnScopedTaskGroup:
     async def test_close_prevents_new_tasks(self) -> None:
         group = TurnScopedTaskGroup(turn_id="t1")
         group.close()
-        with pytest.raises(RuntimeError, match="closed"):
-            group.create_task(asyncio.sleep(0))
+        coroutine = asyncio.sleep(0)
+        try:
+            with pytest.raises(RuntimeError, match="closed"):
+                group.create_task(coroutine)
+        finally:
+            coroutine.close()
 
     @pytest.mark.asyncio
     async def test_join_all_with_timeout(self) -> None:

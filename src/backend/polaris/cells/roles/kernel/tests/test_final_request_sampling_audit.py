@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.internal.llm_caller import context_audit as context_audit_module
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     FinalRequestEvidenceCoverageError,
@@ -1246,7 +1247,7 @@ def test_final_request_evidence_accepts_run_ledger_failure_evidence_without_keyw
                     {
                         "schema_version": "polaris.failure_evidence.v1",
                         "source": "tool_lifecycle",
-                        "failure_class": "tool_dispatch_dropped",
+                        "failure_class": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
                         "responsible_layer": "platform",
                         "repairable_by_director": False,
                         "requires_ce_replan": False,
@@ -1256,7 +1257,7 @@ def test_final_request_evidence_accepts_run_ledger_failure_evidence_without_keyw
                     {
                         "schema_version": "polaris.failure_evidence.v1",
                         "source": "tool_lifecycle",
-                        "failure_class": "missing_effect_receipt",
+                        "failure_class": FailureClassV1.MISSING_EFFECT_RECEIPT.value,
                         "responsible_layer": "tool_executor",
                         "repairable_by_director": True,
                         "requires_ce_replan": False,
@@ -1289,10 +1290,12 @@ def test_final_request_evidence_accepts_run_ledger_failure_evidence_without_keyw
 
     metadata_summary = audit["request_metadata_summary"]
     assert metadata_summary["has_failed_gate_evidence"] is True
-    assert metadata_summary["failed_gate_evidence_summary"]["failure_class"] == "tool_dispatch_dropped"
+    assert (
+        metadata_summary["failed_gate_evidence_summary"]["failure_class"] == FailureClassV1.TOOL_DISPATCH_DROPPED.value
+    )
     assert metadata_summary["failed_gate_evidence_summary"]["failure_classes"] == [
-        "tool_dispatch_dropped",
-        "missing_effect_receipt",
+        FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        FailureClassV1.MISSING_EFFECT_RECEIPT.value,
     ]
     assert metadata_summary["failed_gate_evidence_summary"]["failure_evidence_count"] == 2
     assert metadata_summary["failed_gate_evidence_summary"]["responsible_layer"] == "platform"
@@ -2485,9 +2488,7 @@ def test_final_request_evidence_coverage_tracks_interface_discrepancy_context() 
     slot = next(
         item for item in evidence_coverage["evidence_slots"] if item["ref_type"] == "interface_discrepancy_context"
     )
-    assert {
-        key: value for key, value in slot.items() if key != "details"
-    } == {
+    assert {key: value for key, value in slot.items() if key != "details"} == {
         "schema_version": "polaris.final_request_evidence_slot.v1",
         "ref_type": "interface_discrepancy_context",
         "required": True,

@@ -124,8 +124,35 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
                 }
             ),
         )
+        task_runtime_projection = {
+            "schema_version": "task_runtime.observable_task_rows_authority.v1",
+            "source": "task_runtime.execution_fact",
+            "authoritative": True,
+            "degraded": False,
+            "row_count": 1,
+            "rows": [
+                {
+                    "task_id": "TASK-1",
+                    "status": "completed",
+                    "execution_state": "completed",
+                    "fact_event_seq": 7,
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                }
+            ],
+            "readiness": {"ready": True, "blocking_reasons": []},
+        }
+        monkeypatch.setattr(
+            factory_router_module,
+            "TaskRuntimeService",
+            lambda _workspace: SimpleNamespace(
+                query_observable_task_rows_projection=lambda: SimpleNamespace(
+                    to_authority_dict=lambda: dict(task_runtime_projection)
+                )
+            ),
+        )
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
-        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=1, state=state)
+        response = await factory_router_module.get_factory_run_audit_bundle_v2(run.id, limit=1, state=state)
         return response.model_dump(mode="json")
 
     payload = asyncio.run(_exercise())
@@ -141,6 +168,9 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
     assert payload["workspace"] == str(tmp_path)
     assert payload["control_plane_projection"]["source"] == "run_ledger_projection"
     assert payload["run_ledger_projection"]["tool_lifecycle"]["dropped_count"] == 0
+    assert payload["task_runtime_projection"]["source"] == "task_runtime.execution_fact"
+    assert payload["task_runtime_projection"]["authoritative"] is True
+    assert payload["task_runtime_projection"]["rows"][0]["task_id"] == "TASK-1"
     assert payload["run_identity"]["requested_project_id"] == "L2-08"
     assert payload["run_identity"]["canonical_project_id"] == "L2-18"
     assert payload["run_identity"]["instance_id"] == "bench-instance-1"
@@ -160,7 +190,7 @@ def test_get_factory_run_audit_bundle_missing_run_returns_404(
     state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(factory_router_module.get_factory_run_audit_bundle("missing", state=state))
+        asyncio.run(factory_router_module.get_factory_run_audit_bundle_v2("missing", state=state))
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == {
@@ -209,7 +239,7 @@ def test_get_factory_run_audit_bundle_partial_run_returns_quickly(
 
         monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
-        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=5, state=state)
+        response = await factory_router_module.get_factory_run_audit_bundle_v2(run.id, limit=5, state=state)
         return response.model_dump(mode="json")
 
     payload = asyncio.run(_exercise())
@@ -252,7 +282,7 @@ def test_get_factory_run_audit_bundle_partial_run_with_workspace_dispatch_logs(
 
         monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
-        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=5, state=state)
+        response = await factory_router_module.get_factory_run_audit_bundle_v2(run.id, limit=5, state=state)
         return response.model_dump(mode="json")
 
     payload = asyncio.run(_exercise())
@@ -332,7 +362,7 @@ def test_director_partial_audit_bundle_includes_convergence_diagnostics(
 
         monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
-        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=20, state=state)
+        response = await factory_router_module.get_factory_run_audit_bundle_v2(run.id, limit=20, state=state)
         return response.model_dump(mode="json")
 
     payload = asyncio.run(_exercise())
@@ -388,7 +418,7 @@ def test_qa_completed_bundle_omits_convergence(
 
         monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
-        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=5, state=state)
+        response = await factory_router_module.get_factory_run_audit_bundle_v2(run.id, limit=5, state=state)
         return response.model_dump(mode="json")
 
     payload = asyncio.run(_exercise())

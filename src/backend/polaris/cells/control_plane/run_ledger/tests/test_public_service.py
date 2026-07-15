@@ -40,27 +40,44 @@ def _append_task_runtime_execution_fact(
     factory_run_id: str,
     project_id: str,
     task_id: str,
+    event_type: str = "created",
+    role_id: str = "",
+    target_files: tuple[str, ...] = (),
 ) -> None:
     append_fact_event(
         AppendFactEventCommandV1(
             workspace=str(workspace),
             stream="task_runtime.execution",
-            event_type="task_execution_updated",
+            event_type=event_type,
             source="run_ledger_scope_test",
             run_id=run_id,
             task_id=task_id,
             payload={
-                "event_type": "task_execution_updated",
+                "event_type": event_type,
                 "run_id": run_id,
                 "task_id": task_id,
                 "factory_run_id": factory_run_id,
                 "factory_bench_project_id": project_id,
+                "task_row_snapshot": {
+                    "id": task_id,
+                    "metadata": {
+                        "external_task_id": task_id,
+                        "target_files": list(target_files),
+                        "task_contract": {"target_files": list(target_files)},
+                        "runtime_execution": {"role_id": role_id},
+                    },
+                },
             },
         )
     )
 
 
-def _write_ledger_event(workspace: Path, *, run_id: str = "run-1") -> None:
+def _write_ledger_event(
+    workspace: Path,
+    *,
+    run_id: str = "run-1",
+    include_lifecycle: bool = True,
+) -> None:
     ledger_path = workspace / "runtime" / "factory" / "ledger" / f"{run_id}.ndjson"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     event = {
@@ -90,7 +107,147 @@ def _write_ledger_event(workspace: Path, *, run_id: str = "run-1") -> None:
             }
         },
     }
-    ledger_path.write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
+    events = [event]
+    if include_lifecycle:
+        events.append(_successful_tool_lifecycle_event(run_id=run_id))
+    ledger_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in events) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _successful_tool_lifecycle_event(
+    *,
+    run_id: str = "run-1",
+    task_id: str = "TASK-1",
+    project_id: str = "P1",
+) -> dict[str, object]:
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id=run_id,
+        task_id=task_id,
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": f"batch-{run_id}",
+                "results": [
+                    {
+                        "call_id": f"call-{run_id}",
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "effect_receipt": {
+                            "operation": "write_file",
+                            "file": "src/app.py",
+                            "before_hash": "before-hash",
+                            "after_hash": "after-hash",
+                        },
+                    }
+                ],
+                "success_count": 1,
+                "failure_count": 0,
+            }
+        ],
+    ).to_dict()
+    return {
+        "event_type": "tool_call_lifecycle",
+        "run_id": run_id,
+        "task_id": task_id,
+        "project_id": project_id,
+        "tool_call_lifecycle_receipt": lifecycle,
+    }
+
+
+def test_projection_before_director_execution_marks_lifecycle_not_required(tmp_path: Path) -> None:
+    _write_ledger_event(tmp_path, run_id="run-pre-director", include_lifecycle=False)
+
+    result = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            run_id="run-pre-director",
+            include_migration_ledgers=True,
+        )
+    )
+
+    lifecycle = result.projection["tool_lifecycle"]
+    assert lifecycle["ok"] is True
+    assert lifecycle["requirement"] is False
+    assert lifecycle["requirement_status"] == "not_required"
+
+
+def test_director_materialization_claim_requires_lifecycle_receipt(tmp_path: Path) -> None:
+    run_id = "run-director-claim"
+    _append_task_runtime_execution_fact(
+        tmp_path,
+        run_id=run_id,
+        factory_run_id="",
+        project_id="P1",
+        task_id="TASK-1",
+        event_type="claimed",
+        role_id="director",
+        target_files=("src/main.py",),
+    )
+    _write_ledger_event(tmp_path, run_id=run_id, include_lifecycle=False)
+
+    result = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            run_id=run_id,
+            include_migration_ledgers=True,
+        )
+    )
+
+    lifecycle = result.projection["tool_lifecycle"]
+    assert lifecycle["ok"] is False
+    assert lifecycle["requirement"] is True
+    assert lifecycle["requirement_status"] == "missing_required"
+    assert lifecycle["required_task_keys"] == ["TASK-1"]
+    assert lifecycle["missing_required_task_keys"] == ["TASK-1"]
+
+
+def test_non_director_claim_does_not_activate_lifecycle_requirement(tmp_path: Path) -> None:
+    run_id = "run-chief-engineer-claim"
+    _append_task_runtime_execution_fact(
+        tmp_path,
+        run_id=run_id,
+        factory_run_id="",
+        project_id="P1",
+        task_id="TASK-1",
+        event_type="claimed",
+        role_id="chief_engineer",
+        target_files=("src/main.py",),
+    )
+    _write_ledger_event(tmp_path, run_id=run_id, include_lifecycle=False)
+
+    result = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            run_id=run_id,
+            include_migration_ledgers=True,
+        )
+    )
+
+    lifecycle = result.projection["tool_lifecycle"]
+    assert lifecycle["ok"] is True
+    assert lifecycle["requirement"] is False
+    assert lifecycle["requirement_status"] == "not_required"
+
+
+def _append_successful_tool_lifecycle_event(
+    workspace: Path,
+    *,
+    run_id: str,
+) -> str:
+    result = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(workspace),
+            run_id=run_id,
+            event=_successful_tool_lifecycle_event(run_id=run_id),
+        )
+    )
+    return str(result.receipt["event"]["append_id"])
 
 
 def test_run_ledger_writer_uses_platform_control_plane_namespace(tmp_path: Path) -> None:
@@ -144,6 +301,7 @@ def test_append_run_ledger_event_public_service_projects_event(tmp_path: Path) -
             },
         )
     )
+    _append_successful_tool_lifecycle_event(tmp_path, run_id="run-1")
 
     ledger_path = Path(str(result.receipt["ledger_path"]))
     fact_receipt = result.receipt["fact_receipt"]
@@ -180,9 +338,7 @@ def test_append_tool_call_lifecycle_event_public_service_projects_event(tmp_path
                 "native_tool_calls_count": 1,
                 "decoded_tool_calls_count": 1,
                 "dispatched_tool_calls_count": 0,
-                "dropped_tool_calls": [
-                    {"tool_name": "write_file", "reason": "tool_dispatch_dropped"}
-                ],
+                "dropped_tool_calls": [{"tool_name": "write_file", "reason": "tool_dispatch_dropped"}],
                 "dispatch_status": "dropped",
                 "failure_class": "TOOL_DISPATCH_DROPPED",
             },
@@ -223,7 +379,7 @@ def test_required_evidence_distinguishes_missing_from_failed() -> None:
         },
     }
 
-    projection = build_run_ledger_projection([base_event])
+    projection = build_run_ledger_projection([base_event, _successful_tool_lifecycle_event()])
     summary = summarize_run_ledger_projection(projection)
 
     assert projection["integrity_ok"] is True
@@ -244,7 +400,8 @@ def test_required_evidence_distinguishes_missing_from_failed() -> None:
                         "code": {"present": True, "ok": True, "detail": "files landed"},
                     }
                 },
-            }
+            },
+            _successful_tool_lifecycle_event(),
         ]
     )
 
@@ -301,9 +458,10 @@ def test_projection_exposes_tool_dispatch_dropped() -> None:
     assert projection["tool_lifecycle"]["events"][0]["receipt"]["schema_version"] == "tool_call_lifecycle_receipt.v1"
     assert projection["tool_lifecycle"]["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
     assert projection["tool_lifecycle"]["failure_evidence"][0]["reason"] == "decode failed"
-    assert projection["tool_lifecycle"]["events"][0]["failure_evidence"] == projection["tool_lifecycle"][
-        "failure_evidence"
-    ][0]
+    assert (
+        projection["tool_lifecycle"]["events"][0]["failure_evidence"]
+        == projection["tool_lifecycle"]["failure_evidence"][0]
+    )
     assert summary["detail"] == "run ledger projection tool lifecycle failed: TOOL_DISPATCH_DROPPED"
     assert summary["missing"] == []
     assert summary["failed_control_plane_events"] == ["TOOL_DISPATCH_DROPPED"]
@@ -367,7 +525,8 @@ def test_task_boundary_plan_probe_projects_failed_required_evidence() -> None:
                         ],
                     }
                 },
-            }
+            },
+            _successful_tool_lifecycle_event(),
         ]
     )
     summary = summarize_run_ledger_projection(projection)
@@ -476,6 +635,7 @@ def test_projection_exposes_task_boundary_failure() -> None:
                     "missing_entrypoint_targets": ["src/index.js"],
                 },
             },
+            _successful_tool_lifecycle_event(),
         ]
     )
     summary = summarize_run_ledger_projection(projection)
@@ -581,9 +741,7 @@ def test_public_projection_carries_task_boundary_and_tool_lifecycle(tmp_path: Pa
     assert projection["tool_lifecycle"]["dropped_count"] == 1
     assert projection["task_boundary"]["latest"]["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
     assert projection["task_boundary"]["historical_failed_count"] == 1
-    assert projection["task_boundary"]["latest_by_task"]["TASK-1"]["failure_class"] == (
-        "DEFERRED_FOLLOWUP_REQUIRED"
-    )
+    assert projection["task_boundary"]["latest_by_task"]["TASK-1"]["failure_class"] == ("DEFERRED_FOLLOWUP_REQUIRED")
     assert projection["projects"][0]["tool_lifecycle"]["dropped_count"] == 1
     assert projection["projects"][0]["task_boundary"]["latest"]["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
 
@@ -1039,6 +1197,7 @@ def test_read_run_ledger_projection_barrier_waits_for_effect_receipt(tmp_path: P
             },
         )
     )
+    lifecycle_append_id = _append_successful_tool_lifecycle_event(tmp_path, run_id="run-barrier")
     event = result.receipt["event"]
 
     barrier_result = read_run_ledger_projection_barrier(
@@ -1050,7 +1209,7 @@ def test_read_run_ledger_projection_barrier_waits_for_effect_receipt(tmp_path: P
     )
 
     assert barrier_result.barrier["barrier_satisfied"] is True
-    assert barrier_result.barrier["consumed_until_append_id"] == event["append_id"]
+    assert barrier_result.barrier["consumed_until_append_id"] == lifecycle_append_id
     assert event["append_id"] in barrier_result.barrier["consumed_append_ids"]
     assert barrier_result.projection["available"] is True
     assert barrier_result.projection["ok"] is True
@@ -1248,6 +1407,7 @@ def test_read_run_provenance_bundle_links_contract_blueprint_envelope_and_receip
             },
         )
     )
+    _append_successful_tool_lifecycle_event(tmp_path, run_id="run-1")
 
     bundle = read_run_provenance_bundle(ReadRunProvenanceBundleQueryV1(workspace=str(tmp_path), run_id="run-1")).bundle
 

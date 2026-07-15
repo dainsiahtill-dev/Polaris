@@ -85,6 +85,34 @@ class GovernanceReport:
 
 
 _RULE_MANIFEST_CATALOG_CONSISTENCY = "manifest_catalog_consistency"
+_RULE_FACT_STREAM_SURFACE_DRIFT = "fact_stream_surface_drift"
+_RULE_DECLARED_CELL_DEPENDENCIES_MATCH_IMPORTS = "declared_cell_dependencies_match_imports"
+
+_FACT_STREAM_CELL_ID = "events.fact_stream"
+_FACT_STREAM_ROOT_REL = "polaris/cells/events/fact_stream/__init__.py"
+_FACT_STREAM_PUBLIC_REL = "polaris/cells/events/fact_stream/public/__init__.py"
+_FACT_STREAM_CONTRACTS_REL = "polaris/cells/events/fact_stream/public/contracts.py"
+_FACT_STREAM_MANIFEST_REL = "polaris/cells/events/fact_stream/cell.yaml"
+_FACT_STREAM_README_REL = "polaris/cells/events/fact_stream/README.agent.md"
+_FACT_STREAM_CONTEXT_PACK_REL = "polaris/cells/events/fact_stream/generated/context.pack.json"
+_FACT_STREAM_OWNED_PATHS = frozenset({"polaris/cells/events/fact_stream/**"})
+_FACT_STREAM_PUBLIC_MODULES = frozenset(
+    {
+        "polaris.cells.events.fact_stream.public",
+        "polaris.cells.events.fact_stream.public.catalog",
+        "polaris.cells.events.fact_stream.public.contracts",
+        "polaris.cells.events.fact_stream.public.service",
+        "polaris.cells.events.fact_stream.public.workspace_bootstrap",
+    }
+)
+_FACT_STREAM_REQUIRED_EFFECTS = frozenset(
+    {
+        "fs.read:runtime/events/*",
+        "fs.write:runtime/events/*",
+    }
+)
+_FACT_STREAM_CONTRACT_KINDS = ("commands", "queries", "events", "results", "errors")
+_FACT_STREAM_PUBLIC_EXPORT_COUNT = 37
 
 # Cross-cell acyclicity (GATE-01): a NEW policy enhancement.
 # ACGA 2.0 has NO on-disk peer-cell acyclicity rule, so this gate does not enforce a
@@ -104,6 +132,14 @@ class CatalogCell:
     depends_on: tuple[str, ...]
     state_owners: tuple[str, ...]
     effects_allowed: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CycleAllowlistBaseline:
+    """One frozen SCC baseline, including every internal directed edge."""
+
+    members: frozenset[str]
+    internal_edges: frozenset[str]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -159,6 +195,493 @@ def _repo_relative_path(repo_root: Path, candidate: Path | str) -> str:
 
 def _read_yaml(path: Path) -> Any:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _literal_string_sequence(tree: ast.AST, name: str) -> tuple[str, ...] | None:
+    """Return a literal list or tuple assigned to ``name`` without importing code."""
+    for node in getattr(tree, "body", []):
+        value: ast.AST | None = None
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+        ) or (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name):
+            value = node.value
+        if value is None:
+            continue
+        try:
+            raw = ast.literal_eval(value)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(raw, (list, tuple)) or not all(isinstance(item, str) for item in raw):
+            return None
+        return tuple(raw)
+    return None
+
+
+def _parse_python_module(path: Path) -> ast.Module | None:
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, ValueError):
+        return None
+
+
+def _fact_stream_issue(issues: list[GovernanceIssue], *, path: str, message: str) -> None:
+    issues.append(
+        GovernanceIssue(
+            rule_id=_RULE_FACT_STREAM_SURFACE_DRIFT,
+            severity=_SEVERITY_BLOCKER,
+            message=message,
+            path=path,
+        )
+    )
+
+
+def _mapping_string_set(
+    payload: dict[str, Any],
+    *,
+    field: str,
+) -> frozenset[str] | None:
+    raw = payload.get(field)
+    if not isinstance(raw, list) or not all(isinstance(item, str) and item.strip() for item in raw):
+        return None
+    return frozenset(item.strip() for item in raw)
+
+
+def _mapping_string_sequence(
+    payload: dict[str, Any],
+    *,
+    field: str,
+) -> tuple[str, ...] | None:
+    """Return a non-empty ordered string list from structured metadata."""
+    raw = payload.get(field)
+    if not isinstance(raw, list) or not raw:
+        return None
+    if not all(isinstance(item, str) and item.strip() for item in raw):
+        return None
+    return tuple(item.strip() for item in raw)
+
+
+def _fact_stream_contract_exports(
+    contracts_path: Path,
+) -> tuple[frozenset[str], dict[str, frozenset[str]]] | None:
+    tree = _parse_python_module(contracts_path)
+    if tree is None:
+        return None
+    exports = _literal_string_sequence(tree, "__all__")
+    if exports is None:
+        return None
+
+    runtime_error_classes = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and any(isinstance(base, ast.Name) and base.id == "RuntimeError" for base in node.bases)
+    }
+    categorized: dict[str, set[str]] = {kind: set() for kind in _FACT_STREAM_CONTRACT_KINDS}
+    for name in exports:
+        if name in runtime_error_classes:
+            categorized["errors"].add(name)
+        elif name.startswith(("Query", "Read")) and name.endswith("V1"):
+            categorized["queries"].add(name)
+        elif name.endswith("CommandV1"):
+            categorized["commands"].add(name)
+        elif "Event" in name and name.endswith("V1"):
+            categorized["events"].add(name)
+        else:
+            categorized["results"].add(name)
+    return frozenset(exports), {kind: frozenset(values) for kind, values in categorized.items()}
+
+
+def _readme_contract_projection(path: Path) -> dict[str, frozenset[str]] | None:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    contracts: dict[str, set[str]] = {kind: set() for kind in _FACT_STREAM_CONTRACT_KINDS}
+    active_kind: str | None = None
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.startswith("##"):
+            active_kind = None
+            continue
+        if stripped.startswith("- ") and stripped.endswith(":"):
+            candidate = stripped[2:-1].strip()
+            active_kind = candidate if candidate in contracts else None
+            continue
+        if active_kind is None or not stripped.startswith("- "):
+            continue
+        value = stripped[2:].strip().strip("`")
+        if value:
+            contracts[active_kind].add(value)
+    if not all(contracts.values()):
+        return None
+    return {kind: frozenset(values) for kind, values in contracts.items()}
+
+
+def _readme_public_surface(path: Path) -> tuple[str, ...] | None:
+    """Parse the exact public export list from the README's dedicated section."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    exports: list[str] = []
+    in_surface = False
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.startswith("## "):
+            if in_surface:
+                break
+            in_surface = stripped == "## Public Surface"
+            continue
+        if not in_surface:
+            continue
+        if not stripped:
+            continue
+        if not stripped.startswith("- `") or not stripped.endswith("`"):
+            return None
+        export = stripped[3:-1].strip()
+        if not export:
+            return None
+        exports.append(export)
+    return tuple(exports) if exports else None
+
+
+def _check_fact_stream_contract_projection(
+    *,
+    artifact: str,
+    path: str,
+    projection: dict[str, frozenset[str]] | None,
+    contract_exports: frozenset[str],
+    expected_contracts: dict[str, frozenset[str]],
+    issues: list[GovernanceIssue],
+) -> None:
+    if projection is None:
+        _fact_stream_issue(
+            issues,
+            path=path,
+            message=f"FactStream {artifact} contract projection is missing or malformed.",
+        )
+        return
+    for kind in _FACT_STREAM_CONTRACT_KINDS:
+        declared = projection.get(kind, frozenset())
+        nonexistent = declared - contract_exports
+        if nonexistent:
+            _fact_stream_issue(
+                issues,
+                path=path,
+                message=(
+                    f"FactStream {artifact} declares nonexistent {kind}: "
+                    + ", ".join(sorted(nonexistent))
+                ),
+            )
+        missing = expected_contracts[kind] - declared
+        extra = declared - expected_contracts[kind]
+        if missing or extra:
+            details: list[str] = []
+            if missing:
+                details.append("missing=" + ", ".join(sorted(missing)))
+            if extra:
+                details.append("unexpected=" + ", ".join(sorted(extra)))
+            _fact_stream_issue(
+                issues,
+                path=path,
+                message=f"FactStream {artifact} {kind} drift: " + "; ".join(details),
+            )
+
+
+def _check_fact_stream_metadata_set(
+    *,
+    artifact: str,
+    path: str,
+    payload: dict[str, Any],
+    field: str,
+    expected: frozenset[str],
+    issues: list[GovernanceIssue],
+) -> None:
+    actual = _mapping_string_set(payload, field=field)
+    if actual is None:
+        _fact_stream_issue(
+            issues,
+            path=path,
+            message=f"FactStream {artifact} {field} must be a non-empty string list.",
+        )
+        return
+    missing = expected - actual
+    extra = actual - expected
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append("missing=" + ", ".join(sorted(missing)))
+        if extra:
+            details.append("unexpected=" + ", ".join(sorted(extra)))
+        _fact_stream_issue(
+            issues,
+            path=path,
+            message=f"FactStream {artifact} {field} drift: " + "; ".join(details),
+        )
+
+
+def _check_fact_stream_public_surface_projection(
+    *,
+    artifact: str,
+    path: str,
+    projection: tuple[str, ...] | None,
+    expected_exports: tuple[str, ...],
+    issues: list[GovernanceIssue],
+) -> None:
+    """Require an ordered, exact projection of the public facade exports."""
+    if projection is None:
+        _fact_stream_issue(
+            issues,
+            path=path,
+            message=f"FactStream {artifact} public_surface.exports is missing or malformed.",
+        )
+        return
+    if projection != expected_exports:
+        _fact_stream_issue(
+            issues,
+            path=path,
+            message=f"FactStream {artifact} public_surface.exports drift from public.__all__.",
+        )
+
+
+def _check_fact_stream_surface_drift(
+    *,
+    repo_root: Path,
+    catalog_payload: dict[str, Any],
+    issues: list[GovernanceIssue],
+) -> None:
+    """Verify the Cell facade and derived FactStream governance projections.
+
+    This check intentionally parses Python exports plus YAML/JSON/Markdown
+    structures. It does not use repository-wide keyword matching, so prose or
+    unrelated type names cannot create a false positive.
+    """
+    root_path = repo_root / _FACT_STREAM_ROOT_REL
+    public_path = repo_root / _FACT_STREAM_PUBLIC_REL
+    contracts_path = repo_root / _FACT_STREAM_CONTRACTS_REL
+    manifest_path = repo_root / _FACT_STREAM_MANIFEST_REL
+    readme_path = repo_root / _FACT_STREAM_README_REL
+    context_path = repo_root / _FACT_STREAM_CONTEXT_PACK_REL
+
+    public_tree = _parse_python_module(public_path)
+    root_tree = _parse_python_module(root_path)
+    public_exports = _literal_string_sequence(public_tree, "__all__") if public_tree else None
+    root_exports = _literal_string_sequence(root_tree, "__all__") if root_tree else None
+    if public_exports is None or root_exports is None:
+        _fact_stream_issue(
+            issues,
+            path=_FACT_STREAM_ROOT_REL,
+            message="FactStream root or public facade has no literal string __all__ surface.",
+        )
+    else:
+        expected_export_set = frozenset(public_exports)
+        actual_exports = frozenset(root_exports)
+        missing = expected_export_set - actual_exports
+        extra = actual_exports - expected_export_set
+        if missing or extra or tuple(root_exports) != tuple(public_exports):
+            details: list[str] = []
+            if missing:
+                details.append("missing=" + ", ".join(sorted(missing)))
+            if extra:
+                details.append("unexpected=" + ", ".join(sorted(extra)))
+            if not missing and not extra:
+                details.append("export order differs from public.__all__")
+            _fact_stream_issue(
+                issues,
+                path=_FACT_STREAM_ROOT_REL,
+                message="FactStream root facade drift: " + "; ".join(details),
+            )
+        imported_from_public: set[str] = set()
+        unexpected_root_imports: list[str] = []
+        if root_tree is not None:
+            for node in root_tree.body:
+                if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module == "public":
+                    for alias in node.names:
+                        if alias.name != "*":
+                            imported_from_public.add(alias.asname or alias.name)
+                    continue
+                if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "__future__":
+                    continue
+                if isinstance(node, ast.Import):
+                    unexpected_root_imports.extend(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom):
+                    module = "." * node.level + str(node.module or "")
+                    unexpected_root_imports.append(module)
+        if imported_from_public != expected_export_set:
+            _fact_stream_issue(
+                issues,
+                path=_FACT_STREAM_ROOT_REL,
+                message="FactStream root imports do not exactly re-export public.__all__.",
+            )
+        if unexpected_root_imports:
+            _fact_stream_issue(
+                issues,
+                path=_FACT_STREAM_ROOT_REL,
+                message=(
+                    "FactStream root imports outside the public facade: "
+                    + ", ".join(sorted(unexpected_root_imports))
+                ),
+            )
+
+    if public_exports is None:
+        expected_public_exports: tuple[str, ...] = ()
+    else:
+        expected_public_exports = tuple(public_exports)
+        if len(expected_public_exports) != _FACT_STREAM_PUBLIC_EXPORT_COUNT:
+            _fact_stream_issue(
+                issues,
+                path=_FACT_STREAM_PUBLIC_REL,
+                message=(
+                    "FactStream public facade must expose exactly "
+                    f"{_FACT_STREAM_PUBLIC_EXPORT_COUNT} names, found {len(expected_public_exports)}."
+                ),
+            )
+
+    contract_surface = _fact_stream_contract_exports(contracts_path)
+    if contract_surface is None:
+        _fact_stream_issue(
+            issues,
+            path=_FACT_STREAM_CONTRACTS_REL,
+            message="FactStream contracts module has no literal public contract __all__ surface.",
+        )
+        return
+    contract_exports, expected_contracts = contract_surface
+
+    try:
+        manifest_payload = _read_yaml(manifest_path)
+    except (OSError, yaml.YAMLError):
+        manifest_payload = None
+    context_payload: Any
+    try:
+        context_payload = json.loads(context_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        context_payload = None
+    catalog_cell = next(
+        (
+            item
+            for item in catalog_payload.get("cells", [])
+            if isinstance(item, dict) and item.get("id") == _FACT_STREAM_CELL_ID
+        ),
+        None,
+    )
+
+    artifacts = (
+        ("manifest", _FACT_STREAM_MANIFEST_REL, manifest_payload),
+        ("catalog", "docs/graph/catalog/cells.yaml", catalog_cell),
+        ("context pack", _FACT_STREAM_CONTEXT_PACK_REL, context_payload),
+    )
+    for artifact, path, payload in artifacts:
+        if not isinstance(payload, dict):
+            _fact_stream_issue(
+                issues,
+                path=path,
+                message=f"FactStream {artifact} is missing or malformed.",
+            )
+            continue
+        public_surface_payload = payload.get("public_surface")
+        public_projection = None
+        if isinstance(public_surface_payload, dict):
+            public_projection = _mapping_string_sequence(public_surface_payload, field="exports")
+        _check_fact_stream_public_surface_projection(
+            artifact=artifact,
+            path=path,
+            projection=public_projection,
+            expected_exports=expected_public_exports,
+            issues=issues,
+        )
+        contracts_payload = payload.get("public_contracts")
+        projection = None
+        if isinstance(contracts_payload, dict):
+            projection = {
+                kind: _mapping_string_set(contracts_payload, field=kind) or frozenset()
+                for kind in _FACT_STREAM_CONTRACT_KINDS
+            }
+        _check_fact_stream_contract_projection(
+            artifact=artifact,
+            path=path,
+            projection=projection,
+            contract_exports=contract_exports,
+            expected_contracts=expected_contracts,
+            issues=issues,
+        )
+        _check_fact_stream_metadata_set(
+            artifact=artifact,
+            path=path,
+            payload=payload,
+            field="owned_paths",
+            expected=_FACT_STREAM_OWNED_PATHS,
+            issues=issues,
+        )
+        _check_fact_stream_metadata_set(
+            artifact=artifact,
+            path=path,
+            payload=payload,
+            field="effects_allowed",
+            expected=_FACT_STREAM_REQUIRED_EFFECTS,
+            issues=issues,
+        )
+
+    if isinstance(manifest_payload, dict):
+        _check_fact_stream_metadata_set(
+            artifact="manifest",
+            path=_FACT_STREAM_MANIFEST_REL,
+            payload=manifest_payload,
+            field="current_modules",
+            expected=_FACT_STREAM_PUBLIC_MODULES,
+            issues=issues,
+        )
+        _check_fact_stream_metadata_set(
+            artifact="manifest",
+            path=_FACT_STREAM_MANIFEST_REL,
+            payload=manifest_payload,
+            field="depends_on",
+            expected=frozenset(),
+            issues=issues,
+        )
+    if isinstance(catalog_cell, dict):
+        _check_fact_stream_metadata_set(
+            artifact="catalog",
+            path="docs/graph/catalog/cells.yaml",
+            payload=catalog_cell,
+            field="current_modules",
+            expected=_FACT_STREAM_PUBLIC_MODULES,
+            issues=issues,
+        )
+        _check_fact_stream_metadata_set(
+            artifact="catalog",
+            path="docs/graph/catalog/cells.yaml",
+            payload=catalog_cell,
+            field="depends_on",
+            expected=frozenset(),
+            issues=issues,
+        )
+    if isinstance(context_payload, dict):
+        _check_fact_stream_metadata_set(
+            artifact="context pack",
+            path=_FACT_STREAM_CONTEXT_PACK_REL,
+            payload=context_payload,
+            field="neighbors",
+            expected=frozenset(),
+            issues=issues,
+        )
+
+    _check_fact_stream_contract_projection(
+        artifact="README",
+        path=_FACT_STREAM_README_REL,
+        projection=_readme_contract_projection(readme_path),
+        contract_exports=contract_exports,
+        expected_contracts=expected_contracts,
+        issues=issues,
+    )
+    _check_fact_stream_public_surface_projection(
+        artifact="README",
+        path=_FACT_STREAM_README_REL,
+        projection=_readme_public_surface(readme_path),
+        expected_exports=expected_public_exports,
+        issues=issues,
+    )
 
 
 def _iter_rule_targets(repo_root: Path, pattern: str) -> list[Path]:
@@ -513,6 +1036,7 @@ def _validate_schema_targets(
                     )
                 )
                 continue
+            payload = _legacy_schema_compatible_payload(repo_root=repo_root, target=target, payload=payload)
             for error in sorted(validator.iter_errors(payload), key=lambda item: list(item.path)):
                 path_token = ".".join(str(item) for item in error.path)
                 message = f"{error.message}"
@@ -526,6 +1050,37 @@ def _validate_schema_targets(
                         path=_repo_relative_path(repo_root, target),
                     )
                 )
+
+
+def _legacy_schema_compatible_payload(*, repo_root: Path, target: Path, payload: Any) -> Any:
+    """Hide the FactStream-only surface extension from pre-extension schemas.
+
+    ``public_surface`` is validated more strictly by the dedicated FactStream
+    governance rule below. The shared catalog schemas predate that additive
+    metadata field, so this compatibility projection preserves their existing
+    constraints without weakening validation for any other Cell or field.
+    """
+    target_rel = _repo_relative_path(repo_root, target)
+    if target_rel == _FACT_STREAM_MANIFEST_REL and isinstance(payload, dict):
+        projected = dict(payload)
+        projected.pop("public_surface", None)
+        return projected
+    if target_rel != "docs/graph/catalog/cells.yaml" or not isinstance(payload, dict):
+        return payload
+    cells = payload.get("cells")
+    if not isinstance(cells, list):
+        return payload
+    projected_cells: list[Any] = []
+    for cell in cells:
+        if isinstance(cell, dict) and cell.get("id") == _FACT_STREAM_CELL_ID:
+            projected_cell = dict(cell)
+            projected_cell.pop("public_surface", None)
+            projected_cells.append(projected_cell)
+        else:
+            projected_cells.append(cell)
+    projected_payload = dict(payload)
+    projected_payload["cells"] = projected_cells
+    return projected_payload
 
 
 def _check_owned_path_overlaps(
@@ -725,6 +1280,22 @@ def _cycle_fingerprint(component: tuple[str, ...]) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+def _internal_component_edges(
+    graph: dict[str, tuple[str, ...]],
+    members: Iterable[str],
+) -> tuple[str, ...]:
+    """Return sorted ``source -> target`` edges whose endpoints share one SCC."""
+    member_set = frozenset(members)
+    return tuple(
+        sorted(
+            f"{source} -> {target}"
+            for source in member_set
+            for target in graph.get(source, ())
+            if target in member_set
+        )
+    )
+
+
 def _load_cycle_allowlist(repo_root: Path) -> set[str]:
     """Load the frozen set of allowlisted cycle fingerprints.
 
@@ -754,30 +1325,80 @@ def _load_cycle_allowlist(repo_root: Path) -> set[str]:
     return fingerprints
 
 
+def _load_cycle_allowlist_baselines(repo_root: Path) -> tuple[CycleAllowlistBaseline, ...]:
+    """Load structurally valid SCC baselines with their frozen internal edges.
+
+    Missing, malformed, or edge-incomplete entries are omitted deliberately.
+    The cycle gate then treats the affected observed SCC as new, which keeps the
+    allowlist fail-closed instead of silently accepting an underspecified baseline.
+    """
+    allowlist_path = repo_root / _CYCLE_ALLOWLIST_REL
+    if not allowlist_path.is_file():
+        return ()
+    try:
+        payload = yaml.safe_load(allowlist_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return ()
+    if not isinstance(payload, dict) or not isinstance(payload.get("cycles"), list):
+        return ()
+
+    baselines: list[CycleAllowlistBaseline] = []
+    for entry in payload["cycles"]:
+        if not isinstance(entry, dict):
+            continue
+        raw_members = entry.get("members")
+        raw_edges = entry.get("edges")
+        if not isinstance(raw_members, list) or not isinstance(raw_edges, list):
+            continue
+        members = frozenset(str(member).strip() for member in raw_members if str(member).strip())
+        edges = tuple(str(edge).strip() for edge in raw_edges if isinstance(edge, str) and edge.strip())
+        if len(members) <= 1 or not edges or len(edges) != len(set(edges)):
+            continue
+        valid_edges = True
+        for edge in edges:
+            source, separator, target = edge.partition(" -> ")
+            if not separator or not source or not target or source not in members or target not in members:
+                valid_edges = False
+                break
+        if valid_edges:
+            baselines.append(CycleAllowlistBaseline(members=members, internal_edges=frozenset(edges)))
+    return tuple(baselines)
+
+
 def _check_no_new_cross_cell_cycle(
     *,
     repo_root: Path,
     cells: Iterable[CatalogCell],
     issues: list[GovernanceIssue],
 ) -> None:
-    """Fail on dependency cycles that are NEW relative to the frozen allowlist.
-
-    This is a preventive enhancement: the catalog today contains many declared cycles,
-    so all currently-known cycles are seeded into the allowlist and pass. Only a cycle
-    whose fingerprint is absent from the allowlist (a newly introduced cycle, or an
-    existing cycle that has pulled in a new cell) is reported and counted as a new issue.
-    """
-    components = _strongly_connected_components(_build_depends_on_graph(cells))
-    allowlist = _load_cycle_allowlist(repo_root)
+    """Fail when an observed SCC exceeds its members-and-edges baseline."""
+    graph = _build_depends_on_graph(cells)
+    components = _strongly_connected_components(graph)
+    baselines = _load_cycle_allowlist_baselines(repo_root)
     for component in components:
-        if _cycle_fingerprint(component) in allowlist:
+        component_members = frozenset(component)
+        observed_edges = frozenset(_internal_component_edges(graph, component_members))
+        matching_member_baselines = tuple(
+            baseline for baseline in baselines if component_members <= baseline.members
+        )
+        if any(observed_edges <= baseline.internal_edges for baseline in matching_member_baselines):
             continue
+        if matching_member_baselines:
+            allowed_edges = frozenset().union(
+                *(baseline.internal_edges for baseline in matching_member_baselines)
+            )
+            unexpected_edges = sorted(observed_edges - allowed_edges)
+            reason = "new internal edge(s): " + ", ".join(unexpected_edges)
+        else:
+            reason = "members are not a subset of any baseline SCC"
         issues.append(
             GovernanceIssue(
                 rule_id=_RULE_NO_NEW_CROSS_CELL_CYCLE,
                 severity=_SEVERITY_HIGH,
                 message=(
-                    "New cross-cell dependency cycle not present in the allowlist: "
+                    "Cross-cell dependency cycle exceeds the allowlist baseline ("
+                    + reason
+                    + "): "
                     + " -> ".join(component)
                     + ". Break the cycle or, if intentional, add it to "
                     + _CYCLE_ALLOWLIST_REL
@@ -815,7 +1436,7 @@ def _check_declared_cell_dependencies(
         except (OSError, SyntaxError, ValueError) as exc:
             issues.append(
                 GovernanceIssue(
-                    rule_id="declared_cell_dependencies_match_imports",
+                    rule_id=_RULE_DECLARED_CELL_DEPENDENCIES_MATCH_IMPORTS,
                     severity=_SEVERITY_HIGH,
                     message=f"Failed to parse python source: {exc}",
                     path=rel_path,
@@ -842,7 +1463,7 @@ def _check_declared_cell_dependencies(
             continue
         issues.append(
             GovernanceIssue(
-                rule_id="declared_cell_dependencies_match_imports",
+                rule_id=_RULE_DECLARED_CELL_DEPENDENCIES_MATCH_IMPORTS,
                 severity=_SEVERITY_HIGH,
                 message=(f"{source_cell_id} imports {target_cell_id} but does not declare it in depends_on"),
                 path=rel_path,
@@ -1048,18 +1669,21 @@ def _write_cycle_allowlist(repo_root: Path, cells: Iterable[CatalogCell]) -> Non
     treats them as known and passes. Use this only after a deliberate, reviewed decision
     to accept the listed cycles.
     """
-    components = _strongly_connected_components(_build_depends_on_graph(cells))
+    graph = _build_depends_on_graph(cells)
+    components = _strongly_connected_components(graph)
     lines = [
         "# Allowlist of cross-cell dependency cycles known to cells.yaml.",
         "# Regenerate with: run_catalog_governance_gate.py --write-cycle-allowlist <path>",
-        "# Each entry freezes one strongly connected component (a cycle) so the",
-        "# no_new_cross_cell_cycle rule fails only on cycles introduced after this snapshot.",
+        "# Each entry freezes one SCC's members and exact internal directed edges. The",
+        "# no_new_cross_cell_cycle rule permits only member and edge subsets of this snapshot.",
         "cycles:",
     ]
     for component in components:
         lines.append(f"  - fingerprint: {_cycle_fingerprint(component)}")
         members = ", ".join(component)
         lines.append(f"    members: [{members}]")
+        edges = ", ".join(_internal_component_edges(graph, component))
+        lines.append(f"    edges: [{edges}]")
     allowlist_path = repo_root / _CYCLE_ALLOWLIST_REL
     allowlist_path.parent.mkdir(parents=True, exist_ok=True)
     allowlist_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1147,6 +1771,12 @@ def run_governance_gate(
     _check_declared_cell_dependencies(repo_root=repo_root, cells=cells, issues=issues)
     _check_no_new_cross_cell_cycle(repo_root=repo_root, cells=cells, issues=issues)
     _check_critical_subgraphs(repo_root=repo_root, issues=issues)
+    if isinstance(catalog_payload, dict):
+        _check_fact_stream_surface_drift(
+            repo_root=repo_root,
+            catalog_payload=catalog_payload,
+            issues=issues,
+        )
     _check_undeclared_effects(
         repo_root=repo_root,
         file_owners=file_owners,

@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn, cast
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleSessionCommandV1,
@@ -13,8 +19,25 @@ from polaris.cells.roles.runtime.public.contracts import (
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.roles.session.internal.conversation import Base
 from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
+from polaris.cells.runtime.task_runtime.public import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+
+def _bootstrap_task_runtime_fact_stream(workspace: Path) -> None:
+    """Establish the static FactStream authority required by TaskRuntime event I/O."""
+
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            maintenance_reason="roles-runtime-host-session-continuity-test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
 
 
 class TestRoleRuntimeServiceHostContinuity:
@@ -306,11 +329,14 @@ def test_cognitive_runtime_shadow_artifacts_degrade_when_handoff_store_uninitial
 
 
 @pytest.mark.asyncio
-async def test_execute_role_task_emits_cognitive_runtime_shadow_receipt(monkeypatch) -> None:
+async def test_execute_role_task_emits_cognitive_runtime_shadow_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     class _FakeKernel:
         async def run(self, role: str, request):
             assert role == "director"
-            assert str(request.task_id or "") == "task-1"
+            assert str(request.task_id or "") == "task-shadow-receipt-1"
             return RoleTurnResult(
                 content="Task execution finished.",
                 tool_calls=[{"name": "apply_patch"}],
@@ -353,7 +379,7 @@ async def test_execute_role_task_emits_cognitive_runtime_shadow_receipt(monkeypa
                         "lease_id": "lease-1",
                         "validation_id": "validation-1",
                         "role": "director",
-                        "task_id": "task-1",
+                        "task_id": "task-shadow-receipt-1",
                     },
                 },
             )
@@ -367,24 +393,83 @@ async def test_execute_role_task_emits_cognitive_runtime_shadow_receipt(monkeypa
         lambda **kwargs: shadow_calls.append(dict(kwargs)),
     )
 
-    result = await runtime.execute_role_task(
-        ExecuteRoleTaskCommandV1(
-            role="director",
-            task_id="task-1",
-            workspace="C:/repo",
-            objective="Finish the governed task",
-            run_id="run-1",
-            session_id="session-1",
-        )
+    workspace = str(tmp_path)
+    _bootstrap_task_runtime_fact_stream(tmp_path)
+    task_runtime = TaskRuntimeService(workspace)
+    task_row = task_runtime.ensure_task_row(
+        external_task_id="task-shadow-receipt-1",
+        subject="Cognitive runtime shadow receipt",
+        description="Verify roles.runtime shadow receipt emission from a canonical task attempt.",
     )
+    runtime_task_id = task_runtime.normalize_task_id(task_row["id"])
+    assert runtime_task_id is not None
+    claim = task_runtime.claim_execution(
+        runtime_task_id,
+        worker_id="director-shadow-receipt-worker",
+        role_id="director",
+        run_id="run-shadow-receipt-1",
+        external_task_id="task-shadow-receipt-1",
+    )
+    assert claim["success"] is True
+    identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(claim["execution_attempt"])
 
-    assert result.ok is True
-    assert result.status == "ok"
-    assert len(shadow_calls) == 1
-    assert shadow_calls[0]["source"] == "roles.runtime.execute_role_task"
-    assert shadow_calls[0]["task_id"] == "task-1"
-    assert shadow_calls[0]["run_id"] == "run-1"
-    assert result.metadata["turn_envelope"]["turn_id"] == "turn-task-1"
+    assert identity.workspace == workspace
+    assert identity.task_id == runtime_task_id
+    assert identity.external_task_id == "task-shadow-receipt-1"
+    assert identity.role_id == "director"
+    assert identity.run_id == "run-shadow-receipt-1"
+
+    settled = False
+    try:
+        command = ExecuteRoleTaskCommandV1(
+            role=identity.role_id,
+            task_id=identity.external_task_id,
+            workspace=identity.workspace,
+            objective="Finish the governed task",
+            run_id=identity.run_id,
+            session_id=identity.session_id,
+            execution_attempt=identity,
+        )
+        assert command.workspace == identity.workspace
+        assert command.task_id == identity.external_task_id
+        assert command.run_id == identity.run_id
+        assert command.role == identity.role_id
+        assert command.session_id == identity.session_id
+
+        result = await runtime.execute_role_task(command)
+
+        assert result.ok is True
+        assert result.status == "ok"
+        assert len(shadow_calls) == 1
+        assert shadow_calls[0]["source"] == "roles.runtime.execute_role_task"
+        assert shadow_calls[0]["workspace"] == identity.workspace
+        assert shadow_calls[0]["role"] == identity.role_id
+        assert shadow_calls[0]["task_id"] == identity.external_task_id
+        assert shadow_calls[0]["session_id"] == identity.session_id
+        assert shadow_calls[0]["run_id"] == identity.run_id
+        assert result.metadata["turn_envelope"]["turn_id"] == "turn-task-1"
+
+        completion = task_runtime.settle_execution_attempt(
+            SettleTaskRuntimeExecutionAttemptCommandV1(
+                workspace=identity.workspace,
+                identity=identity,
+                outcome="completed",
+                summary="Cognitive runtime shadow receipt emitted.",
+            )
+        )
+        assert completion["success"] is True
+        settled = True
+    finally:
+        if not settled:
+            failure = task_runtime.settle_execution_attempt(
+                SettleTaskRuntimeExecutionAttemptCommandV1(
+                    workspace=identity.workspace,
+                    identity=identity,
+                    outcome="failed",
+                    summary="Test execution did not reach canonical completion.",
+                )
+            )
+            assert failure["success"] is True
 
 
 def test_emit_cognitive_runtime_shadow_artifacts_respects_mode_off(monkeypatch) -> None:

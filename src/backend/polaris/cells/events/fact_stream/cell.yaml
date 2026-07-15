@@ -4,54 +4,100 @@ kind: capability
 visibility: public
 stateful: true
 owner: observability
-purpose: 'Provide append-only runtime fact stream ingestion, Nats-JetStream publication,
-  and query infrastructure for PM, Director, QA and realtime projection consumers.
-
-  '
+purpose: >
+  Provide strict append-only FactStream facts, guarded snapshots, explicit lock
+  authority maintenance, and bounded per-stream queries.
 current_modules:
-- polaris.cells.events.fact_stream.public.contracts
+  - polaris.cells.events.fact_stream.public
+  - polaris.cells.events.fact_stream.public.catalog
+  - polaris.cells.events.fact_stream.public.contracts
+  - polaris.cells.events.fact_stream.public.service
+  - polaris.cells.events.fact_stream.public.workspace_bootstrap
 tags: []
 owned_paths:
-- polaris/kernelone/events/**
-- polaris/infrastructure/log_pipeline/**
-- polaris/infrastructure/messaging/nats/**
+  - polaris/cells/events/fact_stream/**
+public_surface:
+  exports:
+    - AppendFactEventCommandV1
+    - AppendIfGuardedSnapshotCommandV1
+    - BootstrapFactStreamWorkspaceCommandV1
+    - EnrollFactStreamStreamsCommandV1
+    - FactEventAppendedV1
+    - FactStreamError
+    - FactStreamHeadV1
+    - FactStreamLockIdentityV1
+    - FactStreamLockKeyEvidenceV1
+    - FactStreamMaintenanceProofV1
+    - FactStreamMaintenanceReceiptV1
+    - FactStreamProvenanceV1
+    - FactStreamQueryResultV1
+    - GuardedFactAppendedV1
+    - GuardedFactEventV1
+    - GuardedFactSnapshotProofV1
+    - GuardedFactSnapshotV1
+    - ProvisionFactStreamLockAuthorityCommandV1
+    - QueryFactEventsV1
+    - QueryFactStreamHeadV1
+    - ReadGuardedFactSnapshotCommandV1
+    - append_fact_event
+    - append_if_guarded_snapshot
+    - bootstrap_fact_stream_workspace
+    - configure_debug_tracing
+    - emit_debug_event
+    - enroll_fact_stream_streams
+    - fact_stream_bootstrap_streams
+    - install_global_debug_hooks
+    - is_debug_tracing_enabled
+    - log_stream_token
+    - provision_fact_stream_lock_authority
+    - query_fact_events
+    - query_fact_stream_head
+    - read_guarded_fact_snapshot
+    - sanitize_headers
+    - set_debug_tracing_enabled
 public_contracts:
   modules:
-  - polaris.cells.events.fact_stream.public.contracts
+    - polaris.cells.events.fact_stream.public.contracts
   commands:
-  - AppendFactEventCommandV1
+    - AppendFactEventCommandV1
+    - AppendIfGuardedSnapshotCommandV1
+    - BootstrapFactStreamWorkspaceCommandV1
+    - EnrollFactStreamStreamsCommandV1
+    - ProvisionFactStreamLockAuthorityCommandV1
   queries:
-  - QueryFactEventsV1
+    - QueryFactEventsV1
+    - QueryFactStreamHeadV1
+    - ReadGuardedFactSnapshotCommandV1
   events:
-  - FactEventAppendedV1
+    - FactEventAppendedV1
+    - GuardedFactEventV1
   results:
-  - FactStreamQueryResultV1
+    - FactStreamHeadV1
+    - FactStreamMaintenanceReceiptV1
+    - FactStreamProvenanceV1
+    - FactStreamQueryResultV1
+    - GuardedFactAppendedV1
+    - GuardedFactSnapshotProofV1
+    - GuardedFactSnapshotV1
   errors:
-  - FactStreamErrorV1
-depends_on:
-- policy.workspace_guard
-- audit.evidence
-- runtime.projection
+    - FactStreamError
+depends_on: []
 subgraphs:
-- execution_governance_pipeline
-- storage_archive_pipeline
+  - execution_governance_pipeline
+  - storage_archive_pipeline
 state_owners:
-- runtime/events/*
+  - runtime/events/*
 effects_allowed:
-- fs.read:runtime/events/*
-- fs.write:runtime/events/*
-- ws.outbound:runtime/*
-- process.spawn:*
-- nats.publish:hp.runtime.>
-- nats.consume:hp.runtime.>
+  - fs.read:runtime/events/*
+  - fs.write:runtime/events/*
 verification:
   tests:
-  - tests/test_realtime_single_rail_static_guard.py
-  - delivery/tests/test_ws_stream_delivery.py
-  - tests/test_runtime_ws_migration.py
+    - polaris/cells/events/fact_stream/public/tests/test_guarded_fact_append.py
+    - polaris/cells/events/fact_stream/public/tests/test_public_contracts.py
+    - polaris/cells/events/fact_stream/public/tests/test_public_service.py
+    - polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py
   gaps:
-  - Legacy process-local realtime infrastructure still exists in isolated modules
-    until a follow-up deletion plan retires remaining internal tests.
+    - DEO-1A guarded-append closure requires separate lifecycle, race, and startup evidence.
   smoke_commands: []
 generated_artifacts:
-- generated/verify.pack.json
+  - generated/context.pack.json

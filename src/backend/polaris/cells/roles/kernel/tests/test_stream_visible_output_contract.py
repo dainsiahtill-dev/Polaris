@@ -70,6 +70,7 @@ def _make_request(message: str = "阅读并总结项目") -> RoleTurnRequest:
         message=message,
         history=[],
         context_override={},
+        metadata={"turn_request_id": "visible-output-contract"},
     )
 
 

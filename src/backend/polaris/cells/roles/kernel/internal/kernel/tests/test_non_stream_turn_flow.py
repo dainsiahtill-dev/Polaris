@@ -164,7 +164,11 @@ def test_execute_non_stream_role_turn_calls_transaction_and_projects_success(mon
     monkeypatch.setattr(flow, "TransactionTurnExecutor", _CapturingTransactionTurnExecutor)
 
     kernel = _kernel()
-    request = RoleTurnRequest(message="hello", validate_output=False)
+    request = RoleTurnRequest(
+        message="hello",
+        validate_output=False,
+        metadata={"turn_request_id": "non-stream-success"},
+    )
     result = asyncio.run(
         flow.execute_non_stream_role_turn(
             kernel=kernel,
@@ -259,6 +263,7 @@ def test_validation_retry_uses_distinct_transaction_attempt_identity(monkeypatch
         max_retries=1,
         run_id="run-retry",
         task_id="TASK-1",
+        metadata={"turn_request_id": "non-stream-retry"},
     )
     result = asyncio.run(
         flow.execute_non_stream_role_turn(
@@ -286,6 +291,7 @@ def test_validation_retry_uses_distinct_transaction_attempt_identity(monkeypatch
                 max_retries=0,
                 run_id="run-no-retry",
                 task_id="TASK-2",
+                metadata={"turn_request_id": "non-stream-no-retry"},
             ),
         )
     )

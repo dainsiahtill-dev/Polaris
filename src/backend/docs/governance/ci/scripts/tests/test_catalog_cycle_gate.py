@@ -15,6 +15,7 @@ Test layout (AAA, mocked at the filesystem boundary via temp workspaces):
 from __future__ import annotations
 
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from docs.governance.ci.scripts.run_catalog_governance_gate import (
     _check_no_new_cross_cell_cycle,
     _cycle_fingerprint,
     _load_cycle_allowlist,
+    _load_cycle_allowlist_baselines,
     _strongly_connected_components,
     _write_cycle_allowlist,
 )
@@ -126,7 +128,7 @@ def test_cycle_fingerprint_is_order_independent() -> None:
 
 
 def test_write_then_load_allowlist_round_trip() -> None:
-    """Writing the allowlist then loading it yields the current cycle fingerprints."""
+    """Writing the allowlist freezes both the SCC members and internal edges."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Arrange
         repo_root = Path(tmpdir)
@@ -135,9 +137,13 @@ def test_write_then_load_allowlist_round_trip() -> None:
         # Act
         _write_cycle_allowlist(repo_root, cells)
         loaded = _load_cycle_allowlist(repo_root)
+        baselines = _load_cycle_allowlist_baselines(repo_root)
 
         # Assert
         assert loaded == {_cycle_fingerprint(("a", "b"))}
+        assert len(baselines) == 1
+        assert baselines[0].members == frozenset(("a", "b"))
+        assert baselines[0].internal_edges == frozenset(("a -> b", "b -> a"))
 
 
 def test_load_allowlist_missing_file_is_empty() -> None:
@@ -209,6 +215,53 @@ def test_cycle_growing_new_member_is_flagged() -> None:
         assert "c" in issues[0].message
 
 
+def test_new_shortcut_edge_inside_allowlisted_scc_is_flagged() -> None:
+    """An extra edge between existing SCC members fails even without member growth."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo_root = Path(tmpdir)
+        baseline = (
+            _cell("a", ("b",)),
+            _cell("b", ("c",)),
+            _cell("c", ("a",)),
+        )
+        _write_cycle_allowlist(repo_root, baseline)
+        with_shortcut = (
+            _cell("a", ("b", "c")),
+            _cell("b", ("c",)),
+            _cell("c", ("a",)),
+        )
+        issues: list[GovernanceIssue] = []
+
+        _check_no_new_cross_cell_cycle(repo_root=repo_root, cells=with_shortcut, issues=issues)
+
+        assert len(issues) == 1
+        assert issues[0].severity == "high"
+        assert "a -> c" in issues[0].message
+
+
+def test_allowlisted_cycle_shrinking_to_subset_is_convergence() -> None:
+    """Removing edges may split one frozen SCC without creating a new cycle."""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo_root = Path(tmpdir)
+        original = (
+            _cell("a", ("b",)),
+            _cell("b", ("a", "c")),
+            _cell("c", ("a",)),
+        )
+        _write_cycle_allowlist(repo_root, original)
+        shrunk = (
+            _cell("a", ("b",)),
+            _cell("b", ("a",)),
+            _cell("c", ()),
+        )
+        issues: list[GovernanceIssue] = []
+
+        _check_no_new_cross_cell_cycle(repo_root=repo_root, cells=shrunk, issues=issues)
+
+        assert issues == []
+
+
 # --------------------------------------------------------------------------- #
 # (a) currently-known cycles pass / (b) a new cycle fails -- REAL catalog
 # --------------------------------------------------------------------------- #
@@ -229,6 +282,40 @@ def test_real_catalog_cycles_all_allowlisted() -> None:
 
     # Assert
     assert issues == []
+
+
+def test_real_catalog_scc_rejects_new_internal_shortcut_edge() -> None:
+    """A non-baseline edge between live baseline members is a HIGH governance failure."""
+    baselines = _load_cycle_allowlist_baselines(_REPO_ROOT)
+    assert baselines, "the live catalog must provide an SCC baseline"
+    baseline = baselines[0]
+    source = ""
+    target = ""
+    for candidate_source in sorted(baseline.members):
+        for candidate_target in sorted(baseline.members):
+            edge = f"{candidate_source} -> {candidate_target}"
+            if candidate_source != candidate_target and edge not in baseline.internal_edges:
+                source = candidate_source
+                target = candidate_target
+                break
+        if source:
+            break
+    assert source and target, "the live SCC must have a non-baseline shortcut candidate"
+
+    cells = _real_catalog_cells()
+    for index, cell in enumerate(cells):
+        if cell.cell_id == source:
+            cells[index] = replace(cell, depends_on=(*cell.depends_on, target))
+            break
+    else:
+        raise AssertionError(f"live catalog is missing baseline member {source}")
+    issues: list[GovernanceIssue] = []
+
+    _check_no_new_cross_cell_cycle(repo_root=_REPO_ROOT, cells=cells, issues=issues)
+
+    assert len(issues) == 1
+    assert issues[0].severity == "high"
+    assert f"{source} -> {target}" in issues[0].message
 
 
 def test_real_catalog_plus_injected_edge_fails() -> None:

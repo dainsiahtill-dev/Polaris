@@ -61,23 +61,184 @@ def _canonical_run_ledger_projection(
     """Build the minimal authoritative projection used by taxonomy tests."""
 
     boundary_failures = [dict(item) for item in task_boundary_failures or []]
-    lifecycle_failures = {
-        str(task_key): dict(item)
-        for task_key, item in (tool_lifecycle_failures or {}).items()
-    }
+    lifecycle_failures = {str(task_key): dict(item) for task_key, item in (tool_lifecycle_failures or {}).items()}
     return {
         "schema_version": 1,
-        "source": "run_ledger_projection",
-        "available": True,
+        "source": "run_ledger",
+        "ok": not boundary_failures and not lifecycle_failures,
+        "integrity_ok": not lifecycle_failures,
+        "outcome_ok": not boundary_failures,
+        "gate_count": 1,
+        "gates": [
+            {
+                "name": "qa_verdict",
+                "stage": "qa",
+                "ok": True,
+                "summary": "QA passed",
+                "content_id": "qa-content-1",
+                "append_id": "qa-append-1",
+                "capability_ok": True,
+            }
+        ],
+        "capability": {"ok": True, "issues": []},
+        "evidence_policy": {
+            "ok": True,
+            "integrity_ok": True,
+            "outcome_ok": True,
+            "missing_required_modalities": [],
+            "failed_required_modalities": [],
+        },
         "task_boundary": {
             "ok": not boundary_failures,
+            "verdict_count": max(1, len(boundary_failures)),
             "failed": boundary_failures,
-            "latest": boundary_failures[-1] if boundary_failures else {},
+            "latest": boundary_failures[-1] if boundary_failures else {"ok": True, "status": "completed_verified"},
         },
         "tool_lifecycle": {
             "ok": not lifecycle_failures,
             "unresolved_by_task": lifecycle_failures,
         },
+    }
+
+
+def _canonical_task_runtime_projection(
+    *,
+    authoritative: bool = True,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "task_runtime.observable_task_rows_authority.v1",
+        "source": "task_runtime.execution_fact",
+        "authoritative": authoritative,
+        "degraded": not authoritative,
+        "row_count": 1,
+        "rows": [
+            {
+                "task_id": "TASK-1",
+                "status": "completed",
+                "execution_state": "completed",
+                "fact_event_seq": 1,
+                "source": "task_runtime.execution_fact",
+                "status_source": "task_runtime.execution_fact",
+            }
+        ],
+        "readiness": {"ready": authoritative, "blocking_reasons": []},
+    }
+
+
+def test_canonical_projection_requires_final_qa_event_not_legacy_artifact() -> None:
+    ledger = _canonical_run_ledger_projection()
+    ledger["gates"] = [
+        {
+            "name": "qa_exception",
+            "stage": "qa",
+            "ok": False,
+            "summary": "legacy QA exception artifact",
+            "content_id": "qa-content-legacy",
+            "append_id": "qa-append-legacy",
+            "capability_ok": True,
+        }
+    ]
+    record = {
+        "has_qa_verdict": True,
+        "run_ledger_projection": ledger,
+        "task_runtime_projection": _canonical_task_runtime_projection(),
+    }
+
+    projection = bench_gates.build_canonical_bench_projection(record)
+
+    assert projection["qa"]["authoritative"] is False
+    assert projection["execution"]["ok"] is False
+    assert projection["execution"]["reason_code"] == "qa_verdict_missing"
+    assert projection["legacy_artifacts"]["has_qa_verdict"] is True
+    assert projection["legacy_artifacts"]["authoritative"] is False
+
+
+def test_canonical_pass_does_not_require_legacy_qa_artifact() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": True,
+        "has_qa_verdict": False,
+        "run_ledger_projection": _canonical_run_ledger_projection(),
+        "task_runtime_projection": _canonical_task_runtime_projection(),
+    }
+    record["canonical_projection"] = bench_gates.build_canonical_bench_projection(record)
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert record["canonical_projection"]["execution"]["ok"] is True
+    assert taxonomy["ok"] is True
+    assert taxonomy["authoritative"] is True
+    assert taxonomy["source"] == "canonical_projection"
+
+
+def test_canonical_projection_requires_task_runtime_fact_authority() -> None:
+    record = {
+        "run_ledger_projection": _canonical_run_ledger_projection(),
+        "task_runtime_projection": _canonical_task_runtime_projection(authoritative=False),
+    }
+
+    projection = bench_gates.build_canonical_bench_projection(record)
+
+    assert projection["runtime"]["authoritative"] is False
+    assert projection["execution"]["ok"] is False
+    assert projection["execution"]["reason_code"] == "task_runtime_projection_not_authoritative"
+
+
+def test_legacy_text_cannot_change_canonical_failure_classification() -> None:
+    boundary_failure = {
+        "ok": False,
+        "status": "missing_entrypoint_target",
+        "failure_class": "MISSING_ENTRYPOINT_TARGET",
+        "responsible_layer": "task_boundary",
+        "reason": "Canonical boundary evidence",
+    }
+    base = {
+        "all_checks_passed": False,
+        "checks": [],
+        "has_plan_doc": True,
+        "has_blueprint_doc": True,
+        "has_qa_verdict": True,
+        "real_run_gate": {"ok": True},
+        "llm_route_audit": {"ok": True},
+        "run_ledger_projection": _canonical_run_ledger_projection(task_boundary_failures=[boundary_failure]),
+    }
+    poisoned = {
+        **base,
+        "has_qa_verdict": False,
+        "chain_results": {
+            "qa_ran": True,
+            "qa_passed": True,
+            "qa_reason": "integration_qa_passed and chain_clean",
+        },
+        "chain": {
+            "audit_bundle": {
+                "summary_json": "rate limit director_partial qa_failed",
+                "failure": {"detail": "workspace_switch_failed"},
+            }
+        },
+        "factory_gates": [
+            {"gate": "chain_clean", "ok": True, "detail": "legacy pass"},
+            {"gate": "integration_qa_passed", "ok": True, "detail": "legacy pass"},
+        ],
+    }
+
+    base_taxonomy = apply_factory_bench_failure_taxonomy(dict(base))
+    poisoned_record = dict(poisoned)
+    poisoned_taxonomy = apply_factory_bench_failure_taxonomy(poisoned_record)
+
+    assert poisoned_taxonomy["root_cause_signature"] == base_taxonomy["root_cause_signature"]
+    assert poisoned_taxonomy["root_cause_signature"] == "task_boundary:missing_entrypoint_target"
+    assert poisoned_taxonomy["source"] == "canonical_projection"
+    assert poisoned_taxonomy["authoritative"] is True
+    canonical_projection = poisoned_record["canonical_projection"]
+    assert isinstance(canonical_projection, dict)
+    assert canonical_projection["legacy_artifacts"] == {
+        "source": "legacy_artifact",
+        "authoritative": False,
+        "degraded": True,
+        "has_plan_doc": True,
+        "has_blueprint_doc": True,
+        "has_qa_verdict": False,
+        "chain_results": poisoned["chain_results"],
     }
 
 
@@ -622,7 +783,7 @@ def test_failure_taxonomy_reads_director_provider_timeout_from_runtime_llm_event
     assert "ConnectTimeoutError" in taxonomy["evidence"][0]
 
 
-def test_failure_taxonomy_does_not_mask_real_run_failure_when_ledger_projection_exists() -> None:
+def test_canonical_execution_failure_precedes_independent_real_run_failure() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,
         "checks": [],
@@ -674,8 +835,9 @@ def test_failure_taxonomy_does_not_mask_real_run_failure_when_ledger_projection_
 
     taxonomy = apply_factory_bench_failure_taxonomy(record)
 
-    assert taxonomy["category"] == "llm_output"
-    assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
+    assert taxonomy["category"] == "control_plane"
+    assert taxonomy["root_cause_signature"] == "control_plane:task_boundary_verdict_missing"
+    assert taxonomy["authoritative"] is True
     assert record["goal_audit"]["run_ledger"] == {"projected": 1, "total": 1, "missing": 0}
 
 
@@ -737,7 +899,7 @@ def test_failure_taxonomy_prioritizes_event_wait_timeout_over_run_ledger_project
     assert taxonomy["category"] == "runtime_environment"
     assert taxonomy["root_cause_signature"] == "runtime_environment:event_wait_runtime_v2_connection_failed"
     assert taxonomy["evidence"][0] == "received 1012 (service restart)"
-    assert taxonomy["evidence"][1].startswith("secondary_run_ledger:")
+    assert taxonomy["authoritative"] is False
 
 
 def test_failure_taxonomy_uses_chain_diagnostics_when_chain_error_missing() -> None:
@@ -1049,7 +1211,7 @@ def test_factory_bench_taxonomy_does_not_treat_ce_full_blueprint_count_as_partia
 
     assert taxonomy["category"] == "director_tool_execution"
     assert taxonomy["root_cause_signature"] == "director_tool_execution:director_materialization_failed"
-    assert "secondary_real_run_gate:real run gate failed: build_test_lint_ran" in taxonomy["evidence"]
+    assert taxonomy["authoritative"] is False
     assert record["failure_category"] == "director_tool_execution"
     assert "opencode_audit" not in record
 
@@ -3076,9 +3238,7 @@ def test_failure_taxonomy_prefers_task_boundary_dependency_before_integration_qa
     assert taxonomy["category"] == "task_boundary"
     assert taxonomy["root_cause_signature"] == "task_boundary:dependency_not_unlocked"
     assert taxonomy["evidence"] == [
-        "failure_class=dependency_not_unlocked;"
-        "responsible_layer=task_boundary;"
-        "TASK-1 did not reach completed_verified"
+        "failure_class=dependency_not_unlocked;responsible_layer=task_boundary;TASK-1 did not reach completed_verified"
     ]
 
 

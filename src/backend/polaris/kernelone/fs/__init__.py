@@ -8,8 +8,16 @@ __all__ = [
     "FileWriteReceipt",
     "KernelFileSystem",
     "KernelFileSystemAdapter",
+    "LockAuthorityBindingV1",
+    "LockFileIdentityV1",
+    "LockKeyMaintenanceProofV1",
+    "LockMaintenanceProofV1",
+    "LockedRegularFileError",
+    "LockedRegularFileSetV1",
+    "StreamLeaseV1",
     "_atomic_write_json",
     "_atomic_write_text",
+    "default_platform_lock_root",
     "format_workspace_tree",
     "get_default_adapter",
     "set_default_adapter",
@@ -40,6 +48,37 @@ def __getattr__(name: str) -> Any:
         from polaris.kernelone.fs.runtime import KernelFileSystem
 
         return KernelFileSystem
+    if name in {
+        "LockAuthorityBindingV1",
+        "LockFileIdentityV1",
+        "LockKeyMaintenanceProofV1",
+        "LockMaintenanceProofV1",
+        "LockedRegularFileError",
+        "LockedRegularFileSetV1",
+        "StreamLeaseV1",
+        "default_platform_lock_root",
+    }:
+        from polaris.kernelone.fs.locked_regular_file import (
+            LockAuthorityBindingV1,
+            LockedRegularFileError,
+            LockedRegularFileSetV1,
+            LockFileIdentityV1,
+            LockKeyMaintenanceProofV1,
+            LockMaintenanceProofV1,
+            StreamLeaseV1,
+            default_platform_lock_root,
+        )
+
+        return {
+            "LockAuthorityBindingV1": LockAuthorityBindingV1,
+            "LockFileIdentityV1": LockFileIdentityV1,
+            "LockKeyMaintenanceProofV1": LockKeyMaintenanceProofV1,
+            "LockMaintenanceProofV1": LockMaintenanceProofV1,
+            "LockedRegularFileError": LockedRegularFileError,
+            "LockedRegularFileSetV1": LockedRegularFileSetV1,
+            "StreamLeaseV1": StreamLeaseV1,
+            "default_platform_lock_root": default_platform_lock_root,
+        }[name]
     if name == "format_workspace_tree":
         from polaris.kernelone.fs.tree import format_workspace_tree
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any, Literal
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.cells.director.tasking.public.service import (
@@ -35,9 +37,13 @@ from ..internal.tech_debt import TechDebtLedger, build_tech_debt_event
 from ..internal.tech_radar import TechRadarLedger, build_tech_radar_event
 from .contracts import (
     ADRRecordV1,
+    BuildChiefEngineerBlueprintPortfolioCommandV1,
     CeHandoffDecisionBindingsV1,
     CeHandoffDecisionV1,
     ChiefEngineerBlueprintErrorV1,
+    ChiefEngineerBlueprintPortfolioV1,
+    ChiefEngineerPortfolioTaskV1,
+    ChiefEngineerProjectInterfaceContractV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
     GovernanceSummaryV1,
@@ -152,7 +158,8 @@ def _blueprint_path(blueprint_id: str) -> str:
     return f"runtime/blueprints/{blueprint_id}.json"
 
 
-_BLUEPRINT_HASH_IGNORED_KEYS = frozenset({"blueprint_hash", "job_token", "capability_token"})
+_BLUEPRINT_HASH_IGNORED_KEYS = frozenset({"blueprint_hash", "capability_token", "job_token"})
+_PORTFOLIO_HASH_IGNORED_KEYS = _BLUEPRINT_HASH_IGNORED_KEYS | {"portfolio_hash"}
 
 
 def _hashable_blueprint_payload(value: Any) -> Any:
@@ -169,6 +176,24 @@ def _hashable_blueprint_payload(value: Any) -> Any:
 
 def _blueprint_hash(payload: dict[str, Any]) -> str:
     return stable_hash(_hashable_blueprint_payload(payload))
+
+
+def _hashable_portfolio_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _hashable_portfolio_payload(item)
+            for key, item in value.items()
+            if str(key) not in _PORTFOLIO_HASH_IGNORED_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_hashable_portfolio_payload(item) for item in value]
+    return value
+
+
+def _portfolio_hash(payload: Mapping[str, Any]) -> str:
+    """Hash canonical portfolio content without self-referential hash fields."""
+
+    return stable_hash(_hashable_portfolio_payload(dict(payload)))
 
 
 def _string_list(value: Any) -> list[str]:
@@ -1264,6 +1289,916 @@ def _latest_blueprint_for_task(
     return blueprint_id, payload
 
 
+@dataclass(frozen=True)
+class _PortfolioLlmBlueprint:
+    shared_plan: dict[str, Any]
+    task_plans: dict[str, dict[str, Any]]
+    scope_paths: tuple[str, ...]
+    scope_rejections: tuple[dict[str, str], ...]
+    risk_flags: tuple[str, ...]
+    provider_declarations: tuple[dict[str, Any], ...]
+    consumer_declarations: tuple[dict[str, Any], ...]
+    consumed: bool
+
+
+def _portfolio_contract_error(
+    message: str,
+    *,
+    code: str = "invalid_blueprint_portfolio_input",
+    details: Mapping[str, Any] | None = None,
+) -> ChiefEngineerBlueprintErrorV1:
+    return ChiefEngineerBlueprintErrorV1(message, code=code, details=details)
+
+
+def _portfolio_array(value: Any, *, field_name: str) -> list[Any]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise _portfolio_contract_error(
+            f"{field_name} must be a JSON array",
+            details={"field": field_name, "actual_type": type(value).__name__},
+        )
+    return list(value)
+
+
+def _portfolio_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise _portfolio_contract_error(
+            f"{field_name} must be a JSON object",
+            details={"field": field_name, "actual_type": type(value).__name__},
+        )
+
+    result: dict[str, Any] = {}
+    for raw_key, item in value.items():
+        key = str(raw_key).strip()
+        if not key:
+            raise _portfolio_contract_error(
+                f"{field_name} contains an empty object key",
+                details={"field": field_name},
+            )
+        if key in result:
+            raise _portfolio_contract_error(
+                f"{field_name} contains duplicate normalized key {key!r}",
+                details={"field": field_name, "key": key},
+            )
+        result[key] = item
+    return result
+
+
+def _normalize_portfolio_advisory_path(value: str) -> tuple[str, str]:
+    token = str(value).strip()
+    if not token:
+        return "", "empty_path"
+    if "\x00" in token:
+        return "", "null_byte"
+    if "://" in token:
+        return "", "uri_not_workspace_path"
+    if token.startswith("~"):
+        return "", "home_expansion_not_allowed"
+
+    windows_path = PureWindowsPath(token)
+    path = PurePosixPath(token.replace("\\", "/"))
+    if windows_path.drive or windows_path.root or path.is_absolute():
+        return "", "absolute_path_not_allowed"
+    if any(part == ".." for part in path.parts):
+        return "", "parent_traversal_not_allowed"
+
+    parts = tuple(part for part in path.parts if part not in {"", "."})
+    if not parts:
+        return "", "workspace_root_not_allowed"
+    return PurePosixPath(*parts).as_posix(), ""
+
+
+def _scope_entry_text(item: Any) -> tuple[str, str]:
+    if isinstance(item, str):
+        return item, ""
+    if isinstance(item, Mapping):
+        for key in ("path", "file", "target_file", "target_path", "scope_path", "value"):
+            candidate = item.get(key)
+            if isinstance(candidate, str):
+                return candidate, ""
+        keys = ",".join(sorted(str(key) for key in item))[:240]
+        return f"<mapping:{keys}>", "missing_path_field"
+    return f"<{type(item).__name__}>", "unsupported_scope_entry_type"
+
+
+def _parse_scope_suggestions(
+    value: Any,
+    *,
+    field_name: str,
+    source: str,
+) -> tuple[tuple[str, ...], tuple[dict[str, str], ...]]:
+    entries = _portfolio_array(value, field_name=field_name)
+    accepted: list[str] = []
+    rejected: list[dict[str, str]] = []
+    seen_paths: set[str] = set()
+    seen_rejections: set[tuple[str, str, str]] = set()
+
+    for item in entries:
+        display, entry_error = _scope_entry_text(item)
+        path, path_error = _normalize_portfolio_advisory_path(display) if not entry_error else ("", "")
+        reason = entry_error or path_error
+        if reason:
+            rejection = {"path": display[:800], "reason": reason, "source": source}
+            marker = (rejection["path"], reason, source)
+            if marker not in seen_rejections:
+                seen_rejections.add(marker)
+                rejected.append(rejection)
+            continue
+        if path not in seen_paths:
+            seen_paths.add(path)
+            accepted.append(path)
+    return tuple(accepted), tuple(rejected)
+
+
+def _merge_scope_paths(*values: tuple[str, ...]) -> tuple[str, ...]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for path in value:
+            if path in seen:
+                continue
+            seen.add(path)
+            rows.append(path)
+    return tuple(rows)
+
+
+def _merge_scope_rejections(
+    *values: tuple[dict[str, str], ...],
+) -> tuple[dict[str, str], ...]:
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for value in values:
+        for rejection in value:
+            marker = (
+                str(rejection.get("path") or ""),
+                str(rejection.get("reason") or ""),
+                str(rejection.get("source") or ""),
+            )
+            if marker in seen:
+                continue
+            seen.add(marker)
+            rows.append(dict(rejection))
+    return tuple(rows)
+
+
+def _plan_path_suggestions(
+    value: Any,
+    *,
+    parent_key: str = "",
+) -> tuple[tuple[str, ...], tuple[dict[str, str], ...]]:
+    candidates: list[Any] = []
+    if isinstance(value, Mapping):
+        valid_paths: list[str] = []
+        rejected_paths: list[dict[str, str]] = []
+        for raw_key, item in value.items():
+            key = str(raw_key).strip().casefold()
+            if key in _BLUEPRINT_FILE_PATH_KEYS:
+                candidates.append(item)
+                continue
+            nested_valid, nested_rejected = _plan_path_suggestions(item, parent_key=key)
+            valid_paths.extend(nested_valid)
+            rejected_paths.extend(nested_rejected)
+        direct_valid, direct_rejected = _parse_scope_suggestions(
+            candidates,
+            field_name="construction_plan paths",
+            source="construction_plan",
+        )
+        return (
+            _merge_scope_paths(tuple(valid_paths), direct_valid),
+            _merge_scope_rejections(tuple(rejected_paths), direct_rejected),
+        )
+    if isinstance(value, (list, tuple)):
+        valid_paths = []
+        rejected_paths = []
+        for item in value:
+            if isinstance(item, str) and parent_key in _BLUEPRINT_FILE_CONTAINER_KEYS:
+                candidates.append(item)
+                continue
+            nested_valid, nested_rejected = _plan_path_suggestions(item, parent_key=parent_key)
+            valid_paths.extend(nested_valid)
+            rejected_paths.extend(nested_rejected)
+        direct_valid, direct_rejected = _parse_scope_suggestions(
+            candidates,
+            field_name="construction_plan paths",
+            source="construction_plan",
+        )
+        return (
+            _merge_scope_paths(tuple(valid_paths), direct_valid),
+            _merge_scope_rejections(tuple(rejected_paths), direct_rejected),
+        )
+    return (), ()
+
+
+def _readable_portfolio_value(value: Any, *, depth: int = 0) -> str:
+    if depth > 4:
+        raise _portfolio_contract_error("risk flag mapping exceeds the supported nesting depth")
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, Mapping):
+        parts = [
+            f"{str(key).strip()}={_readable_portfolio_value(item, depth=depth + 1)}"
+            for key, item in sorted(value.items(), key=lambda row: str(row[0]))
+            if str(key).strip()
+        ]
+        return ", ".join(part for part in parts if part)
+    if isinstance(value, (list, tuple)):
+        return ", ".join(part for part in (_readable_portfolio_value(item, depth=depth + 1) for item in value) if part)
+    raise _portfolio_contract_error(
+        "risk flag contains a non-JSON value",
+        details={"actual_type": type(value).__name__},
+    )
+
+
+def _portfolio_risk_flag(item: Any, *, field_name: str) -> str:
+    if isinstance(item, str):
+        token = item.strip()
+        if not token:
+            raise _portfolio_contract_error(f"{field_name} contains an empty risk string")
+        return token[:1200]
+    if not isinstance(item, Mapping):
+        raise _portfolio_contract_error(
+            f"{field_name} entries must be strings or objects",
+            details={"field": field_name, "actual_type": type(item).__name__},
+        )
+
+    risk = _portfolio_mapping(item, field_name=f"{field_name} entry")
+    severity_value = risk.get("severity") or risk.get("risk_level") or risk.get("level")
+    label_value = (
+        risk.get("title")
+        or risk.get("name")
+        or risk.get("risk")
+        or risk.get("description")
+        or risk.get("message")
+        or risk.get("summary")
+    )
+    mitigation_value = risk.get("mitigation") or risk.get("response") or risk.get("control")
+    severity = _readable_portfolio_value(severity_value).strip() if severity_value is not None else ""
+    label = _readable_portfolio_value(label_value).strip() if label_value is not None else ""
+    mitigation = _readable_portfolio_value(mitigation_value).strip() if mitigation_value is not None else ""
+    if label:
+        prefix = f"[{severity.casefold()}] " if severity else ""
+        suffix = f" (mitigation: {mitigation})" if mitigation else ""
+        return f"{prefix}{label}{suffix}"[:1200]
+
+    fallback = _readable_portfolio_value(risk).strip()
+    if not fallback:
+        raise _portfolio_contract_error(f"{field_name} contains an empty risk object")
+    return fallback[:1200]
+
+
+def _normalize_portfolio_risk_flags(value: Any, *, field_name: str) -> tuple[str, ...]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for item in _portfolio_array(value, field_name=field_name):
+        risk = _portfolio_risk_flag(item, field_name=field_name)
+        marker = risk.casefold()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        rows.append(risk)
+    return tuple(rows)
+
+
+def _merge_risk_flags(*values: tuple[str, ...]) -> tuple[str, ...]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for risk in value:
+            marker = risk.casefold()
+            if marker in seen:
+                continue
+            seen.add(marker)
+            rows.append(risk)
+    return tuple(rows)
+
+
+def _merge_portfolio_construction_plan(
+    shared_plan: Mapping[str, Any],
+    task_plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    merged = _mapping(_compact_llm_blueprint_value(dict(shared_plan)))
+    for raw_key, item in task_plan.items():
+        key = str(raw_key).strip()
+        if not key:
+            raise _portfolio_contract_error("task construction plan contains an empty key")
+        current = merged.get(key)
+        if isinstance(current, Mapping) and isinstance(item, Mapping):
+            merged[key] = _merge_portfolio_construction_plan(current, item)
+        elif isinstance(current, list) and isinstance(item, (list, tuple)):
+            merged[key] = _compact_llm_blueprint_value([*current, *item])
+        else:
+            merged[key] = _compact_llm_blueprint_value(item)
+    return merged
+
+
+def _normalize_interface_declarations(value: Any, *, field_name: str) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in _portfolio_array(value, field_name=field_name):
+        if isinstance(item, str):
+            token = item.strip()
+            if not token:
+                raise _portfolio_contract_error(f"{field_name} contains an empty declaration")
+            declaration: dict[str, Any] = {"declaration": token}
+        elif isinstance(item, Mapping):
+            declaration = _mapping(_compact_llm_blueprint_value(dict(item)))
+            if not declaration:
+                raise _portfolio_contract_error(f"{field_name} contains an empty declaration object")
+        else:
+            raise _portfolio_contract_error(
+                f"{field_name} entries must be strings or objects",
+                details={"field": field_name, "actual_type": type(item).__name__},
+            )
+        marker = stable_hash(declaration)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        rows.append(declaration)
+    return tuple(rows)
+
+
+def _parse_portfolio_llm_blueprint(
+    command: BuildChiefEngineerBlueprintPortfolioCommandV1,
+) -> _PortfolioLlmBlueprint:
+    raw = dict(command.llm_blueprint)
+    if not raw:
+        return _PortfolioLlmBlueprint({}, {}, (), (), (), (), (), False)
+
+    allowed_top_level = {"construction_plan", "risk_flags", "scope_for_apply"}
+    unknown_top_level = sorted(str(key) for key in raw if str(key) not in allowed_top_level)
+    if unknown_top_level:
+        raise _portfolio_contract_error(
+            "LLM portfolio blueprint contains unknown top-level fields",
+            details={"unknown_fields": unknown_top_level},
+        )
+
+    construction_plan = _portfolio_mapping(
+        raw.get("construction_plan", {}),
+        field_name="construction_plan",
+    )
+    raw_task_plans = construction_plan.pop("task_plans", {})
+    task_plan_mapping = _portfolio_mapping(raw_task_plans, field_name="construction_plan.task_plans")
+    task_ids = {task.task_id for task in command.tasks}
+    unknown_task_ids = sorted(set(task_plan_mapping) - task_ids)
+    if unknown_task_ids:
+        raise _portfolio_contract_error(
+            "construction_plan.task_plans references unknown PM tasks",
+            code="unknown_blueprint_portfolio_task_plan",
+            details={"unknown_task_ids": unknown_task_ids, "task_ids": sorted(task_ids)},
+        )
+
+    task_plans: dict[str, dict[str, Any]] = {}
+    for task_id, task_plan in task_plan_mapping.items():
+        task_plans[task_id] = _portfolio_mapping(
+            task_plan,
+            field_name=f"construction_plan.task_plans[{task_id!r}]",
+        )
+
+    interface_payload = _portfolio_mapping(
+        construction_plan.pop("project_interface_contract", {}),
+        field_name="construction_plan.project_interface_contract",
+    )
+    allowed_interface_keys = {
+        "consumer_declarations",
+        "consumers",
+        "provider_declarations",
+        "providers",
+    }
+    unknown_interface_keys = sorted(set(interface_payload) - allowed_interface_keys)
+    if unknown_interface_keys:
+        raise _portfolio_contract_error(
+            "project_interface_contract contains unsupported fields",
+            details={"unknown_fields": unknown_interface_keys},
+        )
+    providers = _normalize_interface_declarations(
+        interface_payload.get("provider_declarations", interface_payload.get("providers", [])),
+        field_name="project_interface_contract.provider_declarations",
+    )
+    consumers = _normalize_interface_declarations(
+        interface_payload.get("consumer_declarations", interface_payload.get("consumers", [])),
+        field_name="project_interface_contract.consumer_declarations",
+    )
+    scope_paths, scope_rejections = _parse_scope_suggestions(
+        raw.get("scope_for_apply", []),
+        field_name="scope_for_apply",
+        source="shared_scope_for_apply",
+    )
+    risk_flags = _normalize_portfolio_risk_flags(
+        raw.get("risk_flags", []),
+        field_name="risk_flags",
+    )
+    shared_plan = _mapping(_compact_llm_blueprint_value(construction_plan))
+    consumed = bool(
+        shared_plan or task_plans or scope_paths or scope_rejections or risk_flags or providers or consumers
+    )
+    return _PortfolioLlmBlueprint(
+        shared_plan=shared_plan,
+        task_plans=task_plans,
+        scope_paths=scope_paths,
+        scope_rejections=scope_rejections,
+        risk_flags=risk_flags,
+        provider_declarations=providers,
+        consumer_declarations=consumers,
+        consumed=consumed,
+    )
+
+
+def _task_plan_components(
+    task_id: str,
+    task_plan: Mapping[str, Any],
+) -> tuple[dict[str, Any], tuple[str, ...], tuple[dict[str, str], ...], tuple[str, ...]]:
+    plan = dict(task_plan)
+    if "project_interface_contract" in plan:
+        raise _portfolio_contract_error(
+            "project_interface_contract must be shared, not task-local",
+            details={"task_id": task_id},
+        )
+    scope_paths, scope_rejections = _parse_scope_suggestions(
+        plan.pop("scope_for_apply", []),
+        field_name=f"construction_plan.task_plans[{task_id!r}].scope_for_apply",
+        source=f"task_plan:{task_id}",
+    )
+    risk_flags = _normalize_portfolio_risk_flags(
+        plan.pop("risk_flags", []),
+        field_name=f"construction_plan.task_plans[{task_id!r}].risk_flags",
+    )
+    return plan, scope_paths, scope_rejections, risk_flags
+
+
+def _scope_advisory_for_task(
+    task: ChiefEngineerPortfolioTaskV1,
+    *,
+    requested_paths: tuple[str, ...],
+    rejected_suggestions: tuple[dict[str, str], ...],
+    construction_plan: Mapping[str, Any],
+) -> tuple[tuple[str, ...], dict[str, Any]]:
+    pm_authorized_paths = {*task.target_files, *task.scope_paths}
+    accepted_paths = tuple(path for path in requested_paths if path in pm_authorized_paths)
+    rejected = list(rejected_suggestions)
+    for path in requested_paths:
+        if path not in pm_authorized_paths:
+            rejected.append(
+                {
+                    "path": path,
+                    "reason": "outside_pm_task_authority",
+                    "source": "scope_for_apply",
+                }
+            )
+
+    plan_paths, invalid_plan_paths = _plan_path_suggestions(construction_plan)
+    plan_paths_outside_authority = tuple(path for path in plan_paths if path not in pm_authorized_paths)
+    advisory = {
+        "schema_version": "chief_engineer.blueprint_portfolio.scope_advisory.v1",
+        "task_id": task.task_id,
+        "authority": "pm_task_contract",
+        "requested_paths": list(requested_paths),
+        "authorized_advisory_paths": list(accepted_paths),
+        "rejected_suggestions": [dict(item) for item in _merge_scope_rejections(tuple(rejected))],
+        "pm_target_files": list(task.target_files),
+        "pm_scope_paths": list(task.scope_paths),
+        "construction_plan_declared_paths": list(plan_paths),
+        "construction_plan_paths_outside_pm_authority": list(plan_paths_outside_authority),
+        "construction_plan_rejected_paths": [dict(item) for item in invalid_plan_paths],
+        "scope_expansion_allowed": False,
+    }
+    return accepted_paths, advisory
+
+
+def _deterministic_portfolio_plan(task: ChiefEngineerPortfolioTaskV1) -> dict[str, Any]:
+    return {
+        "source": "chief_engineer.deterministic_pm_task_projection",
+        "diagnostic_only": True,
+        "objective": task.objective,
+        "target_files": list(task.target_files),
+        "scope_paths": list(task.scope_paths),
+        "dependencies": list(task.dependencies),
+    }
+
+
+def _project_interface_seed(
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    *,
+    provider_declarations: tuple[dict[str, Any], ...],
+    consumer_declarations: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
+    task_file_ownership = {task.task_id: task.target_files for task in tasks}
+    file_owners: dict[str, list[str]] = {}
+    for task in tasks:
+        for path in task.target_files:
+            file_owners.setdefault(path, []).append(task.task_id)
+    file_task_ownership = {path: tuple(task_ids) for path, task_ids in file_owners.items()}
+    seed = {
+        "schema_version": "chief_engineer.project_interface_contract.v1",
+        "task_file_ownership": {task_id: list(paths) for task_id, paths in task_file_ownership.items()},
+        "file_task_ownership": {path: list(task_ids) for path, task_ids in file_task_ownership.items()},
+        "provider_declarations": [dict(item) for item in provider_declarations],
+        "consumer_declarations": [dict(item) for item in consumer_declarations],
+        "ownership_authority": "pm_authoritative_tasks",
+        "interface_declaration_authority": "chief_engineer_advisory_only",
+        "authoritative": False,
+    }
+    return seed, task_file_ownership, file_task_ownership
+
+
+def _bind_portfolio_task_overlays(
+    task_overlays: Mapping[str, Mapping[str, Any]],
+    *,
+    portfolio_id: str,
+    portfolio_path: str,
+    portfolio_hash: str,
+    project_interface_contract_ref: str,
+    project_interface_contract_hash: str,
+    llm_blueprint_consumed: bool,
+    usage_mode: Literal["advisory_overlay", "offline_diagnostic_only"],
+) -> dict[str, dict[str, Any]]:
+    bound: dict[str, dict[str, Any]] = {}
+    for task_id, overlay in task_overlays.items():
+        reference = {
+            "schema_version": "chief_engineer.blueprint_portfolio.task_reference.v1",
+            "task_id": task_id,
+            "portfolio_id": portfolio_id,
+            "portfolio_path": portfolio_path,
+            "portfolio_hash": portfolio_hash,
+            "project_interface_contract_ref": project_interface_contract_ref,
+            "project_interface_contract_hash": project_interface_contract_hash,
+        }
+        bound[task_id] = {
+            "construction_plan": _mapping(overlay.get("construction_plan")),
+            "scope_for_apply": list(_string_list(overlay.get("scope_for_apply"))),
+            "risk_flags": list(_string_list(overlay.get("risk_flags"))),
+            "portfolio_id": portfolio_id,
+            "portfolio_path": portfolio_path,
+            "portfolio_hash": portfolio_hash,
+            "project_interface_contract_ref": project_interface_contract_ref,
+            "project_interface_contract_hash": project_interface_contract_hash,
+            "reference": reference,
+            "llm_blueprint_consumed": llm_blueprint_consumed,
+            "usage_mode": usage_mode,
+            "authority": "advisory_only",
+            "handoff_ready": False,
+            "execution_authorized": False,
+        }
+    return bound
+
+
+def _persist_immutable_blueprint_portfolio(portfolio: ChiefEngineerBlueprintPortfolioV1) -> None:
+    persistence = BlueprintPersistence(portfolio.workspace)
+    expected_payload = portfolio.to_dict()
+    try:
+        existing_ids = set(persistence.list_all())
+        existing_payload = persistence.load(portfolio.portfolio_id)
+    except OSError as exc:
+        raise _portfolio_contract_error(
+            "failed to inspect existing blueprint portfolio",
+            code="blueprint_portfolio_persistence_failed",
+            details={"portfolio_id": portfolio.portfolio_id, "operation": "inspect"},
+        ) from exc
+
+    if portfolio.portfolio_id in existing_ids and existing_payload is None:
+        raise _portfolio_contract_error(
+            "existing blueprint portfolio is unreadable and cannot be replaced",
+            code="blueprint_portfolio_immutability_conflict",
+            details={"portfolio_id": portfolio.portfolio_id},
+        )
+    if existing_payload is not None:
+        existing_hash = str(existing_payload.get("portfolio_hash") or "").strip()
+        if (
+            existing_hash != portfolio.portfolio_hash
+            or _portfolio_hash(existing_payload) != portfolio.portfolio_hash
+            or existing_payload != expected_payload
+        ):
+            raise _portfolio_contract_error(
+                "immutable blueprint portfolio content conflict",
+                code="blueprint_portfolio_immutability_conflict",
+                details={
+                    "portfolio_id": portfolio.portfolio_id,
+                    "expected_hash": portfolio.portfolio_hash,
+                    "existing_hash": existing_hash,
+                },
+            )
+        return
+
+    try:
+        persistence.save(portfolio.portfolio_id, expected_payload)
+    except OSError as exc:
+        raise _portfolio_contract_error(
+            "failed to persist blueprint portfolio",
+            code="blueprint_portfolio_persistence_failed",
+            details={"portfolio_id": portfolio.portfolio_id, "operation": "save"},
+        ) from exc
+
+    persisted_payload = persistence.load(portfolio.portfolio_id)
+    if persisted_payload != expected_payload or _portfolio_hash(persisted_payload or {}) != portfolio.portfolio_hash:
+        raise _portfolio_contract_error(
+            "persisted blueprint portfolio failed hash verification",
+            code="blueprint_portfolio_persistence_verification_failed",
+            details={"portfolio_id": portfolio.portfolio_id},
+        )
+
+
+def build_chief_engineer_blueprint_portfolio(
+    command: BuildChiefEngineerBlueprintPortfolioCommandV1,
+) -> ChiefEngineerBlueprintPortfolioV1:
+    """Build and immutably persist one advisory portfolio for PM tasks.
+
+    The canonical LLM payload is consumed once. Every task receives a merged
+    shared/task plan, while scope suggestions are intersected with that task's
+    PM-authoritative target and scope paths. A no-LLM command creates an
+    explicitly offline diagnostic object and never grants handoff authority.
+    """
+
+    parsed = _parse_portfolio_llm_blueprint(command)
+    usage_mode: Literal["advisory_overlay", "offline_diagnostic_only"] = (
+        "advisory_overlay" if parsed.consumed else "offline_diagnostic_only"
+    )
+    task_overlays: dict[str, dict[str, Any]] = {}
+    scope_advisory: dict[str, dict[str, Any]] = {}
+    portfolio_risks: tuple[str, ...] = parsed.risk_flags
+
+    for task in command.tasks:
+        if parsed.consumed:
+            task_plan, task_scope, task_rejections, task_risks = _task_plan_components(
+                task.task_id,
+                parsed.task_plans.get(task.task_id, {}),
+            )
+            construction_plan = _merge_portfolio_construction_plan(parsed.shared_plan, task_plan)
+            requested_scope = _merge_scope_paths(parsed.scope_paths, task_scope)
+            rejected_scope = _merge_scope_rejections(parsed.scope_rejections, task_rejections)
+            risks = _merge_risk_flags(parsed.risk_flags, task_risks)
+        else:
+            construction_plan = _deterministic_portfolio_plan(task)
+            requested_scope = _merge_scope_paths(task.target_files, task.scope_paths)
+            rejected_scope = ()
+            risks = ()
+
+        authorized_scope, task_scope_advisory = _scope_advisory_for_task(
+            task,
+            requested_paths=requested_scope,
+            rejected_suggestions=rejected_scope,
+            construction_plan=construction_plan,
+        )
+        task_overlays[task.task_id] = {
+            "construction_plan": construction_plan,
+            "scope_for_apply": list(authorized_scope),
+            "risk_flags": list(risks),
+        }
+        scope_advisory[task.task_id] = task_scope_advisory
+        portfolio_risks = _merge_risk_flags(portfolio_risks, risks)
+
+    interface_seed, task_file_ownership, file_task_ownership = _project_interface_seed(
+        command.tasks,
+        provider_declarations=parsed.provider_declarations,
+        consumer_declarations=parsed.consumer_declarations,
+    )
+    interface_hash = stable_hash(interface_seed)
+    interface_id = f"ce_project_interface_{interface_hash[:24]}"
+    identity_seed = {
+        "schema_version": "chief_engineer.blueprint_portfolio.identity.v1",
+        "workspace": command.workspace,
+        "run_id": command.run_id,
+        "tasks": [task.to_dict() for task in command.tasks],
+        "task_overlays": task_overlays,
+        "scope_advisory": scope_advisory,
+        "risk_flags": list(portfolio_risks),
+        "project_interface_contract_hash": interface_hash,
+        "llm_blueprint_consumed": parsed.consumed,
+        "usage_mode": usage_mode,
+    }
+    portfolio_id = f"ce_portfolio_{stable_hash(identity_seed)[:32]}"
+    portfolio_path = _blueprint_path(portfolio_id)
+    interface_ref = f"{portfolio_path}#project_interface_contract"
+    project_interface_contract = ChiefEngineerProjectInterfaceContractV1(
+        contract_id=interface_id,
+        contract_ref=interface_ref,
+        contract_hash=interface_hash,
+        task_file_ownership=task_file_ownership,
+        file_task_ownership=file_task_ownership,
+        provider_declarations=parsed.provider_declarations,
+        consumer_declarations=parsed.consumer_declarations,
+    )
+
+    provisional_hash = "pending"
+    provisional = ChiefEngineerBlueprintPortfolioV1(
+        portfolio_id=portfolio_id,
+        workspace=command.workspace,
+        run_id=command.run_id,
+        portfolio_path=portfolio_path,
+        portfolio_hash=provisional_hash,
+        task_ids=tuple(task.task_id for task in command.tasks),
+        task_overlays=_bind_portfolio_task_overlays(
+            task_overlays,
+            portfolio_id=portfolio_id,
+            portfolio_path=portfolio_path,
+            portfolio_hash=provisional_hash,
+            project_interface_contract_ref=interface_ref,
+            project_interface_contract_hash=interface_hash,
+            llm_blueprint_consumed=parsed.consumed,
+            usage_mode=usage_mode,
+        ),
+        scope_advisory=scope_advisory,
+        project_interface_contract=project_interface_contract,
+        project_interface_contract_ref=interface_ref,
+        project_interface_contract_hash=interface_hash,
+        risk_flags=portfolio_risks,
+        llm_blueprint_consumed=parsed.consumed,
+        usage_mode=usage_mode,
+    )
+    portfolio_hash = _portfolio_hash(provisional.to_dict())
+    portfolio = ChiefEngineerBlueprintPortfolioV1(
+        portfolio_id=portfolio_id,
+        workspace=command.workspace,
+        run_id=command.run_id,
+        portfolio_path=portfolio_path,
+        portfolio_hash=portfolio_hash,
+        task_ids=tuple(task.task_id for task in command.tasks),
+        task_overlays=_bind_portfolio_task_overlays(
+            task_overlays,
+            portfolio_id=portfolio_id,
+            portfolio_path=portfolio_path,
+            portfolio_hash=portfolio_hash,
+            project_interface_contract_ref=interface_ref,
+            project_interface_contract_hash=interface_hash,
+            llm_blueprint_consumed=parsed.consumed,
+            usage_mode=usage_mode,
+        ),
+        scope_advisory=scope_advisory,
+        project_interface_contract=project_interface_contract,
+        project_interface_contract_ref=interface_ref,
+        project_interface_contract_hash=interface_hash,
+        risk_flags=portfolio_risks,
+        llm_blueprint_consumed=parsed.consumed,
+        usage_mode=usage_mode,
+    )
+    if _portfolio_hash(portfolio.to_dict()) != portfolio.portfolio_hash:
+        raise _portfolio_contract_error(
+            "blueprint portfolio hash did not stabilize",
+            code="blueprint_portfolio_hash_invariant_failed",
+            details={"portfolio_id": portfolio.portfolio_id},
+        )
+    _persist_immutable_blueprint_portfolio(portfolio)
+    return portfolio
+
+
+def project_chief_engineer_task_blueprint(
+    portfolio: ChiefEngineerBlueprintPortfolioV1,
+    task_id: str,
+    *,
+    allow_offline_diagnostic: bool = False,
+) -> dict[str, Any]:
+    """Project one portfolio task into ``generate_task_blueprint`` LLM shape.
+
+    Offline deterministic portfolios are rejected by default so callers cannot
+    mistake a diagnostic PM projection for a mainline CE LLM result.
+    """
+
+    normalized_task_id = str(task_id).strip()
+    if not normalized_task_id:
+        raise ValueError("task_id must be a non-empty string")
+    overlay = portfolio.task_overlays.get(normalized_task_id)
+    if not isinstance(overlay, Mapping):
+        raise _portfolio_contract_error(
+            f"task {normalized_task_id!r} is not present in blueprint portfolio",
+            code="blueprint_portfolio_task_not_found",
+            details={"portfolio_id": portfolio.portfolio_id, "task_ids": list(portfolio.task_ids)},
+        )
+    if not portfolio.llm_blueprint_consumed and not allow_offline_diagnostic:
+        raise _portfolio_contract_error(
+            "offline diagnostic portfolio cannot be projected into the mainline CE handoff",
+            code="blueprint_portfolio_offline_diagnostic_only",
+            details={"portfolio_id": portfolio.portfolio_id, "task_id": normalized_task_id},
+        )
+    return {
+        "construction_plan": _mapping(_compact_llm_blueprint_value(overlay.get("construction_plan"))),
+        "scope_for_apply": list(_string_list(overlay.get("scope_for_apply"))),
+        "risk_flags": list(_string_list(overlay.get("risk_flags"))),
+    }
+
+
+def _project_blueprint_portfolio_context(
+    context: Mapping[str, Any],
+    *,
+    task_id: str,
+    target_files: list[str],
+) -> dict[str, Any]:
+    canonical_fields = (
+        "blueprint_portfolio_ref",
+        "blueprint_portfolio_hash",
+        "project_interface_contract_ref",
+        "project_interface_contract_hash",
+        "project_interface_contract",
+    )
+    present_fields = [field for field in canonical_fields if field in context]
+    if not present_fields:
+        return {}
+    missing_fields = [field for field in canonical_fields if field not in context]
+    if missing_fields:
+        raise _portfolio_contract_error(
+            "task blueprint portfolio context is incomplete",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "missing_fields": missing_fields},
+        )
+
+    portfolio_ref = str(context.get("blueprint_portfolio_ref") or "").strip()
+    portfolio_hash = str(context.get("blueprint_portfolio_hash") or "").strip()
+    interface_ref = str(context.get("project_interface_contract_ref") or "").strip()
+    interface_hash = str(context.get("project_interface_contract_hash") or "").strip()
+    normalized_portfolio_ref, portfolio_ref_error = _normalize_portfolio_advisory_path(portfolio_ref)
+    interface_path, separator, interface_fragment = interface_ref.partition("#")
+    normalized_interface_path, interface_ref_error = _normalize_portfolio_advisory_path(interface_path)
+    if (
+        portfolio_ref_error
+        or normalized_portfolio_ref != portfolio_ref
+        or not portfolio_hash
+        or interface_ref_error
+        or separator != "#"
+        or interface_fragment != "project_interface_contract"
+        or f"{normalized_interface_path}#project_interface_contract" != interface_ref
+        or normalized_interface_path != portfolio_ref
+        or not interface_hash
+    ):
+        raise _portfolio_contract_error(
+            "task blueprint portfolio references are invalid",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id},
+        )
+
+    interface_contract = _portfolio_mapping(
+        context.get("project_interface_contract"),
+        field_name="project_interface_contract",
+    )
+    if interface_contract.get("project_interface_contract_ref") != interface_ref:
+        raise _portfolio_contract_error(
+            "project interface contract ref does not match its context binding",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "field": "project_interface_contract_ref"},
+        )
+    if interface_contract.get("project_interface_contract_hash") != interface_hash:
+        raise _portfolio_contract_error(
+            "project interface contract hash does not match its context binding",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "field": "project_interface_contract_hash"},
+        )
+
+    interface_hash_payload = {
+        key: item
+        for key, item in interface_contract.items()
+        if key
+        not in {
+            "project_interface_contract_id",
+            "project_interface_contract_ref",
+            "project_interface_contract_hash",
+        }
+    }
+    if stable_hash(interface_hash_payload) != interface_hash:
+        raise _portfolio_contract_error(
+            "project interface contract content hash is invalid",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "field": "project_interface_contract_hash"},
+        )
+
+    for declarations_field in ("provider_declarations", "consumer_declarations"):
+        if not isinstance(interface_contract.get(declarations_field), list):
+            raise _portfolio_contract_error(
+                f"project interface contract must explicitly define {declarations_field}",
+                code="invalid_blueprint_portfolio_context",
+                details={"task_id": task_id, "field": declarations_field},
+            )
+
+    task_file_ownership = interface_contract.get("task_file_ownership")
+    if not isinstance(task_file_ownership, Mapping):
+        raise _portfolio_contract_error(
+            "project interface contract task_file_ownership is invalid",
+            code="invalid_blueprint_portfolio_context",
+            details={"task_id": task_id, "field": "task_file_ownership"},
+        )
+    owned_files = task_file_ownership.get(task_id)
+    if not isinstance(owned_files, list) or tuple(_string_list(owned_files)) != tuple(target_files):
+        raise _portfolio_contract_error(
+            "project interface ownership does not match the PM task target files",
+            code="blueprint_portfolio_pm_authority_mismatch",
+            details={
+                "task_id": task_id,
+                "pm_target_files": list(target_files),
+                "interface_target_files": _string_list(owned_files),
+            },
+        )
+
+    return {
+        "blueprint_portfolio_ref": portfolio_ref,
+        "blueprint_portfolio_hash": portfolio_hash,
+        "project_interface_contract_ref": interface_ref,
+        "project_interface_contract_hash": interface_hash,
+        "project_interface_contract": interface_contract,
+    }
+
+
 def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlueprintResultV1:
     """Generate and persist a task-level Chief Engineer blueprint."""
 
@@ -1273,6 +2208,11 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     constraints = dict(command.constraints)
     contract_fields = _blueprint_contract_fields(context)
     target_files = _target_files_from_context(context)
+    blueprint_portfolio_projection = _project_blueprint_portfolio_context(
+        context,
+        task_id=command.task_id,
+        target_files=target_files,
+    )
     title = str(context.get("task_title") or context.get("title") or command.objective).strip()
     summary = f"Chief Engineer blueprint for {command.task_id}: {command.objective}"
     acceptance_criteria = list(contract_fields["acceptance_criteria"])
@@ -1430,6 +2370,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "pm_task": contract_fields["task"],
         "pm_contract_hash": pm_contract_hash,
         "contract_hash": pm_contract_hash,
+        **blueprint_portfolio_projection,
         "director_execution_profile": director_execution_profile,
         "task_execution_profile": director_execution_profile,
         "execution_profile_ref": execution_profile_ref,
@@ -2341,6 +3282,7 @@ __all__ = [
     "attach_governance_to_blueprint",
     "build_blueprint_governance",
     "build_ce_handoff_decision",
+    "build_chief_engineer_blueprint_portfolio",
     "check_stack_policy",
     "create_rollback_guard",
     "evaluate_ce_handoff_decision_for_blueprint",
@@ -2354,6 +3296,7 @@ __all__ = [
     "list_risks",
     "list_tech_debt",
     "list_tech_radar",
+    "project_chief_engineer_task_blueprint",
     "register_adr",
     "register_post_mortem",
     "register_risk",

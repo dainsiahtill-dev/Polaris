@@ -20,6 +20,10 @@ from polaris.cells.factory.cognitive_runtime.public.contracts import (
 from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
+    _bind_transaction_attempt,
+    _start_transaction_invocation,
+)
 from polaris.cells.roles.kernel.public import turn_contracts
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
@@ -57,9 +61,22 @@ class _MockRequest:
     workspace: str = "."
     prompt_appendix: str = ""
     system_prompt: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=lambda: {"turn_request_id": "handoff-contract"})
     context_override: dict[str, Any] | None = field(default_factory=lambda: {"context_os_snapshot": {}})
     tool_results: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _bind_direct_executor_attempt(request: _MockRequest, workspace: str) -> None:
+    invocation_id = _start_transaction_invocation(
+        cast(Any, request),
+        role="director",
+        workspace=workspace,
+    )
+    _bind_transaction_attempt(
+        cast(Any, request),
+        invocation_id=invocation_id,
+        attempt=0,
+    )
 
 
 class TestCanonicalHandoffPackType:
@@ -206,6 +223,7 @@ class TestTransactionKernelHandoffIntegration:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="director")
         request = _MockRequest(run_id="run_123")
+        _bind_direct_executor_attempt(request, kernel.workspace)
         fingerprint = _MockFingerprint()
 
         mock_tk_result = {

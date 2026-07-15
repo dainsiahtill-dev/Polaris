@@ -579,6 +579,37 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
     )
     assert missing_effect_receipt.metadata["tool_call_lifecycle_receipt"]["failure_class"] == "MISSING_EFFECT_RECEIPT"
 
+    text_fallback_not_dispatched = runtime_service._to_contract_result(
+        role="director",
+        workspace=".",
+        task_id="t",
+        session_id="se",
+        run_id="ru",
+        result=RoleTurnResult(
+            content="",
+            metadata={
+                "tool_call_lifecycle_receipt": {
+                    "schema_version": "tool_call_lifecycle_receipt.v1",
+                    "dispatch_status": "blocked",
+                    "failure_class": "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED",
+                    "native_tool_calls_count": 0,
+                    "decoded_tool_calls_count": 0,
+                    "dispatched_tool_calls_count": 0,
+                    "tool_result_count": 0,
+                    "effect_receipt_count": 0,
+                    "compatibility_mode": "required_tool_text_fallback",
+                    "text_fallback_requested": True,
+                    "parser_attempted": True,
+                }
+            },
+        ),
+    )
+    assert text_fallback_not_dispatched.ok is False
+    assert text_fallback_not_dispatched.error_code == "required_tool_text_fallback_not_dispatched"
+    assert text_fallback_not_dispatched.error_message == (
+        "required_tool_text_fallback_not_dispatched: tool lifecycle reported REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED"
+    )
+
     blocked_without_failure_class = runtime_service._to_contract_result(
         role="director",
         workspace=".",

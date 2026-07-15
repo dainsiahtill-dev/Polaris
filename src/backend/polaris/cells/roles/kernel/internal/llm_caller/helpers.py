@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -22,6 +23,7 @@ from polaris.kernelone.llm.budget_policy import (
     clamp_output_tokens,
 )
 
+from .request_facts import request_fact_source
 from .tool_helpers import (
     build_native_tool_call_envelope_payloads,
     build_native_tool_call_envelopes,
@@ -192,6 +194,23 @@ def resolve_max_tokens(requested: Any, context_override: Any | None = None) -> i
 _TRANSACTION_KERNEL_TEMPERATURE_OVERRIDE_KEY = "_transaction_kernel_temperature_override"
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedRequestTemperature:
+    """Effective provider temperature and its structured source."""
+
+    value: float
+    source: str
+
+    def to_context(self) -> dict[str, Any]:
+        """Project the decision into final-request audit context."""
+
+        return {
+            "schema_version": "roles.kernel.request_sampling.v1",
+            "temperature": self.value,
+            "temperature_source": self.source,
+        }
+
+
 def _coerce_context_temperature_override(raw: Any) -> float | None:
     """Parse a per-request temperature override from trusted runtime context."""
     if raw is None or isinstance(raw, bool):
@@ -205,21 +224,43 @@ def _coerce_context_temperature_override(raw: Any) -> float | None:
     return min(value, 2.0)
 
 
-def resolve_temperature(requested: float, context_override: Any | None = None) -> float:
-    """Resolve sampling temperature from trusted runtime context.
+def resolve_temperature_with_source(
+    requested: float,
+    context_override: Any | None = None,
+) -> ResolvedRequestTemperature:
+    """Resolve sampling temperature once from structured request facts.
 
     ADR-0090 W2.6 (phase-aware decoding): mutation-retry escalation injects a
     deterministic low temperature through the transaction-kernel override
-    channel (``_transaction_kernel_temperature_override``); outside that phase
-    the profile/request temperature is returned untouched. Zero is a valid
-    override (fully deterministic sampling); negatives and garbage fall back.
+    channel. Explicit role-turn context/metadata follows next, then execution
+    contracts. Zero is valid; negatives and malformed values fall back.
     """
     if isinstance(context_override, dict):
         override = _coerce_context_temperature_override(
             context_override.get(_TRANSACTION_KERNEL_TEMPERATURE_OVERRIDE_KEY)
         )
         if override is not None:
-            return override
+            return ResolvedRequestTemperature(
+                value=override,
+                source="transaction_kernel.retry_temperature_override",
+            )
+        override = _coerce_context_temperature_override(context_override.get("temperature"))
+        if override is not None:
+            return ResolvedRequestTemperature(
+                value=override,
+                source=request_fact_source(
+                    context_override,
+                    "temperature",
+                    "role_turn.context.temperature",
+                ),
+            )
+        request_sampling = _mapping_payload(context_override.get("request_sampling"))
+        override = _coerce_context_temperature_override(request_sampling.get("temperature"))
+        if override is not None:
+            return ResolvedRequestTemperature(
+                value=override,
+                source=str(request_sampling.get("temperature_source") or "context.request_sampling.temperature"),
+            )
         for payload_key in (
             "task_execution_contract",
             "director_execution_contract",
@@ -234,8 +275,21 @@ def resolve_temperature(requested: float, context_override: Any | None = None) -
             if override is None:
                 override = _coerce_context_temperature_override(sampling.get("temperature"))
             if override is not None:
-                return override
-    return requested
+                return ResolvedRequestTemperature(
+                    value=override,
+                    source=f"{payload_key}.temperature",
+                )
+    requested_value = _coerce_context_temperature_override(requested)
+    return ResolvedRequestTemperature(
+        value=requested_value if requested_value is not None else 0.7,
+        source="llm_invoker.argument",
+    )
+
+
+def resolve_temperature(requested: float, context_override: Any | None = None) -> float:
+    """Compatibility value projection for the canonical temperature decision."""
+
+    return resolve_temperature_with_source(requested, context_override).value
 
 
 def resolve_platform_retry_max(profile: Any, requested: int) -> int:

@@ -16,6 +16,7 @@ from polaris.kernelone.storage import (
     resolve_runtime_path,
     resolve_storage_roots,
     resolve_workspace_persistent_path,
+    resolve_workspace_runtime_identity,
     workspace_key,
 )
 
@@ -33,6 +34,27 @@ def test_workspace_key_stable_and_distinct(tmp_path: Path) -> None:
     assert key_a_1 == key_a_2
     assert key_a_1 != key_b
     assert key_a_1.startswith("demo-")
+
+
+def test_workspace_runtime_identity_is_distinct_under_shared_global_runtime_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runtime_base = tmp_path / "global-project-cache"
+    workspace_a = tmp_path / "fresh-a" / "l1-01"
+    workspace_b = tmp_path / "fresh-b" / "l1-01"
+    workspace_a.mkdir(parents=True)
+    workspace_b.mkdir(parents=True)
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_base))
+    clear_storage_roots_cache()
+
+    identity_a = resolve_workspace_runtime_identity(str(workspace_a))
+    identity_b = resolve_workspace_runtime_identity(str(workspace_b))
+
+    assert identity_a.workspace_abs == str(workspace_a.resolve())
+    assert identity_b.workspace_abs == str(workspace_b.resolve())
+    assert identity_a.runtime_root != identity_b.runtime_root
+    assert identity_a.token != identity_b.token
 
 
 def test_storage_roots_taxonomy(tmp_path: Path) -> None:

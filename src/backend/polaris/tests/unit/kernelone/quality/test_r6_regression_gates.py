@@ -385,7 +385,8 @@ class TestFactoryRunServiceFailClosed:
         apply_factory_bench_gates(record, chain={"exit_code": 0})
         assert record["all_checks_passed"] is False
         gates = {gate["gate"]: gate for gate in record["factory_gates"]}
-        assert gates["qa_verdict_artifact_present"]["ok"] is False
+        assert "qa_verdict_artifact_present" not in gates
+        assert gates["canonical_execution"]["ok"] is False
 
     def test_wrong_product_suspect_is_fail_closed(self) -> None:
         from scripts.factory_bench.run_factory_bench import apply_factory_bench_gates
@@ -404,7 +405,7 @@ class TestFactoryRunServiceFailClosed:
         gates = {gate["gate"]: gate for gate in record["factory_gates"]}
         assert gates["wrong_product_guard"]["ok"] is False
 
-    def test_chain_failure_overrides_static_checks(self) -> None:
+    def test_legacy_chain_failure_cannot_replace_missing_canonical_projection(self) -> None:
         from scripts.factory_bench.run_factory_bench import apply_factory_bench_gates
 
         record: dict[str, Any] = {
@@ -420,7 +421,8 @@ class TestFactoryRunServiceFailClosed:
         assert record["static_checks_passed"] is True
         assert record["all_checks_passed"] is False
         gates = {gate["gate"]: gate for gate in record["factory_gates"]}
-        assert gates["chain_clean"]["ok"] is False
+        assert "chain_clean" not in gates
+        assert gates["canonical_execution"]["ok"] is False
 
     def test_clean_chain_preserves_static_pass(self) -> None:
         from scripts.factory_bench.run_factory_bench import apply_factory_bench_gates
@@ -456,10 +458,17 @@ class TestFactoryRunServiceFailClosed:
                 "capability": {"ok": True, "issues": [], "latest_token_id": "job-token-id"},
                 "physical_evidence": {},
             },
+            "canonical_projection": {
+                "source": "canonical_projection",
+                "execution": {
+                    "ok": True,
+                    "reason_code": "completed_verified",
+                }
+            },
         }
         apply_factory_bench_gates(record, chain={"exit_code": 0})
         assert record["static_checks_passed"] is True
-        assert record["all_checks_passed"] is True
+        assert record["all_checks_passed"] is True, record["factory_gates"]
         assert all(gate["ok"] for gate in record["factory_gates"])
 
     def test_fail_closed_count_not_counted_as_evidence(self) -> None:

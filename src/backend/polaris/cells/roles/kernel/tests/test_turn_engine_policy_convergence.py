@@ -433,12 +433,8 @@ class TestTurnEnginePolicyIntegration:
         monkeypatch.delenv("KERNELONE_TOOL_LOOP_MAX_STALL_CYCLES", raising=False)
         monkeypatch.delenv("KERNELONE_TOOL_LOOP_MAX_TOTAL_CALLS", raising=False)
 
-    def test_run_single_failed_tool_cycle_does_not_trigger_stall(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Single-turn kernel.run() under TransactionKernel: one tool call + LLM_ONCE finalization.
-
-        New architecture has no multi-turn stall loop. A single failed tool call is
-        followed by one finalization LLM call and completes normally.
-        """
+    def test_run_single_failed_tool_batch_fails_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A failed non-stream tool batch stops before finalization."""
         llm_call_count = [0]
 
         mock_prompt_builder = SimpleNamespace(
@@ -500,23 +496,19 @@ class TestTurnEnginePolicyIntegration:
             message="open missing",
             history=[],
             context_override={},
+            metadata={"turn_request_id": "policy-convergence-run"},
             validate_output=False,
         )
 
         result = asyncio.run(kernel.run("pm", request))
 
-        assert result.error is None
-        assert result.is_complete is True
-        # 1 decision call + 1 finalization call
-        assert llm_call_count[0] == 2
-        assert len(result.tool_results) == 1
-        assert result.tool_results[0]["success"] is False
+        assert "tool_dispatch_failed" in str(result.error or "")
+        assert result.is_complete is False
+        assert llm_call_count[0] == 1
+        assert not result.tool_results
 
-    def test_run_stream_single_failed_tool_cycle_does_not_trigger_stall(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Single-turn run_stream() under TransactionKernel: one tool call + finalization.
-
-        Stream path uses call_stream for decision and call() for LLM_ONCE finalization.
-        """
+    def test_run_stream_single_failed_tool_batch_fails_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A failed stream tool batch emits error and never finalizes."""
         llm_call_count = [0]
 
         mock_prompt_builder = SimpleNamespace(
@@ -578,6 +570,7 @@ class TestTurnEnginePolicyIntegration:
             message="open missing",
             history=[],
             context_override={},
+            metadata={"turn_request_id": "policy-convergence-stream"},
         )
 
         async def _collect() -> list[dict[str, Any]]:
@@ -590,9 +583,11 @@ class TestTurnEnginePolicyIntegration:
         errors = [ev for ev in events if ev.get("type") == "error"]
         tool_results = [ev for ev in events if ev.get("type") == "tool_result"]
 
-        assert not errors
-        assert len(tool_results) == 1
-        assert any(ev.get("type") == "complete" for ev in events)
+        assert errors
+        assert all("tool_dispatch_failed" in str(ev.get("error") or "") for ev in errors)
+        assert not tool_results
+        assert not any(ev.get("type") == "complete" for ev in events)
+        assert llm_call_count[0] == 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────

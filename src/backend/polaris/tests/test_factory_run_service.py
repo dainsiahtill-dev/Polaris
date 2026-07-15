@@ -23,6 +23,10 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 )
 from polaris.cells.factory.pipeline.internal.factory_store import FactoryStore
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
 
@@ -40,14 +44,45 @@ def _complete_task_row(
         selection_source="factory_run_service_test",
     )
     assert claimed["success"] is True
-    completed = task_runtime.complete_execution(
-        task_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="test completed",
-        metadata=metadata,
+    identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(claimed["execution_attempt"])
+    completed = task_runtime.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="completed",
+            summary="test completed",
+            metadata=metadata or {},
+        )
     )
     assert completed["success"] is True
     return completed
+
+
+def _chief_engineer_portfolio_output(
+    *,
+    task_id: str = "TASK-1",
+    scope_path: str = "src/account",
+) -> dict[str, Any]:
+    """Return one valid project-level CE portfolio response for test runtimes."""
+
+    return {
+        "construction_plan": {
+            "project_design_intent": "Keep domain behavior behind stable task-owned interfaces.",
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "task_plans": {
+                task_id: {
+                    "preparation": ["Confirm the task-owned module boundary"],
+                    "implementation": ["Implement the declared domain behavior"],
+                    "verification": ["Run the declared acceptance checks"],
+                }
+            },
+        },
+        "scope_for_apply": [scope_path],
+        "risk_flags": [],
+    }
 
 
 class FakeStageExecutor:
@@ -1023,6 +1058,51 @@ class _WorkspaceValidationStageExecutor(_TestStageExecutor):
         }
 
 
+def _authorize_workspace_quality_checks(executor: OrchestrationStageExecutor) -> None:
+    """Provide canonical completed TaskBoundary evidence to workspace-check tests."""
+
+    projection = {
+        "source": "run_ledger",
+        "integrity_ok": True,
+        "outcome_ok": False,
+        "gates": [{"name": "workspace_validation", "ok": True}],
+        "task_boundary": {
+            "latest_by_task": {
+                "TASK-1": {
+                    "task_id": "TASK-1",
+                    "status": "completed_verified",
+                    "ok": True,
+                }
+            }
+        },
+        "evidence_policy": {
+            "integrity_ok": True,
+            "outcome_ok": True,
+            "missing_required_modalities": [],
+            "failed_required_modalities": [],
+        },
+        "task_runtime_projection": {
+            "schema_version": "task_runtime.observable_task_rows_authority.v1",
+            "source": "task_runtime.execution_fact",
+            "authoritative": True,
+            "degraded": False,
+            "row_count": 1,
+            "rows": [
+                {
+                    "task_id": "TASK-1",
+                    "status": "completed",
+                    "execution_state": "completed",
+                    "fact_event_seq": 1,
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                }
+            ],
+            "readiness": {"ready": True, "blocking_reasons": []},
+        },
+    }
+    executor._canonical_factory_projection = lambda _run, _context: projection  # type: ignore[method-assign]
+
+
 class TestOrchestrationStageExecutor:
     def test_declared_delivery_targets_filter_directory_scope_paths(self, temp_workspace):
         executor = _TestStageExecutor(temp_workspace, _ImmediateFailureCommandService())
@@ -1342,8 +1422,12 @@ class TestOrchestrationStageExecutor:
       "title": "实现账户实体",
       "goal": "完成账单核心实体与校验",
       "scope": "src/account",
+      "scope_paths": ["src/account"],
+      "target_files": ["src/account"],
       "steps": ["实现实体", "补充测试"],
-      "acceptance": ["`pytest` 通过", "接口返回字段正确"]
+      "execution_checklist": ["实现实体", "补充测试"],
+      "acceptance": ["`pytest` 通过", "接口返回字段正确"],
+      "acceptance_criteria": ["`pytest` 通过", "接口返回字段正确"]
     }
   ]
 }
@@ -1405,8 +1489,12 @@ class TestOrchestrationStageExecutor:
       "title": "实现账户实体",
       "goal": "完成账单核心实体与校验",
       "scope": "src/account",
+      "scope_paths": ["src/account"],
+      "target_files": ["src/account"],
       "steps": ["实现实体", "补充测试"],
-      "acceptance": ["`pytest` 通过", "接口返回字段正确"]
+      "execution_checklist": ["实现实体", "补充测试"],
+      "acceptance": ["`pytest` 通过", "接口返回字段正确"],
+      "acceptance_criteria": ["`pytest` 通过", "接口返回字段正确"]
     }
   ]
 }
@@ -1429,14 +1517,7 @@ class TestOrchestrationStageExecutor:
                     workspace=str(temp_workspace),
                     task_id=command.task_id,
                     run_id=command.run_id,
-                    output=json.dumps(
-                        {
-                            "construction_plan": {"steps": ["implement account entity", "add tests"]},
-                            "scope_for_apply": ["src/account"],
-                            "risk_flags": [],
-                        },
-                        ensure_ascii=False,
-                    ),
+                    output=json.dumps(_chief_engineer_portfolio_output(), ensure_ascii=False),
                     metadata={
                         "provider": "test-provider",
                         "model": "test-model",
@@ -1445,7 +1526,7 @@ class TestOrchestrationStageExecutor:
                             "final_request_token_estimate": 2048,
                             "context_window_utilization": 0.08,
                         },
-                        "context_snapshot_ref": "test-ce-context-snapshot",
+                        "context_snapshot_ref": "0123456789abcdef01234567",
                     },
                 )
 
@@ -1623,7 +1704,7 @@ class TestOrchestrationStageExecutor:
         assert "dispatch/log.json" in result.artifacts
 
     @pytest.mark.asyncio
-    async def test_director_stage_requires_taskboard_convergence_even_with_metadata_progress(
+    async def test_director_stage_rejects_file_only_taskboard_even_with_metadata_progress(
         self,
         temp_workspace,
     ):
@@ -1694,11 +1775,12 @@ class TestOrchestrationStageExecutor:
         )
 
         assert result.status == "failed"
-        assert "error_code=director.taskboard_not_converged" in str(result.output)
+        assert "error_code=director.run_status_non_success" in str(result.output)
+        assert "TaskRuntime fact-only observable projection is not ready" in str(result.output)
         assert "dispatch/log.json" in result.artifacts
 
     @pytest.mark.asyncio
-    async def test_director_stage_hands_off_complete_materialization_after_timeout(
+    async def test_director_stage_does_not_handoff_file_only_materialization_after_timeout(
         self,
         temp_workspace,
     ):
@@ -1769,18 +1851,20 @@ class TestOrchestrationStageExecutor:
             context={"director_max_rounds": 2},
         )
 
-        assert result.status == "success"
-        assert "handed off to workspace quality" in str(result.output)
+        assert result.status == "failed"
+        assert "handed off to workspace quality" not in str(result.output)
         assert "director.dispatch_timeout" not in str(result.output)
         assert "dispatch/log.json" in result.artifacts
         dispatch_log = Path(resolve_logical_path(str(temp_workspace), "workspace/dispatch/latest.log.json"))
         payload = json.loads(dispatch_log.read_text(encoding="utf-8"))
-        assert {signal.get("code") for signal in payload.get("signals", []) if isinstance(signal, dict)} >= {
-            "director.materialized_workspace_timeout_handoff_ready"
+        assert "director.run_status_non_success" in {
+            signal.get("code")
+            for signal in payload.get("signals", [])
+            if isinstance(signal, dict)
         }
 
     @pytest.mark.asyncio
-    async def test_director_stage_no_materialized_changes_after_progress_requires_declared_targets(
+    async def test_director_stage_rejects_file_only_progress_before_target_diagnosis(
         self,
         temp_workspace,
     ):
@@ -1853,22 +1937,18 @@ class TestOrchestrationStageExecutor:
         )
 
         assert result.status == "failed"
-        assert "error_code=director.no_materialized_changes_missing_targets" in str(result.output)
+        assert "error_code=director.run_status_non_success" in str(result.output)
         signal_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/signals/director_dispatch.signals.json"))
         payload = json.loads(signal_path.read_text(encoding="utf-8"))
         rows = payload.get("signals") if isinstance(payload, dict) else []
-        missing_signal = next(
-            (
-                item
-                for item in rows
-                if isinstance(item, dict) and item.get("code") == "director.no_materialized_changes_missing_targets"
-            ),
-            {},
+        assert any(
+            isinstance(item, dict)
+            and item.get("code") == "director.run_status_non_success"
+            for item in rows
         )
-        assert missing_signal.get("missing_targets") == ["src/account.py", "tests/test_account.py"]
 
     @pytest.mark.asyncio
-    async def test_director_stage_no_materialized_changes_after_covered_targets_allows_qa_verdict(
+    async def test_director_stage_covered_targets_do_not_bypass_execution_facts(
         self,
         temp_workspace,
     ):
@@ -1944,12 +2024,12 @@ class TestOrchestrationStageExecutor:
             context={"director_max_rounds": 2},
         )
 
-        assert result.status == "success"
-        assert "error_code=none" in str(result.output)
+        assert result.status == "failed"
+        assert "error_code=director.run_status_non_success" in str(result.output)
         signal_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/signals/director_dispatch.signals.json"))
         payload = json.loads(signal_path.read_text(encoding="utf-8"))
         rows = payload.get("signals") if isinstance(payload, dict) else []
-        assert any(
+        assert not any(
             isinstance(item, dict) and item.get("code") == "director.idempotent_no_materialized_changes"
             for item in rows
         )
@@ -2056,7 +2136,7 @@ class TestOrchestrationStageExecutor:
         )
 
         assert result.status == "failed"
-        assert "qa_passed=False" in str(result.output)
+        assert "qa_verdict_passed=False" in str(result.output)
         assert "runtime/qa/report.json" in result.artifacts
         assert f"workspace/roles/qa/{run.id}/report.json" in result.artifacts
 
@@ -2087,9 +2167,9 @@ class TestOrchestrationStageExecutor:
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
         assert result.status == "failed"
-        assert "qa_passed=True" in str(result.output)
-        assert "qa_score=52" in str(result.output)
-        assert "qa_gate_blocker=qa_score_below_threshold" in str(result.output)
+        assert "qa_verdict_passed=False" in str(result.output)
+        assert "report_consistent=False" in str(result.output)
+        assert "canonical_reason=task_runtime_tasks_missing" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_offloads_report_read_off_event_loop(self, temp_workspace, monkeypatch):
@@ -2128,8 +2208,8 @@ class TestOrchestrationStageExecutor:
         # verdict still reflects the on-disk payload.
         assert len(offloaded_report_reads) == 1
         assert offloaded_report_reads[0]["kwargs"] == {"encoding": "utf-8"}
-        assert "qa_passed=True" in str(result.output)
-        assert "qa_score=91" in str(result.output)
+        assert "qa_verdict_passed=False" in str(result.output)
+        assert "report_consistent=False" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_fails_when_llm_judgement_unavailable_by_default(self, temp_workspace):
@@ -2159,9 +2239,7 @@ class TestOrchestrationStageExecutor:
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
         assert result.status == "failed"
-        assert "qa_llm_required=True" in str(result.output)
-        assert "qa_llm_judgement_ready=False" in str(result.output)
-        assert "qa_gate_blocker=qa_llm_judgement_unavailable" in str(result.output)
+        assert "canonical_reason=task_runtime_tasks_missing" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_fails_when_llm_judgement_unavailable_and_explicitly_required(self, temp_workspace):
@@ -2194,9 +2272,7 @@ class TestOrchestrationStageExecutor:
         )
 
         assert result.status == "failed"
-        assert "qa_llm_required=True" in str(result.output)
-        assert "qa_llm_judgement_ready=False" in str(result.output)
-        assert "qa_gate_blocker=qa_llm_judgement_unavailable" in str(result.output)
+        assert "canonical_reason=task_runtime_tasks_missing" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_can_explicitly_allow_llm_judgement_fallback(self, temp_workspace):
@@ -2228,14 +2304,14 @@ class TestOrchestrationStageExecutor:
             context={"qa_target": "Quality gate", "qa_require_llm_judgement": False},
         )
 
-        assert result.status == "success"
-        assert "qa_llm_required=False" in str(result.output)
-        assert "qa_llm_judgement_ready=False" in str(result.output)
+        assert result.status == "failed"
+        assert "canonical_reason=task_runtime_tasks_missing" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_runs_workspace_node_scripts(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[0, 0])
+        _authorize_workspace_quality_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate_workspace_checks",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2256,9 +2332,10 @@ class TestOrchestrationStageExecutor:
 
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
-        assert result.status == "success"
+        assert result.status == "failed"
+        assert "canonical_reason=qa_verdict_missing" in str(result.output)
         assert executor.commands_seen == [["npm", "run", "build"], ["npm", "test"]]
-        assert "workspace_checks_passed=True" in str(result.output)
+        assert "workspace_checks_diagnostic=True" in str(result.output)
         assert "runtime/qa/workspace-validation.json" in result.artifacts
         assert f"workspace/roles/qa/{run.id}/workspace-validation.json" in result.artifacts
         assert "workspace/qa/latest.workspace-validation.json" in result.artifacts
@@ -2267,6 +2344,7 @@ class TestOrchestrationStageExecutor:
     async def test_quality_gate_injects_workspace_evidence_before_qa_llm(self, temp_workspace):
         command_service = _CapturingQaCommandService()
         executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[0])
+        _authorize_workspace_quality_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate_workspace_evidence",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2302,7 +2380,8 @@ class TestOrchestrationStageExecutor:
             context={"qa_target": "Quality gate", "qa_input": "original qa context"},
         )
 
-        assert result.status == "success"
+        assert result.status == "failed"
+        assert "canonical_reason=qa_verdict_missing" in str(result.output)
         assert command_service.validation_exists_at_qa is True
         assert len(command_service.qa_calls) == 1
         qa_input = str(command_service.qa_calls[0]["options"]["input"])
@@ -2380,6 +2459,7 @@ class TestOrchestrationStageExecutor:
     async def test_quality_gate_installs_node_dependencies_before_scripts(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[0, 0])
+        _authorize_workspace_quality_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate_npm_install",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2406,7 +2486,8 @@ class TestOrchestrationStageExecutor:
 
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
-        assert result.status == "success"
+        assert result.status == "failed"
+        assert "canonical_reason=qa_verdict_missing" in str(result.output)
         assert executor.commands_seen == [
             ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"],
             ["npm", "run", "build"],
@@ -2436,6 +2517,7 @@ class TestOrchestrationStageExecutor:
     async def test_quality_gate_fails_on_workspace_node_script_failure(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[1, 1])
+        _authorize_workspace_quality_checks(executor)
         run = FactoryRun(
             id="factory_test_quality_gate_workspace_failure",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2474,7 +2556,7 @@ class TestOrchestrationStageExecutor:
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
         assert result.status == "failed"
-        assert "workspace_checks_passed=False" in str(result.output)
+        assert "workspace_checks_diagnostic=False" in str(result.output)
         validation_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/workspace-validation.json"))
         payload = json.loads(validation_path.read_text(encoding="utf-8"))
         assert payload["passed"] is False
@@ -2812,8 +2894,12 @@ class TestCEProviderModelPropagationR15A:
                             "title": "Implement feature",
                             "goal": "Complete the feature",
                             "scope": "src/feature",
+                            "scope_paths": ["src/feature"],
+                            "target_files": ["src/feature"],
                             "steps": ["implement", "test"],
+                            "execution_checklist": ["implement", "test"],
                             "acceptance": ["tests pass"],
+                            "acceptance_criteria": ["tests pass"],
                         }
                     ]
                 },
@@ -2849,11 +2935,7 @@ class TestCEProviderModelPropagationR15A:
                     task_id="TASK-1",
                     run_id="factory_test_r15a_kimi_success",
                     output=json.dumps(
-                        {
-                            "construction_plan": {"steps": ["implement feature"]},
-                            "scope_for_apply": ["src/account"],
-                            "risk_flags": [],
-                        },
+                        _chief_engineer_portfolio_output(scope_path="src/feature"),
                         ensure_ascii=False,
                     ),
                     usage={},
@@ -2864,7 +2946,7 @@ class TestCEProviderModelPropagationR15A:
                             "final_request_token_estimate": 2048,
                             "context_window_utilization": 0.08,
                         },
-                        "context_snapshot_ref": "test-ce-context-snapshot",
+                        "context_snapshot_ref": "0123456789abcdef01234567",
                     },
                 )
 
@@ -2940,7 +3022,7 @@ class TestCEProviderModelPropagationR15A:
                             "context_underutilized": False,
                         },
                         "context_os_audit": {"ok": True},
-                        "context_snapshot_ref": "ctx-ce-schema-failure",
+                        "context_snapshot_ref": "fedcba9876543210fedcba98",
                     },
                 )
 
@@ -2951,7 +3033,7 @@ class TestCEProviderModelPropagationR15A:
         finally:
             factory_stage_module.RoleRuntimeService = original_service  # type: ignore
 
-        assert result.status == "success"
+        assert result.status == "failed"
 
         review_path = Path(
             resolve_runtime_path(
@@ -2960,16 +3042,16 @@ class TestCEProviderModelPropagationR15A:
             )
         )
         review_payload = json.loads(review_path.read_text(encoding="utf-8"))
-        assert review_payload["generated_blueprints"] == 1
+        assert review_payload["generated_blueprints"] == 0
         signals = review_payload["signals"]
         assert len(signals) == 1
         signal = signals[0]
         assert signal["code"] == "chief_engineer.llm_review_failed"
-        assert signal["severity"] == "warning"
-        assert signal["recoverable"] is True
+        assert signal["severity"] == "error"
+        assert signal["recoverable"] is False
         assert signal["provider"] == "kimi"
         assert signal["model"] == "kimi-k2-thinking-turbo"
-        assert signal["context_snapshot_ref"] == "ctx-ce-schema-failure"
+        assert signal["context_snapshot_ref"] == "fedcba9876543210fedcba98"
         assert signal["final_request_context_audit"]["final_request_token_estimate"] == 2708
         assert signal["context_os_audit"]["ok"] is True
 
@@ -3016,7 +3098,7 @@ class TestCEProviderModelPropagationR15A:
         finally:
             factory_stage_module.RoleRuntimeService = original_service  # type: ignore
 
-        assert result.status == "success"
+        assert result.status == "failed"
 
         signal_path = Path(
             resolve_runtime_path(
@@ -3070,7 +3152,7 @@ class TestCEProviderModelPropagationR15A:
                             "final_request_token_estimate": 2412,
                             "context_window_utilization": 0.0092,
                         },
-                        "context_snapshot_ref": "ctx-ce-empty-response",
+                        "context_snapshot_ref": "abcdef0123456789abcdef01",
                     },
                 )
 
@@ -3081,7 +3163,7 @@ class TestCEProviderModelPropagationR15A:
         finally:
             factory_stage_module.RoleRuntimeService = original_service  # type: ignore
 
-        assert result.status == "success"
+        assert result.status == "failed"
 
         review_path = Path(
             resolve_runtime_path(
@@ -3090,18 +3172,18 @@ class TestCEProviderModelPropagationR15A:
             )
         )
         review_payload = json.loads(review_path.read_text(encoding="utf-8"))
-        assert review_payload["generated_blueprints"] == 1
+        assert review_payload["generated_blueprints"] == 0
         signal = next(
             item
             for item in review_payload["signals"]
             if isinstance(item, dict) and item.get("code") == "chief_engineer.llm_review_failed"
         )
-        assert signal["severity"] == "warning"
-        assert signal["recoverable"] is True
-        assert signal["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"
+        assert signal["severity"] == "error"
+        assert signal["recoverable"] is False
+        assert "recovery_strategy" not in signal
         assert signal["provider"] == "kimi"
         assert signal["model"] == "kimi-for-coding"
-        assert signal["context_snapshot_ref"] == "ctx-ce-empty-response"
+        assert signal["context_snapshot_ref"] == "abcdef0123456789abcdef01"
 
     @pytest.mark.asyncio
     async def test_ce_evidence_unknown_provider_model_marks_unknown_flag(self, temp_workspace: Path) -> None:

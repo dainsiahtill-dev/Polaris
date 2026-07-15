@@ -47,6 +47,24 @@ def _bootstrap_backend_import_path():
 logger = logging.getLogger(__name__)
 
 
+def _bootstrap_director_fact_stream(workspace: str, maintenance_reason: str) -> None:
+    """Delegate one formal Director entrypoint to FactStream bootstrap."""
+
+    from polaris.cells.events.fact_stream.public import (
+        BootstrapFactStreamWorkspaceCommandV1,
+        bootstrap_fact_stream_workspace,
+        fact_stream_bootstrap_streams,
+    )
+
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=workspace,
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason=maintenance_reason,
+        )
+    )
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create thin argument parser."""
     parser = argparse.ArgumentParser(
@@ -132,6 +150,7 @@ async def run_director_console(workspace: str, iterations: int, max_workers: int
     """
     from polaris.delivery.cli.director.director_service import DirectorService
 
+    _bootstrap_director_fact_stream(workspace, "director_thin_cli_console_startup")
     service = DirectorService(
         workspace=Path(workspace).resolve(),
         max_workers=max_workers,
@@ -152,6 +171,7 @@ async def run_director_server(workspace: str, host: str, port: int) -> None:
     from polaris.delivery.cli.director.director_service import DirectorService
 
     enforce_utf8()
+    _bootstrap_director_fact_stream(workspace, "director_thin_cli_server_startup")
     logger.info(f"Starting Director server on {host}:{port}...")
     logger.info("Workspace: %s", workspace)
 
@@ -173,6 +193,7 @@ async def create_task(workspace: str, subject: str, description: str, priority: 
     from polaris.cells.director.execution.public.service import DirectorConfig, DirectorService
     from polaris.domain.entities import TaskPriority
 
+    _bootstrap_director_fact_stream(workspace, "director_thin_cli_task_create_startup")
     config = DirectorConfig(workspace=workspace)
     service = DirectorService(config=config)
     task_priority = TaskPriority(priority.lower())
@@ -215,6 +236,7 @@ def main() -> int:
         # The console subparser's --backend is opt-in (dest="console_backend");
         # fall back to the top-level --backend when it is not given explicitly.
         resolved_backend = parsed.console_backend if parsed.console_backend is not None else parsed.backend
+        _bootstrap_director_fact_stream(workspace, "director_thin_cli_terminal_startup")
         return int(
             terminal.run_director_console(
                 workspace=str(Path(workspace).resolve()),

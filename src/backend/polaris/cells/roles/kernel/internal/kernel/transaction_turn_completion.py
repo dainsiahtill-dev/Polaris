@@ -46,6 +46,63 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MISSING_DISPATCH_COMPLETION_ERROR = "tool_dispatch_dropped: required write tool was not dispatched before completion"
+TASK_BOUNDARY_LEDGER_APPEND_FAILURE_CLASS = "RUN_LEDGER_APPEND_FAILED"
+TASK_BOUNDARY_LEDGER_APPEND_FAILURE_STATUS = "run_ledger_append_failed"
+TASK_BOUNDARY_LEDGER_APPEND_RESPONSIBLE_LAYER = "execution_control_plane"
+_TASK_BOUNDARY_LEDGER_APPEND_OPERATION = "append_task_boundary_verdict"
+
+
+def build_task_boundary_ledger_append_failure_verdict(
+    *,
+    error: OSError | RuntimeError | TypeError | ValueError,
+    run_id: str,
+    turn_id: str,
+) -> dict[str, Any]:
+    """Build fail-closed evidence when a TaskBoundary ledger write fails.
+
+    A missing verdict can legitimately mean that TaskBoundary evaluation does
+    not apply to the current role. An exception raised while appending a verdict
+    is materially different: the control plane could not commit its terminal
+    evidence and therefore must not report a successful turn.
+
+    Complexity:
+        O(m) time and memory where ``m`` is the exception message length.
+    """
+
+    exception_type = type(error).__name__
+    exception_message = str(error).strip() or exception_type
+    return {
+        "schema_version": "polaris.task_boundary_verdict.v1",
+        "status": TASK_BOUNDARY_LEDGER_APPEND_FAILURE_STATUS,
+        "ok": False,
+        "failure_class": TASK_BOUNDARY_LEDGER_APPEND_FAILURE_CLASS,
+        "responsible_layer": TASK_BOUNDARY_LEDGER_APPEND_RESPONSIBLE_LAYER,
+        "failure_stage": "task_boundary_run_ledger_append",
+        "reason": "TaskBoundary verdict could not be committed to the Run Ledger",
+        "root_cause_hint": "run_ledger_append_exception",
+        "detail": f"{exception_type}: {exception_message}",
+        "run_id": str(run_id or turn_id),
+        "turn_id": str(turn_id),
+        "exception_evidence": {
+            "operation": _TASK_BOUNDARY_LEDGER_APPEND_OPERATION,
+            "exception_type": exception_type,
+            "message": exception_message,
+        },
+    }
+
+
+def task_boundary_ledger_append_failure_error(
+    verdict: Mapping[str, Any] | None,
+) -> str | None:
+    """Return the public control-plane error for an append-failure verdict."""
+
+    if not isinstance(verdict, Mapping):
+        return None
+    if verdict.get("failure_class") != TASK_BOUNDARY_LEDGER_APPEND_FAILURE_CLASS:
+        return None
+    status = str(verdict.get("status") or TASK_BOUNDARY_LEDGER_APPEND_FAILURE_STATUS).strip()
+    reason = str(verdict.get("reason") or "TaskBoundary Run Ledger append failed").strip()
+    return f"control_plane_failure:{status}: {reason}"
 
 
 def build_transaction_turn_completion_result(
@@ -438,9 +495,20 @@ def _append_task_boundary_verdict(
             error_message=error_msg,
             evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
         )
-    except (OSError, RuntimeError, TypeError, ValueError):
-        logger.debug("failed to append role-turn task boundary verdict", exc_info=True)
-        return None
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        run_id = str(request.run_id or turn_id)
+        logger.error(
+            "TaskBoundary Run Ledger append failed: run_id=%s turn_id=%s error_type=%s",
+            run_id,
+            turn_id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return build_task_boundary_ledger_append_failure_verdict(
+            error=exc,
+            run_id=run_id,
+            turn_id=turn_id,
+        )
 
 
 def _apply_task_boundary_completion_gate(
@@ -453,6 +521,9 @@ def _apply_task_boundary_completion_gate(
     task_boundary_error = project_task_boundary_failure_to_metadata(metadata, verdict)
     if task_boundary_error is None:
         return error_msg, is_complete
+    control_plane_error = task_boundary_ledger_append_failure_error(verdict)
+    if control_plane_error:
+        return control_plane_error, False
     if error_msg:
         return error_msg, False
     return task_boundary_error, False

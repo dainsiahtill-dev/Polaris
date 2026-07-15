@@ -3,8 +3,56 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from polaris.cells.qa.audit_verdict.internal.verdict_engine import QAVerdictEngine, diff_verdicts
+from polaris.cells.control_plane.run_ledger.public import empty_tool_lifecycle_summary
+from polaris.cells.qa.audit_verdict.internal.verdict_engine import (
+    QAVerdictEngine as ProductionQAVerdictEngine,
+    classify_qa_audit_failure,
+    diff_verdicts,
+)
+from polaris.cells.qa.audit_verdict.public.contracts import QaVerdictEnvelopeV1
+
+
+def _canonical_ledger(partial: dict[str, Any]) -> dict[str, Any]:
+    ledger = {
+        "schema_version": 1,
+        "source": "run_ledger_projection",
+        "available": True,
+        "consumed_run_ids": ["run-qa"],
+        **partial,
+    }
+    task_boundary = dict(ledger.get("task_boundary") or {})
+    latest = dict(task_boundary.get("latest") or {})
+    if not latest:
+        latest = {
+            "status": "completed_verified",
+            "ok": True,
+            "failure_class": "PASSED",
+            "responsible_layer": "execution_control_plane",
+            "reason": "Task boundary verified",
+        }
+    latest.update(
+        {
+            "schema_version": "polaris.task_boundary_verdict.v1",
+            "task_id": "task-qa",
+            "run_id": "run-qa",
+        }
+    )
+    task_boundary["latest"] = latest
+    task_boundary["latest_by_task"] = {"task-qa": latest}
+    task_boundary.setdefault("failed", [] if bool(latest.get("ok")) else [latest])
+    ledger["task_boundary"] = task_boundary
+    ledger.setdefault("tool_lifecycle", empty_tool_lifecycle_summary(requirement=False))
+    return ledger
+
+
+class QAVerdictEngine(ProductionQAVerdictEngine):
+    """Inject canonical control-plane framing into classification unit tests."""
+
+    def build_envelope(self, *args: Any, **kwargs: Any) -> QaVerdictEnvelopeV1:
+        kwargs["ledger_projection"] = _canonical_ledger(dict(kwargs.get("ledger_projection") or {}))
+        return super().build_envelope(*args, **kwargs)
 
 
 def _payload() -> dict[str, object]:
@@ -22,7 +70,7 @@ def _payload() -> dict[str, object]:
     }
 
 
-def test_missing_required_evidence_routes_to_director_repair(tmp_path: Path) -> None:
+def test_missing_required_evidence_blocks_on_execution_control_plane(tmp_path: Path) -> None:
     envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
         task_id="task-qa",
         payload=_payload(),
@@ -38,11 +86,43 @@ def test_missing_required_evidence_routes_to_director_repair(tmp_path: Path) -> 
     )
     payload = envelope.to_dict()
 
-    assert payload["verdict"] == "FAIL"
-    assert payload["next_stage"] == "pending_exec"
+    assert payload["verdict"] == "BLOCKED"
+    assert payload["next_stage"] == "pending_qa"
     assert payload["classification"]["failure_class"] == "EXECUTION_EVIDENCE_MISSING"
-    assert payload["classification"]["repairable_by_director"] is True
+    assert payload["classification"]["repairable_by_director"] is False
+    assert payload["classification"]["responsible_layer"] == "execution_control_plane"
     assert payload["authority"]["contract_hash"] == "contract-hash"
+
+
+def test_missing_director_changed_files_is_execution_control_plane_evidence_failure(
+    tmp_path: Path,
+) -> None:
+    audit_result = {
+        "verdict": "FAIL",
+        "metrics": {"missing_director_changed_files_evidence": True},
+        "findings": ["Director changed_files evidence is required for code task QA"],
+    }
+
+    failure_class, responsible_layer = classify_qa_audit_failure(audit_result)
+    envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
+        task_id="task-qa",
+        payload=_payload(),
+        audit_result=audit_result,
+        ledger_projection={
+            "audit_path": "runtime/control_plane/ledger",
+            "evidence_policy": {},
+        },
+        artifact_quality={"errors": []},
+    )
+    payload = envelope.to_dict()
+
+    assert failure_class == "EXECUTION_EVIDENCE_MISSING"
+    assert responsible_layer == "execution_control_plane"
+    assert payload["verdict"] == "BLOCKED"
+    assert payload["next_stage"] == "pending_qa"
+    assert payload["classification"]["failure_class"] == "EXECUTION_EVIDENCE_MISSING"
+    assert payload["classification"]["responsible_layer"] == "execution_control_plane"
+    assert payload["classification"]["repairable_by_director"] is False
 
 
 def test_unsatisfied_barrier_blocks_qa_instead_of_director_repair(tmp_path: Path) -> None:
@@ -57,7 +137,7 @@ def test_unsatisfied_barrier_blocks_qa_instead_of_director_repair(tmp_path: Path
 
     assert payload["verdict"] == "BLOCKED"
     assert payload["next_stage"] == "pending_qa"
-    assert payload["classification"]["failure_class"] == "TEST_ENVIRONMENT_FAILURE"
+    assert payload["classification"]["failure_class"] == "LEDGER_PROJECTION_INCOMPLETE"
     assert payload["classification"]["repairable_by_director"] is False
 
 
@@ -251,7 +331,7 @@ def test_deferred_followup_routes_to_director_retry(tmp_path: Path) -> None:
     assert payload["classification"]["repairable_by_director"] is True
 
 
-def test_task_boundary_evidence_missing_routes_to_director_retry(tmp_path: Path) -> None:
+def test_task_boundary_evidence_missing_blocks_on_execution_control_plane(tmp_path: Path) -> None:
     envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
         task_id="task-qa",
         payload=_payload(),
@@ -273,11 +353,12 @@ def test_task_boundary_evidence_missing_routes_to_director_retry(tmp_path: Path)
     )
     payload = envelope.to_dict()
 
-    assert payload["verdict"] == "FAIL"
-    assert payload["next_stage"] == "pending_exec"
+    assert payload["verdict"] == "BLOCKED"
+    assert payload["next_stage"] == "pending_qa"
     assert payload["classification"]["failure_class"] == "EXECUTION_EVIDENCE_MISSING"
-    assert payload["classification"]["repairable_by_director"] is True
-    assert payload["classification"]["owner"] == "director"
+    assert payload["classification"]["repairable_by_director"] is False
+    assert payload["classification"]["responsible_layer"] == "execution_control_plane"
+    assert payload["classification"]["owner"] == "execution_control_plane"
 
 
 def test_task_boundary_implementation_defect_routes_to_director_retry(tmp_path: Path) -> None:
@@ -338,7 +419,7 @@ def test_task_boundary_dependency_not_unlocked_blocks_execution_control_plane(tm
     assert payload["classification"]["owner"] == "execution_control_plane"
 
 
-def test_verdict_diff_reports_shadow_mismatch(tmp_path: Path) -> None:
+def test_verdict_diff_reports_local_projection_mismatch(tmp_path: Path) -> None:
     envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
         task_id="task-qa",
         payload=_payload(),

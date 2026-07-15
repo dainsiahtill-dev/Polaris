@@ -6,6 +6,7 @@ from .layout import (
     UNSUPPORTED_PATH_PREFIX,
     StorageLayout,
     StorageRoots,
+    WorkspaceRuntimeIdentity,
     clear_business_roots_resolver,
     clear_storage_roots_cache,
     default_kernelone_cache_base,
@@ -20,6 +21,7 @@ from .layout import (
     resolve_runtime_path,
     resolve_storage_roots,
     resolve_workspace_persistent_path,
+    resolve_workspace_runtime_identity,
     state_to_ramdisk_enabled,
     workspace_key,
 )
@@ -57,6 +59,7 @@ __all__ = [
     "StoragePolicy",
     "StoragePolicyService",
     "StorageRoots",
+    "WorkspaceRuntimeIdentity",
     "clear_business_roots_resolver",
     "clear_storage_roots_cache",
     "default_kernelone_cache_base",
@@ -79,6 +82,7 @@ __all__ = [
     "resolve_storage_roots",
     "resolve_taskboard_path",
     "resolve_workspace_persistent_path",
+    "resolve_workspace_runtime_identity",
     "state_to_ramdisk_enabled",
     "workspace_key",
 ]

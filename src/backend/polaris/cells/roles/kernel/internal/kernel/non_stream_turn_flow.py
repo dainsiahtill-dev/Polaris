@@ -107,7 +107,11 @@ async def execute_non_stream_role_turn(
     if request.run_id is None:
         request.run_id = observer_run_id
     transaction_executor = TransactionTurnExecutor(kernel)
-    transaction_invocation_id = _start_transaction_invocation(request)
+    transaction_invocation_id = _start_transaction_invocation(
+        request,
+        role=role,
+        workspace=kernel.workspace,
+    )
 
     for attempt in range(max_retries + 1):
         _bind_transaction_attempt(

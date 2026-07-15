@@ -62,6 +62,16 @@ from typing import Any, Final
 #: llm_caller helpers/tool_helpers and the director adapter converges here.
 HARD_OUTPUT_TOKEN_CLAMP: Final[int] = 128_000
 
+#: Shared output budget for Chief Engineer calls that must return a complete
+#: structured blueprint. The provider may require extended thinking, so the
+#: ordinary 4k role default is not a viable ceiling for this turn class.
+DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS: Final[int] = HARD_OUTPUT_TOKEN_CLAMP
+
+#: Existing deployment override retained as the single compatibility key for
+#: both portfolio planning and task fission. Central ownership prevents those
+#: two Chief Engineer paths from drifting back to different output budgets.
+CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV: Final[str] = "KERNELONE_CE_FISSION_MAX_TOKENS"
+
 #: CAP semantics: a forced-write retry / first-call materialization turn must
 #: not inherit the full execution budget; its output is capped at this ceiling
 #: (or lower, if the surrounding context already carries a smaller budget).
@@ -242,6 +252,26 @@ def _coerce_positive_float(value: Any) -> float | None:
 def clamp_output_tokens(value: int, *, floor: int = 1) -> int:
     """The ONE implementation of the ``max(floor, min(x, 128_000))`` clamp."""
     return max(floor, min(int(value), HARD_OUTPUT_TOKEN_CLAMP))
+
+
+def chief_engineer_structured_output_tokens(
+    environ: Mapping[str, str] | None = None,
+) -> int:
+    """Resolve one budget for every structured Chief Engineer response.
+
+    Args:
+        environ: Optional environment mapping. Injection keeps policy tests
+            deterministic without mutating process-global state.
+
+    Returns:
+        Positive output-token budget bounded by the platform hard clamp.
+    """
+
+    source = os.environ if environ is None else environ
+    parsed = _coerce_positive_int(source.get(CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV))
+    if parsed is None:
+        return DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS
+    return clamp_output_tokens(parsed)
 
 
 def forced_write_output_token_ceiling() -> int:
@@ -430,9 +460,7 @@ def resolve_execution_budget(
 
     normalized_role = str(role_id or "").strip().lower()
     resolved_request_timeout = (
-        float(request_timeout_seconds)
-        if request_timeout_seconds is not None
-        else float(llm_timeout_seconds)
+        float(request_timeout_seconds) if request_timeout_seconds is not None else float(llm_timeout_seconds)
     )
     provenance: dict[str, Any] = {
         "max_output_tokens": ("context_override" if context_max_tokens_present else "requested_clamped"),
@@ -459,6 +487,8 @@ __all__ = [
     "BUDGET_CONTEXT_KEYS_CANONICAL",
     "BUDGET_STRATEGY_PAYLOAD_KEYS",
     "CANONICAL_NESTED_CONTAINER_KEYS",
+    "CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV",
+    "DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS",
     "DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS",
     "DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS",
     "FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS",
@@ -488,6 +518,7 @@ __all__ = [
     "TURN_KIND_REPAIR_SUBCALL",
     "TURN_KIND_REQUIRED_TOOL_RETRY",
     "ResolvedBudgetV1",
+    "chief_engineer_structured_output_tokens",
     "clamp_output_tokens",
     "classify_turn_kind",
     "forced_write_output_token_ceiling",

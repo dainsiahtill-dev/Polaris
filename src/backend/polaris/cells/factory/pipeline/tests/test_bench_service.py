@@ -10,6 +10,54 @@ import unittest
 from pathlib import Path
 
 
+def _canonical_projection(**overrides: object) -> dict[str, object]:
+    projection: dict[str, object] = {
+        "schema_version": "factory_bench.canonical_projection.v1",
+        "source": "canonical_projection",
+        "authoritative": True,
+        "degraded": False,
+        "requested_project_id": "L1-01",
+        "canonical_project_id": "L1-11",
+        "instance_id": "bench-instance-1",
+        "instance": {"id": "bench-instance-1", "workspace": "/tmp/factory-bench/L1-01"},
+        "workspace": "/tmp/factory-bench/L1-01",
+        "backend_port": 51001,
+        "frontend_port": 52001,
+        "ports": {"backend": 51001, "frontend": 52001},
+        "run_id": "bench-run-1",
+        "factory_run_id": "factory-run-1",
+        "run_ids": {"bench": "bench-run-1", "factory": "factory-run-1"},
+        "final_request_refs": [{"role": "qa", "context_snapshot_ref": "a" * 24}],
+        "lifecycle": {"ok": True},
+        "effect": {"tool_receipts": {"count": 1}},
+        "boundary": {"authoritative": True, "ok": True},
+        "runtime": {"status": "completed", "terminal_observed": True},
+        "ledger": {
+            "source": "run_ledger",
+            "capability": {"latest_token_id": "job-token-1"},
+            "evidence_policy": {
+                "ok": True,
+                "enabled_modalities": ["browser"],
+                "required_modalities": [],
+                "missing_required_modalities": [],
+                "failed_required_modalities": [],
+            },
+            "evidence_modalities": {},
+        },
+        "qa": {"authoritative": True, "ok": True, "name": "qa_verdict"},
+        "barrier": {"barrier_satisfied": True},
+        "fallback": {},
+        "execution": {"ok": True, "status": "completed_verified", "reason_code": "completed_verified"},
+        "legacy_artifacts": {
+            "source": "legacy_artifact",
+            "authoritative": False,
+            "degraded": True,
+        },
+    }
+    projection.update(overrides)
+    return projection
+
+
 class TestFactoryBenchService(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -103,7 +151,7 @@ class TestFactoryBenchService(unittest.TestCase):
         self.assertEqual(snapshot["total"], 2)
         self.assertEqual(len(snapshot["events"]), 3)
         self.assertEqual(snapshot["events"][0]["type"], "event.0")
-        self.assertEqual(snapshot["control_plane_projection"]["source"], "run_ledger_projection")
+        self.assertEqual(snapshot["control_plane_projection"]["source"], "canonical_projection")
         self.assertEqual(snapshot["control_plane_projection"]["status"], "pending")
 
     def test_list_sessions_returns_recent_first(self) -> None:
@@ -140,6 +188,7 @@ class TestFactoryBenchService(unittest.TestCase):
                             "frontend_port": 52001,
                             "run_id": "bench-run-1",
                             "factory_run_id": "factory-run-1",
+                            "canonical_projection": _canonical_projection(),
                             "run_ledger_projection": {
                                 "schema_version": 1,
                                 "source": "run_ledger",
@@ -186,7 +235,7 @@ class TestFactoryBenchService(unittest.TestCase):
         projection = snapshot["control_plane_projection"]
         self.assertTrue(projection["ok"])
         self.assertEqual(projection["status"], "ready")
-        self.assertEqual(projection["source"], "run_ledger_projection")
+        self.assertEqual(projection["source"], "canonical_projection")
         self.assertEqual(projection["total"], 1)
         self.assertEqual(projection["projected"], 1)
         self.assertEqual(projection["missing"], 0)
@@ -199,14 +248,22 @@ class TestFactoryBenchService(unittest.TestCase):
         self.assertEqual(projection["projects"][0]["frontend_port"], 52001)
         self.assertEqual(projection["projects"][0]["run_id"], "bench-run-1")
         self.assertEqual(projection["projects"][0]["factory_run_id"], "factory-run-1")
+        self.assertEqual(projection["projects"][0]["instance"]["id"], "bench-instance-1")
+        self.assertEqual(projection["projects"][0]["ports"], {"backend": 51001, "frontend": 52001})
+        self.assertEqual(
+            projection["projects"][0]["run_ids"],
+            {"bench": "bench-run-1", "factory": "factory-run-1"},
+        )
         self.assertEqual(projection["projects"][0]["latest_token_id"], "job-token-1")
-        self.assertEqual(projection["projects"][0]["run_ledger_projection"]["source"], "run_ledger")
+        self.assertEqual(projection["projects"][0]["ledger"]["source"], "run_ledger")
+        self.assertTrue(projection["projects"][0]["authoritative"])
+        self.assertFalse(projection["projects"][0]["degraded"])
         self.assertEqual(projection["evidence_policy"]["enabled_modalities"], ["browser"])
         self.assertEqual(projection["projects"][0]["evidence_policy"]["enabled_modalities"], ["browser"])
         self.assertEqual(projection["goal_audit"], {"projected": 1, "total": 1, "missing": 0})
         self.assertEqual(listed[0]["control_plane_projection"], projection)
 
-    def test_session_snapshots_normalize_legacy_failed_evidence_projection(self) -> None:
+    def test_session_snapshots_expose_legacy_evidence_as_degraded_only(self) -> None:
         work_dir = self.root / "bench-work-legacy"
         work_dir.mkdir()
         (work_dir / "factory_audits.json").write_text(
@@ -271,21 +328,17 @@ class TestFactoryBenchService(unittest.TestCase):
         projection = snapshot["control_plane_projection"]
         project = projection["projects"][0]
         self.assertFalse(projection["ok"])
-        self.assertEqual(projection["projected"], 1)
-        self.assertEqual(projection["missing"], 0)
-        self.assertEqual(projection["failed"], 1)
+        self.assertEqual(projection["projected"], 0)
+        self.assertEqual(projection["missing"], 1)
+        self.assertEqual(projection["failed"], 0)
         self.assertFalse(project["ok"])
-        self.assertTrue(project["integrity_ok"])
-        self.assertFalse(project["outcome_ok"])
-        self.assertEqual(project["missing"], [])
-        self.assertEqual(project["failed_required_modalities"], ["command"])
-        self.assertEqual(project["detail"], "run ledger projection required evidence failed: command")
-        self.assertEqual(project["evidence_policy"]["missing_required_modalities"], [])
-        self.assertEqual(project["evidence_policy"]["failed_required_modalities"], ["command"])
-        self.assertFalse(project["evidence_policy"]["ok"])
-        self.assertEqual(projection["evidence_policy"]["missing_required_modalities"], [])
-        self.assertEqual(projection["evidence_policy"]["failed_required_modalities"], ["command"])
-        self.assertFalse(projection["evidence_policy"]["ok"])
+        self.assertEqual(project["source"], "legacy_artifact")
+        self.assertFalse(project["authoritative"])
+        self.assertTrue(project["degraded"])
+        self.assertEqual(
+            project["detail"],
+            "canonical projection unavailable; legacy artifacts are display-only",
+        )
 
     def test_read_events_from_returns_all_events_from_offset(self) -> None:
         sid = self.svc.register_session(work_dir="/tmp/ws", project_ids=["L1-01"], total=1)

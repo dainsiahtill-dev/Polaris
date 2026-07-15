@@ -56,7 +56,7 @@ class _MockRequest:
     workspace: str = "."
     prompt_appendix: str = ""
     system_prompt: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=lambda: {"turn_request_id": "transaction-wiring"})
     context_override: dict[str, Any] | None = field(default_factory=lambda: {"context_os_snapshot": {}})
     tool_results: list[dict[str, Any]] = field(default_factory=list)
 
@@ -101,6 +101,27 @@ def _file_param_enum(tool_definitions: list[dict[str, Any]], tool_name: str) -> 
         enum = file_property.get("enum")
         return [str(item) for item in enum] if isinstance(enum, list) else []
     return []
+
+
+async def _execute_bound_turn(
+    executor: TransactionTurnExecutor,
+    **kwargs: Any,
+) -> RoleTurnResult:
+    """Satisfy the executor's explicit attempt-binding precondition in tests."""
+
+    request = cast(_MockRequest, kwargs["request"])
+    role = str(kwargs["role"])
+    invocation_id = _start_transaction_invocation(
+        request,  # type: ignore[arg-type]
+        role=role,
+        workspace=executor.kernel.workspace,
+    )
+    _bind_transaction_attempt(
+        request,  # type: ignore[arg-type]
+        invocation_id=invocation_id,
+        attempt=0,
+    )
+    return await executor.execute_turn(**kwargs)
 
 
 @pytest.mark.asyncio
@@ -353,8 +374,23 @@ class TestContextDeliveryModeMarker:
 
 class TestTransactionTurnId:
     def test_task_scoped_turn_id_distinguishes_concurrent_tasks(self) -> None:
-        first = _resolve_transaction_turn_id(_MockRequest(run_id="run-1", task_id="D4-SAT-1"), "run-1")
-        second = _resolve_transaction_turn_id(_MockRequest(run_id="run-1", task_id="D4-SAT-2"), "run-1")
+        first_request = _MockRequest(run_id="run-1", task_id="D4-SAT-1")
+        first_invocation = _start_transaction_invocation(
+            first_request,
+            role="director",
+            workspace=first_request.workspace,
+        )
+        _bind_transaction_attempt(first_request, invocation_id=first_invocation, attempt=0)
+        second_request = _MockRequest(run_id="run-1", task_id="D4-SAT-2")
+        second_invocation = _start_transaction_invocation(
+            second_request,
+            role="director",
+            workspace=second_request.workspace,
+        )
+        _bind_transaction_attempt(second_request, invocation_id=second_invocation, attempt=0)
+
+        first = _resolve_transaction_turn_id(first_request, "run-1")
+        second = _resolve_transaction_turn_id(second_request, "run-1")
 
         assert first != second
         assert first.startswith("run-1")
@@ -364,7 +400,11 @@ class TestTransactionTurnId:
 
     def test_retry_attempts_have_distinct_terminal_fact_ids(self) -> None:
         request = _MockRequest(run_id="run-1", task_id="TASK-1")
-        invocation_id = _start_transaction_invocation(request)
+        invocation_id = _start_transaction_invocation(
+            request,
+            role="director",
+            workspace=request.workspace,
+        )
 
         first_attempt = _bind_transaction_attempt(request, invocation_id=invocation_id, attempt=0)
         first_turn_id = _resolve_transaction_turn_id(request, "run-1")
@@ -853,7 +893,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=context_gateway,
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -919,7 +960,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=read_only_tools,
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -995,7 +1037,8 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1085,7 +1128,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=full_tool_definitions,
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1172,7 +1216,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=full_tool_definitions,
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1226,7 +1271,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=context_gateway,
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="pm",
                 profile=profile,
                 request=request,
@@ -1292,7 +1338,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="pm",
                 profile=profile,
                 request=request,
@@ -1361,7 +1408,8 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1451,7 +1499,8 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1515,7 +1564,8 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="pm",
                 profile=profile,
                 request=request,
@@ -1562,7 +1612,8 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            await TransactionTurnExecutor(kernel).execute_turn(
+            await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1614,7 +1665,8 @@ class TestExecuteTransactionKernelTurn:
                 ),
             ),
         ):
-            await TransactionTurnExecutor(kernel).execute_turn(
+            await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1659,7 +1711,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1704,7 +1757,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1755,7 +1809,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="director",
                 profile=profile,
                 request=request,
@@ -1787,7 +1842,8 @@ class TestExecuteTransactionKernelTurn:
                 return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
             ),
         ):
-            result = await TransactionTurnExecutor(kernel).execute_turn(
+            result = await _execute_bound_turn(
+                TransactionTurnExecutor(kernel),
                 role="pm",
                 profile=profile,
                 request=request,

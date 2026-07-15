@@ -64,6 +64,7 @@ def _build_readonly_decision(
     batch_suffix: str,
     invocation_count: int = 1,
     should_fail: bool = False,
+    failure_count: int | None = None,
 ) -> TurnDecision:
     invocations: list[dict[str, Any]] = []
     for idx in range(invocation_count):
@@ -73,7 +74,7 @@ def _build_readonly_decision(
                 "tool_name": "read_file",
                 "arguments": {
                     "file": "README.md",
-                    "should_fail": should_fail,
+                    "should_fail": should_fail if failure_count is None else idx < failure_count,
                     "invocation_index": idx,
                 },
                 "execution_mode": "readonly_parallel",
@@ -92,6 +93,28 @@ def _build_readonly_decision(
             },
         },
     )
+
+
+async def _selective_tool_runtime(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Return deterministic success/failure evidence for executor tests."""
+    if bool(arguments.get("should_fail", False)):
+        return {"success": False, "error": "forced failure"}
+    result: dict[str, Any] = {
+        "success": True,
+        "result": {
+            "file": str(arguments.get("file") or ""),
+            "content": str(arguments.get("content") or "ok"),
+        },
+    }
+    if tool_name == "write_file":
+        file_path = str(arguments.get("file") or "")
+        result["effect_receipt"] = {
+            "schema_version": "effect_receipt.v1",
+            "operation": "write_file",
+            "file": file_path,
+            "changed_files": [file_path] if file_path else [],
+        }
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +141,7 @@ async def test_tool_failure_circuit_breaker_triggers_after_three_consecutive_fai
 ) -> None:
     """连续 3 个失败批次后必须触发工具失败熔断。"""
     executor = ToolBatchExecutor(
-        tool_runtime=AsyncMock(return_value={"success": False, "error": "forced failure"}),
+        tool_runtime=AsyncMock(side_effect=_selective_tool_runtime),
         config=TransactionConfig(mutation_guard_mode="warn"),
         emit_event=mock_emit_event,
         guard_assert_single_tool_batch=mock_guard_assert,
@@ -130,7 +153,12 @@ async def test_tool_failure_circuit_breaker_triggers_after_three_consecutive_fai
 
     for idx in range(2):
         await executor.execute_tool_batch(
-            _build_readonly_decision(turn_id, batch_suffix=f"consecutive_{idx}", should_fail=True),
+            _build_readonly_decision(
+                turn_id,
+                batch_suffix=f"consecutive_{idx}",
+                invocation_count=2,
+                failure_count=1,
+            ),
             _build_decoded_state_machine(turn_id),
             TurnLedger(turn_id=turn_id),
             context,
@@ -145,7 +173,12 @@ async def test_tool_failure_circuit_breaker_triggers_after_three_consecutive_fai
         ),
     ):
         await executor.execute_tool_batch(
-            _build_readonly_decision(turn_id, batch_suffix="consecutive_2", should_fail=True),
+            _build_readonly_decision(
+                turn_id,
+                batch_suffix="consecutive_2",
+                invocation_count=2,
+                failure_count=1,
+            ),
             _build_decoded_state_machine(turn_id),
             TurnLedger(turn_id=turn_id),
             context,
@@ -159,15 +192,7 @@ async def test_tool_failure_circuit_breaker_resets_consecutive_after_success_bat
     mock_guard_assert: Any,
 ) -> None:
     """成功批次后 consecutive 计数必须重置。"""
-    tool_runtime = AsyncMock(
-        side_effect=[
-            {"success": False, "error": "failure_1"},
-            {"success": True, "result": {"file": "README.md", "content": "ok"}},
-            {"success": False, "error": "failure_2"},
-            {"success": False, "error": "failure_3"},
-            {"success": False, "error": "failure_4"},
-        ]
-    )
+    tool_runtime = AsyncMock(side_effect=_selective_tool_runtime)
     executor = ToolBatchExecutor(
         tool_runtime=tool_runtime,
         config=TransactionConfig(mutation_guard_mode="warn"),
@@ -179,14 +204,19 @@ async def test_tool_failure_circuit_breaker_resets_consecutive_after_success_bat
     turn_id = "turn_tool_failure_reset"
     context = [{"role": "user", "content": "读取 README.md"}]
 
-    for suffix, should_fail in [
-        ("reset_fail_1", True),
-        ("reset_success", False),
-        ("reset_fail_2", True),
-        ("reset_fail_3", True),
+    for suffix, failure_count in [
+        ("reset_fail_1", 1),
+        ("reset_success", 0),
+        ("reset_fail_2", 1),
+        ("reset_fail_3", 1),
     ]:
         await executor.execute_tool_batch(
-            _build_readonly_decision(turn_id, batch_suffix=suffix, should_fail=should_fail),
+            _build_readonly_decision(
+                turn_id,
+                batch_suffix=suffix,
+                invocation_count=2,
+                failure_count=failure_count,
+            ),
             _build_decoded_state_machine(turn_id),
             TurnLedger(turn_id=turn_id),
             context,
@@ -201,7 +231,12 @@ async def test_tool_failure_circuit_breaker_resets_consecutive_after_success_bat
         ),
     ):
         await executor.execute_tool_batch(
-            _build_readonly_decision(turn_id, batch_suffix="reset_fail_4", should_fail=True),
+            _build_readonly_decision(
+                turn_id,
+                batch_suffix="reset_fail_4",
+                invocation_count=2,
+                failure_count=1,
+            ),
             _build_decoded_state_machine(turn_id),
             TurnLedger(turn_id=turn_id),
             context,
@@ -216,13 +251,8 @@ async def test_tool_failure_circuit_breaker_triggers_on_total_failures(
 ) -> None:
     """累计失败达到 10 时必须触发熔断（即使 consecutive 未达到阈值）。"""
 
-    async def selective_tool_runtime(_tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        if bool(arguments.get("should_fail", False)):
-            return {"success": False, "error": "forced failure"}
-        return {"success": True, "result": {"file": "README.md", "content": "ok"}}
-
     executor = ToolBatchExecutor(
-        tool_runtime=AsyncMock(side_effect=selective_tool_runtime),
+        tool_runtime=AsyncMock(side_effect=_selective_tool_runtime),
         config=TransactionConfig(mutation_guard_mode="warn"),
         emit_event=mock_emit_event,
         guard_assert_single_tool_batch=mock_guard_assert,
@@ -237,8 +267,8 @@ async def test_tool_failure_circuit_breaker_triggers_on_total_failures(
             _build_readonly_decision(
                 turn_id,
                 batch_suffix=f"total_fail_cycle_{cycle}",
-                invocation_count=2,
-                should_fail=True,
+                invocation_count=3,
+                failure_count=2,
             ),
             _build_decoded_state_machine(turn_id),
             TurnLedger(turn_id=turn_id),
@@ -250,7 +280,7 @@ async def test_tool_failure_circuit_breaker_triggers_on_total_failures(
                 turn_id,
                 batch_suffix=f"total_success_cycle_{cycle}",
                 invocation_count=1,
-                should_fail=False,
+                failure_count=0,
             ),
             _build_decoded_state_machine(turn_id),
             TurnLedger(turn_id=turn_id),
@@ -269,8 +299,8 @@ async def test_tool_failure_circuit_breaker_triggers_on_total_failures(
             _build_readonly_decision(
                 turn_id,
                 batch_suffix="total_fail_cycle_4",
-                invocation_count=2,
-                should_fail=True,
+                invocation_count=3,
+                failure_count=2,
             ),
             _build_decoded_state_machine(turn_id),
             TurnLedger(turn_id=turn_id),
@@ -502,7 +532,7 @@ async def test_exploration_streak_hard_block_rejects_exploration_only_batch(
     """当 EXPLORATION_STREAK_HARD_BLOCK 生效时，只探索工具应被拒绝。"""
     captured_events: list[Any] = []
     executor = ToolBatchExecutor(
-        tool_runtime=AsyncMock(),
+        tool_runtime=AsyncMock(side_effect=_selective_tool_runtime),
         config=TransactionConfig(mutation_guard_mode="warn"),
         emit_event=lambda event: captured_events.append(event),
         guard_assert_single_tool_batch=mock_guard_assert,
@@ -549,10 +579,10 @@ async def test_exploration_streak_hard_block_rejects_exploration_only_batch(
 
 
 @pytest.mark.asyncio
-async def test_known_target_requires_read_blocks_exploration_only_batch(
+async def test_known_absent_target_requires_write_blocks_exploration_only_batch(
     mock_guard_assert: Any,
 ) -> None:
-    """已知目标文件后仍只做 broad exploration，必须被 executor 拦截。"""
+    """已知但不存在的目标仍只做 broad exploration，必须要求直接创建。"""
     captured_events: list[Any] = []
     executor = ToolBatchExecutor(
         tool_runtime=AsyncMock(),
@@ -594,13 +624,65 @@ async def test_known_target_requires_read_blocks_exploration_only_batch(
                 "请进一步完善 polaris/cells/roles/runtime/internal/session_orchestrator.py 相关代码。"
                 " 当前必须先 read_file 再修改。"
             ),
+            "metadata": {
+                "platform_tool_contract": {
+                    "missing_target_files": ["polaris/cells/roles/runtime/internal/session_orchestrator.py"],
+                }
+            },
         }
     ]
 
-    with pytest.raises(RuntimeError, match="target_files_known_without_read_evidence"):
+    with pytest.raises(RuntimeError, match="target_files_known_and_absent; requires_direct_write"):
+        await executor.execute_tool_batch(decision, state_machine, ledger, context, stream=False)
+    assert any(
+        isinstance(event, ErrorEvent) and event.error_type == "known_target_requires_write" for event in captured_events
+    )
+
+
+@pytest.mark.asyncio
+async def test_known_existing_target_still_requires_read_before_edit(
+    mock_guard_assert: Any,
+) -> None:
+    """A known existing target without absence evidence still needs a fresh read."""
+    captured_events: list[Any] = []
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=lambda event: captured_events.append(event),
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    decision = cast(
+        TurnDecision,
+        {
+            "turn_id": "turn_known_existing_requires_read",
+            "metadata": {"workspace": "."},
+            "finalize_mode": "none",
+            "tool_batch": {
+                "batch_id": "batch_known_existing_requires_read",
+                "invocations": [
+                    {
+                        "call_id": "call_glob",
+                        "tool_name": "glob",
+                        "arguments": {"pattern": "**/AGENTS.md"},
+                    }
+                ],
+            },
+        },
+    )
+    state_machine = _build_decoded_state_machine("turn_known_existing_requires_read")
+    ledger = TurnLedger(turn_id="turn_known_existing_requires_read")
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    context = [{"role": "user", "content": "请更新 AGENTS.md 中的执行说明。"}]
+
+    with pytest.raises(RuntimeError, match="target_files_known_without_read_evidence; requires_bootstrap_read"):
         await executor.execute_tool_batch(decision, state_machine, ledger, context, stream=False)
     assert any(
         isinstance(event, ErrorEvent) and event.error_type == "known_target_requires_read" for event in captured_events
+    )
+    assert not any(
+        isinstance(event, ErrorEvent) and event.error_type == "known_target_requires_write" for event in captured_events
     )
 
 
@@ -700,7 +782,7 @@ async def test_exploration_streak_hard_block_allows_non_exploration_only_batches
     """熔断标记存在时，包含 direct read 或 write 的批次不应被误拦截。"""
     captured_events: list[Any] = []
     executor = ToolBatchExecutor(
-        tool_runtime=AsyncMock(),
+        tool_runtime=AsyncMock(side_effect=_selective_tool_runtime),
         config=TransactionConfig(mutation_guard_mode="warn"),
         emit_event=lambda event: captured_events.append(event),
         guard_assert_single_tool_batch=mock_guard_assert,

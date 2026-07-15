@@ -1,22 +1,9 @@
-"""Orchestration run-completion waiter for the factory stage executor.
+"""Canonical run-completion barrier for Factory orchestration stages.
 
-Holds the orchestration-service build glue and the run-wait race extracted
-verbatim from ``OrchestrationStageExecutor``. ``OrchestrationStageExecutor``
-keeps same-named delegating shims (``_build_orchestration_service`` /
-``_wait_run_completion`` / ``_resolve_cancel_event`` / ``_resolve_abort_checker``)
-so the test-overridden / monkeypatched entry points stay intact.
-
-Behavior preservation notes (load-bearing — do NOT alter):
-
-* The cross-cell imports stay LAZY (in-function): ``Settings`` /
-  ``OrchestrationCommandService`` inside ``build_orchestration_service`` and
-  ``get_orchestration_service`` inside ``wait`` must not hoist to module scope
-  (import-cycle guard).
-* The orchestration task is discovered via ``getattr(orchestration_service,
-  "_active_runs", {})`` — duck-typed reach, moved verbatim.
-* The ``finally`` cleanup cancels outstanding waiters and drains them under
-  ``contextlib.suppress(asyncio.CancelledError)`` — the concurrency-correctness
-  path is preserved exactly.
+Orchestration sessions and ``_active_runs`` expose process lifecycle only.
+Successful stage completion is projected from a committed TransactionKernel
+turn outcome or a fact-backed TaskRuntime terminal row. This keeps Factory
+from promoting stale session status into execution truth.
 """
 
 from __future__ import annotations
@@ -25,6 +12,8 @@ import asyncio
 import contextlib
 import inspect
 import logging
+from collections.abc import Mapping
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -34,8 +23,36 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from polaris.cells.orchestration.orchestration_engine.public.service import OrchestrationCommandService
+    from polaris.cells.runtime.task_runtime.public.contracts import ObservableTaskRowsProjectionV1
 
 logger = logging.getLogger(__name__)
+
+_CANONICAL_OUTCOME_SETTLEMENT_SECONDS = 2.0
+_CANONICAL_POLL_SECONDS = 0.05
+_TASK_RUNTIME_TERMINAL_STATES = frozenset(
+    {"blocked", "cancelled", "completed", "completed_verified", "failed", "timeout"}
+)
+_TASK_RUNTIME_FAILURE_STATES = frozenset({"blocked", "failed", "timeout"})
+_CANONICAL_STATUS_PRECEDENCE = {
+    "completed": 0,
+    "cancelled": 1,
+    "failed": 2,
+    "blocked": 3,
+}
+
+
+class RunCompletionAuthority(str, Enum):
+    """Select the fact boundary required to settle an orchestration run.
+
+    Planning and review roles may use their orchestration lifecycle result only
+    to continue into their stage-specific contract or evidence validation.
+    Director materialization must instead settle through committed TaskRuntime
+    execution facts. Neither mode, by itself, grants Factory delivery
+    verification authority.
+    """
+
+    ROLE_LIFECYCLE = "role_lifecycle"
+    TASK_RUNTIME_EXECUTION_FACT = "task_runtime_execution_fact"
 
 
 class RunCompletionWaiter:
@@ -44,8 +61,26 @@ class RunCompletionWaiter:
     def __init__(self, workspace: Path) -> None:
         self.workspace = Path(workspace)
 
-    def _active_execution_rows(self, *, run_id: str) -> list[dict[str, Any]]:
-        """Return TaskRuntime-owned active rows for one child run.
+    def _observable_task_rows_projection(self) -> ObservableTaskRowsProjectionV1 | None:
+        """Read TaskRuntime rows through the typed public authority boundary."""
+
+        try:
+            from polaris.cells.runtime.task_runtime.public.service import (
+                TaskRuntimeService,
+            )
+
+            return TaskRuntimeService(str(self.workspace)).query_observable_task_rows_projection()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("TaskRuntime typed observable projection unavailable: %s", exc)
+            return None
+
+    def _execution_rows(
+        self,
+        *,
+        run_id: str,
+        projection: ObservableTaskRowsProjectionV1 | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return fact-projected TaskRuntime rows associated with one run.
 
         TaskRuntime's observable projection is the only status input used by the
         Factory execution barrier.  Keeping the lookup in one helper prevents
@@ -59,22 +94,28 @@ class RunCompletionWaiter:
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
             return []
-        try:
-            from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-
-            rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            logger.debug(
-                "TaskRuntime active-run projection unavailable for run %s: %s",
-                normalized_run_id,
-                exc,
-            )
+        selected_projection = projection or self._observable_task_rows_projection()
+        if selected_projection is None:
             return []
         return [
-            row
-            for row in rows
-            if isinstance(row, dict) and self._row_matches_active_run(row, run_id=normalized_run_id)
+            dict(row)
+            for row in selected_projection.rows
+            if isinstance(row, Mapping) and self._row_matches_run(row, run_id=normalized_run_id)
         ]
+
+    def _active_execution_rows(self, *, run_id: str) -> list[dict[str, Any]]:
+        """Return the active subset of canonical TaskRuntime rows."""
+
+        return [row for row in self._execution_rows(run_id=run_id) if self._row_is_active(row)]
+
+    @staticmethod
+    def _row_has_canonical_fact_source(row: Mapping[str, Any]) -> bool:
+        metadata = row.get("metadata")
+        metadata_map = metadata if isinstance(metadata, Mapping) else {}
+        return (
+            str(metadata_map.get("source") or "").strip() == "task_runtime.execution_fact"
+            and str(metadata_map.get("status_source") or "").strip() == "task_runtime.execution_fact"
+        )
 
     def active_execution_progress_marker(self, *, run_id: str) -> tuple[tuple[str, str, str, str], ...]:
         """Return a stable marker for observable progress in one active run.
@@ -98,19 +139,15 @@ class RunCompletionWaiter:
                 (
                     str(row.get("id") or row.get("task_id") or "").strip(),
                     str(row.get("fact_event_seq") or runtime_execution_map.get("fact_event_seq") or "").strip(),
-                    str(
-                        row.get("last_heartbeat_at")
-                        or runtime_execution_map.get("last_heartbeat_at")
-                        or ""
-                    ).strip(),
+                    str(row.get("last_heartbeat_at") or runtime_execution_map.get("last_heartbeat_at") or "").strip(),
                     str(row.get("status") or row.get("execution_state") or "").strip().lower(),
                 )
             )
         return tuple(sorted(markers))
 
     @staticmethod
-    def _row_matches_active_run(row: dict[str, Any], *, run_id: str) -> bool:
-        """Return whether a task row still represents active work for ``run_id``.
+    def _row_matches_run(row: Mapping[str, Any], *, run_id: str) -> bool:
+        """Return whether an observable row belongs to ``run_id``.
 
         The factory timeout/cancel path must not invalidate a Director lease
         after the provider response has reached tool dispatch.  TaskRuntime is
@@ -137,8 +174,16 @@ class RunCompletionWaiter:
             str(runtime_execution_map.get("run_id") or "").strip(),
             str(runtime_execution_map.get("factory_run_id") or "").strip(),
         }
-        if normalized_run_id not in row_run_ids:
-            return False
+        return normalized_run_id in row_run_ids
+
+    @staticmethod
+    def _row_is_active(row: Mapping[str, Any]) -> bool:
+        """Return whether a fact-projected TaskRuntime row is active."""
+
+        metadata = row.get("metadata")
+        metadata_map = metadata if isinstance(metadata, dict) else {}
+        runtime_execution = metadata_map.get("runtime_execution")
+        runtime_execution_map = runtime_execution if isinstance(runtime_execution, dict) else {}
         row_status = str(row.get("status") or row.get("state") or row.get("execution_state") or "").strip().lower()
         session_status = str(runtime_execution_map.get("status") or "").strip().lower()
         if bool(row.get("running")):
@@ -154,6 +199,222 @@ class RunCompletionWaiter:
             "processing",
             "executing",
         } or session_status in {"active", "claimed", "in_progress", "running"}
+
+    @staticmethod
+    def _canonical_row_status(row: Mapping[str, Any]) -> str:
+        return str(row.get("execution_state") or row.get("status") or row.get("state") or "").strip().lower()
+
+    def _task_runtime_terminal_result(
+        self,
+        *,
+        run_id: str,
+        projection: ObservableTaskRowsProjectionV1,
+    ) -> CommandResult | None:
+        """Project a terminal result from committed TaskRuntime facts.
+
+        Every matching row must have a positive FactStream sequence and a
+        terminal state. A partial or file-fallback projection is therefore
+        never promoted to terminal authority.
+        """
+
+        rows = self._execution_rows(run_id=run_id, projection=projection)
+        if not rows:
+            return None
+        sequences: list[int] = []
+        statuses: list[str] = []
+        task_ids: list[str] = []
+        for row in rows:
+            if not self._row_has_canonical_fact_source(row):
+                return CommandResult(
+                    run_id=run_id,
+                    status="blocked",
+                    message="TaskRuntime observable row is not sourced from canonical execution facts",
+                    metadata={
+                        "canonical_authoritative": False,
+                        "degraded": True,
+                        "terminal_source": "task_runtime_transitional_projection_blocked",
+                        "task_id": str(row.get("task_id") or row.get("id") or "").strip(),
+                    },
+                )
+            sequence = row.get("fact_event_seq")
+            if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+                return None
+            status = self._canonical_row_status(row)
+            if status not in _TASK_RUNTIME_TERMINAL_STATES:
+                return None
+            sequences.append(sequence)
+            statuses.append(status)
+            task_id = str(row.get("task_id") or row.get("id") or "").strip()
+            if task_id:
+                task_ids.append(task_id)
+
+        if any(status in _TASK_RUNTIME_FAILURE_STATES for status in statuses):
+            result_status = "failed"
+        elif any(status == "cancelled" for status in statuses):
+            result_status = "cancelled"
+        else:
+            result_status = "completed"
+        return CommandResult(
+            run_id=run_id,
+            status=result_status,
+            message=f"TaskRuntime canonical projection reached {result_status}",
+            metadata={
+                "canonical_authoritative": True,
+                "terminal_source": "task_runtime.execution_fact",
+                "fact_event_seq": max(sequences),
+                "task_ids": task_ids,
+                "task_statuses": statuses,
+                "task_row_read_model_source": "task_runtime.execution_fact",
+            },
+        )
+
+    def _committed_turn_outcome_result(
+        self,
+        *,
+        run_id: str,
+        process_terminal: bool,
+    ) -> CommandResult | None:
+        """Project the latest committed TransactionKernel outcome.
+
+        A turn outcome only closes the orchestration run after its process has
+        terminated; otherwise a completed intermediate turn could be mistaken
+        for the end of a continuation workflow.
+        """
+
+        if not process_terminal:
+            return None
+        try:
+            from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
+
+            result = query_fact_events(
+                QueryFactEventsV1(
+                    workspace=str(self.workspace),
+                    stream="roles.kernel.turn_outcomes",
+                    event_type="turn_outcome_committed",
+                    run_id=run_id,
+                    limit=1000,
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Committed turn outcome unavailable for run %s: %s", run_id, exc)
+            return None
+        if not result.events:
+            return None
+        event = result.events[-1]
+        payload = event.get("payload")
+        payload_map = payload if isinstance(payload, Mapping) else {}
+        if str(payload_map.get("schema_version") or "").strip() != "roles.kernel.turn_outcome_fact.v1":
+            return None
+        outcome = payload_map.get("outcome")
+        outcome_map = outcome if isinstance(outcome, Mapping) else {}
+        outcome_status = str(outcome_map.get("outcome_status") or "").strip().lower()
+        if outcome_status not in {"cancelled", "completed", "failed", "handed_off", "panic"}:
+            return None
+        if outcome_status == "completed":
+            result_status = "completed"
+        elif outcome_status == "cancelled":
+            result_status = "cancelled"
+        else:
+            result_status = "failed"
+        sequence = event.get("seq")
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+            return None
+        return CommandResult(
+            run_id=run_id,
+            status=result_status,
+            message=f"TransactionKernel committed turn outcome reached {outcome_status}",
+            metadata={
+                "canonical_authoritative": True,
+                "terminal_source": "roles.kernel.turn_outcomes",
+                "fact_event_seq": sequence,
+                "fact_event_id": str(event.get("event_id") or "").strip(),
+                "outcome_hash": str(payload_map.get("outcome_hash") or "").strip(),
+                "resolution_code": str(outcome_map.get("resolution_code") or "").strip(),
+                "failure_class": str(outcome_map.get("failure_class") or "").strip(),
+            },
+        )
+
+    def canonical_terminal_result(
+        self,
+        *,
+        run_id: str,
+        process_terminal: bool = False,
+    ) -> CommandResult | None:
+        """Return the canonical terminal projection for one child run."""
+
+        projection = self._observable_task_rows_projection()
+        if projection is None:
+            readiness: dict[str, Any] = {
+                "ready": False,
+                "blocking_reasons": ["task_runtime_typed_projection_unavailable"],
+            }
+        else:
+            readiness = dict(projection.readiness)
+        if (
+            projection is None
+            or projection.authoritative is not True
+            or projection.degraded
+            or projection.source != "task_runtime.execution_fact"
+            or readiness.get("ready") is not True
+        ):
+            return CommandResult(
+                run_id=run_id,
+                status="blocked",
+                message="TaskRuntime fact-only observable projection is not ready",
+                reason_code="task_runtime_fact_projection_not_ready",
+                metadata={
+                    "canonical_authoritative": False,
+                    "degraded": True,
+                    "terminal_source": "task_runtime_cutover_readiness",
+                    "task_row_read_model_source": (projection.source if projection is not None else "unavailable"),
+                    "task_row_read_model_cutover_readiness": readiness,
+                },
+            )
+
+        task_runtime_result = self._task_runtime_terminal_result(
+            run_id=run_id,
+            projection=projection,
+        )
+        turn_outcome_result = self._committed_turn_outcome_result(
+            run_id=run_id,
+            process_terminal=process_terminal,
+        )
+        if task_runtime_result is None:
+            return turn_outcome_result
+        if turn_outcome_result is None:
+            return task_runtime_result
+
+        task_runtime_status = str(task_runtime_result.status or "").strip().lower()
+        turn_outcome_status = str(turn_outcome_result.status or "").strip().lower()
+        selected = max(
+            (task_runtime_result, turn_outcome_result),
+            key=lambda item: _CANONICAL_STATUS_PRECEDENCE.get(
+                str(item.status or "").strip().lower(),
+                _CANONICAL_STATUS_PRECEDENCE["failed"],
+            ),
+        )
+        metadata = selected.metadata if isinstance(selected.metadata, dict) else {}
+        return CommandResult(
+            run_id=run_id,
+            status=str(selected.status or "failed").strip().lower(),
+            message=(
+                selected.message
+                if task_runtime_status == turn_outcome_status
+                else (
+                    "Canonical terminal projections conflicted; "
+                    f"TaskRuntime={task_runtime_status}, TurnOutcome={turn_outcome_status}; "
+                    f"selected={selected.status}"
+                )
+            ),
+            metadata={
+                **metadata,
+                "canonical_authoritative": True,
+                "terminal_source": "canonical_conflict_matrix",
+                "canonical_conflict": task_runtime_status != turn_outcome_status,
+                "task_runtime_status": task_runtime_status,
+                "turn_outcome_status": turn_outcome_status,
+            },
+        )
 
     def active_execution_barrier_result(self, *, run_id: str, reason: str) -> CommandResult | None:
         """Return a non-mutating cancellation result when TaskRuntime is active.
@@ -208,6 +469,12 @@ class RunCompletionWaiter:
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
             return None
+        canonical_result = self.canonical_terminal_result(
+            run_id=normalized_run_id,
+            process_terminal=True,
+        )
+        if canonical_result is not None:
+            return canonical_result
         barrier_result = self._active_task_runtime_barrier_result(run_id=normalized_run_id, reason=reason)
         if barrier_result is not None:
             logger.info(
@@ -276,11 +543,229 @@ class RunCompletionWaiter:
         cancel_event: asyncio.Event | None = None,
         abort_checker: Callable[[], Awaitable[str | None]] | None = None,
         cancel_on_timeout: bool = True,
+        authority: RunCompletionAuthority = RunCompletionAuthority.TASK_RUNTIME_EXECUTION_FACT,
     ) -> CommandResult:
-        terminal_statuses = {"completed", "failed", "cancelled", "timeout", "blocked"}
-        run_id = str(initial_result.run_id or "").strip()
+        """Wait until the run has a canonical terminal projection.
 
-        if initial_result.status in terminal_statuses or not run_id:
+        ``CommandResult`` and orchestration task state are lifecycle hints. A
+        successful hint is never returned until TaskRuntime or the durable
+        TransactionKernel outcome stream proves terminal completion. Failure
+        hints remain fail-closed and may terminate early because they cannot
+        authorize verified success.
+        """
+
+        if authority is RunCompletionAuthority.ROLE_LIFECYCLE:
+            return await self._wait_role_lifecycle(
+                service,
+                initial_result,
+                timeout_seconds=timeout_seconds,
+                cancel_event=cancel_event,
+                abort_checker=abort_checker,
+                cancel_on_timeout=cancel_on_timeout,
+            )
+
+        terminal_statuses = {"completed", "failed", "cancelled", "timeout", "blocked", "success"}
+        failure_statuses = {"failed", "cancelled", "timeout", "blocked"}
+        run_id = str(initial_result.run_id or "").strip()
+        if not run_id:
+            return initial_result
+
+        from polaris.cells.orchestration.workflow_runtime.public import (
+            get_orchestration_service,
+        )
+
+        orchestration_service = await get_orchestration_service()
+        active_runs = getattr(orchestration_service, "_active_runs", {})
+        active_task = active_runs.get(run_id) if isinstance(active_runs, dict) else None
+        process_terminal = str(initial_result.status or "").strip().lower() in terminal_statuses
+        lifecycle_result = initial_result
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, float(timeout_seconds))
+        settlement_deadline: float | None = (
+            min(deadline, loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS) if process_terminal else None
+        )
+        deferred_cancel_reason = ""
+
+        while True:
+            canonical = self.canonical_terminal_result(
+                run_id=run_id,
+                process_terminal=process_terminal,
+            )
+            if canonical is not None:
+                return canonical
+
+            lifecycle_status = str(lifecycle_result.status or "").strip().lower()
+            if lifecycle_status in failure_statuses:
+                metadata = dict(lifecycle_result.metadata or {})
+                metadata.update(
+                    {
+                        "canonical_authoritative": False,
+                        "terminal_source": "orchestration_lifecycle_failure",
+                    }
+                )
+                lifecycle_result.metadata = metadata
+                return lifecycle_result
+
+            if cancel_event is not None and cancel_event.is_set() and not deferred_cancel_reason:
+                barrier_result = self._active_task_runtime_barrier_result(
+                    run_id=run_id,
+                    reason="factory_cancelled",
+                )
+                if barrier_result is not None:
+                    deferred_cancel_reason = "factory_cancelled"
+                    settlement_deadline = min(
+                        deadline,
+                        loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
+                    )
+                    continue
+                barrier_result = await self.cancel_active_run(run_id, reason="factory_cancelled")
+                if barrier_result is not None:
+                    return barrier_result
+                canonical = self.canonical_terminal_result(run_id=run_id, process_terminal=True)
+                if canonical is not None:
+                    return canonical
+                return CommandResult(
+                    run_id=run_id,
+                    status="cancelled",
+                    message="Run cancelled: factory_cancelled",
+                    metadata={
+                        "canonical_authoritative": False,
+                        "terminal_source": "orchestration_lifecycle_cancel",
+                        "cancel_signal_sent": True,
+                    },
+                )
+
+            if abort_checker is not None:
+                try:
+                    abort_reason = await abort_checker()
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                    logger.debug("Factory abort checker failed for run %s: %s", run_id, exc)
+                    abort_reason = None
+                if abort_reason and abort_reason != "run_not_found":
+                    barrier_result = await self.cancel_active_run(run_id, reason=abort_reason)
+                    if barrier_result is not None:
+                        return barrier_result
+                    return CommandResult(
+                        run_id=run_id,
+                        status="cancelled",
+                        message=f"Run cancelled: {abort_reason}",
+                        metadata={
+                            "canonical_authoritative": False,
+                            "terminal_source": "orchestration_lifecycle_abort",
+                        },
+                    )
+
+            if isinstance(active_task, asyncio.Task) and active_task.done() and not process_terminal:
+                try:
+                    active_task.result()
+                except asyncio.CancelledError:
+                    lifecycle_result = CommandResult(
+                        run_id=run_id,
+                        status="cancelled",
+                        message="Run cancelled: orchestration_task_cancelled",
+                    )
+                except (RuntimeError, ValueError, OSError, TypeError) as exc:
+                    lifecycle_result = CommandResult(
+                        run_id=run_id,
+                        status="failed",
+                        message=f"Run failed: {exc}",
+                    )
+                else:
+                    lifecycle_result = cast("CommandResult", await service.query_run_status(run_id))
+                process_terminal = True
+                settlement_deadline = min(
+                    deadline,
+                    loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
+                )
+                continue
+
+            if not isinstance(active_task, asyncio.Task):
+                observed = cast("CommandResult", await service.query_run_status(run_id))
+                observed_status = str(observed.status or "").strip().lower()
+                lifecycle_result = observed
+                if observed_status in terminal_statuses and not process_terminal:
+                    process_terminal = True
+                    settlement_deadline = settlement_deadline or min(
+                        deadline,
+                        loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
+                    )
+                    continue
+
+            now = loop.time()
+            if settlement_deadline is not None and now >= settlement_deadline:
+                if deferred_cancel_reason:
+                    barrier_result = self._active_task_runtime_barrier_result(
+                        run_id=run_id,
+                        reason=deferred_cancel_reason,
+                    )
+                    if barrier_result is not None:
+                        metadata = dict(barrier_result.metadata or {})
+                        metadata.update(
+                            {
+                                "barrier_cancel_deferred": True,
+                                "deferred_cancel_reason": deferred_cancel_reason,
+                            }
+                        )
+                        barrier_result.metadata = metadata
+                        return barrier_result
+                return CommandResult(
+                    run_id=run_id,
+                    status="failed",
+                    message="Run process terminated without a committed canonical outcome",
+                    reason_code="canonical_terminal_projection_missing",
+                    metadata={
+                        "canonical_authoritative": False,
+                        "terminal_source": "canonical_projection_barrier",
+                        "lifecycle_status": str(lifecycle_result.status or "").strip(),
+                        "failure_class": "LEDGER_PROJECTION_INCOMPLETE",
+                        "responsible_layer": "execution_control_plane",
+                    },
+                )
+            if now >= deadline:
+                if cancel_on_timeout:
+                    barrier_result = self._active_task_runtime_barrier_result(
+                        run_id=run_id,
+                        reason="factory_stage_timeout",
+                    )
+                    if barrier_result is not None:
+                        return barrier_result
+                    barrier_result = await self.cancel_active_run(run_id, reason="factory_stage_timeout")
+                    if barrier_result is not None:
+                        return barrier_result
+                return CommandResult(
+                    run_id=run_id,
+                    status="timeout",
+                    message=f"Run timed out after {timeout_seconds} seconds",
+                    metadata={
+                        "canonical_authoritative": False,
+                        "terminal_source": "canonical_projection_barrier",
+                        "cancel_signal_sent": bool(cancel_on_timeout),
+                        "cancel_reason": "factory_stage_timeout",
+                        "inflight_run_continues": not cancel_on_timeout,
+                    },
+                )
+            await asyncio.sleep(min(_CANONICAL_POLL_SECONDS, max(0.0, deadline - now)))
+
+    async def _wait_role_lifecycle(
+        self,
+        service: OrchestrationCommandService,
+        initial_result: CommandResult,
+        *,
+        timeout_seconds: int,
+        cancel_event: asyncio.Event | None,
+        abort_checker: Callable[[], Awaitable[str | None]] | None,
+        cancel_on_timeout: bool,
+    ) -> CommandResult:
+        """Settle a non-materialization role call without granting verification.
+
+        The result is only a role-process lifecycle fact. PM, CE, and QA stages
+        must still validate their authoritative contract, blueprint, or Run
+        Ledger evidence before succeeding.
+        """
+
+        terminal_statuses = {"completed", "failed", "cancelled", "timeout", "blocked", "success"}
+        run_id = str(initial_result.run_id or "").strip()
+        if str(initial_result.status or "").strip().lower() in terminal_statuses or not run_id:
             return initial_result
 
         if abort_checker is not None:
@@ -289,23 +774,19 @@ class RunCompletionWaiter:
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 logger.debug("Factory abort checker failed for run %s: %s", run_id, exc)
                 abort_reason = None
-            if abort_reason:
-                if abort_reason == "run_not_found":
-                    logger.warning(
-                        "Factory abort checker returned run_not_found while waiting orchestration run %s; "
-                        "continuing instead of cancelling a child Director run from an ambiguous factory-run "
-                        "store projection",
-                        run_id,
-                    )
-                else:
-                    barrier_result = await self.cancel_active_run(run_id, reason=abort_reason)
-                    if barrier_result is not None:
-                        return barrier_result
-                    return CommandResult(
-                        run_id=run_id,
-                        status="cancelled",
-                        message=f"Run cancelled: {abort_reason}",
-                    )
+            if abort_reason and abort_reason != "run_not_found":
+                barrier_result = await self.cancel_active_run(run_id, reason=abort_reason)
+                if barrier_result is not None:
+                    return barrier_result
+                return CommandResult(
+                    run_id=run_id,
+                    status="cancelled",
+                    message=f"Run cancelled: {abort_reason}",
+                    metadata={
+                        "canonical_authoritative": False,
+                        "terminal_source": "role_lifecycle_abort",
+                    },
+                )
 
         from polaris.cells.orchestration.workflow_runtime.public import (
             get_orchestration_service,
@@ -338,12 +819,6 @@ class RunCompletionWaiter:
                     break
 
             if completed_reason == "cancel":
-                barrier_result = self._active_task_runtime_barrier_result(
-                    run_id=run_id,
-                    reason="factory_cancelled",
-                )
-                if barrier_result is not None:
-                    return barrier_result
                 barrier_result = await self.cancel_active_run(run_id, reason="factory_cancelled")
                 if barrier_result is not None:
                     return barrier_result
@@ -351,16 +826,13 @@ class RunCompletionWaiter:
                     run_id=run_id,
                     status="cancelled",
                     message="Run cancelled: factory_cancelled",
+                    metadata={
+                        "canonical_authoritative": False,
+                        "terminal_source": "role_lifecycle_cancel",
+                    },
                 )
-
             if completed_reason == "timeout":
                 if cancel_on_timeout:
-                    barrier_result = self._active_task_runtime_barrier_result(
-                        run_id=run_id,
-                        reason="factory_stage_timeout",
-                    )
-                    if barrier_result is not None:
-                        return barrier_result
                     barrier_result = await self.cancel_active_run(run_id, reason="factory_stage_timeout")
                     if barrier_result is not None:
                         return barrier_result
@@ -369,15 +841,15 @@ class RunCompletionWaiter:
                     status="timeout",
                     message=f"Run timed out after {timeout_seconds} seconds",
                     metadata={
+                        "canonical_authoritative": False,
+                        "terminal_source": "role_lifecycle_timeout",
                         "cancel_signal_sent": bool(cancel_on_timeout),
                         "cancel_reason": "factory_stage_timeout",
                         "inflight_run_continues": not cancel_on_timeout,
                     },
                 )
-
             if completed_waiter is None:
                 return cast("CommandResult", await service.query_run_status(run_id))
-
             try:
                 completed_waiter.result()
             except asyncio.CancelledError:
@@ -386,19 +858,17 @@ class RunCompletionWaiter:
                     status="cancelled",
                     message="Run cancelled: orchestration_task_cancelled",
                 )
-            except (RuntimeError, ValueError, OSError, TypeError) as exc:
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 return CommandResult(
                     run_id=run_id,
                     status="failed",
                     message=f"Run failed: {exc}",
                 )
-
             return cast("CommandResult", await service.query_run_status(run_id))
         finally:
             for waiter in waiters:
-                if waiter.done():
-                    continue
-                waiter.cancel()
+                if not waiter.done():
+                    waiter.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await asyncio.gather(*waiters.keys(), return_exceptions=True)
 

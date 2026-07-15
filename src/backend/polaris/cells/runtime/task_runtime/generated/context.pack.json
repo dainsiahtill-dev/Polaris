@@ -1,0 +1,80 @@
+{
+  "id": "runtime.task_runtime",
+  "kind": "workflow",
+  "owner": "runtime",
+  "public": true,
+  "owned_paths": [
+    "polaris/cells/runtime/task_runtime/**"
+  ],
+  "contracts": {
+    "commands": [
+      "CreateRuntimeTaskCommandV1",
+      "UpdateRuntimeTaskCommandV1",
+      "ReopenRuntimeTaskCommandV1",
+      "BindRuntimeTaskToFactoryRunCommandV1",
+      "FenceExpiredFactoryRunSessionsCommandV1",
+      "PrepareOwnerReworkExecutionCommandV1",
+      "OpenTaskRuntimeExecutionAttemptAuthorityCommandV1",
+      "HeartbeatTaskRuntimeExecutionAttemptCommandV1",
+      "SettleTaskRuntimeExecutionAttemptCommandV1",
+      "EnrollDirectedEffectParentRegistryStreamCommandV1",
+      "EnrollDirectedEffectOperationStreamCommandV1",
+      "AdmitDirectedEffectParentCommandV1",
+      "AdmitDirectedEffectOperationCommandV1",
+      "ClaimDirectedEffectCommandV1",
+      "AbortDirectedEffectOperationCommandV1"
+    ],
+    "queries": [
+      "ListRuntimeTasksQueryV1",
+      "GetRuntimeTaskQueryV1",
+      "ValidateTaskRuntimeExecutionAttemptQueryV1",
+      "GetDirectedEffectParentRegistryQueryV1",
+      "GetDirectedEffectOperationQueryV1"
+    ],
+    "events": [
+      "RuntimeTaskLifecycleEventV1",
+      "TaskRuntimeExecutionFactV1"
+    ],
+    "results": [
+      "RuntimeTaskResultV1",
+      "RuntimeTaskFactoryRunBindingResultV1",
+      "ExpiredFactoryRunSessionFenceResultV1",
+      "OwnerReworkExecutionPreparationResultV1",
+      "TaskRuntimeExecutionAttemptValidationVerdictV1",
+      "TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1",
+      "TaskRuntimeExecutionAttemptHeartbeatVerdictV1",
+      "TaskRuntimeExecutionAttemptSettlementVerdictV1",
+      "DirectedEffectStreamEnrollmentResultV1",
+      "DirectedEffectOperationResultV1",
+      "DirectedEffectParentRegistryResultV1",
+      "ObservableTaskRowsProjectionV1"
+    ],
+    "errors": [
+      "RuntimeTaskRuntimeError"
+    ]
+  },
+  "depends_on": [
+    "events.fact_stream"
+  ],
+  "state_owners": [
+    "runtime/tasks/*",
+    "runtime/tasks/sessions/*"
+  ],
+  "effects_allowed": [
+    "fs.read:runtime/tasks/*",
+    "fs.write:runtime/tasks/*",
+    "fs.write:runtime/events/taskboard.terminal.events.jsonl",
+    "fs.read:runtime/tasks/sessions/*",
+    "fs.write:runtime/tasks/sessions/*",
+    "fs.write:runtime/events/task_runtime.execution.jsonl",
+    "ws.outbound:runtime/*"
+  ],
+  "verify_targets": [
+    "polaris/cells/runtime/task_runtime/tests/test_service.py",
+    "polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation.py",
+    "polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_concurrency.py",
+    "polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py",
+    "polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py",
+    "polaris/tests/test_runtime_projection_snapshot_tasks.py"
+  ]
+}

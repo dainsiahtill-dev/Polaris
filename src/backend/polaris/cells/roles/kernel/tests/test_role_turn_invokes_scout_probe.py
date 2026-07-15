@@ -309,6 +309,7 @@ def test_full_analyze_turn_invokes_scout_cell(
         message="[mode:analyze] 请搜索 payment_gateway 在代码库中的定义位置",
         history=[],
         context_override={},
+        metadata={"turn_request_id": f"scout-probe-{role}"},
         validate_output=False,
     )
 

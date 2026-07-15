@@ -2,17 +2,333 @@
 
 from __future__ import annotations
 
+from typing import Final, cast, get_type_hints
+
 import pytest
 from polaris.cells.runtime.task_runtime.public.contracts import (
+    DIRECTED_EFFECT_PARENT_BINDING_SCHEMA_V1,
+    TASK_RUNTIME_EXECUTION_SOURCE_V1,
+    TASK_RUNTIME_EXECUTION_STREAM_V1,
     CreateRuntimeTaskCommandV1,
+    DirectedEffectParentBindingV1,
+    DirectedEffectParentRegistryIdentityV1,
+    DirectedEffectStreamEnrollmentResultV1,
+    EnrollDirectedEffectOperationStreamCommandV1,
+    EnrollDirectedEffectParentRegistryStreamCommandV1,
     GetRuntimeTaskQueryV1,
+    HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     ListRuntimeTasksQueryV1,
+    OwnerReworkExecutionPreparationCodeV1,
+    OwnerReworkExecutionPreparationResultV1,
+    ParentCorrelationV1,
     ReopenRuntimeTaskCommandV1,
     RuntimeTaskLifecycleEventV1,
     RuntimeTaskResultV1,
     RuntimeTaskRuntimeError,
+    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptSettlementCodeV1,
+    TaskRuntimeExecutionAttemptSettlementVerdictV1,
+    TaskRuntimeExecutionAttemptValidationVerdictV1,
     UpdateRuntimeTaskCommandV1,
+    ValidateTaskRuntimeExecutionAttemptQueryV1,
 )
+
+
+class TestDirectedEffectStreamEnrollmentContracts:
+    """Explicit dynamic-stream enrollment has one strict public boundary."""
+
+    @staticmethod
+    def _identity() -> TaskRuntimeExecutionAttemptIdentityV1:
+        return TaskRuntimeExecutionAttemptIdentityV1(
+            workspace="/tmp/deo-enrollment",
+            task_id=17,
+            external_task_id="DEO-17",
+            session_id="session-17",
+            attempt=1,
+            role_id="director",
+            worker_id="worker-17",
+            run_id="run-17",
+            lease_expires_at="2026-07-15T01:00:00+00:00",
+        )
+
+    @classmethod
+    def _binding(cls) -> DirectedEffectParentBindingV1:
+        return DirectedEffectParentBindingV1(
+            schema_version=DIRECTED_EFFECT_PARENT_BINDING_SCHEMA_V1,
+            registry_identity=DirectedEffectParentRegistryIdentityV1.from_execution_attempt(cls._identity()),
+            registry_stream_token="task-runtime.deo-parent-registry.17",
+            registry_version=1,
+            parent_sequence=1,
+            binding_id="binding-17",
+            operation_stream_token="task-runtime.deo-operation.17",
+            binding_hash="b" * 64,
+            admission_idempotency_key="parent-17",
+            correlation=ParentCorrelationV1(turn_id="turn-17", batch_id="batch-17"),
+            actor="contract-test",
+            source_event_id="event-17",
+            source_event_seq=1,
+        )
+
+    def test_commands_require_complete_typed_authority(self) -> None:
+        identity = self._identity()
+        binding = self._binding()
+
+        assert EnrollDirectedEffectParentRegistryStreamCommandV1(identity).execution_attempt == identity
+        operation = EnrollDirectedEffectOperationStreamCommandV1(identity, binding)
+        assert operation.execution_attempt == identity
+        assert operation.parent_binding == binding
+        with pytest.raises(TypeError, match="execution_attempt"):
+            EnrollDirectedEffectParentRegistryStreamCommandV1(object())  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="parent_binding"):
+            EnrollDirectedEffectOperationStreamCommandV1(identity, object())  # type: ignore[arg-type]
+
+    def test_result_enforces_success_receipt_and_binding_boundaries(self) -> None:
+        identity = self._identity()
+        binding = self._binding()
+        receipt = {"operation": "enroll", "streams": (binding.operation_stream_token,)}
+
+        parent = DirectedEffectStreamEnrollmentResultV1(
+            ok=True,
+            code="parent_registry_stream_enrolled",
+            execution_attempt=identity,
+            receipt=receipt,
+        )
+        operation = DirectedEffectStreamEnrollmentResultV1(
+            ok=True,
+            code="operation_stream_enrolled",
+            execution_attempt=identity,
+            parent_binding=binding,
+            receipt=receipt,
+        )
+        assert parent.parent_binding is None
+        assert operation.parent_binding == binding
+        assert operation.receipt == receipt
+        with pytest.raises(ValueError, match="requires a parent binding"):
+            DirectedEffectStreamEnrollmentResultV1(
+                ok=True,
+                code="operation_stream_enrolled",
+                execution_attempt=identity,
+                receipt=receipt,
+            )
+        with pytest.raises(ValueError, match="must not carry a parent binding"):
+            DirectedEffectStreamEnrollmentResultV1(
+                ok=True,
+                code="parent_registry_stream_enrolled",
+                execution_attempt=identity,
+                parent_binding=binding,
+                receipt=receipt,
+            )
+        with pytest.raises(ValueError, match="requires an observational receipt"):
+            DirectedEffectStreamEnrollmentResultV1(
+                ok=True,
+                code="parent_registry_stream_enrolled",
+                execution_attempt=identity,
+            )
+
+    def test_contract_service_module_and_public_package_exports(self) -> None:
+        from polaris.cells.runtime.task_runtime import public
+        from polaris.cells.runtime.task_runtime.public import contracts, service
+
+        contract_names = {
+            "EnrollDirectedEffectParentRegistryStreamCommandV1",
+            "EnrollDirectedEffectOperationStreamCommandV1",
+            "DirectedEffectStreamEnrollmentResultV1",
+        }
+        service_names = {
+            "enroll_directed_effect_parent_registry_stream",
+            "enroll_directed_effect_operation_stream",
+        }
+        assert contract_names <= set(contracts.__all__)
+        assert service_names <= set(service.__all__)
+        assert contract_names | service_names <= set(public.__all__)
+        assert (
+            public.enroll_directed_effect_parent_registry_stream
+            is service.enroll_directed_effect_parent_registry_stream
+        )
+        assert public.enroll_directed_effect_operation_stream is service.enroll_directed_effect_operation_stream
+        with pytest.raises(TypeError, match="EnrollDirectedEffectParentRegistryStreamCommandV1"):
+            service.enroll_directed_effect_parent_registry_stream(object())  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="EnrollDirectedEffectOperationStreamCommandV1"):
+            service.enroll_directed_effect_operation_stream(object())  # type: ignore[arg-type]
+
+
+def test_settlement_contract_accepts_all_deo_pre_barrier_refusals() -> None:
+    identity = TestDirectedEffectStreamEnrollmentContracts._identity()
+    for code in (
+        "settlement_parent_close_required",
+        "settlement_parent_close_proof_required",
+        "settlement_parent_registry_invalid",
+        "settlement_parent_registry_unavailable",
+    ):
+        verdict = TaskRuntimeExecutionAttemptSettlementVerdictV1(
+            success=False,
+            code=cast(TaskRuntimeExecutionAttemptSettlementCodeV1, code),
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="completed",
+            evidence={"registry_code": code},
+        )
+        assert verdict.code == code
+        assert verdict.success is False
+
+
+class TestTaskRuntimeExecutionFactIdentity:
+    """TaskRuntime public contracts own the canonical FactStream identity."""
+
+    def test_identity_values_are_stable(self) -> None:
+        assert TASK_RUNTIME_EXECUTION_STREAM_V1 == "task_runtime.execution"
+        assert TASK_RUNTIME_EXECUTION_SOURCE_V1 == "runtime.task_runtime"
+
+    def test_identity_constants_are_final_strings(self) -> None:
+        from polaris.cells.runtime.task_runtime.public import contracts as mod
+
+        annotations = get_type_hints(mod)
+        assert annotations["TASK_RUNTIME_EXECUTION_STREAM_V1"] == Final[str]
+        assert annotations["TASK_RUNTIME_EXECUTION_SOURCE_V1"] == Final[str]
+
+    def test_identity_is_exported_from_public_package(self) -> None:
+        from polaris.cells.runtime.task_runtime import public
+
+        assert public.TASK_RUNTIME_EXECUTION_STREAM_V1 == TASK_RUNTIME_EXECUTION_STREAM_V1
+        assert public.TASK_RUNTIME_EXECUTION_SOURCE_V1 == TASK_RUNTIME_EXECUTION_SOURCE_V1
+        assert "TASK_RUNTIME_EXECUTION_STREAM_V1" in public.__all__
+        assert "TASK_RUNTIME_EXECUTION_SOURCE_V1" in public.__all__
+
+
+class TestTaskRuntimeExecutionAttemptIdentity:
+    """TaskRuntime owns the durable execution-attempt authority contract."""
+
+    def _identity(self) -> TaskRuntimeExecutionAttemptIdentityV1:
+        return TaskRuntimeExecutionAttemptIdentityV1(
+            workspace="/tmp/workspace",
+            task_id=41,
+            external_task_id="TASK-41",
+            session_id="tx-41",
+            attempt=2,
+            role_id="director",
+            worker_id="director-worker",
+            run_id="run-41",
+            lease_expires_at="2026-07-14T00:05:00+00:00",
+        )
+
+    def test_identity_is_frozen_and_serializable(self) -> None:
+        identity = self._identity()
+
+        assert identity.to_record() == {
+            "schema_version": "task-runtime.execution-attempt-identity/1",
+            "workspace": "/tmp/workspace",
+            "task_id": 41,
+            "external_task_id": "TASK-41",
+            "session_id": "tx-41",
+            "attempt": 2,
+            "role_id": "director",
+            "worker_id": "director-worker",
+            "run_id": "run-41",
+            "lease_expires_at": "2026-07-14T00:05:00+00:00",
+        }
+        with pytest.raises(AttributeError):
+            identity.session_id = "forged"  # type: ignore[misc]
+
+    def test_from_record_requires_exact_canonical_schema(self) -> None:
+        identity = self._identity()
+
+        assert TaskRuntimeExecutionAttemptIdentityV1.from_record(identity.to_record()) == identity
+        with pytest.raises(ValueError, match="fields must match canonical schema"):
+            TaskRuntimeExecutionAttemptIdentityV1.from_record({**identity.to_record(), "legacy_session_id": "tx-41"})
+        with pytest.raises(TypeError, match="task_id must be an int"):
+            TaskRuntimeExecutionAttemptIdentityV1.from_record({**identity.to_record(), "task_id": "41"})
+        with pytest.raises(ValueError, match="schema_version is unsupported"):
+            TaskRuntimeExecutionAttemptIdentityV1.from_record({**identity.to_record(), "schema_version": "legacy/1"})
+
+    def test_query_and_verdict_require_typed_identity(self) -> None:
+        identity = self._identity()
+        query = ValidateTaskRuntimeExecutionAttemptQueryV1(
+            workspace="/tmp/workspace",
+            identity=identity,
+        )
+        verdict = TaskRuntimeExecutionAttemptValidationVerdictV1(
+            valid=True,
+            code="valid",
+            workspace=query.workspace,
+            identity=identity,
+            evidence={"observed": identity.to_record()},
+        )
+
+        assert verdict.to_record()["identity"] == identity.to_record()
+        with pytest.raises(ValueError, match="valid must match"):
+            TaskRuntimeExecutionAttemptValidationVerdictV1(
+                valid=True,
+                code="session_mismatch",
+                workspace=query.workspace,
+                identity=identity,
+            )
+
+    def test_attempt_authority_contracts_are_publicly_exported(self) -> None:
+        from polaris.cells.runtime.task_runtime import public
+
+        assert public.TaskRuntimeExecutionAttemptIdentityV1 is TaskRuntimeExecutionAttemptIdentityV1
+        assert public.ValidateTaskRuntimeExecutionAttemptQueryV1 is ValidateTaskRuntimeExecutionAttemptQueryV1
+        assert public.TaskRuntimeExecutionAttemptValidationVerdictV1 is TaskRuntimeExecutionAttemptValidationVerdictV1
+        assert "TaskRuntimeExecutionAttemptIdentityV1" in public.__all__
+        assert "ValidateTaskRuntimeExecutionAttemptQueryV1" in public.__all__
+        assert "TaskRuntimeExecutionAttemptValidationVerdictV1" in public.__all__
+
+    def test_error_code_contracts_stay_separate(self) -> None:
+        """Owner-rework, heartbeat, and validation results keep distinct code domains."""
+
+        owner_rework_hints = get_type_hints(OwnerReworkExecutionPreparationResultV1)
+        heartbeat_hints = get_type_hints(TaskRuntimeExecutionAttemptHeartbeatVerdictV1)
+        validation_hints = get_type_hints(TaskRuntimeExecutionAttemptValidationVerdictV1)
+
+        assert owner_rework_hints["code"] == OwnerReworkExecutionPreparationCodeV1
+        assert owner_rework_hints["code"] != heartbeat_hints["code"]
+        assert owner_rework_hints["code"] != validation_hints["code"]
+        from polaris.cells.runtime.task_runtime import public
+
+        assert public.OwnerReworkExecutionPreparationCodeV1 is OwnerReworkExecutionPreparationCodeV1
+        assert "OwnerReworkExecutionPreparationCodeV1" in public.__all__
+
+    def test_bounded_heartbeat_contract_requires_canonical_identity_and_verdict(self) -> None:
+        from polaris.cells.runtime.task_runtime import public
+
+        identity = self._identity()
+        command = HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+            workspace="/tmp/workspace",
+            identity=identity,
+            lease_ttl_seconds=30,
+            lock_timeout_seconds=0.25,
+            context_summary="contract-test",
+        )
+        verdict = TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
+            success=True,
+            code="heartbeat_renewed",
+            workspace=command.workspace,
+            identity=identity,
+            renewed_identity=identity,
+            evidence_anchor={"session_write_receipt": {"after_hash": "abc"}},
+        )
+
+        assert command.to_record()["identity"] == identity.to_record()
+        assert verdict.to_record()["reason"] == "heartbeat_renewed"
+        with pytest.raises(ValueError, match="finite number >= 0"):
+            HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+                workspace="/tmp/workspace",
+                identity=identity,
+                lease_ttl_seconds=30,
+                lock_timeout_seconds=-0.1,
+            )
+        with pytest.raises(ValueError, match="requires renewed_identity"):
+            TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
+                success=True,
+                code="heartbeat_renewed",
+                workspace="/tmp/workspace",
+                identity=identity,
+            )
+        assert public.HeartbeatTaskRuntimeExecutionAttemptCommandV1 is HeartbeatTaskRuntimeExecutionAttemptCommandV1
+        assert public.TaskRuntimeExecutionAttemptHeartbeatVerdictV1 is TaskRuntimeExecutionAttemptHeartbeatVerdictV1
+        assert "HeartbeatTaskRuntimeExecutionAttemptCommandV1" in public.__all__
+        assert "TaskRuntimeExecutionAttemptHeartbeatVerdictV1" in public.__all__
 
 
 class TestRequireNonEmptyHelper:
@@ -328,5 +644,8 @@ class TestModuleExports:
         assert "RuntimeTaskLifecycleEventV1" in mod.__all__
         assert "RuntimeTaskResultV1" in mod.__all__
         assert "RuntimeTaskRuntimeError" in mod.__all__
+        assert "TASK_RUNTIME_EXECUTION_SOURCE_V1" in mod.__all__
+        assert "TASK_RUNTIME_EXECUTION_STREAM_V1" in mod.__all__
         assert "UpdateRuntimeTaskCommandV1" in mod.__all__
-        assert len(mod.__all__) == 8
+        assert len(mod.__all__) == len(set(mod.__all__))
+        assert all(hasattr(mod, name) for name in mod.__all__)

@@ -49,7 +49,6 @@ public_contracts:
 depends_on:
 - roles.session
 - context.engine
-- factory.pipeline
 - policy.workspace_guard
 subgraphs:
 - execution_governance_pipeline

@@ -1412,7 +1412,10 @@ def task_boundary_tool_dispatch_from_lifecycle_receipt(lifecycle_receipt: Mappin
         FailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value,
         FailureClassV1.NO_MATERIALIZED_EFFECT.value,
     }
-    if dispatch_status not in {"dropped", "blocked", "decode_failed", "failed"} and failure_class not in task_boundary_failures:
+    if (
+        dispatch_status not in {"dropped", "blocked", "decode_failed", "failed"}
+        and failure_class not in task_boundary_failures
+    ):
         return None
     native_facts = native_tool_call_facts_from_lifecycle_receipt(lifecycle)
     return {
@@ -1452,6 +1455,159 @@ def task_boundary_tool_dispatch_from_lifecycle_metadata(metadata: Mapping[str, A
 
 
 _TOOL_LIFECYCLE_OUTCOME_SCHEMA_VERSION = "polaris.tool_lifecycle_outcome_projection.v1"
+_TOOL_LIFECYCLE_REQUIREMENT_SCHEMA_VERSION = "polaris.tool_lifecycle_requirement.v1"
+_TOOL_LIFECYCLE_REQUIREMENT_SATISFIED = "satisfied"
+_TOOL_LIFECYCLE_REQUIREMENT_NOT_REQUIRED = "not_required"
+_TOOL_LIFECYCLE_REQUIREMENT_MISSING = "missing_required"
+
+
+@dataclass(frozen=True)
+class ToolLifecycleRequirementV1:
+    """One task-scoped requirement for authoritative tool lifecycle evidence.
+
+    The requirement is an execution-control-plane fact. Capability grants such
+    as a JobToken do not instantiate it: a Director materialization task must
+    first be claimed, or another authoritative producer must emit this contract.
+    """
+
+    task_id: str
+    run_id: str = ""
+    turn_id: str = ""
+    source: str = "task_runtime.execution"
+    reason: str = "director_materialization_claimed"
+    evidence_refs: tuple[str, ...] = ()
+    schema_version: str = _TOOL_LIFECYCLE_REQUIREMENT_SCHEMA_VERSION
+    required: bool = True
+
+    def __post_init__(self) -> None:
+        task_id = _clean_string(self.task_id)
+        run_id = _clean_string(self.run_id)
+        if not task_id and not run_id:
+            raise ValueError("tool lifecycle requirement needs task_id or run_id")
+        object.__setattr__(self, "task_id", task_id)
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "turn_id", _clean_string(self.turn_id))
+        object.__setattr__(self, "source", _clean_string(self.source) or "execution_control_plane")
+        object.__setattr__(self, "reason", _clean_string(self.reason) or "tool_lifecycle_required")
+        object.__setattr__(self, "evidence_refs", tuple(_string_list(self.evidence_refs)))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the stable JSON projection used by Run Ledger events."""
+
+        task_key, _, _, _, identity_source = _lifecycle_task_identity(
+            {
+                "task_id": self.task_id,
+                "run_id": self.run_id,
+                "turn_id": self.turn_id,
+            }
+        )
+        return {
+            "schema_version": self.schema_version,
+            "required": bool(self.required),
+            "task_key": task_key,
+            "task_id": self.task_id,
+            "run_id": self.run_id,
+            "turn_id": self.turn_id,
+            "task_identity_source": identity_source,
+            "source": self.source,
+            "reason": self.reason,
+            "evidence_refs": list(self.evidence_refs),
+        }
+
+
+def build_tool_lifecycle_requirement_run_ledger_event(
+    requirement: ToolLifecycleRequirementV1,
+    *,
+    project_id: str = "",
+) -> dict[str, Any]:
+    """Build a canonical projection event from one structured requirement."""
+
+    payload = requirement.to_dict()
+    return {
+        "event_type": "tool_lifecycle_requirement",
+        "tool_lifecycle_requirement": payload,
+        "task_id": payload["task_id"],
+        "run_id": payload["run_id"],
+        "turn_id": payload["turn_id"],
+        "project_id": _clean_string(project_id),
+    }
+
+
+def project_tool_lifecycle_requirement(
+    requirement_events: Sequence[Mapping[str, Any]],
+    lifecycle_events: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Project task-scoped lifecycle obligations from structured facts only.
+
+    Lifecycle receipts imply their own satisfied obligation. Requirement events
+    carry the execution fact that activates fail-closed behavior before a
+    receipt exists. No prompt text, stage label, or diagnostic string is read.
+
+    Complexity:
+        O(r + e) time and O(t) memory for ``r`` requirement facts, ``e``
+        lifecycle rows, and ``t`` unique task identities.
+    """
+
+    obligations: dict[str, dict[str, Any]] = {}
+    for raw_event in requirement_events:
+        if not isinstance(raw_event, Mapping):
+            continue
+        requirement_raw = raw_event.get("tool_lifecycle_requirement")
+        requirement = _mapping(requirement_raw) if requirement_raw is not None else _mapping(raw_event)
+        if requirement.get("required") is False:
+            continue
+        task_key, task_id, run_id, turn_id, identity_source = _lifecycle_task_identity(requirement)
+        obligations[task_key] = {
+            "task_key": task_key,
+            "task_id": task_id,
+            "run_id": run_id,
+            "turn_id": turn_id,
+            "task_identity_source": identity_source,
+            "source": _clean_string(requirement.get("source")) or "execution_control_plane",
+            "reason": _clean_string(requirement.get("reason")) or "tool_lifecycle_required",
+            "evidence_refs": _string_list(requirement.get("evidence_refs")),
+        }
+    for raw_event in lifecycle_events:
+        if not isinstance(raw_event, Mapping):
+            continue
+        task_key, task_id, run_id, turn_id, identity_source = _lifecycle_task_identity(raw_event)
+        obligations.setdefault(
+            task_key,
+            {
+                "task_key": task_key,
+                "task_id": task_id,
+                "run_id": run_id,
+                "turn_id": turn_id,
+                "task_identity_source": identity_source,
+                "source": "tool_call_lifecycle_receipt",
+                "reason": "lifecycle_evidence_present",
+                "evidence_refs": [],
+            },
+        )
+    required_task_keys = list(obligations)
+    return {
+        "schema_version": _TOOL_LIFECYCLE_REQUIREMENT_SCHEMA_VERSION,
+        "required": bool(required_task_keys),
+        "state": "required" if required_task_keys else _TOOL_LIFECYCLE_REQUIREMENT_NOT_REQUIRED,
+        "required_task_keys": required_task_keys,
+        "obligations": list(obligations.values()),
+    }
+
+
+def _tool_lifecycle_is_required(value: Mapping[str, Any]) -> bool:
+    """Return an explicitly declared lifecycle requirement."""
+
+    return bool(value.get("requirement", False))
+
+
+def _tool_lifecycle_requirement_status(*, requirement: bool, evidence_present: bool) -> str:
+    """Classify lifecycle evidence against its explicit requirement."""
+
+    if evidence_present:
+        return _TOOL_LIFECYCLE_REQUIREMENT_SATISFIED
+    if requirement:
+        return _TOOL_LIFECYCLE_REQUIREMENT_MISSING
+    return _TOOL_LIFECYCLE_REQUIREMENT_NOT_REQUIRED
 
 
 def _lifecycle_task_identity(value: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
@@ -1494,6 +1650,8 @@ def _lifecycle_outcome_projection_from_events(
     source: str,
     degraded: bool,
     fallback: str = "",
+    requirement: bool = False,
+    required_task_keys: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Project latest and unresolved lifecycle state once per task identity."""
 
@@ -1511,12 +1669,27 @@ def _lifecycle_outcome_projection_from_events(
         latest_by_task.pop(task_key, None)
         latest_by_task[task_key] = event
     unresolved_by_task = {
-        task_key: dict(event)
-        for task_key, event in latest_by_task.items()
-        if _lifecycle_event_is_unresolved(event)
+        task_key: dict(event) for task_key, event in latest_by_task.items() if _lifecycle_event_is_unresolved(event)
     }
+    normalized_required_task_keys = _string_list(required_task_keys)
+    effective_requirement = bool(requirement or normalized_required_task_keys or latest_by_task)
+    missing_required_task_keys = [
+        task_key for task_key in normalized_required_task_keys if task_key not in latest_by_task
+    ]
+    requirement_status = _tool_lifecycle_requirement_status(
+        requirement=effective_requirement,
+        evidence_present=bool(latest_by_task) and not missing_required_task_keys,
+    )
     return {
-        "ok": not unresolved_by_task,
+        "ok": (
+            not unresolved_by_task
+            and not missing_required_task_keys
+            and requirement_status != _TOOL_LIFECYCLE_REQUIREMENT_MISSING
+        ),
+        "requirement": effective_requirement,
+        "requirement_status": requirement_status,
+        "required_task_keys": normalized_required_task_keys,
+        "missing_required_task_keys": missing_required_task_keys,
         "latest_by_task": latest_by_task,
         "unresolved_by_task": unresolved_by_task,
         "unresolved_count": len(unresolved_by_task),
@@ -1527,6 +1700,10 @@ def _lifecycle_outcome_projection_from_events(
             "source": source,
             "degraded": degraded,
             "fallback": fallback,
+            "requirement": effective_requirement,
+            "requirement_status": requirement_status,
+            "required_task_keys": normalized_required_task_keys,
+            "missing_required_task_keys": missing_required_task_keys,
         },
     }
 
@@ -1547,29 +1724,22 @@ def _canonical_lifecycle_outcome_projection(summary: Mapping[str, Any]) -> dict[
         for task_key, event in latest_raw.items()
         if _clean_string(task_key) and isinstance(event, Mapping)
     }
-    unresolved_by_task = {
-        _clean_string(task_key): dict(event)
-        for task_key, event in unresolved_raw.items()
-        if _clean_string(task_key) and isinstance(event, Mapping)
-    }
     for task_key, event in latest_by_task.items():
         event.setdefault("task_key", task_key)
-    for task_key, event in unresolved_by_task.items():
-        event.setdefault("task_key", task_key)
-    return {
-        "ok": not unresolved_by_task,
-        "latest_by_task": latest_by_task,
-        "unresolved_by_task": unresolved_by_task,
-        "unresolved_count": len(unresolved_by_task),
-        "unresolved_dropped_count": sum(bool(event.get("dropped")) for event in unresolved_by_task.values()),
-        "unresolved_failed_count": sum(bool(event.get("failed")) for event in unresolved_by_task.values()),
-        "outcome_projection": {
-            "schema_version": _TOOL_LIFECYCLE_OUTCOME_SCHEMA_VERSION,
-            "source": _clean_string(metadata.get("source")) or "canonical",
-            "degraded": bool(metadata.get("degraded")),
-            "fallback": _clean_string(metadata.get("fallback")),
-        },
-    }
+    declared_requirement = (
+        summary.get("requirement") if "requirement" in summary else metadata.get("requirement")
+    ) is True
+    required_task_keys = _string_list(
+        summary.get("required_task_keys") if "required_task_keys" in summary else metadata.get("required_task_keys")
+    )
+    return _lifecycle_outcome_projection_from_events(
+        tuple(latest_by_task.values()),
+        source=_clean_string(metadata.get("source")) or "canonical",
+        degraded=bool(metadata.get("degraded")),
+        fallback=_clean_string(metadata.get("fallback")),
+        requirement=declared_requirement,
+        required_task_keys=required_task_keys,
+    )
 
 
 def _legacy_lifecycle_outcome_projection(
@@ -1583,11 +1753,12 @@ def _legacy_lifecycle_outcome_projection(
         source="legacy_event_rows",
         degraded=True,
         fallback="legacy_event_rows",
+        requirement=_tool_lifecycle_is_required(summary),
     )
+    if not events:
+        return event_projection
     historical_failed = _int_value(summary.get("dropped_count")) > 0 or _int_value(summary.get("failed_count")) > 0
-    if event_projection["unresolved_count"] or (
-        not historical_failed and bool(summary.get("ok", True))
-    ):
+    if event_projection["unresolved_count"] or (not historical_failed and bool(summary.get("ok", True))):
         return event_projection
     dropped = _int_value(summary.get("dropped_count")) > 0
     failure_class = (
@@ -1677,7 +1848,12 @@ def project_tool_lifecycle_event(
     return row
 
 
-def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def summarize_tool_lifecycle_events(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    requirement: bool = False,
+    requirement_projection: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Summarize canonical lifecycle event rows for Run Ledger projections.
 
     Boundary:
@@ -1718,11 +1894,26 @@ def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict
         evidence = event.get("failure_evidence")
         if isinstance(evidence, Mapping):
             failure_evidence.append(dict(evidence))
+    structured_requirement = _mapping(requirement_projection)
+    required_task_keys = _string_list(structured_requirement.get("required_task_keys"))
+    declared_requirement = bool(requirement or structured_requirement.get("required"))
     outcome_projection = _lifecycle_outcome_projection_from_events(
         projected_events,
         source="event_rows",
         degraded=False,
+        requirement=declared_requirement,
+        required_task_keys=required_task_keys,
     )
+    normalized_requirement_projection = {
+        "schema_version": _TOOL_LIFECYCLE_REQUIREMENT_SCHEMA_VERSION,
+        "required": bool(outcome_projection["requirement"]),
+        "state": ("required" if bool(outcome_projection["requirement"]) else _TOOL_LIFECYCLE_REQUIREMENT_NOT_REQUIRED),
+        "required_task_keys": list(outcome_projection["required_task_keys"]),
+        "missing_required_task_keys": list(outcome_projection["missing_required_task_keys"]),
+        "obligations": [
+            dict(item) for item in structured_requirement.get("obligations") or [] if isinstance(item, Mapping)
+        ],
+    }
     return {
         "ok": bool(outcome_projection["ok"]),
         "event_count": len(projected_events),
@@ -1736,6 +1927,7 @@ def summarize_tool_lifecycle_events(events: Sequence[Mapping[str, Any]]) -> dict
         "failed_count": failed_count,
         "failure_evidence": failure_evidence,
         "events": projected_events,
+        "requirement_projection": normalized_requirement_projection,
         **outcome_projection,
     }
 
@@ -1765,6 +1957,8 @@ def project_tool_lifecycle_summary(summary: Mapping[str, Any] | None) -> dict[st
         else []
     )
     events = [dict(item) for item in events_raw if isinstance(item, Mapping)] if isinstance(events_raw, list) else []
+    requirement_projection_raw = lifecycle.get("requirement_projection")
+    requirement_projection = dict(requirement_projection_raw) if isinstance(requirement_projection_raw, Mapping) else {}
     outcome_projection = _canonical_lifecycle_outcome_projection(lifecycle)
     if outcome_projection is None:
         outcome_projection = _legacy_lifecycle_outcome_projection(lifecycle, events)
@@ -1781,6 +1975,7 @@ def project_tool_lifecycle_summary(summary: Mapping[str, Any] | None) -> dict[st
         "failed_count": _int_value(lifecycle.get("failed_count")),
         "failure_evidence": failure_evidence,
         "events": events,
+        "requirement_projection": requirement_projection,
         **outcome_projection,
     }
 
@@ -1804,6 +1999,15 @@ def project_tool_lifecycle_failure_status(summary: Mapping[str, Any] | None) -> 
     metadata = _mapping(projected.get("outcome_projection"))
     degraded = bool(metadata.get("degraded"))
     fallback = _clean_string(metadata.get("fallback"))
+    if projected.get("requirement_status") == _TOOL_LIFECYCLE_REQUIREMENT_MISSING:
+        return {
+            "failed": True,
+            "status": _TOOL_LIFECYCLE_REQUIREMENT_MISSING,
+            "failure_class": FailureClassV1.TOOL_LIFECYCLE_MISSING.value,
+            "reason": "required tool lifecycle evidence is missing",
+            "degraded": degraded,
+            "fallback": fallback,
+        }
     if not unresolved_by_task:
         return {
             "failed": False,
@@ -1814,7 +2018,7 @@ def project_tool_lifecycle_failure_status(summary: Mapping[str, Any] | None) -> 
             "fallback": fallback,
         }
 
-    latest = next(reversed(unresolved_by_task.values()))
+    latest = next(reversed(tuple(unresolved_by_task.values())))
     latest_event = dict(latest) if isinstance(latest, Mapping) else {}
     dropped = bool(latest_event.get("dropped"))
     failure_class = normalize_failure_class(
@@ -1831,11 +2035,23 @@ def project_tool_lifecycle_failure_status(summary: Mapping[str, Any] | None) -> 
     }
 
 
-def empty_tool_lifecycle_summary() -> dict[str, Any]:
-    """Return the canonical empty tool-lifecycle summary shape."""
+def empty_tool_lifecycle_summary(*, requirement: bool = False) -> dict[str, Any]:
+    """Return the canonical empty tool-lifecycle summary shape.
+
+    Absence is neutral until an execution fact activates a requirement. Callers
+    holding such a fact must pass ``requirement=True`` or use the structured
+    requirement projection path in :func:`summarize_tool_lifecycle_events`.
+    """
+
+    requirement_status = _tool_lifecycle_requirement_status(
+        requirement=requirement,
+        evidence_present=False,
+    )
 
     return {
-        "ok": True,
+        "ok": not requirement,
+        "requirement": requirement,
+        "requirement_status": requirement_status,
         "event_count": 0,
         "native_tool_calls_count": 0,
         "decoded_tool_calls_count": 0,
@@ -1847,6 +2063,16 @@ def empty_tool_lifecycle_summary() -> dict[str, Any]:
         "failed_count": 0,
         "failure_evidence": [],
         "events": [],
+        "requirement_projection": {
+            "schema_version": _TOOL_LIFECYCLE_REQUIREMENT_SCHEMA_VERSION,
+            "required": requirement,
+            "state": "required" if requirement else _TOOL_LIFECYCLE_REQUIREMENT_NOT_REQUIRED,
+            "required_task_keys": [],
+            "missing_required_task_keys": [],
+            "obligations": [],
+        },
+        "required_task_keys": [],
+        "missing_required_task_keys": [],
         "latest_by_task": {},
         "unresolved_by_task": {},
         "unresolved_count": 0,
@@ -1857,6 +2083,8 @@ def empty_tool_lifecycle_summary() -> dict[str, Any]:
             "source": "event_rows",
             "degraded": False,
             "fallback": "",
+            "requirement": requirement,
+            "requirement_status": requirement_status,
         },
     }
 
@@ -1874,12 +2102,24 @@ def merge_tool_lifecycle_summaries(projects: Sequence[Mapping[str, Any]]) -> dic
     """
 
     totals = empty_tool_lifecycle_summary()
+    requirement_flags: list[bool] = []
+    missing_required_project_count = 0
     native_names: list[str] = []
     failure_evidence: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
+    required_task_keys: list[str] = []
+    requirement_obligations: list[dict[str, Any]] = []
     for project in projects:
         lifecycle_raw = project.get("tool_lifecycle")
         lifecycle: Mapping[str, Any] = lifecycle_raw if isinstance(lifecycle_raw, Mapping) else {}
+        lifecycle_required = _tool_lifecycle_is_required(lifecycle)
+        requirement_flags.append(lifecycle_required)
+        raw_project_events = lifecycle.get("events")
+        project_has_lifecycle_evidence = isinstance(raw_project_events, list) and any(
+            isinstance(item, Mapping) for item in raw_project_events
+        )
+        if lifecycle_required and not project_has_lifecycle_evidence:
+            missing_required_project_count += 1
         if not lifecycle:
             continue
         totals["ok"] = bool(totals["ok"]) and bool(lifecycle.get("ok", True))
@@ -1900,12 +2140,20 @@ def merge_tool_lifecycle_summaries(projects: Sequence[Mapping[str, Any]]) -> dic
         raw_failure_evidence = lifecycle.get("failure_evidence")
         if isinstance(raw_failure_evidence, list):
             failure_evidence.extend(dict(item) for item in raw_failure_evidence if isinstance(item, Mapping))
+        requirement_projection = _mapping(lifecycle.get("requirement_projection"))
+        required_task_keys.extend(_string_list(requirement_projection.get("required_task_keys")))
+        raw_obligations = requirement_projection.get("obligations")
+        if isinstance(raw_obligations, list):
+            requirement_obligations.extend(dict(item) for item in raw_obligations if isinstance(item, Mapping))
         raw_events = lifecycle.get("events")
         if isinstance(raw_events, list):
             events.extend(dict(item) for item in raw_events if isinstance(item, Mapping))
     totals["native_tool_call_names"] = list(dict.fromkeys(native_names))
     totals["failure_evidence"] = failure_evidence
     totals["events"] = events
+    requirement = any(requirement_flags) if requirement_flags else False
+    required_task_keys = list(dict.fromkeys(required_task_keys))
+    totals["requirement"] = requirement
     canonical_event_rows = bool(events) and all(
         isinstance(event, Mapping) and bool(_clean_string(event.get("task_key"))) for event in events
     )
@@ -1914,10 +2162,26 @@ def merge_tool_lifecycle_summaries(projects: Sequence[Mapping[str, Any]]) -> dic
             events,
             source="merged_event_rows",
             degraded=False,
+            requirement=requirement,
+            required_task_keys=required_task_keys,
         )
-        if canonical_event_rows
+        if canonical_event_rows or required_task_keys
         else _legacy_lifecycle_outcome_projection(totals, events)
     )
+    if missing_required_project_count:
+        outcome_projection["ok"] = False
+        outcome_projection["requirement_status"] = _TOOL_LIFECYCLE_REQUIREMENT_MISSING
+        outcome_metadata = _mapping(outcome_projection.get("outcome_projection"))
+        outcome_metadata["requirement_status"] = _TOOL_LIFECYCLE_REQUIREMENT_MISSING
+        outcome_projection["outcome_projection"] = outcome_metadata
+    totals["requirement_projection"] = {
+        "schema_version": _TOOL_LIFECYCLE_REQUIREMENT_SCHEMA_VERSION,
+        "required": requirement,
+        "state": "required" if requirement else _TOOL_LIFECYCLE_REQUIREMENT_NOT_REQUIRED,
+        "required_task_keys": required_task_keys,
+        "missing_required_task_keys": list(outcome_projection.get("missing_required_task_keys") or []),
+        "obligations": requirement_obligations,
+    }
     totals.update(outcome_projection)
     return totals
 
@@ -2450,6 +2714,7 @@ def project_tool_lifecycle_receipt_to_metadata(
 __all__ = [
     "NativeToolCallEnvelopeV1",
     "ToolCallLifecycleReceiptV1",
+    "ToolLifecycleRequirementV1",
     "batch_receipt_has_dispatch_evidence",
     "build_missing_dispatch_lifecycle_receipt",
     "build_native_tool_call_envelope_payloads",
@@ -2463,6 +2728,7 @@ __all__ = [
     "build_tool_dispatch_dropped_anomaly_projection",
     "build_tool_dispatch_dropped_lifecycle_from_anomaly_flags",
     "build_tool_dispatch_dropped_lifecycle_from_observed_calls",
+    "build_tool_lifecycle_requirement_run_ledger_event",
     "effect_receipts_from_batch_receipts",
     "empty_tool_lifecycle_summary",
     "failure_evidence_from_lifecycle_receipt",
@@ -2488,6 +2754,7 @@ __all__ = [
     "project_tool_lifecycle_failure_status",
     "project_tool_lifecycle_metadata",
     "project_tool_lifecycle_receipt_to_metadata",
+    "project_tool_lifecycle_requirement",
     "project_tool_lifecycle_summary",
     "summarize_tool_lifecycle_events",
     "task_boundary_tool_dispatch_from_lifecycle_metadata",

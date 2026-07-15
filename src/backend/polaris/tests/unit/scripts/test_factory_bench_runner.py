@@ -69,6 +69,155 @@ def test_launcher_instance_mode_invalid_env_falls_back_to_isolated(monkeypatch: 
     assert bench._default_launcher_instance_mode() == "isolated"
 
 
+def test_isolated_launch_receipts_are_unique_and_auditable(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    workspace = tmp_path / "factory-bench-same-workdir" / "L1-01"
+
+    first = bench._new_isolated_bench_launch_receipt(
+        bench_session_id="bench-session",
+        run_id="run-identity",
+        project_id="L1-01",
+        requested_project_id="L1-01",
+        canonical_project_id="L1-01",
+        bench_workspace=workspace.parent,
+        project_workspace=str(workspace),
+    )
+    second = bench._new_isolated_bench_launch_receipt(
+        bench_session_id="bench-session",
+        run_id="run-identity",
+        project_id="L1-01",
+        requested_project_id="L1-01",
+        canonical_project_id="L1-01",
+        bench_workspace=workspace.parent,
+        project_workspace=str(workspace),
+    )
+
+    assert first["requested_instance_id"] == second["requested_instance_id"]
+    assert first["launch_nonce"] != second["launch_nonce"]
+    assert first["instance_id"] != second["instance_id"]
+    assert first["launch_scope"] != second["launch_scope"]
+    assert first["workspace"] == str(workspace.resolve())
+    assert first["runtime_root"] == str((workspace / "runtime").resolve())
+    assert first["expected_backend_root"] == str(bench._BACKEND_ROOT)
+    assert first["expected_source_fingerprint"] == "source-fingerprint"
+    assert first["requested_project_id"] == "L1-01"
+    assert first["canonical_project_id"] == "L1-01"
+    assert first["run_id"] == "run-identity"
+
+
+def test_isolated_launch_forwards_fresh_receipt_to_supervisor(monkeypatch: Any, tmp_path: Path) -> None:
+    from polaris.cells.instances.internal.service import InstanceSupervisor
+
+    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    monkeypatch.setattr(bench, "_wait_backend_health", lambda *_args, **_kwargs: True)
+    workspace = tmp_path / "factory-bench-same-workdir" / "L1-01"
+    receipt = bench._new_isolated_bench_launch_receipt(
+        bench_session_id="bench-session",
+        run_id="run-identity",
+        project_id="L1-01",
+        requested_project_id="request-L1-01",
+        canonical_project_id="L1-01",
+        bench_workspace=workspace.parent,
+        project_workspace=str(workspace),
+    )
+    captured: dict[str, Any] = {}
+
+    def _start(_self: InstanceSupervisor, request: dict[str, Any]) -> dict[str, Any]:
+        captured.update(request)
+        return {
+            "instance_id": request["instance_id"],
+            "workspace": request["workspace"],
+            "runtime_root": request["runtime_root"],
+            "backend_url": "http://127.0.0.1:60101",
+            "frontend_url": "http://127.0.0.1:5174",
+            "token": request["token"],
+            "metadata": request["metadata"],
+        }
+
+    monkeypatch.setattr(InstanceSupervisor, "start_instance", _start)
+
+    result = bench._start_isolated_bench_project_instance(
+        bench_session_id="bench-session",
+        project_id="L1-01",
+        project_title="One",
+        level=1,
+        bench_workspace=workspace.parent,
+        project_workspace=str(workspace),
+        backend_token="token",
+        launch_receipt=receipt,
+    )
+
+    assert result is not None and result["ok"] is True
+    assert captured["instance_id"] == receipt["instance_id"]
+    assert captured["require_fresh_instance"] is True
+    assert captured["workspace"] == receipt["workspace"]
+    assert captured["runtime_root"] == receipt["runtime_root"]
+    assert Path(captured["polaris_root"]).resolve() == bench._REPO_ROOT
+    assert (Path(captured["polaris_root"]) / "src" / "backend").resolve() == bench._BACKEND_ROOT
+    assert Path(bench.__file__).resolve().parents[2] == bench._BACKEND_ROOT
+    assert captured["bench"]["launch_scope"] == receipt["launch_scope"]
+    assert captured["metadata"]["instance_launch_receipt"] == receipt
+
+
+def test_isolated_launch_reports_registry_corruption_as_platform_failure(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    from polaris.cells.instances.internal import service as instance_service
+
+    instance_home = tmp_path / "instances"
+    instance_home.mkdir(parents=True)
+    registry_path = instance_home / "registry.json"
+    original_bytes = b'{"schema_version": 1, "instances": ['
+    registry_path.write_bytes(original_bytes)
+    monkeypatch.setenv(instance_service.INSTANCE_HOME_ENV, str(instance_home))
+    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    side_effects = {"allocate": 0, "spawn": 0}
+
+    def _unexpected_allocate(*_args: Any, **_kwargs: Any) -> int:
+        side_effects["allocate"] += 1
+        raise AssertionError("port allocation must not run")
+
+    def _unexpected_spawn(*_args: Any, **_kwargs: Any) -> int:
+        side_effects["spawn"] += 1
+        raise AssertionError("backend spawn must not run")
+
+    monkeypatch.setattr(instance_service, "allocate_port", _unexpected_allocate)
+    monkeypatch.setattr(instance_service.InstanceSupervisor, "_start_backend", _unexpected_spawn)
+    workspace = tmp_path / "factory-bench-corrupt" / "L1-01"
+    receipt = bench._new_isolated_bench_launch_receipt(
+        bench_session_id="bench-corrupt",
+        run_id="run-corrupt",
+        project_id="L1-01",
+        requested_project_id="L1-01",
+        canonical_project_id="L1-01",
+        bench_workspace=workspace.parent,
+        project_workspace=str(workspace),
+    )
+
+    result = bench._start_isolated_bench_project_instance(
+        bench_session_id="bench-corrupt",
+        project_id="L1-01",
+        project_title="One",
+        level=1,
+        bench_workspace=workspace.parent,
+        project_workspace=str(workspace),
+        backend_token="token",
+        launch_receipt=receipt,
+    )
+
+    assert result is not None
+    assert result["ok"] is False
+    assert result["error"] == "instance_registry_unavailable"
+    assert result["failure_class"] == "platform_failure"
+    assert result["error_code"] == "instance_registry_corrupt"
+    assert result["error_type"] == "RegistryCorruptionError"
+    assert result["platform_error"]["registry_path"] == str(registry_path)
+    assert result["platform_error"]["reason"] == "invalid_json"
+    assert side_effects == {"allocate": 0, "spawn": 0}
+    assert registry_path.read_bytes() == original_bytes
+
+
 def test_default_bench_session_reporting_mode_is_auto(monkeypatch: Any) -> None:
     monkeypatch.delenv("FACTORY_BENCH_SESSION_REPORTING", raising=False)
 
@@ -114,6 +263,129 @@ def test_shared_reporting_overrides_isolated_default() -> None:
     )
 
 
+def test_isolated_launch_receipts_get_new_run_scoped_instance_ids(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    first = bench._new_isolated_bench_launch_receipt(
+        bench_session_id="bench-reused",
+        run_id="run-001",
+        project_id="L1-01",
+        requested_project_id="L1-01",
+        canonical_project_id="L1-01",
+        bench_workspace=tmp_path,
+        project_workspace=str(tmp_path / "L1-01"),
+    )
+    second = bench._new_isolated_bench_launch_receipt(
+        bench_session_id="bench-reused",
+        run_id="run-002",
+        project_id="L1-01",
+        requested_project_id="L1-01",
+        canonical_project_id="L1-01",
+        bench_workspace=tmp_path,
+        project_workspace=str(tmp_path / "L1-01"),
+    )
+
+    assert first["requested_instance_id"] == second["requested_instance_id"]
+    assert first["instance_id"] != second["instance_id"]
+    assert first["launch_nonce"] != second["launch_nonce"]
+    assert len(str(first["instance_id"])) <= 80
+
+
+def _matching_isolated_launch_identity(
+    tmp_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    receipt = {
+        "launch_scope": "run-001:L1-01:nonce",
+        "launch_nonce": "nonce",
+        "run_id": "run-001",
+        "project_id": "L1-01",
+        "requested_project_id": "L1-01",
+        "canonical_project_id": "L1-01",
+        "requested_instance_id": "bench-l1-01",
+        "instance_id": "bench-l1-01-run-run-001-nonce",
+        "workspace": str((tmp_path / "L1-01").resolve()),
+        "runtime_root": str((tmp_path / "L1-01" / "runtime").resolve()),
+        "expected_backend_root": str(bench._BACKEND_ROOT),
+        "expected_source_fingerprint": "expected-source",
+    }
+    instance = {
+        "instance_id": receipt["instance_id"],
+        "workspace": receipt["workspace"],
+        "runtime_root": receipt["runtime_root"],
+        "backend_pid": 73101,
+        "metadata": {"instance_launch_receipt": dict(receipt)},
+    }
+    backend_context = {
+        "backend_freshness": {
+            "ok": True,
+            "expected_fingerprint": "expected-source",
+            "actual_fingerprint": "expected-source",
+            "backend_info": {
+                "pid": 73101,
+                "instance_id": receipt["instance_id"],
+                "workspace": receipt["workspace"],
+                "backend_root": receipt["expected_backend_root"],
+            },
+        }
+    }
+    return receipt, instance, backend_context
+
+
+def test_isolated_launch_validation_accepts_matching_process_identity(tmp_path: Path) -> None:
+    receipt, instance, backend_context = _matching_isolated_launch_identity(tmp_path)
+
+    validation = bench._validate_isolated_bench_launch(
+        instance=instance,
+        receipt=receipt,
+        backend_context=backend_context,
+    )
+
+    assert validation["ok"] is True
+    assert validation["backend_pid"] == 73101
+    assert validation["backend_root"] == str(bench._BACKEND_ROOT)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("pid", 99999, "backend_pid_mismatch"),
+        ("instance_id", "impostor-instance", "backend_instance_id_mismatch"),
+        ("backend_root", "/tmp/impostor-backend", "backend_root_mismatch"),
+    ],
+)
+def test_isolated_launch_validation_rejects_backend_process_identity_mismatch(
+    tmp_path: Path,
+    field: str,
+    value: Any,
+    reason: str,
+) -> None:
+    receipt, instance, backend_context = _matching_isolated_launch_identity(tmp_path)
+    backend_context["backend_freshness"]["backend_info"][field] = value
+
+    validation = bench._validate_isolated_bench_launch(
+        instance=instance,
+        receipt=receipt,
+        backend_context=backend_context,
+    )
+
+    assert validation["ok"] is False
+    assert reason in validation["reasons"]
+
+
+def test_isolated_launch_validation_fails_closed_for_source_mismatch(tmp_path: Path) -> None:
+    receipt, instance, backend_context = _matching_isolated_launch_identity(tmp_path)
+    backend_context["backend_freshness"]["actual_fingerprint"] = "wrong-source"
+
+    validation = bench._validate_isolated_bench_launch(
+        instance=instance,
+        receipt=receipt,
+        backend_context=backend_context,
+    )
+
+    assert validation["ok"] is False
+    assert validation["error"] == "measurement_contaminated"
+    assert "actual_source_fingerprint_mismatch" in validation["reasons"]
+
+
 def test_bench_observation_posts_use_short_timeout(monkeypatch: Any) -> None:
     timeouts: list[float] = []
 
@@ -156,6 +428,32 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "wrong_product_suspect": False,
         "implementation_depth": {"ok": True, "detail": "implementation depth passed"},
         "backend_freshness": {"ok": True, "detail": "backend fresh"},
+        "task_runtime_projection": {
+            "schema_version": "task_runtime.observable_task_rows_authority.v1",
+            "source": "task_runtime.execution_fact",
+            "authoritative": True,
+            "degraded": False,
+            "row_count": 1,
+            "rows": [
+                {
+                    "task_id": "TASK-1",
+                    "status": "completed",
+                    "execution_state": "completed",
+                    "fact_event_seq": 1,
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                }
+            ],
+            "readiness": {"ready": True, "blocking_reasons": []},
+        },
+        "factory_terminal_status": {
+            "status": "completed",
+            "metadata": {
+                "canonical_authoritative": True,
+                "terminal_source": "task_runtime.execution_fact",
+                "task_row_read_model_source": "task_runtime.execution_fact",
+            },
+        },
         "run_ledger": {
             "ledger_path": __file__,
             "content_id": "content-id",
@@ -171,9 +469,34 @@ def _record(**overrides: Any) -> dict[str, Any]:
             "ok": True,
             "event_count": 1,
             "gate_count": 1,
+            "gates": [
+                {
+                    "name": "qa_verdict",
+                    "stage": "qa",
+                    "ok": True,
+                    "summary": "QA passed",
+                    "content_id": "qa-content-id",
+                    "append_id": "qa-append-id",
+                    "capability_ok": True,
+                }
+            ],
             "failed_gates": [],
             "capability": {"ok": True, "issues": [], "latest_token_id": "job-token-id"},
             "physical_evidence": {},
+            "evidence_policy": {
+                "ok": True,
+                "integrity_ok": True,
+                "outcome_ok": True,
+                "missing_required_modalities": [],
+                "failed_required_modalities": [],
+            },
+            "tool_lifecycle": {"ok": True},
+            "task_boundary": {
+                "ok": True,
+                "verdict_count": 1,
+                "latest": {"ok": True, "status": "completed_verified"},
+                "failed": [],
+            },
         },
     }
     record.update(overrides)
@@ -195,6 +518,32 @@ def _successful_audit_record(**overrides: Any) -> dict[str, Any]:
         "allowed_paths": ["src/index.js"],
         "required_artifacts": ["src/index.js"],
         "project_brief": "Build something",
+        "task_runtime_projection": {
+            "schema_version": "task_runtime.observable_task_rows_authority.v1",
+            "source": "task_runtime.execution_fact",
+            "authoritative": True,
+            "degraded": False,
+            "row_count": 1,
+            "rows": [
+                {
+                    "task_id": "TASK-1",
+                    "status": "completed",
+                    "execution_state": "completed",
+                    "fact_event_seq": 1,
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                }
+            ],
+            "readiness": {"ready": True, "blocking_reasons": []},
+        },
+        "factory_terminal_status": {
+            "status": "completed",
+            "metadata": {
+                "canonical_authoritative": True,
+                "terminal_source": "task_runtime.execution_fact",
+                "task_row_read_model_source": "task_runtime.execution_fact",
+            },
+        },
         "blueprint_id": "bp-test",
         "blueprints": [{"id": "bp-test"}],
         "checks": [],
@@ -211,9 +560,34 @@ def _ok_run_ledger_projection(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         "outcome_ok": True,
         "event_count": 1,
         "gate_count": 1,
+        "gates": [
+            {
+                "name": "qa_verdict",
+                "stage": "qa",
+                "ok": True,
+                "summary": "QA passed",
+                "content_id": "qa-content-id",
+                "append_id": "qa-append-id",
+                "capability_ok": True,
+            }
+        ],
         "failed_gates": [],
         "capability": {"ok": True, "issues": [], "latest_token_id": "job-token-id"},
         "physical_evidence": {"command_count": 1},
+        "evidence_policy": {
+            "ok": True,
+            "integrity_ok": True,
+            "outcome_ok": True,
+            "missing_required_modalities": [],
+            "failed_required_modalities": [],
+        },
+        "tool_lifecycle": {"ok": True},
+        "task_boundary": {
+            "ok": True,
+            "verdict_count": 1,
+            "latest": {"ok": True, "status": "completed_verified"},
+            "failed": [],
+        },
     }
 
 
@@ -252,9 +626,7 @@ def test_bench_reads_authoritative_task_boundary_without_appending(tmp_path: Pat
 
     verdict = bench._read_task_boundary_verdict_from_run_ledger_projection(projection)
 
-    event_count_after = int(
-        bench.load_run_ledger_projection(workspace, run_id="run-task-boundary")["event_count"]
-    )
+    event_count_after = int(bench.load_run_ledger_projection(workspace, run_id="run-task-boundary")["event_count"])
 
     assert verdict["ok"] is False
     assert verdict["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
@@ -294,19 +666,67 @@ def test_bench_preserves_text_fallback_task_boundary_classification() -> None:
     assert verdict["responsible_layer"] == "execution_control_plane"
 
 
-def test_chain_failure_overrides_static_artifact_checks() -> None:
+def test_canonical_projection_preserves_operational_evidence_fields() -> None:
+    record = _record(
+        requested_project_id="requested-L1-01",
+        canonical_project_id="canonical-L1-11",
+        instance_id="bench-instance-1",
+        workspace="/tmp/factory-bench/L1-01",
+        backend_port=51001,
+        frontend_port=52001,
+        run_id="bench-run-1",
+        factory_run_id="factory-run-1",
+        final_request_refs=[{"role": "qa", "context_snapshot_ref": "a" * 24}],
+        factory_terminal_status={
+            "status": "completed",
+            "metadata": {
+                "canonical_authoritative": True,
+                "terminal_source": "task_runtime.execution_fact",
+                "task_row_read_model_source": "task_runtime.execution_fact",
+                "execution_barrier": {"barrier_satisfied": True},
+                "fallback": {"used": False},
+            },
+        },
+    )
+
+    projection = bench.build_canonical_bench_projection(record)
+
+    assert projection["source"] == "canonical_projection"
+    assert projection["requested_project_id"] == "requested-L1-01"
+    assert projection["canonical_project_id"] == "canonical-L1-11"
+    assert projection["instance"] == {
+        "id": "bench-instance-1",
+        "workspace": "/tmp/factory-bench/L1-01",
+    }
+    assert projection["ports"] == {"backend": 51001, "frontend": 52001}
+    assert projection["run_ids"] == {"bench": "bench-run-1", "factory": "factory-run-1"}
+    assert projection["final_request_refs"] == [{"role": "qa", "context_snapshot_ref": "a" * 24}]
+    assert projection["lifecycle"] == {"ok": True}
+    assert projection["effect"]["physical_evidence"] == {}
+    assert projection["boundary"]["authoritative"] is True
+    assert projection["runtime"]["status"] == "completed"
+    assert projection["ledger"]["source"] == "run_ledger"
+    assert projection["qa"]["name"] == "qa_verdict"
+    assert projection["barrier"] == {"barrier_satisfied": True}
+    assert projection["fallback"] == {"used": False}
+
+
+def test_legacy_chain_text_cannot_override_canonical_execution() -> None:
     record = _record(
         chain_state="fail",
         chain_results={"qa_ran": False, "qa_passed": False},
+        real_run_gate={"ok": True, "summary": "real run gate passed"},
+        llm_route_audit={"ok": True, "summary": "LLM route audit passed"},
     )
 
     apply_factory_bench_gates(record, chain={"exit_code": 1})
 
     assert record["static_checks_passed"] is True
-    assert record["all_checks_passed"] is False
+    assert record["all_checks_passed"] is True
     gates = {gate["gate"]: gate for gate in record["factory_gates"]}
-    assert gates["chain_clean"]["ok"] is False
-    assert gates["integration_qa_passed"]["ok"] is False
+    assert gates["canonical_execution"]["ok"] is True
+    assert "chain_clean" not in gates
+    assert "integration_qa_passed" not in gates
 
 
 def test_runner_audits_llm_routes_for_llm_backed_roles_only() -> None:
@@ -319,7 +739,7 @@ def test_runner_audits_llm_routes_for_llm_backed_roles_only() -> None:
     assert "required_llm_roles_for_factory_record" in source
 
 
-def test_missing_qa_verdict_and_wrong_product_are_fail_closed() -> None:
+def test_missing_legacy_qa_artifact_does_not_override_canonical_projection() -> None:
     record = _record(
         has_qa_verdict=False,
         wrong_product_suspect=True,
@@ -329,7 +749,8 @@ def test_missing_qa_verdict_and_wrong_product_are_fail_closed() -> None:
 
     assert record["all_checks_passed"] is False
     gates = {gate["gate"]: gate for gate in record["factory_gates"]}
-    assert gates["qa_verdict_artifact_present"]["ok"] is False
+    assert "qa_verdict_artifact_present" not in gates
+    assert gates["canonical_execution"]["ok"] is True
     assert gates["wrong_product_guard"]["ok"] is False
 
 
@@ -506,6 +927,8 @@ def test_build_bench_backend_audit_context_writes_record_fields(monkeypatch: Any
             "actual_fingerprint": "actual-fp",
             "backend_info": {
                 "pid": 123,
+                "instance_id": "bench-run-01",
+                "backend_root": str(bench._BACKEND_ROOT),
                 "startup_time": "2026-06-21T00:00:00Z",
                 "source": "runtime_fingerprint",
             },
@@ -529,62 +952,66 @@ def test_build_bench_backend_audit_context_writes_record_fields(monkeypatch: Any
     assert context["backend_metadata"]["expected_source_fingerprint"] == "expected-fp"
     assert context["backend_metadata"]["actual_backend_fingerprint"] == "actual-fp"
     assert context["backend_metadata"]["backend_pid"] == 123
+    assert context["backend_metadata"]["backend_instance_id"] == "bench-run-01"
+    assert context["backend_metadata"]["backend_root"] == str(bench._BACKEND_ROOT)
 
 
 # --- map_factory_run_to_chain_results ---
 
 
-def test_map_completed_qa_passed_is_clean() -> None:
+def test_map_completed_qa_artifact_is_non_authoritative() -> None:
     run_status = {"status": "completed", "phase": "qa_gate"}
     audit_bundle: dict[str, Any] = {
         "gates": [{"gate_name": "quality_gate", "passed": True, "message": "all good"}],
         "summary_json": {"director": {"total": 10, "successes": 8, "failures": 1, "blocked": 1}},
     }
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "clean"
-    assert result["qa_ran"] is True
-    assert result["qa_passed"] is True
-    assert result["qa_reason"] == "all good"
+    assert result["source"] == "legacy_artifact"
+    assert result["authoritative"] is False
+    assert result["degraded"] is True
+    assert result["exit_class"] == "legacy_unknown"
+    assert result["qa_ran"] is None
+    assert result["qa_passed"] is None
     assert result["director"] == {"total": 10, "successes": 8, "failures": 1, "blocked": 1}
 
 
-def test_map_completed_qa_failed_is_qa_failed() -> None:
+def test_map_failed_qa_artifact_cannot_set_exit_class() -> None:
     run_status = {"status": "completed", "phase": "qa_gate"}
     audit_bundle = {
         "gates": [{"gate_name": "quality_gate", "passed": False, "message": "lint errors"}],
     }
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "qa_failed"
-    assert result["qa_ran"] is True
-    assert result["qa_passed"] is False
-    assert result["qa_reason"] == "lint errors"
+    assert result["exit_class"] == "legacy_unknown"
+    assert result["qa_ran"] is None
+    assert result["qa_passed"] is None
+    assert result["qa_reason"] == ""
 
 
-def test_map_failed_qa_gate_phase_is_qa_failed() -> None:
+def test_map_runtime_phase_cannot_authorize_qa() -> None:
     run_status = {"status": "failed", "phase": "qa_gate"}
     audit_bundle = {
         "gates": [{"gate_name": "quality_gate", "passed": False, "message": "tests failed"}],
     }
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "qa_failed"
-    assert result["qa_ran"] is True
-    assert result["qa_passed"] is False
+    assert result["exit_class"] == "legacy_unknown"
+    assert result["qa_ran"] is None
+    assert result["qa_passed"] is None
 
 
-def test_map_failed_non_qa_phase_is_director_partial() -> None:
+def test_map_director_summary_is_display_only() -> None:
     run_status = {"status": "failed", "phase": "director_dispatch"}
     audit_bundle: dict[str, Any] = {
         "gates": [],
         "summary_json": {"director": {"total": 5, "successes": 2, "failures": 3, "blocked": 0}},
     }
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "director_partial"
-    assert result["qa_ran"] is False
-    assert result["qa_passed"] is False
+    assert result["exit_class"] == "legacy_unknown"
+    assert result["qa_ran"] is None
+    assert result["qa_passed"] is None
     assert result["director"] == {"total": 5, "successes": 2, "failures": 3, "blocked": 0}
 
 
-def test_map_falls_back_to_run_status_gates() -> None:
+def test_map_does_not_fall_back_to_run_status_gates() -> None:
     run_status: dict[str, Any] = {
         "status": "completed",
         "phase": "",
@@ -592,13 +1019,13 @@ def test_map_falls_back_to_run_status_gates() -> None:
     }
     audit_bundle: dict[str, Any] = {}
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "clean"
-    assert result["qa_ran"] is True
-    assert result["qa_passed"] is True
-    assert result["qa_reason"] == "ok"
+    assert result["exit_class"] == "legacy_unknown"
+    assert result["qa_ran"] is None
+    assert result["qa_passed"] is None
+    assert result["qa_reason"] == ""
 
 
-def test_map_falls_back_to_events_tail_for_director() -> None:
+def test_map_does_not_scan_events_tail_for_director() -> None:
     run_status = {"status": "failed", "phase": "director_dispatch"}
     audit_bundle: dict[str, Any] = {
         "gates": [],
@@ -608,18 +1035,18 @@ def test_map_falls_back_to_events_tail_for_director() -> None:
         ],
     }
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "director_partial"
-    assert result["director"] == {"total": 7, "successes": 3, "failures": 4, "blocked": None}
+    assert result["exit_class"] == "legacy_unknown"
+    assert result["director"] == {"total": None, "successes": None, "failures": None, "blocked": None}
 
 
-def test_map_summary_json_string_parsing() -> None:
+def test_map_does_not_parse_summary_json_string() -> None:
     run_status = {"status": "completed", "phase": "qa_gate"}
     audit_bundle: dict[str, Any] = {
         "gates": [{"gate_name": "quality_gate", "passed": True}],
         "summary_json": '{"director": {"total": 3, "successes": 3}}',
     }
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["director"] == {"total": 3, "successes": 3, "failures": None, "blocked": None}
+    assert result["director"] == {"total": None, "successes": None, "failures": None, "blocked": None}
 
 
 def test_map_summary_json_invalid_string_defaults() -> None:
@@ -636,9 +1063,9 @@ def test_map_no_qa_gate_defaults() -> None:
     run_status = {"status": "failed", "phase": "build"}
     audit_bundle: dict[str, Any] = {}
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "hard_failed"
-    assert result["qa_ran"] is False
-    assert result["qa_passed"] is False
+    assert result["exit_class"] == "legacy_unknown"
+    assert result["qa_ran"] is None
+    assert result["qa_passed"] is None
     assert result["qa_reason"] == ""
 
 
@@ -1273,8 +1700,9 @@ def test_run_factory_chain_success(monkeypatch: Any, tmp_path: Path) -> None:
 
     assert result["exit_code"] == 0
     assert result["run_id"] == "run-123"
-    assert result["chain_results"]["exit_class"] == "clean"
-    assert result["chain_results"]["qa_passed"] is True
+    assert result["chain_results"]["exit_class"] == "legacy_unknown"
+    assert result["chain_results"]["authoritative"] is False
+    assert result["chain_results"]["qa_passed"] is None
     assert result["chain_results"]["director"] == {
         "total": 5,
         "successes": 5,
@@ -1511,7 +1939,8 @@ def test_run_factory_chain_failed_status(monkeypatch: Any, tmp_path: Path) -> No
     )
 
     assert result["exit_code"] == 1
-    assert result["chain_results"]["exit_class"] == "director_partial"
+    assert result["chain_results"]["exit_class"] == "legacy_unknown"
+    assert result["chain_results"]["authoritative"] is False
 
 
 def test_run_factory_chain_on_stage_change_callback(monkeypatch: Any, tmp_path: Path) -> None:
@@ -1749,6 +2178,7 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
     captured_chain: dict[str, str] = {}
     captured_session: dict[str, Any] = {}
     backend_context_urls: list[str] = []
+    launch_receipts: list[dict[str, Any]] = []
 
     monkeypatch.setattr(
         sys,
@@ -1778,21 +2208,41 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
         "_push_bench_workspace_to_backend",
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("isolated mode must not switch shared workspace")),
     )
-    monkeypatch.setattr(
-        bench,
-        "_start_isolated_bench_project_instance",
-        lambda **_kwargs: {
-            "instance_id": "bench-isolated-l1-01",
+
+    def _start_isolated(**kwargs: Any) -> dict[str, Any]:
+        receipt = dict(kwargs["launch_receipt"])
+        launch_receipts.append(receipt)
+        return {
+            "instance_id": receipt["instance_id"],
+            "workspace": receipt["workspace"],
+            "runtime_root": receipt["runtime_root"],
+            "backend_pid": 73101,
+            "metadata": {"instance_launch_receipt": receipt},
             "backend_url": "http://127.0.0.1:60011",
             "frontend_url": "http://127.0.0.1:60012",
             "token": "isolated-token",
-        },
-    )
+        }
+
+    monkeypatch.setattr(bench, "_start_isolated_bench_project_instance", _start_isolated)
 
     def _backend_context(url: str, **_kwargs: Any) -> dict[str, Any]:
         backend_context_urls.append(url)
+        workspace = str(_kwargs["workspace"])
+        source_fingerprint = bench.compute_source_fingerprint(bench._BACKEND_ROOT)
+        receipt = launch_receipts[-1] if launch_receipts else {}
         return {
-            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_freshness": {
+                "ok": True,
+                "detail": "backend fresh",
+                "expected_fingerprint": source_fingerprint,
+                "actual_fingerprint": source_fingerprint,
+                "backend_info": {
+                    "pid": 73101,
+                    "instance_id": str(receipt.get("instance_id") or ""),
+                    "workspace": workspace,
+                    "backend_root": str(receipt.get("expected_backend_root") or bench._BACKEND_ROOT),
+                },
+            },
             "backend_metadata": {"backend_base_url": url},
         }
 
@@ -1841,9 +2291,15 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
 
     monkeypatch.setattr(bench, "run_factory_chain", _chain)
 
-    result = bench.main()
+    first_result = bench.main()
+    second_result = bench.main()
 
-    assert result == 0
+    assert first_result == 0
+    assert second_result == 0
+    assert len(launch_receipts) == 2
+    assert launch_receipts[0]["requested_instance_id"] == launch_receipts[1]["requested_instance_id"]
+    assert launch_receipts[0]["instance_id"] != launch_receipts[1]["instance_id"]
+    assert launch_receipts[0]["launch_scope"] != launch_receipts[1]["launch_scope"]
     assert captured_chain == {
         "backend_url": "http://127.0.0.1:60011",
         "backend_token": "isolated-token",
@@ -1852,6 +2308,13 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
     assert captured_session["metadata"]["launcher_instance_mode"] == "isolated"
     assert captured_session["metadata"]["bench_session_reporting"] == "auto"
     assert backend_context_urls[-1] == "http://127.0.0.1:60011"
+    audit = json.loads((tmp_path / "factory_audits.json").read_text(encoding="utf-8"))["records"][0]
+    assert audit["requested_project_id"] == "L1-01"
+    assert audit["canonical_project_id"] == "L1-01"
+    assert audit["instance_id"]
+    assert audit["requested_instance_id"]
+    assert audit["run_id"] == audit["instance_launch_receipt"]["run_id"]
+    assert audit["instance_launch_validation"]["ok"] is True
 
 
 def test_main_audit_path_points_to_conflict_when_same_id_reused(monkeypatch: Any, tmp_path: Path) -> None:
@@ -2558,8 +3021,8 @@ def test_run_factory_chain_fallback_on_audit_bundle_timeout(monkeypatch: Any, tm
     assert result["audit_bundle"]["events_tail"][0]["stage"] == "director_dispatch"
 
 
-def test_map_director_partial_includes_blocking_phase_for_convergence() -> None:
-    """Regression: director_partial chain_results must carry phase and director stats for convergence diagnostics."""
+def test_map_director_artifact_preserves_stats_for_display() -> None:
+    """Legacy Director stats remain visible but cannot decide execution state."""
     run_status = {"status": "failed", "phase": "director_dispatch"}
     audit_bundle: dict[str, Any] = {
         "gates": [],
@@ -2580,8 +3043,8 @@ def test_map_director_partial_includes_blocking_phase_for_convergence() -> None:
         },
     }
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "director_partial"
-    assert result["qa_ran"] is False
+    assert result["exit_class"] == "legacy_unknown"
+    assert result["qa_ran"] is None
     assert result["director"]["total"] == 5
     assert result["director"]["failures"] == 3
 
@@ -2704,9 +3167,11 @@ def test_director_repair_coverage_gap_summary_reads_workspace_validation_artifac
 
     summary = build_director_repair_coverage_gap_summary(record, {})
 
-    assert record["workspace_validation_repair_coverage"]["report_count"] == 1
+    coverage = record["workspace_validation_repair_coverage"]
+    assert isinstance(coverage, dict)
+    assert coverage["report_count"] == 1
     assert summary["coverage_gap_count"] == 1
-    assert summary["coverage_gap_languages"] == ["go"]
+    assert list(summary["coverage_gap_languages"]) == ["go"]
     assert summary["coverage_gaps"][0]["path"] == "engine/riddle.go"
 
 

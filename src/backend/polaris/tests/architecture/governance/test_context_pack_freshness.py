@@ -21,6 +21,11 @@ from pathlib import Path
 
 import pytest
 import yaml
+from docs.governance.ci.scripts.context_pack_freshness_policy import (
+    FRESHNESS_THRESHOLD_SECONDS,
+    _find_context_pack_path,
+    _format_age,
+)
 
 BACKEND_ROOT = Path(__file__).resolve().parents[4]
 CHECK_SCRIPT = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "check_context_pack_freshness.py"
@@ -35,7 +40,6 @@ if _script_spec and _script_spec.loader:
 
     # Import from the loaded module
     ContextPackFreshnessChecker = _check_module.ContextPackFreshnessChecker
-    FRESHNESS_THRESHOLD_SECONDS = _check_module.FRESHNESS_THRESHOLD_SECONDS
 else:
     raise ImportError(f"Could not load check_context_pack_freshness from {CHECK_SCRIPT}")
 
@@ -278,14 +282,12 @@ class TestContextPackPathDiscovery:
         temp_workspace: Path,
     ) -> None:
         """Test that checker finds pack in generated/ subdirectory."""
-        checker = ContextPackFreshnessChecker(workspace=temp_workspace)
-
         cell_path = temp_workspace / "polaris" / "cells" / "test" / "cell_a"
         (cell_path / "generated").mkdir(parents=True)
         generated_path = cell_path / "generated" / "context.pack.json"
         generated_path.write_text(json.dumps({"cell_id": "test.cell_a"}), encoding="utf-8")
 
-        found_path = checker._find_context_pack_path("test.cell_a")
+        found_path = _find_context_pack_path(temp_workspace, "test.cell_a")
         assert found_path is not None
         assert found_path == generated_path
 
@@ -294,14 +296,12 @@ class TestContextPackPathDiscovery:
         temp_workspace: Path,
     ) -> None:
         """Test that checker falls back to root of cell directory."""
-        checker = ContextPackFreshnessChecker(workspace=temp_workspace)
-
         cell_path = temp_workspace / "polaris" / "cells" / "test" / "cell_b"
         root_path = cell_path / "context.pack.json"
         root_path.parent.mkdir(parents=True, exist_ok=True)
         root_path.write_text(json.dumps({"cell_id": "test.cell_b"}), encoding="utf-8")
 
-        found_path = checker._find_context_pack_path("test.cell_b")
+        found_path = _find_context_pack_path(temp_workspace, "test.cell_b")
         assert found_path is not None
         assert found_path == root_path
 
@@ -310,9 +310,7 @@ class TestContextPackPathDiscovery:
         temp_workspace: Path,
     ) -> None:
         """Test that checker returns None when pack is not found."""
-        checker = ContextPackFreshnessChecker(workspace=temp_workspace)
-
-        found_path = checker._find_context_pack_path("nonexistent.cell")
+        found_path = _find_context_pack_path(temp_workspace, "nonexistent.cell")
         assert found_path is None
 
 
@@ -340,35 +338,23 @@ class TestContextPackAgeFormatting:
 
     def test_format_seconds(self) -> None:
         """Test formatting of age in seconds."""
-        checker = ContextPackFreshnessChecker(workspace=BACKEND_ROOT)
-        checker.current_time = 1000.0
-
         # 30 seconds ago
-        assert checker._format_age(970.0) == "30s ago"
+        assert _format_age(1000.0, 970.0) == "30s ago"
 
     def test_format_minutes(self) -> None:
         """Test formatting of age in minutes."""
-        checker = ContextPackFreshnessChecker(workspace=BACKEND_ROOT)
-        checker.current_time = 3600.0
-
         # 30 minutes ago
-        assert checker._format_age(3600.0 - 1800.0) == "30m ago"
+        assert _format_age(3600.0, 3600.0 - 1800.0) == "30m ago"
 
     def test_format_hours(self) -> None:
         """Test formatting of age in hours."""
-        checker = ContextPackFreshnessChecker(workspace=BACKEND_ROOT)
-        checker.current_time = 86400.0
-
         # 12 hours ago
-        assert checker._format_age(86400.0 - 43200.0) == "12.0h ago"
+        assert _format_age(86400.0, 86400.0 - 43200.0) == "12.0h ago"
 
     def test_format_days(self) -> None:
         """Test formatting of age in days."""
-        checker = ContextPackFreshnessChecker(workspace=BACKEND_ROOT)
-        checker.current_time = 86400.0 * 10
-
         # 5 days ago
-        assert checker._format_age(86400.0 * 5) == "5.0d ago"
+        assert _format_age(86400.0 * 10, 86400.0 * 5) == "5.0d ago"
 
 
 if __name__ == "__main__":

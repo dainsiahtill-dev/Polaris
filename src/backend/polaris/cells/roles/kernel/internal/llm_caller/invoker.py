@@ -139,6 +139,31 @@ def _final_request_context_tokens(metadata: dict[str, Any], fallback: int | None
         return fallback
 
 
+def _prepared_request_temperature(prepared: PreparedLLMRequest, fallback: float) -> float:
+    """Read the effective temperature emitted by the request preparer.
+
+    Minimal test/provider adapters may omit request options. They retain the
+    caller argument instead of failing before invocation; production requests
+    always use the prepared option when present.
+    """
+
+    option_payloads = (
+        prepared.request_options,
+        getattr(prepared.ai_request, "options", None),
+    )
+    for payload in option_payloads:
+        if not isinstance(payload, dict):
+            continue
+        raw_temperature = payload.get("temperature")
+        if raw_temperature is None or isinstance(raw_temperature, bool):
+            continue
+        try:
+            return float(raw_temperature)
+        except (TypeError, ValueError):
+            continue
+    return float(fallback)
+
+
 def _required_tools_from_final_request_audit(audit: dict[str, Any]) -> list[str]:
     coverage = audit.get("final_request_evidence_coverage")
     if not isinstance(coverage, dict):
@@ -1951,11 +1976,11 @@ class LLMInvoker:
         task_id = task_id or getattr(context, "task_id", None)
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
         model = profile.model or "default"
-        from .helpers import resolve_max_tokens, resolve_temperature
+        from .helpers import resolve_max_tokens
 
         context_override = getattr(context, "context_override", None)
         effective_max_tokens = resolve_max_tokens(max_tokens, context_override)
-        effective_temperature = resolve_temperature(temperature, context_override)
+        effective_temperature = temperature
 
         start_time = time.perf_counter()
         prepared: PreparedLLMRequest | None = None
@@ -1983,6 +2008,7 @@ class LLMInvoker:
                 response_model=response_model,
                 platform_retry_max=platform_retry_max,
             )
+            effective_temperature = _prepared_request_temperature(prepared, effective_temperature)
             active_request = prepared.ai_request
             await _store_call_start_context_snapshot(
                 workspace=self.workspace,
@@ -2958,11 +2984,11 @@ class LLMInvoker:
         task_id = task_id or getattr(context, "task_id", None)
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
         model = profile.model or "default"
-        from .helpers import resolve_max_tokens, resolve_temperature
+        from .helpers import resolve_max_tokens
 
         context_override = getattr(context, "context_override", None)
         effective_max_tokens = resolve_max_tokens(max_tokens, context_override)
-        effective_temperature = resolve_temperature(temperature, context_override)
+        effective_temperature = temperature
 
         start_time = time.perf_counter()
         prepared: PreparedLLMRequest | None = None
@@ -3301,6 +3327,7 @@ class LLMInvoker:
                 max_tokens=effective_max_tokens,
                 stream=True,
             )
+            effective_temperature = _prepared_request_temperature(prepared, effective_temperature)
             resolved_provider_id = str(
                 getattr(prepared.ai_request, "provider_id", None) or getattr(profile, "provider_id", "") or ""
             )

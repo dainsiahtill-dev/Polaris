@@ -26,7 +26,6 @@ from polaris.cells.director.runtime.public.repair_kernel_contracts import (
     is_overstrict_node_test_script_contract as _is_overstrict_node_test_script_contract,
     remove_patch_residue_lines as _remove_patch_residue_lines,
 )
-from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 from polaris.cells.roles.adapters.internal.director import (
     execute_method as execute_method_module,
     quality_gate as quality_gate_module,
@@ -54,6 +53,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _director_existing_scope_preflight_enabled,
     _emit_director_adapter_cognitive_receipt,
     _empty_write_content_retry_needed,
+    _execution_attempt_authority_from_context,
     _extract_task_target_path_candidates,
     _finalize_claimed_execution,
     _handle_claim_required,
@@ -96,6 +96,12 @@ from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter 
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptSettlementVerdictV1,
+)
+from polaris.cells.runtime.task_runtime.public.service import create_task_runtime_execution_attempt_authority
 from polaris.kernelone.events.final_request_evidence import (
     looks_like_ce_blueprint_payload,
     looks_like_failed_gate_evidence_context_payload,
@@ -655,6 +661,17 @@ async def test_execute_director_task_propagates_selected_task_identity_to_role_r
 ) -> None:
     task = {"id": "selected-task-2", "subject": "Implement selected task"}
     captured: dict[str, Any] = {}
+    execution_attempt = TaskRuntimeExecutionAttemptIdentityV1(
+        workspace=str(tmp_path),
+        task_id=2,
+        external_task_id="selected-task-2",
+        session_id="lease-selected-task-2",
+        attempt=1,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="director-run-1",
+        lease_expires_at="2030-01-01T00:00:00+00:00",
+    )
 
     class FakeStateTracker:
         def build_taskboard_observation_snapshot(self, task_runtime: Any) -> dict[str, Any]:
@@ -721,7 +738,10 @@ async def test_execute_director_task_propagates_selected_task_identity_to_role_r
             True,
             {},
             [],
-            {"session": {"session_id": "lease-selected-task-2"}},
+            {
+                "session": {"session_id": "lease-selected-task-2"},
+                "execution_attempt": execution_attempt.to_record(),
+            },
         )
 
     async def fake_standard_flow(
@@ -758,6 +778,8 @@ async def test_execute_director_task_propagates_selected_task_identity_to_role_r
     assert flow_context["pm_task_id"] == "requested-task"
     assert flow_context["task_runtime_session_id"] == "lease-selected-task-2"
     assert flow_context["task_runtime_guard"] is True
+    authority = flow_context["task_runtime_execution_attempt_authority"]
+    assert authority.snapshot().identity == execution_attempt
     assert flow_context["metadata"]["task_id"] == "selected-task-2"
     assert flow_context["metadata"]["target_task_id"] == "selected-task-2"
     assert flow_context["metadata"]["pm_task_id"] == "requested-task"
@@ -4968,43 +4990,150 @@ class TestDeterministicRepairEvidence:
 class TestDirectorFailureClosure:
     """Runtime failures must fail the claimed task instead of leaving it running."""
 
+    def test_finalization_uses_renewed_identity_from_public_authority(self) -> None:
+        initial = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace="/workspace",
+            task_id=1,
+            external_task_id="TASK-1",
+            session_id="session-1",
+            attempt=1,
+            role_id="director",
+            worker_id="director-worker",
+            run_id="run-1",
+            lease_expires_at="2030-01-01T00:00:00+00:00",
+        )
+        renewed = TaskRuntimeExecutionAttemptIdentityV1(
+            **{**initial.to_record(), "lease_expires_at": "2030-01-01T00:02:00+00:00"}
+        )
+
+        def heartbeat(command: Any) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
+            return TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
+                success=True,
+                code="heartbeat_renewed",
+                workspace=command.workspace,
+                identity=command.identity,
+                renewed_identity=renewed,
+            )
+
+        def settle(command: Any) -> TaskRuntimeExecutionAttemptSettlementVerdictV1:
+            assert command.identity == renewed
+            assert command.identity != initial
+            return TaskRuntimeExecutionAttemptSettlementVerdictV1(
+                success=True,
+                code="settled",
+                workspace=command.workspace,
+                identity=command.identity,
+                outcome=command.outcome,
+            )
+
+        authority = create_task_runtime_execution_attempt_authority(initial, heartbeat=heartbeat, settle=settle)
+        heartbeat_result = authority.heartbeat(lease_ttl_seconds=30, lock_timeout_seconds=0.5)
+        assert heartbeat_result.success is True
+
+        result = _finalize_claimed_execution(
+            SimpleNamespace(),
+            target_task_id="TASK-1",
+            authority=_execution_attempt_authority_from_context(
+                {"task_runtime_execution_attempt_authority": authority}
+            ),
+            outcome="completed",
+            result_summary="completed after renewal",
+        )
+
+        assert result["success"] is True
+
     @pytest.mark.asyncio
     async def test_suspend_claimed_execution_for_cancellation_emits_failure_evidence(self) -> None:
         captured_event: dict[str, Any] = {}
-        suspend_result = {
-            "success": False,
-            "reason": "execution_event_append_failed",
-            "failure_class": "ledger_append_failed",
-            "execution_event": {
-                "ok": False,
-                "event_type": "suspended",
-                "error": "fact stream unavailable",
-            },
-        }
+        execution_attempt = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace="/workspace",
+            task_id=1,
+            external_task_id="TASK-1",
+            session_id="session-1",
+            attempt=1,
+            role_id="director",
+            worker_id="director-worker",
+            run_id="run-1",
+            lease_expires_at="2030-01-01T00:00:00+00:00",
+        )
 
-        class FakeTaskRuntime:
-            def suspend_execution(self, task_id: str, *, session_id: str, reason: str, metadata: dict[str, Any]):
-                assert task_id == "TASK-1"
-                assert session_id == "session-1"
-                assert reason == "director_execution_cancelled"
-                assert metadata == {"adapter_phase": "pending"}
-                return suspend_result
+        def settle(command: Any) -> TaskRuntimeExecutionAttemptSettlementVerdictV1:
+            assert command.outcome == "suspended"
+            assert command.summary == "director_execution_cancelled"
+            assert command.metadata == {"adapter_phase": "pending"}
+            assert command.identity == execution_attempt
+            return TaskRuntimeExecutionAttemptSettlementVerdictV1(
+                success=False,
+                code="execution_event_append_failed",
+                workspace=command.workspace,
+                identity=command.identity,
+                outcome=command.outcome,
+                evidence={
+                    "failure_class": "ledger_append_failed",
+                    "execution_event": {
+                        "ok": False,
+                        "event_type": "suspended",
+                        "error": "fact stream unavailable",
+                    },
+                },
+            )
 
         class FakeAdapter:
-            task_runtime = FakeTaskRuntime()
-
             async def _emit_task_trace_event(self, **kwargs: Any) -> None:
                 captured_event.update(kwargs)
+
+        authority = create_task_runtime_execution_attempt_authority(execution_attempt, settle=settle)
 
         result = await _suspend_claimed_execution_for_cancellation(
             FakeAdapter(),
             target_task_id="TASK-1",
             run_id="run-1",
-            session_id="session-1",
+            authority=authority,
         )
 
-        assert result["success"] is False
-        assert result["reason"] == "execution_event_append_failed"
+        expected_settlement_projection = {
+            "success": False,
+            "code": "settlement_rejected",
+            "reason": "execution_event_append_failed",
+            "identity": execution_attempt.to_record(),
+            "outcome": "suspended",
+            "callback_error_type": "",
+            "task_runtime_verdict": {
+                "success": False,
+                "code": "execution_event_append_failed",
+                "reason": "execution_event_append_failed",
+                "workspace": "/workspace",
+                "identity": execution_attempt.to_record(),
+                "outcome": "suspended",
+                "idempotent": False,
+                "evidence": {
+                    "failure_class": "ledger_append_failed",
+                    "execution_event": {
+                        "ok": False,
+                        "event_type": "suspended",
+                        "error": "fact stream unavailable",
+                    },
+                },
+            },
+        }
+        assert {key: result[key] for key in expected_settlement_projection} == expected_settlement_projection
+        assert result["task_runtime_verdict"] == {
+            "success": False,
+            "code": "execution_event_append_failed",
+            "reason": "execution_event_append_failed",
+            "workspace": "/workspace",
+            "identity": execution_attempt.to_record(),
+            "outcome": "suspended",
+            "idempotent": False,
+            "evidence": {
+                "failure_class": "ledger_append_failed",
+                "execution_event": {
+                    "ok": False,
+                    "event_type": "suspended",
+                    "error": "fact stream unavailable",
+                },
+            },
+        }
         assert result["task_runtime_suspend_failed"] is True
         assert captured_event == {
             "task_id": "TASK-1",
@@ -5017,7 +5146,7 @@ class TestDirectorFailureClosure:
             "code": "director_task_runtime_suspend_failed",
             "reason": "execution_event_append_failed",
             "refs": {
-                "task_runtime_suspend_result": suspend_result,
+                "task_runtime_suspend_result": expected_settlement_projection,
                 "task_runtime_session_id": "session-1",
             },
         }
@@ -5175,17 +5304,29 @@ class TestDirectorFailureClosure:
         ]
 
     def test_finalize_claimed_execution_reports_terminal_transition_failure(self) -> None:
-        class _Runtime:
-            def complete_execution(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-                del args, kwargs
-                raise RuntimeError("Cannot transition task from 'failed' to 'completed'")
+        execution_attempt = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace="/workspace",
+            task_id=1,
+            external_task_id="task-1",
+            session_id="session-1",
+            attempt=1,
+            role_id="director",
+            worker_id="director-worker",
+            run_id="run-1",
+            lease_expires_at="2030-01-01T00:00:00+00:00",
+        )
 
-        adapter = SimpleNamespace(task_runtime=_Runtime())
+        def failing_settle(command: Any) -> TaskRuntimeExecutionAttemptSettlementVerdictV1:
+            assert command.outcome == "completed"
+            assert command.identity == execution_attempt
+            raise RuntimeError("Cannot transition task from 'failed' to 'completed'")
+
+        authority = create_task_runtime_execution_attempt_authority(execution_attempt, settle=failing_settle)
 
         finalize_result = _finalize_claimed_execution(
-            adapter,
+            SimpleNamespace(),
             target_task_id="task-1",
-            session_id="session-1",
+            authority=authority,
             outcome="completed",
             result_summary="done",
             metadata={"adapter_phase": "completed"},
@@ -5432,7 +5573,7 @@ class TestDirectorFailureClosure:
 
         assert result["success"] is False
         assert result["error_code"] == "director_materialized_out_of_scope"
-        assert result["failure_class"] == QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value
+        assert result["failure_class"] == FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value
         updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
@@ -5479,7 +5620,7 @@ class TestDirectorFailureClosure:
 
         assert result["success"] is False
         assert result["error_code"] == "incomplete_materialization"
-        assert result["failure_class"] == QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
+        assert result["failure_class"] == FailureClassV1.INCOMPLETE_MATERIALIZATION.value
         updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
@@ -5488,7 +5629,7 @@ class TestDirectorFailureClosure:
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
         assert adapter_result.get("materialization_error_code") == "incomplete_materialization"
-        assert adapter_result.get("failure_class") == QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
+        assert adapter_result.get("failure_class") == FailureClassV1.INCOMPLETE_MATERIALIZATION.value
         assert adapter_result.get("out_of_scope_files") == ["scripts/verify.js"]
 
     def test_no_materialized_changes_ignores_sibling_diff_after_failed_write_tool(self, tmp_path: Any) -> None:
@@ -5543,7 +5684,7 @@ class TestDirectorFailureClosure:
         assert result is not None
         assert result["success"] is False
         assert result["error_code"] == "incomplete_materialization"
-        assert result["failure_class"] == QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
+        assert result["failure_class"] == FailureClassV1.INCOMPLETE_MATERIALIZATION.value
 
     def test_no_materialized_changes_preserves_primary_tool_dispatch_failure(self, tmp_path: Any) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -5673,11 +5814,11 @@ class TestDirectorFailureClosure:
         assert result["success"] is False
         assert result["error"] == "model_provider_timeout"
         assert result["error_code"] == "model_provider_timeout"
-        assert result["failure_class"] == QaFailureClassV1.MODEL_PROVIDER_TIMEOUT.value
+        assert result["failure_class"] == FailureClassV1.MODEL_PROVIDER_TIMEOUT.value
         assert result["responsible_layer"] == "model_provider"
         assert result["failure_stage"] == "director_llm_call"
         failure_evidence = result["failure_evidence"][0]
-        assert failure_evidence["failure_class"] == QaFailureClassV1.MODEL_PROVIDER_TIMEOUT.value
+        assert failure_evidence["failure_class"] == FailureClassV1.MODEL_PROVIDER_TIMEOUT.value
         assert failure_evidence["responsible_layer"] == "model_provider"
         assert failure_evidence["metadata"]["materialization_mode"] == "llm_call_failed"
 
@@ -6969,7 +7110,7 @@ export function summary() {
         assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "runtime_provider_bypass_removed"
 
     @pytest.mark.asyncio
-    async def test_execute_accepts_existing_scope_after_read_only_mutation_guard(self, tmp_path: Any) -> None:
+    async def test_execute_rejects_existing_scope_after_read_only_mutation_guard(self, tmp_path: Any) -> None:
         target = tmp_path / "src" / "server" / "app.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
@@ -7030,21 +7171,25 @@ export function summary() {
             context={"run_id": "run-director-existing-scope-after-read-only"},
         )
 
-        assert result["success"] is True
-        assert result["materialization_mode"] == "verified_existing_workspace_scope"
+        assert result["success"] is False
+        assert result["error"] == "director_no_materialized_changes"
+        assert result["error_code"] == "incomplete_materialization"
+        assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
         updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
-        assert str(updated.get("status") or "").lower() == "completed"
+        assert str(updated.get("status") or "").lower() == "failed"
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("existing_contract_evidence", {}).get("ok") is True
+        assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
+        assert adapter_result.get("materialization_error_code") == "incomplete_materialization"
         assert adapter_result.get("primary_llm", {}).get("error", "").startswith("TransactionKernel execution failed")
         assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "runtime_provider_bypass_removed"
 
     @pytest.mark.asyncio
-    async def test_execute_accepts_existing_scope_after_read_write_batch_violation(self, tmp_path: Any) -> None:
+    async def test_execute_rejects_existing_scope_after_read_write_batch_violation(self, tmp_path: Any) -> None:
         target = tmp_path / "src" / "server" / "session-store.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
@@ -7092,12 +7237,21 @@ export function summary() {
             context={"run_id": "run-director-existing-scope-after-batch-violation"},
         )
 
-        assert result["success"] is True
-        assert result["materialization_mode"] == "verified_existing_workspace_scope"
-        assert result["existing_contract_evidence"]["ok"] is True
+        assert result["success"] is False
+        assert result["error"] == "director_no_materialized_changes"
+        assert result["error_code"] == "incomplete_materialization"
+        assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+        updated = adapter.task_runtime.get_task(task_id)
+        assert updated is not None
+        assert str(updated.get("status") or "").lower() == "failed"
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert adapter_result.get("existing_contract_evidence", {}).get("ok") is True
 
     @pytest.mark.asyncio
-    async def test_execute_accepts_existing_scope_after_successful_no_diff_response(self, tmp_path: Any) -> None:
+    async def test_execute_rejects_existing_scope_after_successful_no_diff_response(self, tmp_path: Any) -> None:
         target = tmp_path / "src" / "server" / "app.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("export const serverReady = true;\n", encoding="utf-8")
@@ -7130,8 +7284,10 @@ export function summary() {
             context={"run_id": "run-director-existing-scope-after-successful-no-diff"},
         )
 
-        assert result["success"] is True
-        assert result["materialization_mode"] == "verified_existing_workspace_scope"
+        assert result["success"] is False
+        assert result["error"] == "director_no_materialized_changes"
+        assert result["error_code"] == "incomplete_materialization"
+        assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
 
     @pytest.mark.asyncio
     async def test_execute_preflights_existing_verification_scope(self, tmp_path: Any) -> None:
@@ -7330,6 +7486,36 @@ export function summary() {
         }
 
         assert resolve_contract_step_verify_command(context) == ""
+
+    def test_explicit_project_test_verify_is_owned_by_declared_test_task(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.contract_verify import (
+            resolve_contract_step_verify,
+        )
+
+        context = {
+            "construction_step": {"verify": "npm run test"},
+            "language": "typescript",
+            "project_declared_target_files": [
+                "src/index.ts",
+                "tests/simulation.test.ts",
+            ],
+        }
+
+        source_resolution = resolve_contract_step_verify(
+            context,
+            task={"target_files": ["src/index.ts"]},
+        )
+        test_resolution = resolve_contract_step_verify(
+            context,
+            task={"target_files": ["tests/simulation.test.ts"]},
+        )
+
+        assert source_resolution.command == ""
+        assert source_resolution.disposition == "deferred"
+        assert source_resolution.reason == "project_test_targets_not_owned_by_current_task"
+        assert source_resolution.downstream_validation_targets == ("tests/simulation.test.ts",)
+        assert test_resolution.command == "npm run test"
+        assert test_resolution.disposition == "run"
 
     def test_substantive_node_test_script_accepts_named_export_blocks(self, tmp_path: Any) -> None:
         script = tmp_path / "scripts" / "test.mjs"
@@ -7965,7 +8151,7 @@ class TestExistingWorkspaceTaskEvidence:
             is True
         )
 
-    def test_transient_provider_errors_can_accept_existing_scope(self) -> None:
+    def test_provider_failures_cannot_authorize_existing_scope_completion(self) -> None:
         task = {
             "subject": "Extend realtime gateway",
             "phase": "implementation",
@@ -7977,24 +8163,8 @@ class TestExistingWorkspaceTaskEvidence:
                 task=task,
                 requires_fresh_materialization=True,
                 write_tool_evidence=False,
-                primary_llm_summary={
-                    "success": False,
-                    "error": "TransactionKernel execution failed: circuit_open:50s_remaining",
-                },
             )
-            is True
-        )
-        assert (
-            _can_accept_existing_workspace_scope(
-                task=task,
-                requires_fresh_materialization=True,
-                write_tool_evidence=False,
-                primary_llm_summary={
-                    "success": False,
-                    "error": "429 Client Error: Too Many Requests for url",
-                },
-            )
-            is True
+            is False
         )
 
     def test_non_transient_no_write_still_requires_materialization(self) -> None:
@@ -8007,7 +8177,6 @@ class TestExistingWorkspaceTaskEvidence:
                 },
                 requires_fresh_materialization=True,
                 write_tool_evidence=False,
-                primary_llm_summary={"success": False, "error": "model returned no tool calls"},
             )
             is False
         )
@@ -9480,6 +9649,31 @@ def test_materialization_quality_errors_keep_pinned_step_single_file_scope(tmp_p
     assert not any("src/other.ts" in error for error in errors)
 
 
+def test_task_boundary_quality_scan_covers_all_owned_files_despite_pinned_step(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _collect_materialization_quality_errors,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (src / "pinned.ts").write_text("export const pinned = 1;\n", encoding="utf-8")
+    (src / "other.ts").write_text(
+        "export function broken() {\n  return {\n    value: 1;\n  };\n}\n",
+        encoding="utf-8",
+    )
+
+    errors = _collect_materialization_quality_errors(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task={"target_files": ["src/pinned.ts", "src/other.ts"]},
+        all_affected_files=["src/pinned.ts"],
+        workspace_name=tmp_path.name,
+        context={"construction_step": {"target_file": "src/pinned.ts"}},
+        task_boundary=True,
+    )
+
+    assert any("src/other.ts" in error for error in errors)
+
+
 def test_project_test_obligation_is_deferred_to_declared_downstream_owner(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _collect_materialization_quality_errors,
@@ -9511,9 +9705,7 @@ def test_project_test_obligation_is_deferred_to_declared_downstream_owner(tmp_pa
 
     assert errors == []
     deferred = context["director_task_boundary_deferred_quality_errors"]
-    project_record = next(
-        record for record in deferred if record["reason"] == "project_test_targets_not_unlocked"
-    )
+    project_record = next(record for record in deferred if record["reason"] == "project_test_targets_not_unlocked")
     assert project_record["target_files"] == ["tests/simulation.test.ts"]
 
 
@@ -11605,6 +11797,46 @@ class TestQualityRepairMissingTargetContract:
                     "step verify failed (exit 1): npm test :: failure excerpt: Could not find 'tests/product.test.js'"
                 ],
                 "target_files": ["tests/product.test.js"],
+            }
+        ]
+
+    def test_step_verify_declared_downstream_test_owner_is_deferred_before_execution(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _collect_step_verify_errors,
+        )
+
+        def _unexpected_run(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("downstream-owned project verifier must not execute in the source task")
+
+        monkeypatch.setattr(director_quality_gate.subprocess, "run", _unexpected_run)
+        context: dict[str, Any] = {
+            "construction_step": {"verify": "npm run test"},
+            "project_declared_target_files": [
+                "src/index.ts",
+                "tests/simulation.test.ts",
+            ],
+        }
+
+        errors = _collect_step_verify_errors(
+            SimpleNamespace(workspace=str(tmp_path)),
+            context,
+            task={"target_files": ["src/index.ts"]},
+            workspace_name=tmp_path.name,
+        )
+
+        assert errors == []
+        assert context["director_task_boundary_deferred_verification_obligations"] == [
+            {
+                "schema_version": "director.contract_step_verify_resolution.v1",
+                "command": "",
+                "disposition": "deferred",
+                "reason": "project_test_targets_not_owned_by_current_task",
+                "downstream_validation_targets": ["tests/simulation.test.ts"],
             }
         ]
 

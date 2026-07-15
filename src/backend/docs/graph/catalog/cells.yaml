@@ -136,7 +136,9 @@ cells:
         - RunLedgerProjectionResultV1
       errors:
         - ControlPlaneRunLedgerV1Error
-    depends_on: []
+    depends_on:
+      - events.fact_stream
+      - runtime.task_runtime
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -513,10 +515,13 @@ cells:
     owner: runtime
     purpose: >
       Provide the single task lifecycle runtime for PM/Director/QA collaboration,
-      including create/claim/update/reopen transitions and canonical taskboard rows.
+      including canonical taskboard rows, execution-attempt authority, and the finalized
+      DEO-1B guarded aggregate, explicit stream enrollment, and inactive-write pre-barrier.
     current_modules:
       - polaris.cells.runtime.task_runtime.public.service
       - polaris.cells.runtime.task_runtime.internal.service
+      - polaris.cells.runtime.task_runtime.internal.execution_session
+      - polaris.cells.runtime.task_runtime.internal.directed_effect_operation
       - polaris.cells.runtime.task_runtime.internal.task_board
     owned_paths:
       - polaris/cells/runtime/task_runtime/**
@@ -527,18 +532,43 @@ cells:
         - CreateRuntimeTaskCommandV1
         - UpdateRuntimeTaskCommandV1
         - ReopenRuntimeTaskCommandV1
+        - BindRuntimeTaskToFactoryRunCommandV1
+        - FenceExpiredFactoryRunSessionsCommandV1
+        - PrepareOwnerReworkExecutionCommandV1
+        - OpenTaskRuntimeExecutionAttemptAuthorityCommandV1
+        - HeartbeatTaskRuntimeExecutionAttemptCommandV1
+        - SettleTaskRuntimeExecutionAttemptCommandV1
+        - EnrollDirectedEffectParentRegistryStreamCommandV1
+        - EnrollDirectedEffectOperationStreamCommandV1
+        - AdmitDirectedEffectParentCommandV1
+        - AdmitDirectedEffectOperationCommandV1
+        - ClaimDirectedEffectCommandV1
+        - AbortDirectedEffectOperationCommandV1
       queries:
         - ListRuntimeTasksQueryV1
         - GetRuntimeTaskQueryV1
+        - ValidateTaskRuntimeExecutionAttemptQueryV1
+        - GetDirectedEffectParentRegistryQueryV1
+        - GetDirectedEffectOperationQueryV1
       events:
         - RuntimeTaskLifecycleEventV1
+        - TaskRuntimeExecutionFactV1
       results:
         - RuntimeTaskResultV1
+        - RuntimeTaskFactoryRunBindingResultV1
+        - ExpiredFactoryRunSessionFenceResultV1
+        - OwnerReworkExecutionPreparationResultV1
+        - TaskRuntimeExecutionAttemptValidationVerdictV1
+        - TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1
+        - TaskRuntimeExecutionAttemptHeartbeatVerdictV1
+        - TaskRuntimeExecutionAttemptSettlementVerdictV1
+        - DirectedEffectStreamEnrollmentResultV1
+        - DirectedEffectOperationResultV1
+        - DirectedEffectParentRegistryResultV1
+        - ObservableTaskRowsProjectionV1
       errors:
-        - RuntimeTaskRuntimeErrorV1
+        - RuntimeTaskRuntimeError
     depends_on:
-      - policy.workspace_guard
-      - audit.evidence
       - events.fact_stream
     subgraphs:
       - execution_governance_pipeline
@@ -556,9 +586,15 @@ cells:
     verification:
       tests:
         - polaris/cells/runtime/task_runtime/tests/test_service.py
+        - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation.py
+        - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_concurrency.py
+        - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py
+        - polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py
         - polaris/tests/test_runtime_projection_snapshot_tasks.py
       gaps:
-        - Role-agent legacy entrypoints still need full migration to runtime.task_runtime contracts.
+        - DEO-1C read-only readiness query and fence is pending; it must not authorize settlement or parent close.
+        - DEO-2, DEO-3, and DEO-4 remain unschedulable; DEO-3 still owns receipt closure, recovery, and outcome-bound terminal admission.
+      smoke_commands: []
 
   - id: runtime.task_market
     title: Runtime Task Market
@@ -600,12 +636,7 @@ cells:
       errors:
         - TaskMarketErrorV1
     depends_on:
-      - runtime.task_runtime
-      - runtime.state_owner
-      - runtime.projection
       - events.fact_stream
-      - policy.workspace_guard
-      - audit.evidence
       - factory.cognitive_runtime
     subgraphs:
       - execution_governance_pipeline
@@ -1564,6 +1595,7 @@ cells:
       - llm.control_plane
       - context.catalog
       - context.engine
+      - events.fact_stream
       - runtime.execution_broker
       - runtime.projection
       - runtime.state_owner
@@ -1581,12 +1613,14 @@ cells:
       - roles.profile
       - roles.session
       - runtime.task_market
+      - runtime.task_runtime
       - factory.verification_guard
       - factory.cognitive_runtime
       - finops.budget_guard
       - archive.run_archive
       - audit.diagnosis
       - cognitive.knowledge_distiller
+      - control_plane.run_ledger
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -1681,6 +1715,7 @@ cells:
         - RoleAdaptersErrorV1
     depends_on:
       - chief_engineer.blueprint
+      - control_plane.run_ledger
       - roles.kernel
       - roles.profile
       - roles.session
@@ -1864,6 +1899,7 @@ cells:
       - policy.permission
       - audit.evidence
       - control_plane.run_ledger
+      - events.fact_stream
       - director.execution
       - roles.profile
       - roles.session
@@ -2209,6 +2245,7 @@ cells:
       - control_plane.verifier_execution
       - runtime.projection
       - director.runtime
+      - events.fact_stream
     subgraphs:
       - storage_archive_pipeline
       - execution_governance_pipeline
@@ -2292,7 +2329,6 @@ cells:
     depends_on:
       - roles.session
       - context.engine
-      - factory.pipeline
       - policy.workspace_guard
     subgraphs:
       - execution_governance_pipeline
@@ -2794,6 +2830,7 @@ cells:
       - chief_engineer.blueprint
       - control_plane.run_ledger
       - runtime.task_market
+      - runtime.task_runtime
       - roles.adapters
     subgraphs: []
     state_owners: []
@@ -2960,6 +2997,7 @@ cells:
       - policy.workspace_guard
       - workspace.integrity
       - events.fact_stream
+      - control_plane.run_ledger
     subgraphs: []
     state_owners: []
     effects_allowed:
@@ -3054,14 +3092,8 @@ cells:
       errors:
         - QaAuditErrorV1
     depends_on:
-      - director.execution
-      - policy.permission
-      - policy.workspace_guard
-      - runtime.execution_broker
       - runtime.task_market
-      - runtime.projection
       - audit.evidence
-      - events.fact_stream
       - audit.verdict
       - roles.runtime
       - llm.dialogue
@@ -3317,36 +3349,82 @@ cells:
     stateful: true
     owner: observability
     purpose: >
-      Provide append-only runtime fact stream ingestion, fanout, and query
-      infrastructure for PM/Director/QA and realtime projection consumers.
+      Provide strict append-only FactStream facts, guarded snapshots, explicit lock
+      authority maintenance, and bounded per-stream queries.
     current_modules:
-      - polaris.kernelone.events
-      - polaris.infrastructure.log_pipeline
-      - polaris.infrastructure.realtime.process_local.message_event_fanout
-      - polaris.infrastructure.realtime.process_local.log_fanout
+      - polaris.cells.events.fact_stream.public
+      - polaris.cells.events.fact_stream.public.catalog
+      - polaris.cells.events.fact_stream.public.contracts
+      - polaris.cells.events.fact_stream.public.service
+      - polaris.cells.events.fact_stream.public.workspace_bootstrap
     owned_paths:
-      - polaris/kernelone/events/**
-      - polaris/infrastructure/log_pipeline/**
-      - polaris/infrastructure/messaging/nats/**
-      - polaris/infrastructure/realtime/process_local/message_event_fanout.py
-      - polaris/infrastructure/realtime/process_local/log_fanout.py
+      - polaris/cells/events/fact_stream/**
+    public_surface:
+      exports:
+        - AppendFactEventCommandV1
+        - AppendIfGuardedSnapshotCommandV1
+        - BootstrapFactStreamWorkspaceCommandV1
+        - EnrollFactStreamStreamsCommandV1
+        - FactEventAppendedV1
+        - FactStreamError
+        - FactStreamHeadV1
+        - FactStreamLockIdentityV1
+        - FactStreamLockKeyEvidenceV1
+        - FactStreamMaintenanceProofV1
+        - FactStreamMaintenanceReceiptV1
+        - FactStreamProvenanceV1
+        - FactStreamQueryResultV1
+        - GuardedFactAppendedV1
+        - GuardedFactEventV1
+        - GuardedFactSnapshotProofV1
+        - GuardedFactSnapshotV1
+        - ProvisionFactStreamLockAuthorityCommandV1
+        - QueryFactEventsV1
+        - QueryFactStreamHeadV1
+        - ReadGuardedFactSnapshotCommandV1
+        - append_fact_event
+        - append_if_guarded_snapshot
+        - bootstrap_fact_stream_workspace
+        - configure_debug_tracing
+        - emit_debug_event
+        - enroll_fact_stream_streams
+        - fact_stream_bootstrap_streams
+        - install_global_debug_hooks
+        - is_debug_tracing_enabled
+        - log_stream_token
+        - provision_fact_stream_lock_authority
+        - query_fact_events
+        - query_fact_stream_head
+        - read_guarded_fact_snapshot
+        - sanitize_headers
+        - set_debug_tracing_enabled
     public_contracts:
       modules:
         - polaris.cells.events.fact_stream.public.contracts
       commands:
         - AppendFactEventCommandV1
+        - AppendIfGuardedSnapshotCommandV1
+        - BootstrapFactStreamWorkspaceCommandV1
+        - EnrollFactStreamStreamsCommandV1
+        - ProvisionFactStreamLockAuthorityCommandV1
       queries:
         - QueryFactEventsV1
+        - QueryFactStreamHeadV1
+        - ReadGuardedFactSnapshotCommandV1
       events:
         - FactEventAppendedV1
+        - GuardedFactEventV1
       results:
+        - FactStreamHeadV1
+        - FactStreamMaintenanceReceiptV1
+        - FactStreamProvenanceV1
         - FactStreamQueryResultV1
+        - GuardedFactAppendedV1
+        - GuardedFactSnapshotProofV1
+        - GuardedFactSnapshotV1
       errors:
-        - FactStreamErrorV1
-    depends_on:
-      - policy.workspace_guard
-      - audit.evidence
-      - runtime.projection
+        - FactStreamError
+    depends_on: []
     subgraphs:
       - execution_governance_pipeline
       - storage_archive_pipeline
@@ -3355,19 +3433,14 @@ cells:
     effects_allowed:
       - fs.read:runtime/events/*
       - fs.write:runtime/events/*
-      - ws.outbound:runtime/*
-      - network.http_outbound:*
-      - process.exec:*
-      - process.spawn:*
-      - nats.publish:hp.runtime.>
-      - nats.consume:hp.runtime.>
     verification:
       tests:
-        - tests/test_runtime_event_fanout.py
-        - tests/test_realtime_hub_v2.py
-        - tests/test_websocket_signal_hub.py
+        - polaris/cells/events/fact_stream/public/tests/test_guarded_fact_append.py
+        - polaris/cells/events/fact_stream/public/tests/test_public_contracts.py
+        - polaris/cells/events/fact_stream/public/tests/test_public_service.py
+        - polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py
       gaps:
-        - Some emitters still write event files directly and need unified writer routing.
+        - DEO-1A guarded-append closure requires separate lifecycle, race, and startup evidence.
 
   - id: orchestration.workflow_runtime
     title: Workflow Runtime
@@ -3503,6 +3576,7 @@ cells:
       results: []
       errors: []
     depends_on:
+      - control_plane.run_ledger
       - orchestration.workflow_engine
       - orchestration.workflow_runtime
       - chief_engineer.blueprint

@@ -11,6 +11,36 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+
+async def _canonical_wait_result(
+    _service: Any,
+    initial_result: CommandResult,
+    **_kwargs: Any,
+) -> CommandResult:
+    """Project a committed outcome for fanout tests not exercising wait logic."""
+
+    metadata = dict(initial_result.metadata or {})
+    metadata.update(
+        {
+            "canonical_authoritative": True,
+            "fact_event_seq": 1,
+            "terminal_source": "test.committed_outcome",
+        }
+    )
+    return CommandResult(
+        run_id=initial_result.run_id,
+        status=initial_result.status,
+        message=initial_result.message,
+        reason_code=initial_result.reason_code,
+        metadata=metadata,
+    )
+
+
+def _attach_canonical_wait(executor: Any) -> Any:
+    executor._wait_run_completion = _canonical_wait_result
+    return executor
 
 
 class TestResolveDirectorBindingFanout:
@@ -383,7 +413,54 @@ class TestExecuteDirectorBindingFanout:
         executor.workspace = Path(".")
         executor._binding_timeout_counts = {}
         executor._quarantined_bindings = set()
-        return executor
+        return _attach_canonical_wait(executor)
+
+    @pytest.mark.asyncio
+    async def test_submission_and_completion_wait_share_one_absolute_lease(self) -> None:
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        async def mock_execute(**_kwargs: Any) -> CommandResult:
+            await asyncio.sleep(0.35)
+            return CommandResult(run_id="run-active", status="running", message="submitted")
+
+        async def slow_wait(
+            _service: Any,
+            initial_result: CommandResult,
+            **_kwargs: Any,
+        ) -> CommandResult:
+            await asyncio.sleep(0.8)
+            return CommandResult(
+                run_id=initial_result.run_id,
+                status="completed",
+                message="late",
+            )
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+        executor._wait_run_completion = slow_wait  # type: ignore[assignment]
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=["TASK-1", "TASK-2"],
+            base_options={},
+            bindings=bindings,
+            timeout_seconds=1,
+        )
+
+        elapsed_seconds = loop.time() - started_at
+        assert elapsed_seconds < 1.25
+        assert result.status == "failed"
+        assert result.metadata is not None
+        per_binding = result.metadata["per_binding"]
+        assert {entry["status"] for entry in per_binding} == {"timeout"}
+        assert all(entry["inflight_run_continues"] is True for entry in per_binding)
 
     @pytest.mark.asyncio
     async def test_creates_per_binding_runs(self) -> None:
@@ -568,64 +645,6 @@ class TestExecuteDirectorBindingFanout:
         assert result.metadata["active_binding_count"] == 1
         assert result.metadata["readiness_skipped_count"] == 1
 
-    def test_fanout_all_active_bindings_failed_ignores_skipped_entries(self) -> None:
-        from polaris.cells.factory.pipeline.internal.factory_run_service import (
-            OrchestrationStageExecutor,
-        )
-
-        metadata = {
-            "binding_fanout": True,
-            "active_binding_count": 1,
-            "per_binding": [
-                {"provider_id": "live", "model": "m1", "status": "failed"},
-                {"provider_id": "dead", "model": "m2", "status": "skipped", "skipped": True},
-            ],
-        }
-
-        assert OrchestrationStageExecutor._fanout_all_active_bindings_failed(metadata) is True
-
-        skipped_only = {
-            "binding_fanout": True,
-            "active_binding_count": 0,
-            "per_binding": [
-                {"provider_id": "dead", "model": "m2", "status": "skipped", "skipped": True},
-            ],
-        }
-
-        assert OrchestrationStageExecutor._fanout_all_active_bindings_failed(skipped_only) is False
-
-    def test_running_task_counts_are_not_terminal(self) -> None:
-        from polaris.cells.factory.pipeline.internal.factory_run_service import (
-            OrchestrationStageExecutor,
-        )
-
-        active_statuses = ("running", "processing", "executing", "in_design", "in_execution", "in_qa", "waiting_human")
-        for status in active_statuses:
-            counts = {"completed": 1, "failed": 2, status: 1}
-
-            assert OrchestrationStageExecutor._terminal_status_from_task_counts(counts) == ""
-
-        assert OrchestrationStageExecutor._terminal_status_from_task_counts({"total": 4, "pending": 4}) == ""
-        assert OrchestrationStageExecutor._terminal_status_from_task_counts({"total": 4, "ready": 4}) == ""
-
-    def test_dead_ended_pending_task_counts_are_failed_terminal(self) -> None:
-        from polaris.cells.factory.pipeline.internal.factory_run_service import (
-            OrchestrationStageExecutor,
-        )
-
-        assert (
-            OrchestrationStageExecutor._terminal_status_from_task_counts(
-                {"total": 7, "completed": 2, "failed": 1, "pending": 4}
-            )
-            == "failed"
-        )
-        assert (
-            OrchestrationStageExecutor._terminal_status_from_task_counts(
-                {"total": 7, "completed": 2, "failed": 1, "ready": 4}
-            )
-            == "failed"
-        )
-
     @pytest.mark.asyncio
     async def test_running_task_counts_do_not_cancel_active_binding(self) -> None:
         executor = self._make_executor()
@@ -669,10 +688,10 @@ class TestExecuteDirectorBindingFanout:
         )
 
         assert result.status == "completed"
-        assert mock_service.query_run_status.await_count >= 1
+        mock_service.query_run_status.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_terminal_failed_task_counts_end_binding_wait(self) -> None:
+    async def test_terminal_failed_task_counts_do_not_end_binding_wait(self) -> None:
         executor = self._make_executor()
         executor._binding_status_probe_seconds = 0.001
         bindings = [{"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"}]
@@ -682,8 +701,6 @@ class TestExecuteDirectorBindingFanout:
         async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
             return CommandResult(run_id="run-1", status="running", message="submitted")
 
-        wait_cancelled = False
-
         async def mock_wait(
             service: Any,
             initial: Any,
@@ -692,13 +709,7 @@ class TestExecuteDirectorBindingFanout:
             cancel_event: Any = None,
             abort_checker: Any = None,
         ) -> CommandResult:
-            nonlocal wait_cancelled
-            try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                wait_cancelled = True
-                raise
-            return CommandResult(run_id=initial.run_id, status="completed", message="late")
+            return CommandResult(run_id=initial.run_id, status="completed", message="canonical")
 
         mock_service = MagicMock()
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
@@ -720,13 +731,11 @@ class TestExecuteDirectorBindingFanout:
             bindings=bindings,
         )
 
-        assert result.status == "failed"
-        assert result.metadata["per_binding"][0]["terminal_source"] == "task_status_counts"
-        assert result.metadata["per_binding"][0]["queried_status"] == "running"
-        assert wait_cancelled is True
+        assert result.status == "completed"
+        mock_service.query_run_status.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_workspace_terminal_failed_taskboard_ends_binding_wait(self) -> None:
+    async def test_workspace_taskboard_counts_do_not_end_binding_wait(self) -> None:
         executor = self._make_executor()
         executor._binding_status_probe_seconds = 0.001
         bindings = [{"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"}]
@@ -737,8 +746,6 @@ class TestExecuteDirectorBindingFanout:
             del workspace, tasks, options
             return CommandResult(run_id="run-1", status="running", message="submitted")
 
-        wait_cancelled = False
-
         async def mock_wait(
             service: Any,
             initial: Any,
@@ -748,13 +755,7 @@ class TestExecuteDirectorBindingFanout:
             abort_checker: Any = None,
         ) -> CommandResult:
             del service, initial, timeout_seconds, cancel_event, abort_checker
-            nonlocal wait_cancelled
-            try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                wait_cancelled = True
-                raise
-            return CommandResult(run_id="run-1", status="completed", message="late")
+            return CommandResult(run_id="run-1", status="completed", message="canonical")
 
         mock_service = MagicMock()
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
@@ -777,10 +778,8 @@ class TestExecuteDirectorBindingFanout:
             bindings=bindings,
         )
 
-        assert result.status == "failed"
-        assert result.metadata["per_binding"][0]["terminal_source"] == "workspace_taskboard_counts"
-        assert result.metadata["per_binding"][0]["queried_status"] == "running"
-        assert wait_cancelled is True
+        assert result.status == "completed"
+        mock_service.query_run_status.assert_not_awaited()
 
     def test_director_dispatch_timeout_uses_stage_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
         executor = self._make_executor()
@@ -887,6 +886,7 @@ class TestThreeReachableBindingsAllExecuted:
         executor.workspace = Path(".")
         executor._binding_timeout_counts = {}
         executor._quarantined_bindings = set()
+        _attach_canonical_wait(executor)
 
         bindings = [{"provider_id": f"provider-{i}", "model": f"model-{i}", "binding_id": f"b{i}"} for i in range(3)]
 
@@ -939,6 +939,7 @@ class TestOneExecutedTwoNotExecutedFails:
         executor.workspace = Path(".")
         executor._binding_timeout_counts = {}
         executor._quarantined_bindings = set()
+        _attach_canonical_wait(executor)
 
         bindings = [{"provider_id": f"provider-{i}", "model": f"model-{i}", "binding_id": f"b{i}"} for i in range(3)]
 
@@ -1029,11 +1030,11 @@ class TestFanoutWaitForAllRuns:
         executor.workspace = Path(".")
         executor._binding_timeout_counts = {}
         executor._quarantined_bindings = set()
-        return executor
+        return _attach_canonical_wait(executor)
 
     @pytest.mark.asyncio
-    async def test_all_terminal_submissions_skip_wait(self) -> None:
-        """Runs already terminal at submission time should not block."""
+    async def test_terminal_lifecycle_submissions_still_require_canonical_wait(self) -> None:
+        """A terminal CommandResult is lifecycle state, not completion authority."""
         executor = self._make_executor()
         bindings = [
             {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
@@ -1048,7 +1049,12 @@ class TestFanoutWaitForAllRuns:
         mock_service = MagicMock()
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
-        with patch.object(executor, "_wait_run_completion", new_callable=AsyncMock) as mock_wait:
+        with patch.object(
+            executor,
+            "_wait_run_completion",
+            new_callable=AsyncMock,
+            side_effect=_canonical_wait_result,
+        ) as mock_wait:
             result = await executor._execute_director_binding_fanout(
                 service=mock_service,
                 workspace=".",
@@ -1056,7 +1062,7 @@ class TestFanoutWaitForAllRuns:
                 base_options={},
                 bindings=bindings,
             )
-            mock_wait.assert_not_called()
+            assert mock_wait.await_count == 2
 
         assert result.status == "completed"
 
@@ -1173,7 +1179,7 @@ class TestFanoutBindingMetadata:
         executor.workspace = Path(".")
         executor._binding_timeout_counts = {}
         executor._quarantined_bindings = set()
-        return executor
+        return _attach_canonical_wait(executor)
 
     @pytest.mark.asyncio
     async def test_per_binding_has_all_required_fields(self) -> None:
@@ -1386,7 +1392,7 @@ class TestFanoutPartialFailureNotCompleted:
         executor.workspace = Path(".")
         executor._binding_timeout_counts = {}
         executor._quarantined_bindings = set()
-        return executor
+        return _attach_canonical_wait(executor)
 
     @pytest.mark.asyncio
     async def test_partial_failure_must_not_be_completed(self) -> None:
@@ -1918,7 +1924,7 @@ class TestBindingTimeoutQuarantine:
         executor.workspace = Path(".")
         executor._binding_timeout_counts = {}
         executor._quarantined_bindings = set()
-        return executor
+        return _attach_canonical_wait(executor)
 
     @pytest.mark.asyncio
     async def test_first_timeout_does_not_quarantine(self) -> None:

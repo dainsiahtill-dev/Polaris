@@ -45,6 +45,7 @@ from polaris.cells.runtime.task_market.public.contracts import (
     PublishTaskWorkItemCommandV1,
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
+from polaris.kernelone.llm.budget_policy import chief_engineer_structured_output_tokens
 from polaris.kernelone.quality.file_ownership_ledger import (
     normalize_file_ownership_target,
     read_file_owners,
@@ -59,7 +60,6 @@ from polaris.kernelone.quality.interface_ledger import (
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_CE_FISSION_MAX_OUTPUT_TOKENS = 128_000
 _CE_REQUEUE_CONTEXT_KEYS = frozenset(
     {
         "amendment_request",
@@ -82,12 +82,7 @@ def _ce_fission_max_output_tokens() -> int:
     raises the floor where the model allows; the provider self-heal then carries
     it the rest of the way. Env-tunable, never a hardcoded project value.
     """
-    raw = os.getenv("KERNELONE_CE_FISSION_MAX_TOKENS", "")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return _DEFAULT_CE_FISSION_MAX_OUTPUT_TOKENS
-    return value if value > 0 else _DEFAULT_CE_FISSION_MAX_OUTPUT_TOKENS
+    return chief_engineer_structured_output_tokens()
 
 
 def _normalize_owned_target(raw: Any) -> str:

@@ -2,39 +2,126 @@ from __future__ import annotations
 
 import hashlib
 import json
+import multiprocessing as mp
+import sys
 import threading
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, NamedTuple, NoReturn
+from queue import Empty
+from typing import Any, Callable, NamedTuple, NoReturn, cast
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    FactStreamError,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.events.fact_stream.public.service import (
     AppendFactEventCommandV1,
     QueryFactEventsV1,
     append_fact_event,
     query_fact_events,
 )
-from polaris.cells.runtime.task_market.public.contracts import OwnerReworkHandoffV1
 from polaris.cells.runtime.task_runtime.internal import service as service_module
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
+    build_task_runtime_execution_event_payload,
     terminal_session_timestamp,
 )
-from polaris.cells.runtime.task_runtime.internal.task_board import InvalidTaskStateTransitionError
+from polaris.cells.runtime.task_runtime.internal.task_board import (
+    InvalidTaskStateTransitionError,
+    TaskBoard,
+)
 from polaris.cells.runtime.task_runtime.public.contracts import (
     OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
+    BindRuntimeTaskToFactoryRunCommandV1,
+    FenceExpiredFactoryRunSessionsCommandV1,
+    HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     OwnerReworkExecutionAuthorizationV1,
     PrepareOwnerReworkExecutionCommandV1,
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionFactV1,
+    ValidateTaskRuntimeExecutionAttemptQueryV1,
 )
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
+from polaris.cells.runtime.task_runtime.public.service import (
+    TaskRuntimeService,
+    bind_runtime_task_to_factory_run,
+    heartbeat_task_runtime_execution_attempt,
+    query_observable_task_rows,
+    reset_runtime_task_records,
+    validate_task_runtime_execution_attempt,
+)
 from polaris.kernelone.storage import resolve_runtime_path
 
 
 def _task_file_path(workspace: Path, task_id: object) -> Path:
     return Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task_id}.json"))
+
+
+def _bootstrap_task_runtime_fact_stream(workspace: Path) -> None:
+    """Establish the explicit FactStream authority needed by TaskRuntime tests."""
+
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            maintenance_reason="task-runtime-service-test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
+
+
+def _create_bootstrapped_task_runtime_service(workspace: str | Path) -> TaskRuntimeService:
+    """Construct TaskRuntime only after its public FactStream precondition exists."""
+
+    workspace_path = Path(workspace)
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    _bootstrap_task_runtime_fact_stream(workspace_path)
+    return TaskRuntimeService(str(workspace_path))
+
+
+def _multiprocess_claim_execution(
+    workspace: str,
+    task_id: int,
+    worker_id: str,
+    start_event: Any,
+    result_queue: Any,
+) -> None:
+    """Claim one shared persisted task from an independent Python process."""
+
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    if not start_event.wait(timeout=15):
+        result_queue.put({"success": False, "reason": "start_timeout"})
+        return
+    result_queue.put(
+        service.claim_execution(
+            task_id,
+            worker_id=worker_id,
+            role_id="director",
+            run_id="cross-process-run",
+            selection_source="multiprocessing-regression",
+        )
+    )
+
+
+def _multiprocess_hold_session_lock(
+    workspace: str,
+    task_id: int,
+    ready_marker_path: str,
+    hold_seconds: float,
+) -> None:
+    """Hold the real cooperative session lock from an isolated spawned process."""
+
+    board = TaskBoard(workspace)
+    lock_path = Path(resolve_runtime_path(workspace, f"runtime/tasks/.task_{task_id}.session.json.lock"))
+    with board._file_lock(lock_path):
+        Path(ready_marker_path).write_text("locked\n", encoding="utf-8")
+        time.sleep(hold_seconds)
 
 
 def _sha256_utf8_file(path: Path) -> str:
@@ -64,23 +151,23 @@ def _owner_rework_prepare_command(
 ) -> PrepareOwnerReworkExecutionCommandV1:
     """Build public TaskMarket evidence for one owner/requester prepare call."""
 
-    handoff = OwnerReworkHandoffV1(
-        schema_version="task-market.owner-rework-route/1",
-        handoff_id=handoff_id,
-        owner_task_id="owner-task",
-        requester_task_id="requester-task",
-        owner_previous_status="resolved",
-        requester_previous_status="in_execution",
-        owner_reopened=True,
-        dependency_mode="resolved_only",
-        failure_metadata={"error_code": "SCOPE_CONFLICT"},
-        evidence_metadata={"source": "task-runtime-service-test"},
-        metadata={"test": True},
-        routed_at="2026-07-11T00:00:00+00:00",
-    )
+    handoff = {
+        "schema_version": "task-market.owner-rework-route/1",
+        "handoff_id": handoff_id,
+        "owner_task_id": "owner-task",
+        "requester_task_id": "requester-task",
+        "owner_previous_status": "resolved",
+        "requester_previous_status": "in_execution",
+        "owner_reopened": True,
+        "dependency_mode": "resolved_only",
+        "failure_metadata": {"error_code": "SCOPE_CONFLICT"},
+        "evidence_metadata": {"source": "task-runtime-service-test"},
+        "metadata": {"test": True},
+        "routed_at": "2026-07-11T00:00:00+00:00",
+    }
     task_id = "owner-task" if task_role == "owner" else "requester-task"
     counterparty_task_id = "requester-task" if task_role == "owner" else "owner-task"
-    handoff_records = {"owner_rework_handoffs": {handoff_id: handoff.to_record()}}
+    handoff_records = {"owner_rework_handoffs": {handoff_id: handoff}}
     claimed_item = {
         "task_id": task_id,
         "status": "in_execution",
@@ -424,43 +511,62 @@ def _session_file_path(workspace: Path, task_id: object) -> Path:
     return Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task_id}.session.json"))
 
 
-ExecutionTransitionInvoker = Callable[[TaskRuntimeService, object, str], dict[str, Any]]
+def _settle_claimed_execution_attempt(
+    service: TaskRuntimeService,
+    claim: dict[str, Any],
+    *,
+    outcome: str,
+    summary: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Settle only the canonical attempt identity returned by a real claim."""
+
+    execution_attempt = claim.get("execution_attempt")
+    assert isinstance(execution_attempt, dict)
+    identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(execution_attempt)
+    return service.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome=outcome,  # type: ignore[arg-type]
+            summary=summary,
+            metadata=metadata or {},
+        )
+    )
+
+
+ExecutionTransitionInvoker = Callable[[TaskRuntimeService, dict[str, Any]], dict[str, Any]]
 OwnerTerminalTransitionInvoker = Callable[[TaskRuntimeService, object], dict[str, Any] | None]
 
 
 def _complete_execution_transition(
     service: TaskRuntimeService,
-    task_id: object,
-    session_id: str,
+    claim: dict[str, Any],
 ) -> dict[str, Any]:
-    return service.complete_execution(
-        task_id,
-        session_id=session_id,
-        result_summary="done",
-    )
+    return _settle_claimed_execution_attempt(service, claim, outcome="completed", summary="done")
 
 
 def _fail_execution_transition(
     service: TaskRuntimeService,
-    task_id: object,
-    session_id: str,
+    claim: dict[str, Any],
 ) -> dict[str, Any]:
-    return service.fail_execution(
-        task_id,
-        session_id=session_id,
-        error="director execution failed",
+    return _settle_claimed_execution_attempt(
+        service,
+        claim,
+        outcome="failed",
+        summary="director execution failed",
     )
 
 
 def _suspend_execution_transition(
     service: TaskRuntimeService,
-    task_id: object,
-    session_id: str,
+    claim: dict[str, Any],
 ) -> dict[str, Any]:
-    return service.suspend_execution(
-        task_id,
-        session_id=session_id,
-        reason="factory_stage_timeout",
+    return _settle_claimed_execution_attempt(
+        service,
+        claim,
+        outcome="suspended",
+        summary="factory_stage_timeout",
     )
 
 
@@ -565,7 +671,7 @@ def test_task_runtime_service_normalizes_task_ids() -> None:
 def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="wire runtime.v2 taskboard",
@@ -596,7 +702,7 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
 def test_task_runtime_service_records_taskboard_row_write_receipt(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="receipt anchored task",
@@ -639,7 +745,7 @@ def test_task_runtime_service_records_taskboard_row_write_receipt(tmp_path: Path
 def test_row_write_receipt_details_use_task_identity_after_latest_anchor_moves(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     task_a = service.create_task_row(
         subject="keyed row receipt task a",
@@ -686,7 +792,7 @@ def test_row_write_receipt_details_use_task_identity_after_latest_anchor_moves(t
 def test_claim_execution_records_session_write_receipt(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="session receipt anchored task",
@@ -721,7 +827,7 @@ def test_claim_execution_records_session_write_receipt(tmp_path: Path) -> None:
 def test_session_write_receipt_details_use_session_identity_after_latest_anchor_moves(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     task_a = service.create_task_row(subject="keyed session receipt task a")
     task_b = service.create_task_row(subject="keyed session receipt task b")
@@ -794,7 +900,7 @@ def test_read_session_normal_path_reads_while_holding_session_file_lock(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="session read lock normal path")
     task_id = int(created["id"])
     session = TaskExecutionSession.create(
@@ -840,7 +946,7 @@ def test_write_session_normal_path_writes_while_holding_session_file_lock(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="session write lock normal path")
     task_id = int(created["id"])
     session = TaskExecutionSession.create(
@@ -884,7 +990,7 @@ def test_write_session_normal_path_writes_while_holding_session_file_lock(
 def test_claim_execution_event_details_include_session_write_receipt(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="session receipt event projection")
     task_id = int(created["id"])
 
@@ -926,7 +1032,7 @@ def test_claim_execution_event_details_include_session_write_receipt(tmp_path: P
 def test_heartbeat_execution_event_details_include_session_write_receipt(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="heartbeat session receipt event projection")
     task_id = int(created["id"])
     claimed = service.claim_execution(
@@ -982,7 +1088,7 @@ def test_heartbeat_execution_event_details_include_session_write_receipt(tmp_pat
 def test_append_execution_event_omits_session_write_receipt_for_wrong_session_identity(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     first = service.create_task_row(subject="first session receipt task")
     second = service.create_task_row(subject="second session receipt task")
     first_claim = service.claim_execution(
@@ -1001,7 +1107,9 @@ def test_append_execution_event_omits_session_write_receipt_for_wrong_session_id
     )
     assert first_claim["success"] is True
     assert second_claim["success"] is True
-    assert service.last_session_write_receipt().session_id == second_claim["session"]["session_id"]
+    last_receipt = service.last_session_write_receipt()
+    assert last_receipt is not None
+    assert last_receipt.session_id == second_claim["session"]["session_id"]
 
     wrong_session = TaskExecutionSession.from_dict(
         {
@@ -1033,7 +1141,7 @@ def test_write_session_terminal_preserved_path_writes_while_holding_session_file
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="preserve terminal session receipt")
     task_id = int(created["id"])
 
@@ -1097,7 +1205,7 @@ def test_failed_session_write_does_not_update_last_session_write_receipt(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="failed session receipt write")
     task_id = int(created["id"])
     claimed = service.claim_execution(
@@ -1131,7 +1239,9 @@ def test_failed_session_write_does_not_update_last_session_write_receipt(
             context_summary="receipt should stay anchored to the last successful write",
         )
 
-    assert service.last_session_write_receipt().to_dict() == baseline
+    last_receipt = service.last_session_write_receipt()
+    assert last_receipt is not None
+    assert last_receipt.to_dict() == baseline
 
 
 def test_session_write_cas_conflict_raises_and_preserves_last_session_write_receipt(
@@ -1140,7 +1250,7 @@ def test_session_write_cas_conflict_raises_and_preserves_last_session_write_rece
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="session cas guarded write")
     task_id = int(created["id"])
     claimed = service.claim_execution(
@@ -1209,7 +1319,9 @@ def test_session_write_cas_conflict_raises_and_preserves_last_session_write_rece
     assert external_hash in error_message
     assert json.loads(session_path.read_text(encoding="utf-8")) == external_payload
     assert _sha256_utf8_file(session_path) == external_hash
-    assert service.last_session_write_receipt().to_dict() == baseline
+    last_receipt = service.last_session_write_receipt()
+    assert last_receipt is not None
+    assert last_receipt.to_dict() == baseline
 
 
 def test_taskboard_save_task_row_write_is_guarded_by_per_row_file_lock(
@@ -1218,7 +1330,7 @@ def test_taskboard_save_task_row_write_is_guarded_by_per_row_file_lock(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     first = service.create_task_row(
         subject="row lock probe one",
@@ -1308,7 +1420,7 @@ def test_taskboard_save_task_fails_closed_when_row_hash_changes_before_replace(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="cas guarded task row",
@@ -1387,7 +1499,7 @@ def test_taskboard_save_task_fails_closed_when_row_hash_changes_before_replace(
 def test_create_task_row_execution_event_details_include_row_write_receipt(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="execution event receipt anchored task",
@@ -1432,7 +1544,7 @@ def test_create_task_row_execution_event_details_include_row_write_receipt(tmp_p
 def test_append_execution_event_omits_row_write_receipt_for_wrong_task_identity(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     current = service.create_task_row(subject="current task for stale receipt guard")
     current_id = int(current["id"])
@@ -1474,7 +1586,7 @@ def test_append_execution_event_omits_row_write_receipt_for_wrong_task_identity(
 def test_task_runtime_service_projects_rows_from_execution_facts(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     append_fact_event(
         AppendFactEventCommandV1(
@@ -1516,7 +1628,7 @@ def test_task_runtime_service_projects_rows_from_execution_facts(tmp_path: Path)
 def test_task_runtime_service_observable_rows_overlay_execution_facts(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(
         subject="Observable task",
         description="File row should receive fact overlay",
@@ -1561,7 +1673,7 @@ def test_list_observable_task_rows_does_not_refresh_dependency_unblocks(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     file_rows: list[dict[str, Any]] = [
         {
             "id": 1,
@@ -1605,7 +1717,7 @@ def test_fact_only_task_row_read_model_rows_reads_execution_facts_only(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     fact_rows: list[dict[str, Any]] = [
         {
             "id": 81,
@@ -1665,7 +1777,7 @@ def test_list_observable_task_rows_uses_fact_only_read_model_when_cutover_ready(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     fact_only_rows: list[dict[str, Any]] = [
         {
             "id": 91,
@@ -1704,7 +1816,7 @@ def test_list_observable_task_rows_uses_transitional_read_model_when_cutover_not
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     transitional_rows: list[dict[str, Any]] = [
         {
             "id": 101,
@@ -1736,6 +1848,48 @@ def test_list_observable_task_rows_uses_transitional_read_model_when_cutover_not
 
     assert rows == transitional_rows
     assert calls == ["task_row_read_model_cutover_readiness", "_transitional_task_row_read_model_rows"]
+
+
+def test_observable_task_rows_projection_marks_fact_only_rows_authoritative(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    readiness = {"ready": True, "blocking_reasons": []}
+    rows = [{"id": 1, "status": "completed", "metadata": {"source": "task_runtime.execution_fact"}}]
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", lambda: dict(readiness))
+    monkeypatch.setattr(service, "_fact_only_task_row_read_model_rows", lambda: [dict(row) for row in rows])
+
+    projection = service.query_observable_task_rows_projection()
+
+    assert projection.authoritative is True
+    assert projection.degraded is False
+    assert projection.source == "task_runtime.execution_fact"
+    assert projection.rows == tuple(rows)
+    assert projection.readiness == readiness
+
+
+def test_observable_task_rows_projection_marks_file_fallback_degraded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    readiness = {"ready": False, "blocking_reasons": ["task_row_file_fallback_required"]}
+    rows = [{"id": 1, "status": "pending", "metadata": {"source": "file_row"}}]
+    monkeypatch.setattr(service, "task_row_read_model_cutover_readiness", lambda: dict(readiness))
+    monkeypatch.setattr(service, "_transitional_task_row_read_model_rows", lambda: [dict(row) for row in rows])
+
+    projection = service.query_observable_task_rows_projection()
+
+    assert projection.authoritative is False
+    assert projection.degraded is True
+    assert projection.source == "task_runtime.transitional_file_fallback"
+    assert projection.rows == tuple(rows)
+    assert projection.readiness == readiness
 
 
 def _assert_task_row_read_model_fallback_coverage(
@@ -1837,7 +1991,7 @@ def test_task_row_read_model_fallback_coverage_reports_full_file_coverage(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(
         service,
@@ -1873,7 +2027,7 @@ def test_task_row_read_model_fallback_coverage_reports_file_rows_without_facts(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(
         service,
@@ -1910,7 +2064,7 @@ def test_task_row_read_model_fallback_coverage_reports_fact_only_rows(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(
         service,
@@ -1947,7 +2101,7 @@ def test_task_row_read_model_fallback_coverage_does_not_refresh_dependency_unblo
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     refresh_calls: list[str] = []
 
     def reject_refresh_dependency_unblocks() -> NoReturn:
@@ -1976,7 +2130,7 @@ def test_task_row_read_model_projection_parity_coverage_ready_for_fact_only_rows
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(service, "_list_file_task_rows", lambda: [])
     monkeypatch.setattr(
@@ -2005,13 +2159,13 @@ def test_task_row_read_model_projection_parity_coverage_ready_for_fact_only_rows
     )
 
 
-def test_task_row_read_model_projection_parity_coverage_reports_row_mismatch(
+def test_task_row_read_model_projection_parity_coverage_prefers_fact_over_stale_file_content(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(
         service,
@@ -2044,11 +2198,11 @@ def test_task_row_read_model_projection_parity_coverage_reports_row_mismatch(
 
     _assert_task_row_read_model_projection_parity_coverage(
         coverage,
-        parity_ratio=0.0,
-        observable_projection_parity_ready=False,
+        parity_ratio=1.0,
+        observable_projection_parity_ready=True,
         transitional_only_row_ids=[],
         fact_only_row_ids=[],
-        row_ids_with_projection_mismatch=["52"],
+        row_ids_with_projection_mismatch=[],
     )
 
 
@@ -2058,7 +2212,7 @@ def test_task_row_read_model_projection_parity_coverage_reports_projection_only_
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(
         service,
@@ -2123,7 +2277,7 @@ def test_observable_task_row_stats_include_delegated_read_model_fallback_coverag
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     observable_rows: list[dict[str, Any]] = [
         {"id": 1, "task_id": "1", "status": "pending", "blocked_by": []},
         {"id": 2, "task_id": "2", "status": "in_progress", "blocked_by": []},
@@ -2181,7 +2335,7 @@ def test_get_task_row_stats_delegates_to_observable_stats_without_rebuilding_cov
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     sentinel_stats: dict[str, Any] = {
         "total": 7,
         "ready": 2,
@@ -2216,7 +2370,7 @@ def test_projected_runtime_execution_session_fallback_coverage_reports_full_cove
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     def file_rows(
         *,
@@ -2259,7 +2413,7 @@ def test_projected_runtime_execution_session_fallback_coverage_reports_file_sess
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     def file_rows(
         *,
@@ -2302,7 +2456,7 @@ def test_projected_runtime_execution_session_fallback_coverage_reports_fact_only
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     def file_rows(
         *,
@@ -2342,7 +2496,7 @@ def test_observable_task_row_stats_include_delegated_projected_runtime_execution
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     sentinel_coverage: dict[str, Any] = {
         "file_projected_session_rows_count": 1,
         "fact_projected_session_rows_count": 1,
@@ -2403,7 +2557,7 @@ def test_projected_runtime_execution_session_fallback_coverage_does_not_refresh_
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     refresh_calls: list[str] = []
 
     def reject_refresh_dependency_unblocks() -> NoReturn:
@@ -2447,7 +2601,7 @@ def test_find_projected_runtime_execution_session_returns_fact_session_without_f
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     fact_row = _runtime_execution_projected_row(244, subject="fact session wins")
     fact_lookup_calls: list[int] = []
 
@@ -2491,7 +2645,7 @@ def test_find_projected_runtime_execution_session_uses_file_fallback_when_readin
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     fallback_row = _runtime_execution_projected_row(245, subject="allowed fallback session")
     fallback_session = service._runtime_execution_session_from_projected_row(fallback_row)
     assert fallback_session is not None
@@ -2527,7 +2681,7 @@ def test_find_projected_runtime_execution_session_skips_file_fallback_when_readi
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     readiness_calls: list[str] = []
 
     def readiness() -> dict[str, Any]:
@@ -2559,7 +2713,7 @@ def test_find_projected_runtime_execution_session_locked_uses_file_fallback_with
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     fallback_row = _runtime_execution_projected_row(247, subject="locked fallback session")
     fallback_session = service._runtime_execution_session_from_projected_row(fallback_row)
     assert fallback_session is not None
@@ -2593,7 +2747,7 @@ def test_find_projected_runtime_execution_session_locked_preserves_file_fallback
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     fallback_row = _runtime_execution_projected_row(248, subject="locked fallback ignores readiness gate")
     fallback_session = service._runtime_execution_session_from_projected_row(fallback_row)
     assert fallback_session is not None
@@ -2626,7 +2780,7 @@ def test_task_row_read_model_cutover_readiness_ready_when_file_rows_and_projecte
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     def file_rows(
         *,
@@ -2695,13 +2849,13 @@ def test_task_row_read_model_cutover_readiness_ready_when_file_rows_and_projecte
     )
 
 
-def test_task_row_read_model_cutover_readiness_blocks_when_projection_parity_mismatches(
+def test_task_row_read_model_cutover_readiness_ignores_stale_file_projection_when_fact_is_complete(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(
         service,
@@ -2732,16 +2886,16 @@ def test_task_row_read_model_cutover_readiness_blocks_when_projection_parity_mis
 
     readiness = service.task_row_read_model_cutover_readiness()
 
-    assert readiness["ready"] is False
-    assert readiness["observable_projection_parity_ready"] is False
-    assert "observable_projection_parity_mismatch" in readiness["blocking_reasons"]
+    assert readiness["ready"] is True
+    assert readiness["observable_projection_parity_ready"] is True
+    assert "observable_projection_parity_mismatch" not in readiness["blocking_reasons"]
     _assert_task_row_read_model_projection_parity_coverage(
         readiness["task_row_read_model_projection_parity_coverage"],
-        parity_ratio=0.0,
-        observable_projection_parity_ready=False,
+        parity_ratio=1.0,
+        observable_projection_parity_ready=True,
         transitional_only_row_ids=[],
         fact_only_row_ids=[],
-        row_ids_with_projection_mismatch=["71"],
+        row_ids_with_projection_mismatch=[],
     )
 
 
@@ -2751,7 +2905,7 @@ def test_task_row_read_model_cutover_readiness_blocks_when_file_row_requires_fal
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(
         service,
@@ -2779,7 +2933,7 @@ def test_task_row_read_model_cutover_readiness_blocks_when_projected_session_req
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     def file_rows(
         *,
@@ -2815,7 +2969,7 @@ def test_observable_task_row_stats_include_read_model_cutover_readiness(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     def file_rows(
         *,
@@ -2893,7 +3047,7 @@ def test_task_row_stats_outlets_do_not_refresh_dependency_unblocks(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     refresh_calls: list[str] = []
 
     def reject_refresh_dependency_unblocks() -> NoReturn:
@@ -2922,7 +3076,7 @@ def test_list_observable_task_rows_delegates_to_transitional_read_model_helper(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     sentinel_rows: list[dict[str, Any]] = [
         {
             "id": 61,
@@ -2974,7 +3128,7 @@ def test_list_task_rows_continues_to_refresh_dependency_unblocks(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     file_rows: list[dict[str, Any]] = [
         {
             "id": 2,
@@ -3016,7 +3170,7 @@ def test_list_ready_task_rows_refreshes_before_observable_projection(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     events: list[str] = []
 
     def record_refresh_dependency_unblocks() -> dict[str, Any]:
@@ -3057,7 +3211,7 @@ def test_selection_entrypoints_refresh_before_observable_projection(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     events: list[str] = []
 
     def record_refresh_dependency_unblocks() -> dict[str, Any]:
@@ -3095,7 +3249,7 @@ def test_list_observable_task_rows_consumes_fact_overlay_without_refresh(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(
         subject="Observable fact overlay without refresh",
         description="File row should stay stale while fact row is projected",
@@ -3144,7 +3298,7 @@ def test_list_observable_task_rows_consumes_fact_overlay_without_refresh(
 def test_task_runtime_service_stats_use_observable_execution_fact_rows(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(
         subject="Observable stats task",
         description="File row should not dominate execution facts",
@@ -3182,7 +3336,7 @@ def test_task_runtime_service_stats_use_observable_execution_fact_rows(tmp_path:
 def test_task_runtime_service_raw_list_all_is_retired(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     service.create_task_row(subject="row projection only")
 
     with pytest.raises(RuntimeError, match="use list_task_rows"):
@@ -3192,7 +3346,7 @@ def test_task_runtime_service_raw_list_all_is_retired(tmp_path: Path) -> None:
 def test_task_runtime_service_entity_apis_are_retired(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="row projection only")
 
     with pytest.raises(RuntimeError, match="use create_task_row"):
@@ -3210,7 +3364,7 @@ def test_task_runtime_service_entity_apis_are_retired(tmp_path: Path) -> None:
 def test_task_runtime_service_ready_and_stats_entity_apis_are_retired(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="ready row projection")
 
     ready_rows = service.list_ready_task_rows()
@@ -3231,7 +3385,7 @@ def test_task_runtime_service_ready_and_stats_entity_apis_are_retired(tmp_path: 
 def test_task_runtime_service_does_not_proxy_legacy_board_methods(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     for method_name in ("list_my_tasks", "get_dependency_graph", "get_critical_path"):
         with pytest.raises(AttributeError):
@@ -3241,7 +3395,7 @@ def test_task_runtime_service_does_not_proxy_legacy_board_methods(tmp_path: Path
 def test_task_runtime_service_create_links_reverse_dependency_with_execution_event(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     parent = service.create_task_row(subject="parent task")
     parent_id = int(parent["id"])
@@ -3273,7 +3427,7 @@ def test_create_task_row_reports_event_append_failure_with_row_receipt_without_p
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
@@ -3303,7 +3457,7 @@ def test_update_task_row_reports_event_append_failure_with_row_receipt_without_p
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="update with append evidence")
     task_id = int(created["id"])
 
@@ -3332,7 +3486,7 @@ def test_update_task_row_reports_event_append_failure_with_row_receipt_without_p
 def test_update_task_row_rejects_terminal_status_owner_bypass(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="terminal bypass guard")
 
     with pytest.raises(RuntimeError, match="terminal_task_status_requires_task_runtime_owner_transition:completed"):
@@ -3353,7 +3507,7 @@ def test_claim_execution_fails_closed_on_execution_event_append_failure(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="claim with append evidence")
     task_id = int(created["id"])
 
@@ -3397,14 +3551,14 @@ def test_task_entity_for_transition_normalizes_and_reads_raw_board_once(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="transition helper boundary")
     created_id = int(created["id"])
 
     original_get = service._board.get
     get_calls: list[object] = []
 
-    def tracing_get(task_id: object) -> Any:
+    def tracing_get(task_id: int) -> Any:
         get_calls.append(task_id)
         return original_get(task_id)
 
@@ -3426,14 +3580,14 @@ def test_task_entity_for_owner_terminal_transition_normalizes_and_reads_raw_boar
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="owner terminal transition helper boundary")
     created_id = int(created["id"])
 
     original_get = service._board.get
     get_calls: list[object] = []
 
-    def tracing_get(task_id: object) -> Any:
+    def tracing_get(task_id: int) -> Any:
         get_calls.append(task_id)
         return original_get(task_id)
 
@@ -3455,14 +3609,14 @@ def test_task_entity_for_dependency_side_effect_normalizes_and_reads_raw_board_o
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="dependency side-effect helper boundary")
     created_id = int(created["id"])
 
     original_get = service._board.get
     get_calls: list[object] = []
 
-    def tracing_get(task_id: object) -> Any:
+    def tracing_get(task_id: int) -> Any:
         get_calls.append(task_id)
         return original_get(task_id)
 
@@ -3484,14 +3638,14 @@ def test_task_entity_for_claim_execution_normalizes_and_reads_raw_board_once(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="claim helper boundary")
     created_id = int(created["id"])
 
     original_get = service._board.get
     get_calls: list[object] = []
 
-    def tracing_get(task_id: object) -> Any:
+    def tracing_get(task_id: int) -> Any:
         get_calls.append(task_id)
         return original_get(task_id)
 
@@ -3520,7 +3674,7 @@ def test_claim_execution_uses_task_entity_helper_and_preserves_success_shape(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="claim helper success")
     created_id = int(created["id"])
     task = service._board.get(created_id)
@@ -3605,7 +3759,7 @@ def test_claim_execution_short_circuits_from_task_entity_helper_boundary(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     sentinel = service.create_task_row(subject=f"claim helper {boundary_name} sentinel")
     sentinel_id = int(sentinel["id"])
     sentinel_before = json.loads(_task_file_path(workspace, sentinel_id).read_text(encoding="utf-8"))
@@ -3684,7 +3838,7 @@ def test_apply_reverse_dependency_links_uses_dependency_side_effect_helper_and_p
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     blocker = service.create_task_row(subject="reverse helper blocker")
     dependent = service.create_task_row(subject="reverse helper dependent")
     blocker_id = int(blocker["id"])
@@ -3755,7 +3909,7 @@ def test_apply_reopen_downstream_reblocks_uses_dependency_side_effect_helper_and
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     reopened = service.create_task_row(subject="reopened prerequisite")
     dependent = service.create_task_row(subject="dependent to reblock")
     reopened_id = int(reopened["id"])
@@ -3856,7 +4010,7 @@ def test_dependency_side_effects_skip_missing_helper_results_without_mutating_ro
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     task_id = 7001
     helper_calls: list[object] = []
     direct_board_get_calls: list[object] = []
@@ -3910,7 +4064,7 @@ def test_execution_transitions_use_task_entity_helper_and_preserve_success_shape
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created, claimed = _claimed_execution_for_transition(
         service,
         subject=f"{transition_name} helper success",
@@ -3921,93 +4075,69 @@ def test_execution_transitions_use_task_entity_helper_and_preserve_success_shape
     assert task is not None
 
     helper_calls: list[object] = []
-    direct_board_get_calls: list[object] = []
 
     def task_entity_for_transition(task_id: object) -> tuple[int | None, Any | None]:
         helper_calls.append(task_id)
         return service.normalize_task_id(task_id), task
 
-    def reject_direct_board_get(task_id: object) -> Any:
-        direct_board_get_calls.append(task_id)
-        raise AssertionError("execution transitions must read task entities through _task_entity_for_transition")
-
-    def append_execution_event(event_type: str, **_kwargs: Any) -> dict[str, Any]:
-        return {"ok": True, "event_type": event_type, "published": True}
-
     monkeypatch.setattr(service, "_task_entity_for_transition", task_entity_for_transition)
-    monkeypatch.setattr(service._board, "get", reject_direct_board_get)
-    monkeypatch.setattr(service, "_append_execution_event", append_execution_event)
 
-    result = invoke_transition(
-        service,
-        f"task-{created_id}",
-        str(claimed["session"]["session_id"]),
-    )
+    result = invoke_transition(service, claimed)
 
-    assert helper_calls == [f"task-{created_id}"]
-    assert direct_board_get_calls == []
+    assert helper_calls == [created_id]
     assert result["success"] is True
-    assert result["reason"] == expected_reason
+    assert result["code"] == "settled"
+    assert result["outcome"] == expected_reason
     assert result["task"]["id"] == created_id
     assert result["task"]["status"] == expected_task_status
     assert result["session"]["session_id"] == claimed["session"]["session_id"]
-    assert result["execution_event"] == {
-        "ok": True,
-        "event_type": expected_reason,
-        "published": True,
-    }
-    assert "requested_reason" not in result
-    assert "failure_class" not in result
-    assert "state_mutation_applied" not in result
 
 
-@pytest.mark.parametrize(
-    ("boundary_name", "task_id", "helper_normalized", "expected_reason"),
-    (
-        ("invalid_task_id", "not-a-task", None, "invalid_task_id"),
-        ("task_not_found", "task-7001", 7001, "task_not_found"),
-    ),
-    ids=("invalid_task_id", "task_not_found"),
-)
-@pytest.mark.parametrize(
-    ("transition_name", "_expected_reason", "_expected_task_status", "invoke_transition"),
-    _EXECUTION_TRANSITION_HELPER_CASES,
-    ids=[case[0] for case in _EXECUTION_TRANSITION_HELPER_CASES],
-)
-def test_execution_transitions_short_circuit_from_task_entity_helper_boundary(
+def test_settlement_rejects_forged_task_identity_before_session_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    boundary_name: str,
-    task_id: object,
-    helper_normalized: int | None,
-    expected_reason: str,
-    transition_name: str,
-    _expected_reason: str,
-    _expected_task_status: str,
-    invoke_transition: ExecutionTransitionInvoker,
 ) -> None:
+    """A deliberately forged identity cannot reach the session lock boundary."""
+
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created, claimed = _claimed_execution_for_transition(
+        service,
+        subject="forged settlement identity",
+        run_id="forged-settlement-identity",
+    )
+    forged = replace(
+        TaskRuntimeExecutionAttemptIdentityV1.from_record(claimed["execution_attempt"]),
+        task_id=int(created["id"]) + 7000,
+    )
     helper_calls: list[object] = []
     session_lock_calls: list[object] = []
 
     def task_entity_for_transition(raw_task_id: object) -> tuple[int | None, Any | None]:
         helper_calls.append(raw_task_id)
-        return helper_normalized, None
+        return int(cast(Any, raw_task_id)), None
 
     def reject_session_lock(normalized_task_id: object) -> Any:
         session_lock_calls.append(normalized_task_id)
-        raise AssertionError(f"{transition_name} must short-circuit before session reads for {boundary_name}")
+        raise AssertionError("forged settlement must short-circuit before session reads")
 
     monkeypatch.setattr(service, "_task_entity_for_transition", task_entity_for_transition)
     monkeypatch.setattr(service, "_get_session_lock", reject_session_lock)
 
-    result = invoke_transition(service, task_id, "unused-session-id")
+    result = service.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=forged.workspace,
+            identity=forged,
+            outcome="completed",
+            summary="forged identity regression",
+        )
+    )
 
-    assert helper_calls == [task_id]
+    assert helper_calls == [forged.task_id]
     assert session_lock_calls == []
-    assert result == {"success": False, "reason": expected_reason}
+    assert result["success"] is False
+    assert result["code"] == "session_not_found"
 
 
 @pytest.mark.parametrize(
@@ -4034,7 +4164,7 @@ def test_owner_terminal_transitions_short_circuit_before_session_read(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     helper_calls: list[object] = []
     session_read_calls: list[object] = []
     update_calls: list[object] = []
@@ -4073,9 +4203,8 @@ def test_complete_execution_fails_closed_on_execution_event_append_failure(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="complete with append evidence")
-    task_id = int(created["id"])
     claimed = service.claim_execution(
         created["id"],
         worker_id="director",
@@ -4087,23 +4216,12 @@ def test_complete_execution_fails_closed_on_execution_event_append_failure(
 
     monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
-    completed = service.complete_execution(
-        created["id"],
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
 
     assert completed["success"] is False
-    assert completed["reason"] == "execution_event_append_failed"
-    assert completed["requested_reason"] == "completed"
-    assert completed["failure_class"] == "ledger_append_failed"
-    assert completed["state_mutation_applied"] is True
-    _assert_execution_event_append_failure_with_row_write_receipt(
-        completed["execution_event"],
-        event_type="completed",
-        task_id=task_id,
-        task_path=_task_file_path(workspace, task_id),
-    )
+    assert completed["code"] == "row_projection_failed"
+    assert completed["outcome"] == "completed"
+    assert completed["evidence"]["execution_event"]["error"] == "fact stream unavailable"
     assert completed["task"]["status"] == "completed"
 
 
@@ -4113,9 +4231,8 @@ def test_fail_execution_fails_closed_on_execution_event_append_failure(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="fail with append evidence")
-    task_id = int(created["id"])
     claimed = service.claim_execution(
         created["id"],
         worker_id="director",
@@ -4127,23 +4244,12 @@ def test_fail_execution_fails_closed_on_execution_event_append_failure(
 
     monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
-    failed = service.fail_execution(
-        created["id"],
-        session_id=str(claimed["session"]["session_id"]),
-        error="director execution failed",
-    )
+    failed = _settle_claimed_execution_attempt(service, claimed, outcome="failed", summary="director execution failed")
 
     assert failed["success"] is False
-    assert failed["reason"] == "execution_event_append_failed"
-    assert failed["requested_reason"] == "failed"
-    assert failed["failure_class"] == "ledger_append_failed"
-    assert failed["state_mutation_applied"] is True
-    _assert_execution_event_append_failure_with_row_write_receipt(
-        failed["execution_event"],
-        event_type="failed",
-        task_id=task_id,
-        task_path=_task_file_path(workspace, task_id),
-    )
+    assert failed["code"] == "row_projection_failed"
+    assert failed["outcome"] == "failed"
+    assert failed["evidence"]["execution_event"]["error"] == "fact stream unavailable"
     assert failed["task"]["status"] == "failed"
 
 
@@ -4153,9 +4259,8 @@ def test_suspend_execution_fails_closed_on_execution_event_append_failure(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="suspend with append evidence")
-    task_id = int(created["id"])
     claimed = service.claim_execution(
         created["id"],
         worker_id="director",
@@ -4167,30 +4272,21 @@ def test_suspend_execution_fails_closed_on_execution_event_append_failure(
 
     monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
-    suspended = service.suspend_execution(
-        created["id"],
-        session_id=str(claimed["session"]["session_id"]),
-        reason="factory_stage_timeout",
+    suspended = _settle_claimed_execution_attempt(
+        service, claimed, outcome="suspended", summary="factory_stage_timeout"
     )
 
     assert suspended["success"] is False
-    assert suspended["reason"] == "execution_event_append_failed"
-    assert suspended["requested_reason"] == "suspended"
-    assert suspended["failure_class"] == "ledger_append_failed"
-    assert suspended["state_mutation_applied"] is True
-    _assert_execution_event_append_failure_with_row_write_receipt(
-        suspended["execution_event"],
-        event_type="suspended",
-        task_id=task_id,
-        task_path=_task_file_path(workspace, task_id),
-    )
+    assert suspended["code"] == "row_projection_failed"
+    assert suspended["outcome"] == "suspended"
+    assert suspended["evidence"]["execution_event"]["error"] == "fact stream unavailable"
     assert suspended["task"]["status"] == "pending"
 
 
 def test_task_runtime_service_wakes_ready_waiters_on_create(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     ready_events: list[str] = []
     listener_event = threading.Event()
@@ -4227,7 +4323,7 @@ def test_task_runtime_service_wakes_ready_waiters_on_create(tmp_path: Path) -> N
 def test_task_runtime_service_wakes_ready_waiters_when_dependency_unblocks(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     parent = service.create_task_row(subject="parent task")
     parent_id = int(parent["id"])
@@ -4261,11 +4357,7 @@ def test_task_runtime_service_wakes_ready_waiters_when_dependency_unblocks(tmp_p
     waiter.start()
     assert waiter_started.wait(timeout=0.5)
 
-    completed = service.complete_execution(
-        parent_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="parent done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="parent done")
 
     waiter.join(timeout=2.0)
     assert completed["success"] is True
@@ -4281,7 +4373,7 @@ def test_task_runtime_service_wakes_ready_waiters_when_dependency_unblocks(tmp_p
 def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="completed task with stale row")
     created_id = created["id"]
@@ -4294,11 +4386,7 @@ def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_pat
     )
     assert claimed["success"] is True
 
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
     assert completed["success"] is True
 
     task_path = _task_file_path(workspace, created_id)
@@ -4307,7 +4395,7 @@ def test_task_runtime_service_reconciles_terminal_session_before_reclaim(tmp_pat
     stale_payload["completed_at"] = None
     task_path.write_text(json.dumps(stale_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    reloaded = TaskRuntimeService(str(workspace))
+    reloaded = _create_bootstrapped_task_runtime_service(workspace)
     reclaimed = reloaded.claim_execution(
         created_id,
         worker_id="director",
@@ -4332,7 +4420,7 @@ def test_apply_terminal_session_reconcile_non_terminal_session_uses_helper_fallb
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="non-terminal reconcile helper fallback")
     task_id = int(created["id"])
     task = service._board.get(task_id)
@@ -4376,7 +4464,7 @@ def test_apply_terminal_session_reconcile_missing_helper_result_after_invalid_tr
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     task_id = 7001
     session = _session_for_terminal_reconcile(task_id, status="failed")
     helper_calls: list[int] = []
@@ -4425,7 +4513,7 @@ def test_apply_terminal_session_reconcile_terminal_task_conflict_uses_helper_row
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="terminal reconcile conflict helper row")
     task_id = int(created["id"])
     terminal_task = service._board.reconcile_terminal_status(
@@ -4487,7 +4575,7 @@ def test_apply_terminal_session_reconcile_update_none_uses_helper_row_fallback(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="terminal reconcile update none helper fallback")
     task_id = int(created["id"])
     task = service._board.get(task_id)
@@ -4545,7 +4633,7 @@ def test_task_runtime_ready_reset_row_with_older_terminal_session_is_claimable(t
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="retry after failure via ready reset")
     created_id = created["id"]
@@ -4559,7 +4647,7 @@ def test_task_runtime_ready_reset_row_with_older_terminal_session_is_claimable(t
     assert claimed["success"] is True
     old_session_id = str(claimed["session"]["session_id"])
 
-    failed = service.fail_execution(created_id, session_id=old_session_id, error="transient failure")
+    failed = _settle_claimed_execution_attempt(service, claimed, outcome="failed", summary="transient failure")
     assert failed["success"] is True
 
     time.sleep(0.02)
@@ -4588,7 +4676,7 @@ def test_task_runtime_deliberate_pending_retry_is_claimable_and_not_flipped_to_f
     """A deliberate FAILED->PENDING retry must not be reconciled back to failed."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="retry after failure via pending reset")
     created_id = created["id"]
@@ -4600,11 +4688,7 @@ def test_task_runtime_deliberate_pending_retry_is_claimable_and_not_flipped_to_f
         selection_source="task_id_lookup",
     )
     assert claimed["success"] is True
-    failed = service.fail_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        error="transient failure",
-    )
+    failed = _settle_claimed_execution_attempt(service, claimed, outcome="failed", summary="transient failure")
     assert failed["success"] is True
 
     time.sleep(0.02)
@@ -4625,10 +4709,8 @@ def test_task_runtime_deliberate_pending_retry_is_claimable_and_not_flipped_to_f
     persisted = json.loads(_task_file_path(workspace, created_id).read_text(encoding="utf-8"))
     assert persisted["status"] == "in_progress"
 
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(reclaimed["session"]["session_id"]),
-        result_summary="second attempt worked",
+    completed = _settle_claimed_execution_attempt(
+        service, reclaimed, outcome="completed", summary="second attempt worked"
     )
     assert completed["success"] is True
     assert completed["task"]["status"] == "completed"
@@ -4638,7 +4720,7 @@ def test_task_runtime_claim_next_honors_deliberate_retry_projection(tmp_path: Pa
     """Queue projection must not hide a deliberate retry behind stale session evidence."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="retry should be visible to queue")
     created_id = created["id"]
@@ -4650,11 +4732,7 @@ def test_task_runtime_claim_next_honors_deliberate_retry_projection(tmp_path: Pa
         selection_source="task_id_lookup",
     )
     assert claimed["success"] is True
-    failed = service.fail_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        error="temporary platform failure",
-    )
+    failed = _settle_claimed_execution_attempt(service, claimed, outcome="failed", summary="temporary platform failure")
     assert failed["success"] is True
 
     time.sleep(0.02)
@@ -4696,7 +4774,7 @@ def test_augment_task_row_authorizes_terminal_session_superseded_from_passed_row
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="augment row owns retry authority")
     created_id = int(created["id"])
@@ -4709,10 +4787,8 @@ def test_augment_task_row_authorizes_terminal_session_superseded_from_passed_row
     )
     assert claimed["success"] is True
 
-    failed = service.fail_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        error="retryable execution failure",
+    failed = _settle_claimed_execution_attempt(
+        service, claimed, outcome="failed", summary="retryable execution failure"
     )
     assert failed["success"] is True
 
@@ -4761,7 +4837,7 @@ def test_find_terminal_session_snapshot_reads_row_metadata_without_raw_board_get
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="terminal metadata fallback")
     task_id = int(created["id"])
@@ -4839,7 +4915,7 @@ def test_find_projected_runtime_execution_session_reads_row_projection_without_r
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     task_id = 407
     row_session = TaskExecutionSession.create(
@@ -4899,7 +4975,7 @@ def test_find_projected_runtime_execution_session_delegates_file_row_fallback_af
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     task_id = 408
     fallback_session = TaskExecutionSession.create(
@@ -4953,7 +5029,7 @@ def test_find_projected_runtime_execution_session_locked_delegates_file_row_fall
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     task_id = 409
     fallback_session = TaskExecutionSession.create(
@@ -5003,7 +5079,7 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
     """A stale row carrying an OLD reset marker must not beat a NEWER terminal session."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="stale row after second failure")
     created_id = created["id"]
@@ -5015,11 +5091,7 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
         selection_source="task_id_lookup",
     )
     assert first_claim["success"] is True
-    assert service.fail_execution(
-        created_id,
-        session_id=str(first_claim["session"]["session_id"]),
-        error="first failure",
-    )["success"]
+    assert _settle_claimed_execution_attempt(service, first_claim, outcome="failed", summary="first failure")["success"]
 
     time.sleep(0.02)
     # Sanctioned retry: stamps the terminal-reset marker.
@@ -5033,11 +5105,9 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
     )
     assert second_claim["success"] is True
     time.sleep(0.02)
-    assert service.fail_execution(
-        created_id,
-        session_id=str(second_claim["session"]["session_id"]),
-        error="second failure",
-    )["success"]
+    assert _settle_claimed_execution_attempt(service, second_claim, outcome="failed", summary="second failure")[
+        "success"
+    ]
 
     # Stale byte-level rewrite: pending row with the OLD reset marker, while
     # the terminal session on disk is NEWER than that marker.
@@ -5047,7 +5117,7 @@ def test_task_runtime_stale_pending_row_with_newer_terminal_session_still_reject
     stale_payload["completed_at"] = None
     task_path.write_text(json.dumps(stale_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    reloaded = TaskRuntimeService(str(workspace))
+    reloaded = _create_bootstrapped_task_runtime_service(workspace)
     reclaimed = reloaded.claim_execution(
         created_id,
         worker_id="director",
@@ -5074,7 +5144,7 @@ def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: P
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="stale ready row over failed session")
     created_id = created["id"]
@@ -5086,11 +5156,7 @@ def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: P
         selection_source="task_id_lookup",
     )
     assert claimed["success"] is True
-    assert service.fail_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        error="genuine failure",
-    )["success"]
+    assert _settle_claimed_execution_attempt(service, claimed, outcome="failed", summary="genuine failure")["success"]
 
     # Stale writer clobbers the row to READY without the sanctioned reset
     # marker (bypassing the state machine entirely).
@@ -5100,7 +5166,7 @@ def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: P
     stale_payload["completed_at"] = None
     task_path.write_text(json.dumps(stale_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    reloaded = TaskRuntimeService(str(workspace))
+    reloaded = _create_bootstrapped_task_runtime_service(workspace)
     reclaimed = reloaded.claim_execution(
         created_id,
         worker_id="director",
@@ -5122,7 +5188,7 @@ def test_task_runtime_stale_ready_row_reconcile_does_not_crash_claim(tmp_path: P
 def test_task_runtime_service_preserves_terminal_session_during_run_cancellation(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="completed task with stale active session")
     created_id = created["id"]
@@ -5135,11 +5201,7 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     )
     assert claimed["success"] is True
 
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
     assert completed["success"] is True
 
     session_path = _session_file_path(workspace, created_id)
@@ -5149,7 +5211,7 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     stale_session["last_error"] = ""
     session_path.write_text(json.dumps(stale_session, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    reloaded = TaskRuntimeService(str(workspace))
+    reloaded = _create_bootstrapped_task_runtime_service(workspace)
     suspended_results: list[dict[str, Any]] = []
     suspend_errors: list[Exception] = []
 
@@ -5192,11 +5254,11 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
 def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    writer = TaskRuntimeService(str(workspace))
+    writer = _create_bootstrapped_task_runtime_service(workspace)
 
     created = writer.create_task_row(subject="completed task")
     created_id = created["id"]
-    stale_reader = TaskRuntimeService(str(workspace))
+    stale_reader = _create_bootstrapped_task_runtime_service(workspace)
     stale_reader.get_task(created_id)
 
     claimed = writer.claim_execution(
@@ -5207,11 +5269,7 @@ def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp
         selection_source="task_id_lookup",
     )
     assert claimed["success"] is True
-    completed = writer.complete_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="done",
-    )
+    completed = _settle_claimed_execution_attempt(writer, claimed, outcome="completed", summary="done")
     assert completed["success"] is True
 
     updated = stale_reader.update_task_row(created_id, metadata={"late_projection": "workspace_quality_gate_failed"})
@@ -5227,7 +5285,7 @@ def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp
 def test_task_runtime_service_refresh_dependency_unblocks_uses_fact_status_source(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     parent = service.create_task_row(subject="fact-completed prerequisite")
     parent_id = int(parent["id"])
@@ -5277,7 +5335,7 @@ def test_task_runtime_service_refresh_dependency_unblocks_uses_fact_status_sourc
 def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_dependencies(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     parent = service.create_task_row(subject="completed prerequisite")
     parent_id = int(parent["id"])
@@ -5295,14 +5353,17 @@ def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_depende
         selection_source="unit",
     )
     assert claim_parent["success"] is True
-    completed = service.complete_execution(
-        parent_id,
-        session_id=str(claim_parent["session"]["session_id"]),
-        result_summary="parent done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claim_parent, outcome="completed", summary="parent done")
     assert completed["success"] is True
-    assert completed["dependency_execution_events"][0]["ok"] is True
-    assert completed["dependency_execution_events"][0]["event_type"] == "dependencies_unblocked"
+    terminal_dependency_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="dependencies_unblocked",
+        )
+    ).events
+    assert len(terminal_dependency_events) == 1
+    assert terminal_dependency_events[0]["payload"]["task_id"] == str(child_id)
 
     stale = service.update_task_row(child_id, status="blocked")
     assert stale is not None
@@ -5343,7 +5404,7 @@ def test_task_runtime_service_refreshes_stale_blocked_row_with_completed_depende
 def test_task_runtime_service_records_dependency_blocker_refresh_events(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     completed_parent = service.create_task_row(subject="completed dependency")
     active_parent = service.create_task_row(subject="still active dependency")
@@ -5365,14 +5426,17 @@ def test_task_runtime_service_records_dependency_blocker_refresh_events(tmp_path
         selection_source="unit",
     )
     assert claimed["success"] is True
-    completed = service.complete_execution(
-        completed_parent_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="dependency done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="dependency done")
     assert completed["success"] is True
-    assert completed["dependency_execution_events"][0]["ok"] is True
-    assert completed["dependency_execution_events"][0]["event_type"] == "dependency_blockers_refreshed"
+    terminal_dependency_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="dependency_blockers_refreshed",
+        )
+    ).events
+    assert len(terminal_dependency_events) == 1
+    assert terminal_dependency_events[0]["payload"]["task_id"] == str(child_id)
 
     stale_child = service.update_task_row(
         child_id,
@@ -5410,7 +5474,7 @@ def test_task_runtime_service_records_dependency_blocker_refresh_events(tmp_path
 def test_task_runtime_service_blocks_missing_dependency_fail_closed(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     child = service.create_task_row(subject="child with missing dependency", blocked_by=[999])
     child_id = child["id"]
@@ -5430,7 +5494,7 @@ def test_task_runtime_service_blocks_missing_dependency_fail_closed(tmp_path: Pa
 def test_task_runtime_reset_records_clears_rows_sessions_and_events(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="reset stale taskboard rows", metadata={"scope": "src/App.tsx"})
     created_id = created["id"]
@@ -5443,25 +5507,172 @@ def test_task_runtime_reset_records_clears_rows_sessions_and_events(tmp_path: Pa
         external_task_id="task-reset",
     )
     assert claim["success"] is True
+    completed = _settle_claimed_execution_attempt(service, claim, outcome="completed", summary="reset fixture settled")
+    assert completed["success"] is True
 
     taskboard_event_path = Path(resolve_runtime_path(str(workspace), "runtime/events/taskboard.terminal.events.jsonl"))
     taskboard_event_path.parent.mkdir(parents=True, exist_ok=True)
     taskboard_event_path.write_text('{"event_type":"completed"}\n', encoding="utf-8")
 
-    result = reset_runtime_task_records(str(workspace))
+    result = reset_runtime_task_records(str(workspace), factory_run_id="run-reset")
 
     assert result["failed_count"] == 0
-    assert TaskRuntimeService(str(workspace)).list_task_rows() == []
+    assert result["tombstone_count"] == 1
+    assert _create_bootstrapped_task_runtime_service(workspace).list_task_rows() == []
+    assert _create_bootstrapped_task_runtime_service(workspace).list_observable_task_rows() == []
+    assert _create_bootstrapped_task_runtime_service(workspace).get_task(created_id) is None
     tasks_dir = Path(resolve_runtime_path(str(workspace), "runtime/tasks"))
     assert not list(tasks_dir.glob("task_*.json"))
     assert (tasks_dir / ".max_id").is_file()
     assert not taskboard_event_path.exists()
 
 
+def test_expired_factory_session_fence_is_authoritative_and_idempotent(tmp_path: Path) -> None:
+    """A stale Factory lease becomes blocked once and records one fact."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    factory_run_id = "factory-stale-owner"
+    created = service.create_task_row(
+        subject="fence stale Factory child",
+        metadata={"factory_run_id": factory_run_id},
+    )
+    task_id = int(created["id"])
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="director",
+        role_id="director",
+        run_id=factory_run_id,
+        selection_source="unit.stale-fence",
+    )
+    assert claimed["success"] is True
+    expired_session = service._read_session(task_id)
+    assert expired_session is not None
+    expired_session.lease_expires_at = "2000-01-01T00:00:00+00:00"
+    assert service._write_session(expired_session) is True
+
+    command = FenceExpiredFactoryRunSessionsCommandV1(
+        workspace=str(workspace),
+        factory_run_id=factory_run_id,
+        reason="Factory stale-owner recovery",
+    )
+    fenced = service.fence_expired_factory_run_sessions(command)
+
+    assert fenced.ok is True
+    assert fenced.code == "expired_sessions_fenced"
+    assert fenced.fenced_session_ids == (expired_session.session_id,)
+    assert len(fenced.execution_events) == 1
+    event = fenced.execution_events[0]
+    assert event["event_type"] == "factory_stale_session_fenced"
+    assert str(event["fact_event_id"]).strip()
+    assert isinstance(event["fact_event_seq"], int)
+    row = service.get_task(task_id)
+    assert row is not None
+    assert row["status"] == "blocked"
+    assert row["metadata"]["factory_stale_session_fenced"] is True
+
+    fence_facts = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="factory_stale_session_fenced",
+        )
+    ).events
+    assert len(fence_facts) == 1
+    assert fence_facts[0]["payload"]["status"] == "blocked"
+    assert fence_facts[0]["payload"]["factory_run_id"] == factory_run_id
+    assert service.query_factory_run_settlement(factory_run_id=factory_run_id)["settled"] is True
+
+    repeated = service.fence_expired_factory_run_sessions(command)
+
+    assert repeated.ok is True
+    assert repeated.code == "no_expired_sessions"
+    assert repeated.fenced_session_ids == ()
+    assert repeated.execution_events == ()
+    assert (
+        len(
+            query_fact_events(
+                QueryFactEventsV1(
+                    workspace=str(workspace),
+                    stream="task_runtime.execution",
+                    event_type="factory_stale_session_fenced",
+                )
+            ).events
+        )
+        == 1
+    )
+
+
+def test_task_runtime_reset_rejects_foreign_active_session_without_file_changes(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(subject="foreign active reset guard")
+    task_id = created["id"]
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="factory-foreign",
+        selection_source="unit.foreign-reset",
+    )
+    assert claimed["success"] is True
+    task_path = _task_file_path(workspace, task_id)
+    session_path = _session_file_path(workspace, task_id)
+    task_before = task_path.read_bytes()
+    session_before = session_path.read_bytes()
+
+    result = service.reset_records(keep_plan=True, factory_run_id="factory-current")
+
+    assert result["ok"] is False
+    assert result["code"] == "task_runtime_reset_authority_conflict"
+    assert result["cleared_count"] == 0
+    conflicts = result["conflicts"]
+    assert isinstance(conflicts, list)
+    assert any(
+        conflict.get("kind") == "active_foreign_session"
+        for conflict in conflicts
+        if isinstance(conflict, dict)
+    )
+    assert task_path.read_bytes() == task_before
+    assert session_path.read_bytes() == session_before
+
+
+def test_task_runtime_reset_preserves_stable_lock_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(subject="stable reset locks")
+    task_id = created["id"]
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="director",
+        role_id="director",
+        run_id="factory-lock-owner",
+        selection_source="unit.lock-reset",
+    )
+    assert claimed["success"] is True
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="settled before reset")
+    assert completed["success"] is True
+    tasks_dir = Path(resolve_runtime_path(str(workspace), "runtime/tasks"))
+    row_lock = tasks_dir / f".task_{task_id}.json.lock"
+    session_lock = tasks_dir / f".task_{task_id}.session.json.lock"
+    assert row_lock.is_file()
+    assert session_lock.is_file()
+
+    result = service.reset_records(keep_plan=True, factory_run_id="factory-lock-owner")
+
+    assert result["ok"] is True
+    assert row_lock.is_file()
+    assert session_lock.is_file()
+    assert (tasks_dir / ".task_runtime.reset.lock").is_file()
+
+
 def test_task_runtime_reset_rows_for_reexecution_emits_execution_facts(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     first = service.create_task_row(subject="dirty task one", metadata={"scope": "src/App.tsx"})
     second = service.create_task_row(subject="dirty task two", metadata={"scope": "src/main.py"})
@@ -5526,7 +5737,7 @@ def test_task_runtime_reset_rows_for_reexecution_emits_execution_facts(tmp_path:
 def test_task_runtime_import_rows_for_reexecution_preserves_ids_and_events(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     _session_file_path(workspace, 7).write_text('{"status":"active"}', encoding="utf-8")
 
     result = service.import_task_rows_for_reexecution(
@@ -5604,7 +5815,7 @@ def test_task_runtime_reexecution_source_reader_rejects_non_task_dir(tmp_path: P
 def test_task_runtime_service_materializes_legacy_task_and_claims_it(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     row = service.ensure_task_row(
         external_task_id="task-0-director",
@@ -5644,7 +5855,7 @@ def test_ensure_task_row_reuses_fact_overlaid_row_when_raw_row_is_stale(tmp_path
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     external_id = "TASK-ENSURE-OVERLAY"
 
     created = service.create_task_row(
@@ -5702,7 +5913,7 @@ def test_ensure_task_row_reuses_fact_overlaid_row_when_raw_row_is_stale(tmp_path
     assert row["metadata"]["source_task_id"] == external_id
     assert row["metadata"]["owner"] == "fact"
     assert row["metadata"]["source"] == "task_runtime.execution_fact"
-    assert row["metadata"]["previous_status"] == "pending"
+    assert "previous_status" not in row["metadata"]
     assert [file_row["id"] for file_row in service.list_task_rows()] == [created_id]
 
 
@@ -5711,7 +5922,7 @@ def test_ensure_task_row_reuses_observable_external_id_when_raw_metadata_lacks_i
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     external_id = "TASK-ENSURE-FACT-ONLY-ID"
 
     created = service.create_task_row(
@@ -5778,7 +5989,7 @@ def test_ensure_task_row_reports_materialized_event_append_failure(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     append_count = 0
     original_append_execution_fact = service._append_execution_fact
 
@@ -5817,10 +6028,501 @@ def test_ensure_task_row_reports_materialized_event_append_failure(
     assert row["execution_events"][1] == row["execution_event"]
 
 
+def test_factory_run_binding_is_explicit_idempotent_and_filterable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    row = service.ensure_task_row(
+        external_task_id="TASK-FACTORY-BIND-1",
+        subject="bind existing PM task",
+    )
+
+    def publish_succeeds(_service: TaskRuntimeService, _payload: dict[str, Any]) -> bool:
+        return True
+
+    monkeypatch.setattr(TaskRuntimeService, "_publish_factory_execution_event", publish_succeeds)
+    command = BindRuntimeTaskToFactoryRunCommandV1(
+        workspace=str(workspace),
+        task_id=str(row["id"]),
+        factory_run_id="factory-run-bind-1",
+    )
+
+    first = bind_runtime_task_to_factory_run(command)
+    first_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="factory_run_bound",
+        )
+    ).events
+    second = bind_runtime_task_to_factory_run(command)
+    second_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="factory_run_bound",
+        )
+    ).events
+
+    assert first.ok is True
+    assert first.code == "factory_run_bound"
+    assert first.row_updated is True
+    assert first.event_recorded is True
+    assert first.idempotent is False
+    assert second.ok is True
+    assert second.code == "factory_run_already_bound"
+    assert second.row_updated is False
+    assert second.event_recorded is True
+    assert second.idempotent is True
+    assert len(first_events) == 1
+    assert len(second_events) == 1
+
+    projection = query_observable_task_rows(str(workspace))
+    matching_rows = projection.rows_for_factory_run("factory-run-bind-1")
+    assert len(matching_rows) == 1
+    assert str(matching_rows[0]["id"]) == str(row["id"])
+    assert projection.rows_for_factory_run("another-factory-run") == ()
+
+
+def test_factory_run_binding_routes_row_commit_through_save_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    row = service.ensure_task_row(
+        external_task_id="TASK-FACTORY-BIND-SAVE-OWNER",
+        subject="bind through sole row-write owner",
+    )
+    observed_expected_hashes: list[str | None] = []
+    original_save_task = service._board._save_task
+
+    def record_save_task(
+        task: Any,
+        *,
+        expected_before_hash: str | None = None,
+    ) -> object:
+        observed_expected_hashes.append(expected_before_hash)
+        return original_save_task(task, expected_before_hash=expected_before_hash)
+
+    monkeypatch.setattr(service._board, "_save_task", record_save_task)
+    monkeypatch.setattr(service, "_publish_factory_execution_event", lambda _payload: True)
+
+    result = service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(row["id"]),
+            factory_run_id="factory-run-save-owner",
+        )
+    )
+
+    assert result.ok is True
+    assert result.code == "factory_run_bound"
+    assert len(observed_expected_hashes) == 1
+    expected_before_hash = observed_expected_hashes[0]
+    assert isinstance(expected_before_hash, str)
+    assert len(expected_before_hash) == 64
+    receipt = _assert_task_row_write_receipt(
+        service._board.row_write_receipt_for_task(row["id"]),
+        task_id=row["id"],
+        task_path=_task_file_path(workspace, row["id"]),
+    )
+    assert receipt["before_hash"] == expected_before_hash
+
+
+def test_factory_run_binding_conflict_fails_closed_without_overwrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    row = service.ensure_task_row(
+        external_task_id="TASK-FACTORY-BIND-CONFLICT",
+        subject="reject conflicting Factory run",
+    )
+    monkeypatch.setattr(service, "_publish_factory_execution_event", lambda _payload: True)
+    first_command = BindRuntimeTaskToFactoryRunCommandV1(
+        workspace=str(workspace),
+        task_id=str(row["id"]),
+        factory_run_id="factory-run-owner",
+    )
+    conflicting_command = BindRuntimeTaskToFactoryRunCommandV1(
+        workspace=str(workspace),
+        task_id=str(row["id"]),
+        factory_run_id="factory-run-intruder",
+    )
+
+    first = service.bind_task_to_factory_run(first_command)
+    conflict = service.bind_task_to_factory_run(conflicting_command)
+
+    assert first.ok is True
+    assert conflict.ok is False
+    assert conflict.code == "factory_run_binding_conflict"
+    assert conflict.existing_factory_run_id == "factory-run-owner"
+    on_disk = json.loads(_task_file_path(workspace, row["id"]).read_text(encoding="utf-8"))
+    assert on_disk["metadata"]["factory_run_id"] == "factory-run-owner"
+    projection = service.query_observable_task_rows_projection()
+    assert len(projection.rows_for_factory_run("factory-run-owner")) == 1
+    assert projection.rows_for_factory_run("factory-run-intruder") == ()
+
+
+def test_factory_run_binding_recovers_fact_after_prior_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    row = service.ensure_task_row(
+        external_task_id="TASK-FACTORY-BIND-RECOVERY",
+        subject="recover missing binding fact",
+    )
+    command = BindRuntimeTaskToFactoryRunCommandV1(
+        workspace=str(workspace),
+        task_id=str(row["id"]),
+        factory_run_id="factory-run-recovery",
+    )
+    original_append_execution_fact = service._append_execution_fact
+
+    def fail_binding_fact(*, event_type_str: str, payload: dict[str, Any]) -> object:
+        if event_type_str == "factory_run_bound":
+            raise RuntimeError("fact stream unavailable")
+        return original_append_execution_fact(event_type_str=event_type_str, payload=payload)
+
+    monkeypatch.setattr(service, "_append_execution_fact", fail_binding_fact)
+    monkeypatch.setattr(service, "_publish_factory_execution_event", lambda _payload: True)
+    failed = service.bind_task_to_factory_run(command)
+
+    assert failed.ok is False
+    assert failed.code == "execution_event_append_failed"
+    assert failed.row_updated is True
+    assert failed.event_recorded is False
+    on_disk = json.loads(_task_file_path(workspace, row["id"]).read_text(encoding="utf-8"))
+    assert on_disk["metadata"]["factory_run_id"] == "factory-run-recovery"
+
+    monkeypatch.setattr(service, "_append_execution_fact", original_append_execution_fact)
+    recovered = service.bind_task_to_factory_run(command)
+    repeated = service.bind_task_to_factory_run(command)
+
+    assert recovered.ok is True
+    assert recovered.code == "factory_run_binding_recovered"
+    assert recovered.row_updated is False
+    assert recovered.event_recorded is True
+    assert repeated.ok is True
+    assert repeated.code == "factory_run_already_bound"
+    assert repeated.idempotent is True
+
+
+def test_factory_run_binding_honors_fact_authority_when_file_row_is_unbound(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    row = service.ensure_task_row(
+        external_task_id="TASK-FACTORY-BIND-FACT-AUTHORITY",
+        subject="fact authority wins over stale file",
+    )
+    task_id = str(row["id"])
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="factory_run_bound",
+            source="runtime.task_runtime",
+            task_id=task_id,
+            payload={
+                "task_id": task_id,
+                "event_type": "factory_run_bound",
+                "status": row["status"],
+                "execution_state": row["status"],
+                "factory_run_id": "factory-run-fact-owner",
+                "task_row_snapshot": {
+                    key: value for key, value in row.items() if key not in {"execution_event", "execution_events"}
+                },
+            },
+        )
+    )
+
+    conflict = service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=task_id,
+            factory_run_id="factory-run-file-intruder",
+        )
+    )
+
+    assert conflict.ok is False
+    assert conflict.code == "factory_run_binding_conflict"
+    assert conflict.existing_factory_run_id == "factory-run-fact-owner"
+    on_disk = json.loads(_task_file_path(workspace, task_id).read_text(encoding="utf-8"))
+    assert "factory_run_id" not in on_disk["metadata"]
+    projection = service.query_observable_task_rows_projection()
+    assert len(projection.rows_for_factory_run("factory-run-fact-owner")) == 1
+    assert projection.rows_for_factory_run("factory-run-file-intruder") == ()
+
+
+def test_factory_run_binding_concurrent_conflict_has_single_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    creator = _create_bootstrapped_task_runtime_service(workspace)
+    row = creator.ensure_task_row(
+        external_task_id="TASK-FACTORY-BIND-RACE",
+        subject="serialize competing Factory runs",
+    )
+    services = (_create_bootstrapped_task_runtime_service(workspace), _create_bootstrapped_task_runtime_service(workspace))
+    barrier = threading.Barrier(2)
+    original_bind = TaskBoard.bind_factory_run_id
+
+    def synchronized_bind(
+        board: TaskBoard,
+        task_id: int | str,
+        factory_run_id: str,
+    ) -> object:
+        barrier.wait(timeout=5)
+        return original_bind(board, task_id, factory_run_id)
+
+    def publish_succeeds(_service: TaskRuntimeService, _payload: dict[str, Any]) -> bool:
+        return True
+
+    monkeypatch.setattr(TaskBoard, "bind_factory_run_id", synchronized_bind)
+    monkeypatch.setattr(TaskRuntimeService, "_publish_factory_execution_event", publish_succeeds)
+    commands = (
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(row["id"]),
+            factory_run_id="factory-run-race-a",
+        ),
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(row["id"]),
+            factory_run_id="factory-run-race-b",
+        ),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        service_commands = zip(services, commands, strict=True)
+        results = list(
+            executor.map(
+                lambda pair: pair[0].bind_task_to_factory_run(pair[1]),
+                service_commands,
+            )
+        )
+
+    winners = [result for result in results if result.ok]
+    conflicts = [result for result in results if result.code == "factory_run_binding_conflict"]
+    assert len(winners) == 1
+    assert len(conflicts) == 1
+    winner_factory_run_id = winners[0].factory_run_id
+    assert conflicts[0].existing_factory_run_id == winner_factory_run_id
+    projection = _create_bootstrapped_task_runtime_service(workspace).query_observable_task_rows_projection()
+    assert len(projection.rows_for_factory_run(winner_factory_run_id)) == 1
+
+
+def test_factory_run_binding_concurrent_same_value_is_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    creator = _create_bootstrapped_task_runtime_service(workspace)
+    row = creator.ensure_task_row(
+        external_task_id="TASK-FACTORY-BIND-SAME-RACE",
+        subject="serialize same-value Factory run binding",
+    )
+    services = (_create_bootstrapped_task_runtime_service(workspace), _create_bootstrapped_task_runtime_service(workspace))
+    barrier = threading.Barrier(2)
+    original_bind = TaskBoard.bind_factory_run_id
+
+    def synchronized_bind(
+        board: TaskBoard,
+        task_id: int | str,
+        factory_run_id: str,
+    ) -> object:
+        barrier.wait(timeout=5)
+        return original_bind(board, task_id, factory_run_id)
+
+    def publish_succeeds(_service: TaskRuntimeService, _payload: dict[str, Any]) -> bool:
+        return True
+
+    monkeypatch.setattr(TaskBoard, "bind_factory_run_id", synchronized_bind)
+    monkeypatch.setattr(TaskRuntimeService, "_publish_factory_execution_event", publish_succeeds)
+    command = BindRuntimeTaskToFactoryRunCommandV1(
+        workspace=str(workspace),
+        task_id=str(row["id"]),
+        factory_run_id="factory-run-shared",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda service: service.bind_task_to_factory_run(command), services))
+
+    assert all(result.ok for result in results)
+    assert {result.code for result in results} <= {
+        "factory_run_bound",
+        "factory_run_already_bound",
+        "factory_run_binding_recovered",
+    }
+    assert sum(result.row_updated for result in results) == 1
+    projection = _create_bootstrapped_task_runtime_service(workspace).query_observable_task_rows_projection()
+    assert len(projection.rows_for_factory_run("factory-run-shared")) == 1
+
+
+def test_reexecution_reset_preserves_factory_run_binding_write_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    row = service.ensure_task_row(
+        external_task_id="TASK-FACTORY-BIND-REEXECUTION",
+        subject="reexecution keeps Factory ownership",
+    )
+    monkeypatch.setattr(service, "_publish_factory_execution_event", lambda _payload: True)
+    original = service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(row["id"]),
+            factory_run_id="factory-run-original",
+        )
+    )
+    assert original.ok is True
+
+    reset = service.reset_task_rows_for_reexecution(source="test.reexecution")
+    conflict = service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(row["id"]),
+            factory_run_id="factory-run-second",
+        )
+    )
+
+    assert reset["success"] is True
+    assert reset["skipped_files"] == []
+    assert conflict.ok is False
+    assert conflict.code == "factory_run_binding_conflict"
+    assert conflict.existing_factory_run_id == "factory-run-original"
+    on_disk = json.loads(_task_file_path(workspace, row["id"]).read_text(encoding="utf-8"))
+    assert on_disk["metadata"]["factory_run_id"] == "factory-run-original"
+
+
+def test_full_runtime_reset_after_terminal_run_creates_new_row_incarnation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    external_task_id = "TASK-FACTORY-BIND-NEW-INCARNATION"
+    first_row = service.ensure_task_row(
+        external_task_id=external_task_id,
+        subject="first Factory run row",
+    )
+    monkeypatch.setattr(service, "_publish_factory_execution_event", lambda _payload: True)
+    first_binding = service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(first_row["id"]),
+            factory_run_id="factory-run-first",
+        )
+    )
+    assert first_binding.ok is True
+    claimed = service.claim_execution(
+        first_row["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="factory-run-first",
+        selection_source="test.factory-incarnation",
+    )
+    assert claimed["success"] is True
+    completed = _settle_claimed_execution_attempt(
+        service, claimed, outcome="completed", summary="first Factory run completed"
+    )
+    assert completed["success"] is True
+
+    reset = service.reset_records(keep_plan=True, factory_run_id="factory-run-first")
+    second_row = service.ensure_task_row(
+        external_task_id=external_task_id,
+        subject="second Factory run row",
+    )
+    second_binding = service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(second_row["id"]),
+            factory_run_id="factory-run-second",
+        )
+    )
+
+    assert reset["failed_count"] == 0
+    assert int(second_row["id"]) > int(first_row["id"])
+    assert second_binding.ok is True
+    assert second_binding.code == "factory_run_bound"
+    assert second_binding.factory_run_id == "factory-run-second"
+    on_disk = json.loads(_task_file_path(workspace, second_row["id"]).read_text(encoding="utf-8"))
+    assert on_disk["metadata"]["factory_run_id"] == "factory-run-second"
+
+
+def test_ensure_task_row_does_not_rebind_existing_factory_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    external_task_id = "TASK-FACTORY-BIND-ENSURE"
+    row = service.ensure_task_row(
+        external_task_id=external_task_id,
+        subject="ensure remains creation-only",
+    )
+    monkeypatch.setattr(service, "_publish_factory_execution_event", lambda _payload: True)
+    command = BindRuntimeTaskToFactoryRunCommandV1(
+        workspace=str(workspace),
+        task_id=str(row["id"]),
+        factory_run_id="factory-run-original",
+    )
+    assert service.bind_task_to_factory_run(command).ok is True
+
+    ensured = service.ensure_task_row(
+        external_task_id=external_task_id,
+        subject="must not mutate existing row",
+        metadata={"factory_run_id": "factory-run-overwrite-attempt"},
+    )
+
+    assert ensured["factory_run_id"] == "factory-run-original"
+    on_disk = json.loads(_task_file_path(workspace, row["id"]).read_text(encoding="utf-8"))
+    assert on_disk["metadata"]["factory_run_id"] == "factory-run-original"
+
+
+def test_factory_run_binding_reports_missing_task(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    result = bind_runtime_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id="404",
+            factory_run_id="factory-run-missing-task",
+        )
+    )
+
+    assert result.ok is False
+    assert result.code == "task_not_found"
+    assert result.row_updated is False
+    assert result.event_recorded is False
+
+
 def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     stale = service.create_task_row(subject="stale", description="old row")
     stale_id = stale["id"]
@@ -5831,11 +6533,8 @@ def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_pat
         selection_source="unit",
     )
     assert claimed_stale["success"] is True
-    service.complete_execution(
-        stale_id,
-        session_id=str(claimed_stale["session"]["session_id"]),
-        result_summary="old row",
-        metadata={"previous_run": "old"},
+    _settle_claimed_execution_attempt(
+        service, claimed_stale, outcome="completed", summary="old row", metadata={"previous_run": "old"}
     )
 
     row = service.ensure_task_row(
@@ -5856,7 +6555,7 @@ def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_pat
 def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="实现账单模型",
@@ -5874,10 +6573,8 @@ def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: 
     )
     assert first_claim["success"] is True
 
-    suspended = service.suspend_execution(
-        created_id,
-        session_id=str(first_claim["session"]["session_id"]),
-        reason="director_execution_cancelled",
+    suspended = _settle_claimed_execution_attempt(
+        service, first_claim, outcome="suspended", summary="director_execution_cancelled"
     )
     assert suspended["success"] is True
     assert suspended["task"]["status"] == "pending"
@@ -5900,10 +6597,8 @@ def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: 
     assert resumed["task"]["status"] == "in_progress"
     assert resumed["task"]["resume_state"] == "resumed"
 
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(resumed["session"]["session_id"]),
-        result_summary="implemented billing model",
+    completed = _settle_claimed_execution_attempt(
+        service, resumed, outcome="completed", summary="implemented billing model"
     )
     assert completed["success"] is True
     assert completed["task"]["status"] == "completed"
@@ -5912,7 +6607,7 @@ def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: 
 def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     cancelled_task = service.create_task_row(subject="cancelled run task")
     cancelled_task_id = cancelled_task["id"]
@@ -6006,7 +6701,7 @@ def test_suspend_active_executions_for_run_reads_and_writes_session_under_file_l
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     other_run_task = service.create_task_row(subject="bulk suspend other run")
     other_run_task_id = int(other_run_task["id"])
@@ -6038,10 +6733,8 @@ def test_suspend_active_executions_for_run_reads_and_writes_session_under_file_l
     assert cancelled_claim["success"] is True
     assert other_run_claim["success"] is True
     assert inactive_claim["success"] is True
-    inactive_suspend = service.suspend_execution(
-        inactive_task_id,
-        session_id=str(inactive_claim["session"]["session_id"]),
-        reason="already_suspended_before_bulk_cancel",
+    inactive_suspend = _settle_claimed_execution_attempt(
+        service, inactive_claim, outcome="suspended", summary="already_suspended_before_bulk_cancel"
     )
     assert inactive_suspend["success"] is True
     session_id = str(cancelled_claim["session"]["session_id"])
@@ -6223,7 +6916,7 @@ def test_heartbeat_execution_fails_closed_on_event_append_failure(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="heartbeat append evidence")
     created_id = created["id"]
     task_id = int(created_id)
@@ -6249,6 +6942,14 @@ def test_heartbeat_execution_fails_closed_on_event_append_failure(
     assert heartbeat["requested_reason"] == "heartbeat_renewed"
     assert heartbeat["failure_class"] == "ledger_append_failed"
     assert heartbeat["state_mutation_applied"] is True
+    assert heartbeat["execution_event"]["failure_evidence"] == {
+        "schema_version": "task-runtime.execution-event-failure/1",
+        "source": "task_runtime",
+        "stage": "fact_append",
+        "code": "task_runtime_execution_event_runtime_error",
+        "error_type": "RuntimeError",
+        "details": {"message": "fact stream unavailable"},
+    }
     _assert_execution_event_append_failure_with_row_write_receipt(
         heartbeat["execution_event"],
         event_type="heartbeat_renewed",
@@ -6257,13 +6958,195 @@ def test_heartbeat_execution_fails_closed_on_event_append_failure(
     )
 
 
+def test_execution_event_append_without_bootstrap_preserves_fact_stream_authority_evidence(
+    tmp_path: Path,
+) -> None:
+    """Missing FactStream authority fails closed without degrading its typed evidence."""
+
+    workspace = tmp_path / "workspace-without-fact-stream-bootstrap"
+    workspace.mkdir(parents=True, exist_ok=True)
+    created = TaskRuntimeService(str(workspace)).create_task_row(subject="missing fact-stream authority")
+
+    execution_event = created["execution_event"]
+    assert execution_event["ok"] is False
+    assert execution_event["error"]
+    failure_evidence = execution_event["failure_evidence"]
+    assert failure_evidence["schema_version"] == "task-runtime.execution-event-failure/1"
+    assert failure_evidence["source"] == "fact_stream"
+    assert failure_evidence["stage"] == "fact_append"
+    assert failure_evidence["code"] == "lock_authority_missing"
+    assert failure_evidence["error_type"] == "FactStreamError"
+    assert failure_evidence["details"]
+
+
+def test_execution_event_append_with_explicit_bootstrap_succeeds(tmp_path: Path) -> None:
+    """TaskRuntime performs normal FactStream I/O only after public bootstrap."""
+
+    workspace = tmp_path / "workspace-with-fact-stream-bootstrap"
+    workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_task_runtime_fact_stream(workspace)
+
+    created = TaskRuntimeService(str(workspace)).create_task_row(subject="bootstrapped fact-stream authority")
+
+    assert created["execution_event"]["ok"] is True
+    assert created["execution_event"]["fact_stream"] == "task_runtime.execution"
+
+
+def test_execution_event_failure_evidence_details_are_detached_from_fact_stream_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Returned receipt evidence cannot mutate the FactStream exception details."""
+
+    workspace = tmp_path / "workspace-detached-failure-evidence"
+    workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_task_runtime_fact_stream(workspace)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(subject="detached failure evidence")
+    fact_error = FactStreamError(
+        "synthetic guarded append failure",
+        code="stream_lock_missing",
+        details={"lock": {"stream": "task_runtime.execution"}},
+    )
+
+    def raise_fact_stream_error(*_args: object, **_kwargs: object) -> NoReturn:
+        raise fact_error
+
+    monkeypatch.setattr(service, "_append_execution_fact", raise_fact_stream_error)
+    execution_event = service._append_execution_event(
+        "created",
+        task_row=service.get_task(int(created["id"])) or {},
+        session=None,
+    )
+
+    failure_evidence = execution_event["failure_evidence"]
+    assert failure_evidence == {
+        "schema_version": "task-runtime.execution-event-failure/1",
+        "source": "fact_stream",
+        "stage": "fact_append",
+        "code": "stream_lock_missing",
+        "error_type": "FactStreamError",
+        "details": {"lock": {"stream": "task_runtime.execution"}},
+    }
+    failure_evidence["details"]["lock"]["stream"] = "mutated"
+    assert fact_error.details == {"lock": {"stream": "task_runtime.execution"}}
+
+
+def test_execution_event_transition_identity_fact_stream_error_preserves_authority_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transition identity errors retain FactStream identity without append semantics."""
+
+    workspace = tmp_path / "workspace-transition-identity-fact-stream-error"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(subject="transition identity FactStream error")
+    fact_error = FactStreamError(
+        "synthetic transition identity failure",
+        code="transition_identity_lock_missing",
+        details={"transition": {"task_id": created["id"]}},
+    )
+
+    def raise_transition_identity(*, session: TaskExecutionSession | None) -> tuple[str, str | None]:
+        del session
+        raise fact_error
+
+    monkeypatch.setattr(service, "_execution_transition_identity", raise_transition_identity)
+    execution_event = service._append_execution_event(
+        "created",
+        task_row=service.get_task(int(created["id"])) or {},
+        session=None,
+    )
+
+    assert execution_event["ok"] is False
+    assert execution_event["failure_evidence"] == {
+        "schema_version": "task-runtime.execution-event-failure/1",
+        "source": "fact_stream",
+        "stage": "transition_identity",
+        "code": "transition_identity_lock_missing",
+        "error_type": "FactStreamError",
+        "details": {"transition": {"task_id": created["id"]}},
+    }
+
+
+def test_execution_event_publish_fact_stream_error_preserves_authority_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Publish exceptions remain FactStream failure evidence after a durable append."""
+
+    workspace = tmp_path / "workspace-event-publish-fact-stream-error"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(subject="event publish FactStream error")
+    fact_error = FactStreamError(
+        "synthetic event publish failure",
+        code="projection_stream_unavailable",
+        details={"projection": {"subject": "event.factory"}},
+    )
+
+    def raise_publish_error(_payload: dict[str, object]) -> bool:
+        raise fact_error
+
+    monkeypatch.setattr(service, "_publish_factory_execution_event", raise_publish_error)
+    execution_event = service._append_execution_event(
+        "created",
+        task_row=service.get_task(int(created["id"])) or {},
+        session=None,
+    )
+
+    assert execution_event["ok"] is True
+    assert execution_event["published"] is False
+    assert execution_event["failure_evidence"] == {
+        "schema_version": "task-runtime.execution-event-failure/1",
+        "source": "fact_stream",
+        "stage": "event_publish",
+        "code": "projection_stream_unavailable",
+        "error_type": "FactStreamError",
+        "details": {"projection": {"subject": "event.factory"}},
+    }
+
+
+def test_execution_event_validation_failure_uses_task_runtime_generic_evidence_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A generic validation error never impersonates a FactStream failure code."""
+
+    workspace = tmp_path / "workspace-validation-failure-evidence"
+    workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_task_runtime_fact_stream(workspace)
+    service = TaskRuntimeService(str(workspace))
+    created = service.create_task_row(subject="validation failure evidence")
+
+    def raise_validation_error(*_args: object, **_kwargs: object) -> NoReturn:
+        raise ValueError("synthetic append validation failure")
+
+    monkeypatch.setattr(service, "_append_execution_fact", raise_validation_error)
+    execution_event = service._append_execution_event(
+        "created",
+        task_row=service.get_task(int(created["id"])) or {},
+        session=None,
+    )
+
+    assert execution_event["failure_evidence"] == {
+        "schema_version": "task-runtime.execution-event-failure/1",
+        "source": "task_runtime",
+        "stage": "fact_append",
+        "code": "task_runtime_execution_event_validation_error",
+        "error_type": "ValueError",
+        "details": {"message": "synthetic append validation failure"},
+    }
+
+
 def test_suspend_active_executions_for_run_fails_closed_on_event_append_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="cancel with append evidence")
     created_id = created["id"]
     task_id = int(created_id)
@@ -6308,7 +7191,7 @@ def test_suspend_active_executions_for_run_fails_closed_on_event_append_failure(
 def test_task_runtime_service_persists_sessions_under_canonical_task_namespace(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="persist task session canonically",
@@ -6338,7 +7221,7 @@ def test_task_runtime_service_ignores_corrupt_session_snapshot(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="recover corrupt session")
     created_id = created["id"]
@@ -6375,7 +7258,7 @@ def test_task_runtime_service_ignores_corrupt_session_snapshot(
 def test_task_runtime_service_writes_sessions_atomically(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="persist task session atomically",
@@ -6427,7 +7310,7 @@ def test_task_runtime_service_writes_sessions_atomically(tmp_path: Path, monkeyp
 def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="emit execution event",
@@ -6444,11 +7327,7 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     )
     assert claimed["success"] is True
 
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
     assert completed["success"] is True
 
     event_path = Path(resolve_runtime_path(str(workspace), "runtime/events/task_runtime.execution.jsonl"))
@@ -6481,6 +7360,154 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert payload["lease_expires_at"]
 
 
+def test_factory_terminal_fact_projects_workspace_fencing_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    factory_run_id = "factory-run-terminal-fencing"
+    workspace_lease = {
+        "schema_version": "factory.workspace-run-lease.v1",
+        "workspace": str(workspace.resolve()),
+        "run_id": factory_run_id,
+        "state": "active",
+        "version": 4,
+        "fencing_token": 73,
+        "acquired_at": "2026-07-13T00:00:00+00:00",
+        "updated_at": "2026-07-13T00:02:00+00:00",
+        "expires_at": "2026-07-13T01:00:00+00:00",
+    }
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    monkeypatch.setattr(
+        service,
+        "_publish_factory_execution_event",
+        lambda _payload: True,
+    )
+    created = service.create_task_row(
+        subject="emit fenced Factory terminal fact",
+        metadata={
+            "factory_run_id": factory_run_id,
+            "factory_workspace_run_lease": workspace_lease,
+        },
+    )
+    claimed = service.claim_execution(
+        created["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="director-child-run",
+        selection_source="task_id_lookup",
+    )
+
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
+
+    assert completed["success"] is True
+    completed_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="completed",
+        )
+    ).events
+    assert len(completed_events) == 1
+    event = completed_events[0]
+    payload = event["payload"]
+    assert event["stream"] == "task_runtime.execution"
+    assert int(event["seq"]) >= 1
+    assert payload["event_type"] == "completed"
+    assert payload["terminal"] is True
+    assert payload["workspace"] == str(workspace)
+    assert payload["factory_run_id"] == factory_run_id
+    assert payload["workspace_lease_fencing_token"] == 73
+    assert payload["factory_workspace_run_lease"] == workspace_lease
+    assert payload["task_row_snapshot"]["metadata"]["factory_workspace_run_lease"] == workspace_lease
+
+
+@pytest.mark.parametrize(
+    "invalid_token",
+    [None, 0, -1, True, 1.5, "not-an-integer", {}, []],
+)
+def test_execution_event_builder_never_fabricates_workspace_fencing_token(
+    invalid_token: object,
+) -> None:
+    lease = {
+        "schema_version": "factory.workspace-run-lease.v1",
+        "workspace": "/tmp/factory-workspace",
+        "run_id": "factory-run-invalid-token",
+        "fencing_token": invalid_token,
+    }
+
+    payload = build_task_runtime_execution_event_payload(
+        event_type="completed",
+        workspace="/tmp/factory-workspace",
+        task_row={
+            "id": 51,
+            "status": "completed",
+            "metadata": {
+                "factory_run_id": "factory-run-invalid-token",
+                "factory_workspace_run_lease": lease,
+            },
+        },
+        session=None,
+    )
+
+    assert payload["factory_workspace_run_lease"] == lease
+    assert "workspace_lease_fencing_token" not in payload
+
+
+def test_execution_event_builder_keeps_non_factory_tasks_lease_free() -> None:
+    payload = build_task_runtime_execution_event_payload(
+        event_type="completed",
+        workspace="/tmp/non-factory-workspace",
+        task_row={"id": 52, "status": "completed", "metadata": {}},
+        session=None,
+    )
+
+    assert "factory_run_id" not in payload
+    assert "factory_workspace_run_lease" not in payload
+    assert "workspace_lease_fencing_token" not in payload
+
+
+def test_task_runtime_execution_fact_contract_and_terminal_session_round_trip() -> None:
+    session = TaskExecutionSession.create(
+        task_id=41,
+        role_id="director",
+        worker_id="worker-1",
+        run_id="run-terminal-round-trip",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="claim",
+        selection_source="unit",
+    )
+
+    assert session.terminal_transition_id == ""
+    session.mark_completed(result_summary="done")
+    transition_id = session.terminal_transition_id
+    assert transition_id.startswith("task-transition-")
+
+    restored = TaskExecutionSession.from_dict(json.loads(json.dumps(session.to_dict(), ensure_ascii=False)))
+    restored.mark_completed(result_summary="done")
+    assert restored.terminal_transition_id == transition_id
+
+    fact = TaskRuntimeExecutionFactV1.from_payload(
+        transition_id=transition_id,
+        payload={
+            "event_type": "completed",
+            "workspace": "/tmp/workspace",
+            "task_id": "41",
+            "status": "completed",
+            "execution_state": "completed",
+            "timestamp": restored.released_at,
+        },
+    )
+    record = fact.to_record()
+    assert fact.terminal is True
+    assert record["transition_id"] == transition_id
+    assert record["terminal"] is True
+    assert record["idempotency_key"] == fact.idempotency_key
+
+
 def test_task_runtime_execution_event_append_delegates_sequence_authority_to_fact_stream(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -6495,7 +7522,7 @@ def test_task_runtime_execution_event_append_delegates_sequence_authority_to_fac
         return real_append_fact_event(command)
 
     monkeypatch.setattr(service_module, "append_fact_event", recording_append)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="expected seq event")
     created_id = created["id"]
@@ -6507,22 +7534,130 @@ def test_task_runtime_execution_event_append_delegates_sequence_authority_to_fac
         selection_source="task_id_lookup",
     )
     assert claimed["success"] is True
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
     assert completed["success"] is True
 
-    assert expected_seq_values[:3] == [None, None, None]
+    assert expected_seq_values[:3] == [1, 2, 3]
     events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
     assert [int(event["seq"]) for event in events[:3]] == [1, 2, 3]
+
+
+def test_terminal_execution_fact_reuses_transition_identity_after_cas_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(subject="terminal CAS identity")
+    claimed = service.claim_execution(
+        created["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="run-terminal-cas",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+
+    real_append_fact_event = service_module.append_fact_event
+    completed_commands: list[AppendFactEventCommandV1] = []
+
+    def append_with_one_competing_fact(command: AppendFactEventCommandV1) -> object:
+        if command.event_type == "completed":
+            completed_commands.append(command)
+            if len(completed_commands) == 1:
+                real_append_fact_event(
+                    AppendFactEventCommandV1(
+                        workspace=str(workspace),
+                        stream="task_runtime.execution",
+                        event_type="competing_probe",
+                        source="runtime.task_runtime.test",
+                        task_id="competing-task",
+                        payload={
+                            "event_type": "competing_probe",
+                            "task_id": "competing-task",
+                            "status": "in_progress",
+                        },
+                    )
+                )
+                raise FactStreamError(
+                    "injected expected sequence drift",
+                    code="expected_seq_drift",
+                )
+        return real_append_fact_event(command)
+
+    monkeypatch.setattr(service_module, "append_fact_event", append_with_one_competing_fact)
+
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
+
+    assert completed["success"] is True
+    assert len(completed_commands) == 2
+    assert completed_commands[0].expected_seq == 3
+    assert completed_commands[1].expected_seq == 4
+    assert completed_commands[0].idempotency_key == completed_commands[1].idempotency_key
+    assert completed_commands[0].idempotency_key
+    assert completed_commands[0].payload["transition_id"] == completed_commands[1].payload["transition_id"]
+
+
+def test_repeated_terminal_execution_append_returns_committed_fact(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(subject="terminal append idempotency")
+    claimed = service.claim_execution(
+        created["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="run-terminal-repeat",
+        selection_source="unit",
+    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
+    assert completed["success"] is True
+
+    duplicate = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
+
+    assert duplicate["success"] is True
+    assert duplicate["code"] == "settlement_idempotent"
+    assert (
+        duplicate["projection_receipt"]["terminal_transition_id"]
+        == completed["projection_receipt"]["terminal_transition_id"]
+    )
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    assert sum(event["event_type"] == "completed" for event in events) == 1
+
+
+def test_distinct_heartbeats_never_share_transition_identity(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(subject="heartbeat transition identity")
+    claimed = service.claim_execution(
+        created["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="run-heartbeat-identity",
+        selection_source="unit",
+    )
+    session_id = str(claimed["session"]["session_id"])
+
+    first = service.heartbeat_execution(created["id"], session_id=session_id)
+    second = service.heartbeat_execution(created["id"], session_id=session_id)
+
+    assert first["success"] is True
+    assert second["success"] is True
+    events = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")).events
+    heartbeat_payloads = [event["payload"] for event in events if event["event_type"] == "heartbeat_renewed"]
+    assert len(heartbeat_payloads) == 2
+    assert heartbeat_payloads[0]["transition_id"] != heartbeat_payloads[1]["transition_id"]
+    assert heartbeat_payloads[0]["idempotency_key"] != heartbeat_payloads[1]["idempotency_key"]
 
 
 def test_task_runtime_execution_event_append_is_concurrency_safe(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     def append_probe(index: int) -> int | None:
         appended = service._append_execution_fact(
@@ -6547,7 +7682,7 @@ def test_task_runtime_execution_event_append_is_concurrency_safe(tmp_path: Path)
 def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="emit row update events")
     created_id = created["id"]
@@ -6562,11 +7697,7 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
         selection_source="unit",
     )
     assert claimed["success"] is True
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
     assert completed["success"] is True
     unblocked_child = service.get_task(child_id)
     assert unblocked_child is not None
@@ -6602,7 +7733,7 @@ def test_task_runtime_update_and_reopen_emit_execution_events(tmp_path: Path) ->
 def test_task_runtime_rework_exhaustion_failure_is_owner_transition(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="qa-owned rework exhausted")
     created_id = int(created["id"])
@@ -6616,11 +7747,7 @@ def test_task_runtime_rework_exhaustion_failure_is_owner_transition(tmp_path: Pa
         selection_source="test",
     )
     assert claimed["success"] is True
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="director completed",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="director completed")
     assert completed["success"] is True
 
     failed = service.fail_task_row_after_rework_exhausted(
@@ -6671,7 +7798,7 @@ def test_task_runtime_dedup_cancel_is_owner_transition(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     primary = service.create_task_row(subject="primary task")
     duplicate = service.create_task_row(subject="duplicate task")
@@ -6749,7 +7876,7 @@ def test_task_runtime_role_adapter_failure_is_owner_transition(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="pm planning task")
     created_id = int(created["id"])
@@ -6828,7 +7955,7 @@ def test_reopen_task_row_reports_event_append_failure_without_persisting_evidenc
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(subject="reopen with append evidence")
     created_id = created["id"]
     task_id = int(created_id)
@@ -6841,11 +7968,7 @@ def test_reopen_task_row_reports_event_append_failure_without_persisting_evidenc
         selection_source="unit",
     )
     assert claimed["success"] is True
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
     assert completed["success"] is True
 
     monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
@@ -6872,7 +7995,7 @@ def test_task_runtime_factory_event_projects_fact_stream_receipt(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     published: dict[str, object] = {}
 
     class Publisher:
@@ -6918,12 +8041,15 @@ def test_task_runtime_factory_event_projects_fact_stream_receipt(
     assert payload["fact_event_id"]
     assert payload["fact_stream"] == "task_runtime.execution"
     assert payload["fact_storage_path"] == "runtime/events/task_runtime.execution.jsonl"
+    assert envelope["event_id"] == payload["fact_event_id"]
+    assert envelope["cursor"] == payload["fact_event_seq"]
+    assert envelope["meta"]["fact_event_seq"] == payload["fact_event_seq"]
 
 
 def test_task_runtime_execution_event_without_factory_run_is_not_published(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="non factory execution event")
     task_id = int(created["id"])
@@ -6948,7 +8074,7 @@ def test_task_runtime_factory_event_publish_false_is_projected(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     class Publisher:
         def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
@@ -6975,11 +8101,74 @@ def test_task_runtime_factory_event_publish_false_is_projected(
     assert execution_event["fact_stream"] == "task_runtime.execution"
     assert execution_event["published"] is False
     assert execution_event["publish_error"] == "factory_execution_event_publish_returned_false"
+    assert execution_event["projection_evidence"] == {
+        "schema_version": "task-runtime.execution-event-projection/1",
+        "source": "task_runtime",
+        "stage": "event_publish",
+        "code": "factory_execution_event_publish_returned_false",
+        "status": "not_published",
+        "details": {
+            "factory_run_id": "factory_123456789abc",
+            "durable_fact": {
+                "event_id": execution_event["fact_event_id"],
+                "stream": "task_runtime.execution",
+                "event_seq": execution_event["fact_event_seq"],
+            },
+        },
+    }
     _assert_execution_event_row_write_receipt(
         execution_event,
         task_id=task_id,
         task_path=_task_file_path(workspace, task_id),
     )
+
+
+def test_task_execution_result_keeps_success_when_factory_publish_returns_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missed realtime projection never reverses a durable execution transition."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+
+    class Publisher:
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            del subject, payload
+            return False
+
+    import polaris.infrastructure.log_pipeline.jetstream_publisher as publisher_module
+
+    monkeypatch.setattr(
+        publisher_module,
+        "get_log_jetstream_publisher",
+        lambda: Publisher(),
+    )
+    created = service.create_task_row(
+        subject="high-level result preserves durable success",
+        metadata={"factory_run_id": "factory_123456789abc"},
+    )
+
+    claimed = service.claim_execution(
+        created["id"],
+        worker_id="director",
+        role_id="director",
+        run_id="director-123456789abc",
+        selection_source="task_id_lookup",
+    )
+
+    assert claimed["success"] is True
+    assert claimed["reason"] == "claimed"
+    assert claimed["execution_event"]["ok"] is True
+    assert claimed["execution_event"]["published"] is False
+    assert "failure_evidence" not in claimed["execution_event"]
+    projection_evidence = claimed["projection_evidence"]
+    assert projection_evidence == claimed["execution_event"]["projection_evidence"]
+    assert projection_evidence["code"] == "factory_execution_event_publish_returned_false"
+    assert projection_evidence["status"] == "not_published"
+    projection_evidence["details"]["durable_fact"]["event_id"] = "mutated"
+    assert claimed["execution_event"]["projection_evidence"]["details"]["durable_fact"]["event_id"] != "mutated"
 
 
 def test_task_runtime_factory_event_preserves_payload_director_run_id(
@@ -6988,7 +8177,7 @@ def test_task_runtime_factory_event_preserves_payload_director_run_id(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     published: dict[str, object] = {}
 
     class Publisher:
@@ -7012,6 +8201,8 @@ def test_task_runtime_factory_event_preserves_payload_director_run_id(
             "task_id": "task-1",
             "event_type": "completed",
             "status": "completed",
+            "fact_event_id": "evt-committed-terminal-fact",
+            "fact_event_seq": 17,
         }
     )
 
@@ -7020,6 +8211,9 @@ def test_task_runtime_factory_event_preserves_payload_director_run_id(
     assert isinstance(envelope, dict)
     assert envelope["run_id"] == "factory_123456789abc"
     assert envelope["channel"] == "event.factory:factory_123456789abc"
+    assert envelope["event_id"] == "evt-committed-terminal-fact"
+    assert envelope["cursor"] == 17
+    assert envelope["meta"]["fact_event_seq"] == 17
     payload = envelope["payload"]
     assert isinstance(payload, dict)
     assert payload["run_id"] == "director-123456789abc"
@@ -7034,7 +8228,7 @@ def test_create_task_row_projects_fact_event_seq_matching_fact_stream(tmp_path: 
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     row = service.create_task_row(subject="project fact_event_seq")
 
@@ -7056,7 +8250,7 @@ def test_claim_and_complete_execution_projects_fact_event_seq_consistently(tmp_p
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="seq claim+complete")
     created_id = int(created["id"])
@@ -7075,11 +8269,7 @@ def test_claim_and_complete_execution_projects_fact_event_seq_consistently(tmp_p
     assert isinstance(claim_event.get("fact_event_seq"), int)
     assert claim_event["fact_event_seq"] >= 1
 
-    completed = service.complete_execution(
-        created_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="done",
-    )
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
     assert completed["success"] is True
     completed_event = completed["execution_event"]
     assert completed_event["ok"] is True
@@ -7108,7 +8298,7 @@ def test_execution_event_does_not_fabricate_fact_event_seq_on_append_failure(
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     monkeypatch.setattr(service, "_append_execution_fact", _raise_fact_stream_unavailable)
 
@@ -7139,7 +8329,7 @@ def test_execution_event_does_not_fabricate_fact_event_seq_on_publish_failure(
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     def fail_publish(_payload: dict[str, object]) -> bool:
         raise RuntimeError("publish down")
@@ -7173,7 +8363,7 @@ def test_execution_event_omits_fact_event_seq_when_appended_seq_is_none(
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     workspace_path = str(workspace)
 
     def _make_appended() -> Any:
@@ -7210,7 +8400,7 @@ def test_list_task_rows_from_execution_facts_projects_fact_event_seq_matching_ev
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     append_fact_event(
         AppendFactEventCommandV1(
@@ -7262,7 +8452,7 @@ def test_list_task_rows_from_execution_facts_preserves_payload_fact_event_seq(tm
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     append_fact_event(
         AppendFactEventCommandV1(
@@ -7303,7 +8493,7 @@ def test_list_task_rows_from_execution_facts_uses_latest_fact_window(tmp_path: P
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     for event_type, status in (
         ("created", "pending"),
@@ -7351,7 +8541,7 @@ def test_list_task_rows_from_execution_facts_queries_gateway_and_keeps_latest_wi
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     for event_type, status in (
         ("created", "pending"),
@@ -7387,7 +8577,7 @@ def test_find_latest_execution_fact_row_for_task_pages_backward_through_gateway(
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     target_task_id = 232
 
     _append_execution_fact_probe(
@@ -7454,7 +8644,7 @@ def test_list_task_rows_from_execution_facts_omits_fact_event_seq_when_wrapper_s
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     append_fact_event(
         AppendFactEventCommandV1(
@@ -7520,7 +8710,7 @@ def test_list_observable_task_rows_preserves_fact_event_seq_overlay(tmp_path: Pa
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     created = service.create_task_row(
         subject="Overlay preserves fact_event_seq",
         description="file row overlaid by fact row",
@@ -7580,7 +8770,7 @@ def test_dependent_rows_blocked_by_reads_fact_overlaid_observable_rows(tmp_path:
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     parent = service.create_task_row(subject="observable dependency parent")
     parent_id = int(parent["id"])
@@ -7656,7 +8846,7 @@ def test_dependent_rows_blocked_by_reads_fact_overlaid_observable_rows(tmp_path:
     assert row["blocked_by"] == [parent_id]
     assert row["subject"] == "fact-overlaid dependent row"
     assert row["metadata"]["source"] == "task_runtime.execution_fact"
-    assert row["metadata"]["previous_status"] == "pending"
+    assert "previous_status" not in row["metadata"]
     assert row["metadata"]["projection"] == "execution_fact"
 
     persisted_dependent = json.loads(_task_file_path(workspace, dependent_id).read_text(encoding="utf-8"))
@@ -7724,7 +8914,7 @@ def test_file_task_rows_project_to_observable_rows_across_refresh_suspend_and_re
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     parent = service.create_task_row(subject="file-backed parent")
     parent_id = int(parent["id"])
@@ -7775,11 +8965,7 @@ def test_file_task_rows_project_to_observable_rows_across_refresh_suspend_and_re
     )
     assert claimed["success"] is True
 
-    suspended = service.suspend_execution(
-        child_id,
-        session_id=str(claimed["session"]["session_id"]),
-        reason="unit_regression",
-    )
+    suspended = _settle_claimed_execution_attempt(service, claimed, outcome="suspended", summary="unit_regression")
     assert suspended["success"] is True
     assert suspended["task"]["status"] == "pending"
     assert suspended["task"]["resume_state"] == "resumable"
@@ -7818,7 +9004,7 @@ def test_list_ready_task_rows_skips_file_pending_row_with_terminal_fact(tmp_path
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="stale pending row over terminal fact")
     created_id = str(created["id"])
@@ -7859,7 +9045,7 @@ def test_observable_task_row_stats_count_terminal_fact_overlay(tmp_path: Path) -
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="observable stats terminal fact")
     created_id = str(created["id"])
@@ -7899,7 +9085,7 @@ def test_select_next_task_with_requested_id_rejects_stale_pending_file_row(tmp_p
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="select_next_task terminal fact rejection")
     created_id = str(created["id"])
@@ -7934,7 +9120,7 @@ def test_claim_next_execution_skips_stale_pending_row_with_terminal_fact(tmp_pat
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     stale = service.create_task_row(subject="stale pending file row over terminal fact")
     stale_id = str(stale["id"])
@@ -7999,7 +9185,7 @@ def test_refresh_dependency_unblocks_overlays_execution_fact_status(tmp_path: Pa
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     parent = service.create_task_row(subject="fact-only completed parent")
     parent_id = str(parent["id"])
@@ -8082,7 +9268,7 @@ def test_claim_execution_rejects_stale_pending_row_with_terminal_execution_fact(
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(subject="claim direct rejects stale pending over terminal fact")
     created_id = int(created["id"])
@@ -8159,7 +9345,7 @@ def test_claim_execution_refreshes_dependency_unblocks_from_execution_fact(
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     # Parent file row stays at status="pending" — never claimed, never
     # completed through the service APIs.
@@ -8261,7 +9447,7 @@ def test_get_task_returns_fact_overlaid_status_for_numeric_task_id(tmp_path: Pat
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="get_task numeric overlay",
@@ -8306,7 +9492,7 @@ def test_get_task_returns_fact_overlaid_status_for_numeric_task_id(tmp_path: Pat
     # The fact-overlay marker must be present so consumers can distinguish a
     # file-row status from a fact-overlaid status.
     assert overlaid.get("metadata", {}).get("source") == "task_runtime.execution_fact"
-    assert overlaid.get("metadata", {}).get("previous_status") == "pending"
+    assert "previous_status" not in overlaid.get("metadata", {})
 
 
 def test_get_task_returns_fact_overlaid_status_for_external_task_id(tmp_path: Path) -> None:
@@ -8318,7 +9504,7 @@ def test_get_task_returns_fact_overlaid_status_for_external_task_id(tmp_path: Pa
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     external_id = "TASK-EXT"
     created = service.create_task_row(
@@ -8381,14 +9567,13 @@ def test_get_task_returns_fact_overlaid_status_for_external_task_id(tmp_path: Pa
         "get_task must surface the latest task_runtime.execution fact status "
         f"for external id {external_id!r}; got status={overlaid.get('status')!r}"
     )
-    # The overlay merges the fact onto the file row, so the observable row id
-    # is the file-row's numeric id while the external id stays reachable
-    # through metadata.
+    # The fact snapshot is authoritative; its normalized numeric row id and
+    # external-id metadata make the row discoverable without merging file state.
     assert overlaid["id"] == created_id
     assert str(overlaid["metadata"].get("external_task_id") or "") == external_id
     assert str(overlaid["metadata"].get("source_task_id") or "") == external_id
     assert overlaid["metadata"].get("source") == "task_runtime.execution_fact"
-    assert overlaid["metadata"].get("previous_status") == "pending"
+    assert "previous_status" not in overlaid["metadata"]
 
 
 # ---------------------------------------------------------------------------
@@ -8420,7 +9605,7 @@ def test_task_exists_returns_true_for_fact_only_numeric_task_id(tmp_path: Path) 
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     fact_only_id = 4242
 
@@ -8505,7 +9690,7 @@ def test_task_exists_keeps_true_when_observable_overlays_terminal_fact(tmp_path:
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     created = service.create_task_row(
         subject="task_exists overlay",
@@ -8556,7 +9741,7 @@ def test_task_exists_returns_false_for_unknown_task_id_when_facts_present(tmp_pa
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     fact_only_id = 9001
 
@@ -8622,7 +9807,7 @@ def test_dependency_status_read_model_rows_delegates_to_transitional_read_model_
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     sentinel_rows: list[dict[str, Any]] = [
         {
             "id": 71,
@@ -8669,7 +9854,7 @@ def test_fact_overlaid_dependency_status_rows_reuses_observable_projection_helpe
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     file_rows: list[dict[str, Any]] = [
         {
             "id": 41,
@@ -8733,7 +9918,7 @@ def test_fact_overlaid_dependency_status_rows_delegates_to_dependency_status_rea
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     read_model_calls: list[str] = []
 
     def dependency_status_read_model_rows() -> list[dict[str, Any]]:
@@ -8805,7 +9990,7 @@ def test_task_has_unresolved_dependencies_uses_fact_overlay_for_completed_parent
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     parent = service.create_task_row(subject="fact-overlay completed parent")
     parent_id = int(parent["id"])
@@ -8894,7 +10079,7 @@ def test_task_has_unresolved_dependencies_returns_true_when_dependency_missing(
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     missing_parent_id = 7777
     created = service.create_task_row(
@@ -8932,7 +10117,7 @@ def test_task_has_unresolved_dependencies_returns_true_when_overlay_status_not_c
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
 
     parent = service.create_task_row(subject="non-completed overlay parent")
     parent_id = int(parent["id"])
@@ -9003,7 +10188,7 @@ def test_prepare_owner_rework_execution_reopens_terminal_row_and_rotates_session
 
     workspace = tmp_path / task_role
     workspace.mkdir()
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     task_id = "owner-task" if task_role == "owner" else "requester-task"
     created = service.ensure_task_row(external_task_id=task_id, subject=f"{task_role} task")
     runtime_task_id = int(created["id"])
@@ -9014,11 +10199,12 @@ def test_prepare_owner_rework_execution_reopens_terminal_row_and_rotates_session
         external_task_id=task_id,
     )
     assert claimed["success"] is True
-    session_id = str(claimed["session"]["session_id"])
     if terminal_outcome == "completed":
-        terminal = service.complete_execution(runtime_task_id, session_id=session_id)
+        terminal = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="")
     else:
-        terminal = service.fail_execution(runtime_task_id, session_id=session_id, error="owner rework required")
+        terminal = _settle_claimed_execution_attempt(
+            service, claimed, outcome="failed", summary="owner rework required"
+        )
     assert terminal["success"] is True
 
     prepared = service.prepare_owner_rework_execution(_owner_rework_prepare_command(workspace, task_role=task_role))
@@ -9055,7 +10241,7 @@ def test_prepare_owner_rework_execution_is_idempotent_for_nonterminal_handoff(tm
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     service.ensure_task_row(external_task_id="owner-task", subject="owner task")
     command = _owner_rework_prepare_command(workspace, task_role="owner")
 
@@ -9081,7 +10267,7 @@ def test_prepare_owner_rework_execution_rejects_conflicting_handoff(tmp_path: Pa
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     service.ensure_task_row(external_task_id="owner-task", subject="owner task")
 
     assert (
@@ -9106,7 +10292,7 @@ def test_prepare_owner_rework_execution_rejects_malformed_handoff_and_missing_ro
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    service = TaskRuntimeService(str(workspace))
+    service = _create_bootstrapped_task_runtime_service(workspace)
     malformed = _owner_rework_prepare_command(workspace, task_role="owner")
     object.__setattr__(malformed.authorization, "handoff", object())
 
@@ -9119,3 +10305,416 @@ def test_prepare_owner_rework_execution_rejects_malformed_handoff_and_missing_ro
     assert malformed_result.code == "owner_rework_authorization_malformed"
     assert missing_row_result.ok is False
     assert missing_row_result.code == "runtime_task_not_found"
+
+
+def test_claim_execution_threaded_contenders_have_one_session_winner(tmp_path: Path) -> None:
+    """Independent services must serialize one task claim through the file lock."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    seed_service = _create_bootstrapped_task_runtime_service(workspace)
+    created = seed_service.create_task_row(subject="threaded claim authority")
+    task_id = int(created["id"])
+    services = (_create_bootstrapped_task_runtime_service(workspace), _create_bootstrapped_task_runtime_service(workspace))
+    start_barrier = threading.Barrier(2)
+
+    def claim(service: TaskRuntimeService, worker_id: str) -> dict[str, Any]:
+        start_barrier.wait(timeout=10)
+        return service.claim_execution(
+            task_id,
+            worker_id=worker_id,
+            role_id="director",
+            run_id="threaded-claim-run",
+            selection_source="threaded-claim-regression",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = (
+            executor.submit(claim, services[0], "thread-worker-a"),
+            executor.submit(claim, services[1], "thread-worker-b"),
+        )
+        results = [future.result(timeout=15) for future in futures]
+
+    winners = [result for result in results if result["success"] is True]
+    losers = [result for result in results if result["success"] is False]
+    assert len(winners) == 1
+    assert len(losers) == 1
+    assert losers[0]["reason"] == "lease_conflict"
+    assert winners[0]["session"]["session_id"] == losers[0]["session"]["session_id"]
+    assert winners[0]["execution_attempt"]["session_id"] == winners[0]["session"]["session_id"]
+
+
+def test_claim_execution_spawn_contenders_have_one_session_winner(tmp_path: Path) -> None:
+    """Spawned interpreters must not split persisted session claim authority."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    seed_service = _create_bootstrapped_task_runtime_service(workspace)
+    created = seed_service.create_task_row(subject="spawn claim authority")
+    task_id = int(created["id"])
+    package_parent = str(Path(__file__).resolve().parents[6])
+    if package_parent not in sys.path:
+        sys.path.insert(0, package_parent)
+    context = mp.get_context("spawn")
+    start_event = context.Event()
+    result_queue = context.Queue(maxsize=2)
+    processes = [
+        context.Process(
+            target=_multiprocess_claim_execution,
+            args=(str(workspace), task_id, worker_id, start_event, result_queue),
+        )
+        for worker_id in ("spawn-worker-a", "spawn-worker-b")
+    ]
+
+    try:
+        for process in processes:
+            process.start()
+        start_event.set()
+        try:
+            results = [result_queue.get(timeout=20) for _ in processes]
+        except Empty:
+            pytest.fail("spawn claim contenders did not report within the timeout")
+    finally:
+        start_event.set()
+        for process in processes:
+            process.join(timeout=10)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        result_queue.close()
+        result_queue.join_thread()
+
+    assert all(process.exitcode == 0 for process in processes)
+    winners = [result for result in results if result["success"] is True]
+    losers = [result for result in results if result["success"] is False]
+    assert len(winners) == 1
+    assert len(losers) == 1
+    assert losers[0]["reason"] == "lease_conflict"
+    assert winners[0]["session"]["session_id"] == losers[0]["session"]["session_id"]
+
+
+def test_claim_replay_resume_and_reload_keep_execution_attempt_authority(tmp_path: Path) -> None:
+    """Replay renews one session; a resumable requeue creates a new attempt."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(subject="claim replay and resume identity")
+    task_id = int(created["id"])
+
+    first = service.claim_execution(
+        task_id,
+        worker_id="director-worker",
+        role_id="director",
+        run_id="identity-run",
+        selection_source="identity-regression",
+    )
+    replay = service.claim_execution(
+        task_id,
+        worker_id="director-worker",
+        role_id="director",
+        run_id="identity-run",
+        selection_source="identity-regression",
+    )
+
+    assert first["success"] is True
+    assert replay["success"] is True
+    assert replay["reason"] == "claim_renewed"
+    assert replay["session"]["session_id"] == first["session"]["session_id"]
+    assert replay["execution_attempt"]["attempt"] == first["execution_attempt"]["attempt"]
+
+    suspended = _settle_claimed_execution_attempt(service, replay, outcome="suspended", summary="requeue-for-resume")
+    resumed = service.claim_execution(
+        task_id,
+        worker_id="director-worker",
+        role_id="director",
+        run_id="identity-run",
+        selection_source="identity-resume-regression",
+    )
+
+    assert suspended["success"] is True
+    assert resumed["success"] is True
+    assert resumed["resumed"] is True
+    assert resumed["session"]["session_id"] != first["session"]["session_id"]
+    assert resumed["execution_attempt"]["attempt"] == first["execution_attempt"]["attempt"] + 1
+
+    reloaded = _create_bootstrapped_task_runtime_service(workspace)
+    identity = TaskRuntimeExecutionAttemptIdentityV1(**dict(resumed["execution_attempt"]))
+    verdict = validate_task_runtime_execution_attempt(
+        ValidateTaskRuntimeExecutionAttemptQueryV1(workspace=str(workspace), identity=identity)
+    )
+    assert verdict.valid is True
+    assert verdict.code == "valid"
+    assert verdict.identity == identity
+    assert reloaded._read_session(task_id) is not None
+
+
+def test_execution_attempt_validation_is_typed_fail_closed_and_read_only(tmp_path: Path) -> None:
+    """Attempt validation rejects forged authority fields without mutation."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created = service.create_task_row(
+        subject="attempt validation authority",
+        metadata={"external_task_id": "external-validation-task"},
+    )
+    task_id = int(created["id"])
+    claimed = service.claim_execution(
+        task_id,
+        worker_id="validation-worker",
+        role_id="director",
+        run_id="validation-run",
+        external_task_id="external-validation-task",
+        selection_source="validation-regression",
+    )
+    assert claimed["success"] is True
+    identity = TaskRuntimeExecutionAttemptIdentityV1(**dict(claimed["execution_attempt"]))
+    session_path = _session_file_path(workspace, task_id)
+    before_hash = _sha256_utf8_file(session_path)
+    before_mtime_ns = session_path.stat().st_mtime_ns
+
+    valid = service.validate_execution_attempt(
+        ValidateTaskRuntimeExecutionAttemptQueryV1(workspace=str(workspace), identity=identity)
+    )
+    assert valid.valid is True
+    assert valid.code == "valid"
+    assert _sha256_utf8_file(session_path) == before_hash
+    assert session_path.stat().st_mtime_ns == before_mtime_ns
+
+    mismatches = (
+        (
+            "workspace",
+            ValidateTaskRuntimeExecutionAttemptQueryV1(
+                workspace=f"{workspace}-forged",
+                identity=identity,
+            ),
+            "workspace_mismatch",
+        ),
+        (
+            "task",
+            ValidateTaskRuntimeExecutionAttemptQueryV1(
+                workspace=str(workspace),
+                identity=replace(identity, task_id=task_id + 1000),
+            ),
+            "session_not_found",
+        ),
+        (
+            "forged_session",
+            ValidateTaskRuntimeExecutionAttemptQueryV1(
+                workspace=str(workspace),
+                identity=replace(identity, session_id="forged-session"),
+            ),
+            "session_mismatch",
+        ),
+        (
+            "attempt",
+            ValidateTaskRuntimeExecutionAttemptQueryV1(
+                workspace=str(workspace),
+                identity=replace(identity, attempt=identity.attempt + 1),
+            ),
+            "attempt_mismatch",
+        ),
+        (
+            "role",
+            ValidateTaskRuntimeExecutionAttemptQueryV1(
+                workspace=str(workspace),
+                identity=replace(identity, role_id="qa"),
+            ),
+            "role_mismatch",
+        ),
+        (
+            "worker",
+            ValidateTaskRuntimeExecutionAttemptQueryV1(
+                workspace=str(workspace),
+                identity=replace(identity, worker_id="forged-worker"),
+            ),
+            "worker_mismatch",
+        ),
+        (
+            "run",
+            ValidateTaskRuntimeExecutionAttemptQueryV1(
+                workspace=str(workspace),
+                identity=replace(identity, run_id="forged-run"),
+            ),
+            "run_mismatch",
+        ),
+        (
+            "external",
+            ValidateTaskRuntimeExecutionAttemptQueryV1(
+                workspace=str(workspace),
+                identity=replace(identity, external_task_id="forged-external-task"),
+            ),
+            "external_task_id_mismatch",
+        ),
+        (
+            "lease_version",
+            ValidateTaskRuntimeExecutionAttemptQueryV1(
+                workspace=str(workspace),
+                identity=replace(identity, lease_expires_at="2000-01-01T00:00:00+00:00"),
+            ),
+            "lease_version_mismatch",
+        ),
+    )
+    for field_name, query, expected_code in mismatches:
+        verdict = service.validate_execution_attempt(query)
+        assert verdict.valid is False, field_name
+        assert verdict.code == expected_code
+
+    session_payload = json.loads(session_path.read_text(encoding="utf-8"))
+    session_payload["lease_expires_at"] = "2000-01-01T00:00:00+00:00"
+    session_path.write_text(
+        json.dumps(session_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    expired_identity = replace(identity, lease_expires_at=session_payload["lease_expires_at"])
+    expired = service.validate_execution_attempt(
+        ValidateTaskRuntimeExecutionAttemptQueryV1(workspace=str(workspace), identity=expired_identity)
+    )
+    assert expired.valid is False
+    assert expired.code == "session_lease_expired"
+
+    stale_task = service.create_task_row(subject="stale execution attempt")
+    stale_task_id = int(stale_task["id"])
+    stale_claim = service.claim_execution(
+        stale_task_id,
+        worker_id="stale-worker",
+        role_id="director",
+        run_id="stale-run",
+        selection_source="validation-regression",
+    )
+    stale_identity = TaskRuntimeExecutionAttemptIdentityV1(**dict(stale_claim["execution_attempt"]))
+    suspended = _settle_claimed_execution_attempt(
+        service, stale_claim, outcome="suspended", summary="stale-identity-requeue"
+    )
+    reclaimed = service.claim_execution(
+        stale_task_id,
+        worker_id="stale-worker",
+        role_id="director",
+        run_id="stale-run",
+        selection_source="validation-regression",
+    )
+    assert suspended["success"] is True
+    assert reclaimed["success"] is True
+    stale = service.validate_execution_attempt(
+        ValidateTaskRuntimeExecutionAttemptQueryV1(workspace=str(workspace), identity=stale_identity)
+    )
+    assert stale.valid is False
+    assert stale.code == "session_mismatch"
+
+
+def test_typed_heartbeat_is_bounded_by_real_spawned_session_lock(tmp_path: Path) -> None:
+    """A held cooperative lock rejects in time, then permits a real renewal."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    task_id = int(service.create_task_row(subject="bounded typed heartbeat")["id"])
+    claim = service.claim_execution(
+        task_id,
+        worker_id="heartbeat-worker",
+        role_id="chief_engineer",
+        run_id="heartbeat-run",
+        selection_source="heartbeat-bound-regression",
+    )
+    identity = TaskRuntimeExecutionAttemptIdentityV1(**dict(claim["execution_attempt"]))
+    session_path = _session_file_path(workspace, task_id)
+    before_hash = _sha256_utf8_file(session_path)
+    package_parent = str(Path(__file__).resolve().parents[6])
+    if package_parent not in sys.path:
+        sys.path.insert(0, package_parent)
+    context = mp.get_context("spawn")
+    ready_marker_path = workspace / "session-lock-ready.txt"
+    holder = context.Process(
+        target=_multiprocess_hold_session_lock,
+        args=(str(workspace), task_id, str(ready_marker_path), 1.0),
+    )
+    holder.start()
+    try:
+        readiness_deadline = time.monotonic() + 10
+        while not ready_marker_path.is_file() and time.monotonic() < readiness_deadline:
+            time.sleep(0.01)
+        assert ready_marker_path.read_text(encoding="utf-8") == "locked\n"
+        started_at = time.monotonic()
+        blocked = heartbeat_task_runtime_execution_attempt(
+            HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+                workspace=str(workspace),
+                identity=identity,
+                lease_ttl_seconds=30,
+                lock_timeout_seconds=0.1,
+                context_summary="bounded-lock-regression",
+            )
+        )
+        elapsed_seconds = time.monotonic() - started_at
+        assert blocked.success is False
+        assert blocked.reason == "file_lock_timeout"
+        assert 0.08 <= elapsed_seconds < 1.0
+        assert _sha256_utf8_file(session_path) == before_hash
+    finally:
+        holder.join(timeout=10)
+        if holder.is_alive():
+            holder.terminate()
+            holder.join(timeout=5)
+    assert holder.exitcode == 0
+
+    renewed = heartbeat_task_runtime_execution_attempt(
+        HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+            workspace=str(workspace),
+            identity=identity,
+            lease_ttl_seconds=30,
+            lock_timeout_seconds=0.5,
+            context_summary="bounded-lock-released",
+        )
+    )
+    assert renewed.success is True
+    assert renewed.reason == "heartbeat_renewed"
+    assert renewed.renewed_identity is not None
+    assert renewed.renewed_identity.lease_expires_at != identity.lease_expires_at
+    assert renewed.evidence_anchor["session_write_receipt"]["session_id"] == identity.session_id
+
+
+def test_typed_heartbeat_rejects_every_forged_identity_field_without_mutation(tmp_path: Path) -> None:
+    """The bounded mutation path fences every canonical identity component."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    task_id = int(
+        service.create_task_row(
+            subject="typed heartbeat identity fence",
+            metadata={"external_task_id": "typed-heartbeat-task"},
+        )["id"]
+    )
+    claim = service.claim_execution(
+        task_id,
+        worker_id="typed-worker",
+        role_id="chief_engineer",
+        run_id="typed-run",
+        external_task_id="typed-heartbeat-task",
+        selection_source="typed-heartbeat-regression",
+    )
+    identity = TaskRuntimeExecutionAttemptIdentityV1(**dict(claim["execution_attempt"]))
+    session_path = _session_file_path(workspace, task_id)
+    before_hash = _sha256_utf8_file(session_path)
+    forged_identities = (
+        (replace(identity, task_id=task_id + 1), "session_not_found"),
+        (replace(identity, session_id="forged-session"), "session_mismatch"),
+        (replace(identity, attempt=identity.attempt + 1), "attempt_mismatch"),
+        (replace(identity, role_id="director"), "role_mismatch"),
+        (replace(identity, worker_id="forged-worker"), "worker_mismatch"),
+        (replace(identity, run_id="forged-run"), "run_mismatch"),
+        (replace(identity, external_task_id="forged-task"), "external_task_id_mismatch"),
+        (replace(identity, lease_expires_at="2000-01-01T00:00:00+00:00"), "lease_version_mismatch"),
+    )
+    for forged_identity, expected_reason in forged_identities:
+        verdict = heartbeat_task_runtime_execution_attempt(
+            HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+                workspace=str(workspace),
+                identity=forged_identity,
+                lease_ttl_seconds=30,
+                lock_timeout_seconds=0.5,
+            )
+        )
+        assert verdict.success is False
+        assert verdict.reason == expected_reason
+        assert _sha256_utf8_file(session_path) == before_hash

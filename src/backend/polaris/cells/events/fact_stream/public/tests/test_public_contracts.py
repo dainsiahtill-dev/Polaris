@@ -3,13 +3,44 @@
 from __future__ import annotations
 
 import pytest
+from polaris.cells.events.fact_stream.public.catalog import fact_stream_bootstrap_streams
 from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
     FactEventAppendedV1,
     FactStreamError,
+    FactStreamHeadV1,
+    FactStreamProvenanceV1,
     FactStreamQueryResultV1,
+    ProvisionFactStreamLockAuthorityCommandV1,
     QueryFactEventsV1,
+    QueryFactStreamHeadV1,
 )
+
+
+def test_bootstrap_catalog_is_static_and_nonempty() -> None:
+    streams = fact_stream_bootstrap_streams()
+
+    assert streams
+    assert len(streams) == len(set(streams))
+    assert streams == tuple(sorted(streams))
+    assert "factory.settlement" in streams
+    assert "task_runtime.execution" in streams
+
+
+def test_authority_provision_command_requires_explicit_maintenance_intent() -> None:
+    command = ProvisionFactStreamLockAuthorityCommandV1(
+        workspace="/repo",
+        streams=fact_stream_bootstrap_streams(),
+        maintenance_reason="http_app_lifespan_startup",
+    )
+
+    assert command.streams == fact_stream_bootstrap_streams()
+    with pytest.raises(ValueError, match="maintenance_reason"):
+        ProvisionFactStreamLockAuthorityCommandV1(
+            workspace="/repo",
+            streams=("task_runtime.execution",),
+            maintenance_reason=" ",
+        )
 
 
 class TestAppendFactEventCommandV1HappyPath:
@@ -28,6 +59,8 @@ class TestAppendFactEventCommandV1HappyPath:
         assert cmd.source == "director"
         assert cmd.run_id is None
         assert cmd.task_id is None
+        assert cmd.durability == "buffered"
+        assert cmd.strict_integrity is False
 
     def test_with_optional_ids(self) -> None:
         cmd = AppendFactEventCommandV1(
@@ -146,6 +179,7 @@ class TestQueryFactEventsV1HappyPath:
         assert q.limit == 100
         assert q.offset == 0
         assert q.event_type is None
+        assert q.strict_integrity is False
 
     def test_with_filters(self) -> None:
         q = QueryFactEventsV1(
@@ -175,6 +209,57 @@ class TestQueryFactEventsV1EdgeCases:
     def test_negative_offset_raises(self) -> None:
         with pytest.raises(ValueError, match="offset"):
             QueryFactEventsV1(workspace="/repo", stream="audit", offset=-1)
+
+
+class TestFactStreamHeadContracts:
+    def test_query_requires_workspace_and_stream(self) -> None:
+        query = QueryFactStreamHeadV1(workspace="/repo", stream="audit")
+        assert query.workspace == "/repo"
+        assert query.stream == "audit"
+        assert query.strict_integrity is False
+
+        with pytest.raises(ValueError, match="workspace"):
+            QueryFactStreamHeadV1(workspace="", stream="audit")
+
+    def test_head_requires_adjacent_sequences(self) -> None:
+        head = FactStreamHeadV1(
+            workspace="/repo",
+            stream="audit",
+            storage_path="runtime/events/audit.jsonl",
+            current_seq=3,
+            next_expected_seq=4,
+        )
+        assert head.current_seq == 3
+        assert head.next_expected_seq == 4
+
+        with pytest.raises(ValueError, match=r"current_seq \+ 1"):
+            FactStreamHeadV1(
+                workspace="/repo",
+                stream="audit",
+                storage_path="runtime/events/audit.jsonl",
+                current_seq=3,
+                next_expected_seq=5,
+            )
+
+
+def test_turn_transition_provenance_requires_all_identity_fields() -> None:
+    provenance = FactStreamProvenanceV1(
+        workspace="/workspace",
+        run_id="run-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        transition_id="transition-1",
+    )
+
+    assert provenance.to_record()["transition_id"] == "transition-1"
+    with pytest.raises(ValueError, match="transition_id"):
+        FactStreamProvenanceV1(
+            workspace="/workspace",
+            run_id="run-1",
+            task_id="task-1",
+            turn_id="turn-1",
+            transition_id="",
+        )
 
 
 class TestFactEventAppendedV1HappyPath:
@@ -300,6 +385,37 @@ class TestFactStreamError:
         )
         assert err.code == "append_rejected"
         assert err.details == {"stream": "audit"}
+
+    def test_details_recursively_detach_nested_mappings_and_sequences(self) -> None:
+        nested_mapping: dict[str, list[dict[str, str]]] = {"entries": [{"state": "before"}]}
+        nested_tuple_mapping: dict[str, list[str]] = {"nested": ["before"]}
+        source = {
+            "mapping": nested_mapping,
+            "tuple": ("fixed", nested_tuple_mapping),
+        }
+
+        err = FactStreamError("append failed", details=source)
+        nested_mapping["entries"][0]["state"] = "after"
+        nested_tuple_mapping["nested"].append("after")
+        err.details["mapping"]["entries"].append({"state": "error-only"})
+
+        assert err.details == {
+            "mapping": {"entries": [{"state": "before"}, {"state": "error-only"}]},
+            "tuple": ("fixed", {"nested": ["before"]}),
+        }
+        assert source == {
+            "mapping": {"entries": [{"state": "after"}]},
+            "tuple": ("fixed", {"nested": ["before", "after"]}),
+        }
+
+    def test_details_normalize_unknown_values_with_public_serialization_policy(self) -> None:
+        class ExternalDetail:
+            def __str__(self) -> str:
+                return "external-detail"
+
+        err = FactStreamError("append failed", details={"external": ExternalDetail()})
+
+        assert err.details == {"external": "external-detail"}
 
     def test_empty_message_raises(self) -> None:
         with pytest.raises(ValueError, match="message"):

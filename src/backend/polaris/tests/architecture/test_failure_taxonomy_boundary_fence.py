@@ -22,7 +22,6 @@ QA_VERDICT_ENGINE = POLARIS_ROOT / "cells" / "qa" / "audit_verdict" / "internal"
 OWNED_FAILURE_CLASS_DEFINITIONS = {
     "FailureClassV1": "polaris/cells/control_plane/run_ledger/public/failure_evidence.py",
     "TaskBoundaryFailureClassV1": "polaris/cells/control_plane/run_ledger/public/task_boundary.py",
-    "QaFailureClassV1": "polaris/cells/qa/audit_verdict/public/contracts.py",
     "AuditFailureClass": "polaris/kernelone/audit/error_correlator.py",
     "TurnFailureClass": "polaris/cells/roles/kernel/public/turn_contracts.py",
     "SequentialFailureClass": "polaris/cells/roles/runtime/internal/sequential_engine.py",
@@ -45,6 +44,7 @@ LOCAL_FAILURE_CLASS_BOUNDARY_DECISIONS = {
         "boundary": "roles.kernel.turn_continuation",
         "allowed_imports": (
             "polaris/cells/roles/kernel/internal/transaction/ledger.py",
+            "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py",
             "polaris/cells/roles/runtime/internal/continuation_policy.py",
             "polaris/cells/roles/runtime/internal/session_orchestrator.py",
         ),
@@ -62,6 +62,7 @@ LOCAL_FAILURE_CLASS_BOUNDARY_DECISIONS = {
 LOCAL_FAILURE_CLASS_FIELD_USAGE_ALLOWLIST = {
     "polaris/cells/roles/adapters/internal/director/adapter_sequential.py",
     "polaris/cells/roles/kernel/internal/transaction/ledger.py",
+    "polaris/cells/roles/kernel/internal/transaction/outcome_commit.py",
     "polaris/cells/roles/kernel/public/turn_contracts.py",
     "polaris/cells/roles/runtime/internal/continuation_policy.py",
     "polaris/cells/roles/runtime/internal/session_orchestrator.py",
@@ -167,6 +168,24 @@ def test_failure_class_definitions_are_explicitly_owned() -> None:
     }
 
     assert actual == OWNED_FAILURE_CLASS_DEFINITIONS
+
+
+def test_qa_has_no_second_failure_class_enum_or_cross_layer_import_surface() -> None:
+    """QA and its consumers must use the Run Ledger canonical enum directly."""
+
+    offenders: list[str] = []
+    for path in _production_python_files(POLARIS_ROOT):
+        tree = _parse_python(path)
+        relative = path.relative_to(BACKEND_ROOT).as_posix()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "QaFailureClassV1":
+                offenders.append(f"{relative}:{node.lineno}:class")
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "QaFailureClassV1":
+                        offenders.append(f"{relative}:{node.lineno}:import")
+
+    assert offenders == []
 
 
 def test_local_failure_class_boundary_decisions_are_complete() -> None:
@@ -353,8 +372,8 @@ def test_roles_ecosystem_does_not_hand_write_failure_class_string_literals() -> 
     string literals.
 
     All failure classifications must route through Run Ledger public
-    ``FailureClassV1``, ``TaskBoundaryFailureClassV1``, or ``QaFailureClassV1``
-    enum values.  Bare ``failure_class = "..."`` or ``{"failure_class": "..."}``
+    ``FailureClassV1`` or boundary-local ``TaskBoundaryFailureClassV1`` enum
+    values. Bare ``failure_class = "..."`` or ``{"failure_class": "..."}``
     literals are a reclassification bypass that escapes the canonical taxonomy.
     """
 

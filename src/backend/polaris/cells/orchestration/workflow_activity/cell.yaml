@@ -41,6 +41,7 @@ public_contracts:
   - WorkflowContext
   errors: []
 depends_on:
+- control_plane.run_ledger
 - orchestration.workflow_engine
 - orchestration.workflow_runtime
 - orchestration.pm_planning

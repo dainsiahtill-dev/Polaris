@@ -30,8 +30,8 @@ Violations:
 
 from __future__ import annotations
 
+import ast
 import os
-import re
 from pathlib import Path
 
 import pytest
@@ -39,6 +39,112 @@ import yaml
 
 BACKEND_ROOT = Path(__file__).resolve().parents[4]
 FITNESS_RULES_FILE = BACKEND_ROOT / "docs" / "governance" / "ci" / "fitness-rules.yaml"
+
+_FORBIDDEN_TASK_PUBLICATION_METHODS = frozenset(
+    {
+        "claim_work_item",
+        "publish_work_item",
+    }
+)
+
+
+def _protocol_import_aliases(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """Return direct and module aliases that can denote ``Protocol`` bases."""
+    protocol_names = {"Protocol"}
+    typing_module_names = {"typing", "typing_extensions"}
+
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module in {"typing", "typing_extensions"}:
+            for imported_name in node.names:
+                if imported_name.name == "Protocol":
+                    protocol_names.add(imported_name.asname or imported_name.name)
+        elif isinstance(node, ast.Import):
+            for imported_name in node.names:
+                if imported_name.name in {"typing", "typing_extensions"}:
+                    typing_module_names.add(imported_name.asname or imported_name.name)
+
+    return protocol_names, typing_module_names
+
+
+def _is_protocol_declaration(
+    node: ast.ClassDef,
+    *,
+    protocol_names: set[str],
+    typing_module_names: set[str],
+) -> bool:
+    """Return whether ``node`` declares a structural port rather than an implementation."""
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id in protocol_names:
+            return True
+        if (
+            isinstance(base, ast.Attribute)
+            and base.attr == "Protocol"
+            and isinstance(base.value, ast.Name)
+            and base.value.id in typing_module_names
+        ):
+            return True
+    return False
+
+
+class _AlternativeTaskPublisherVisitor(ast.NodeVisitor):
+    """Collect executable task publishers while excluding Protocol-only ports."""
+
+    def __init__(
+        self,
+        *,
+        protocol_names: set[str],
+        typing_module_names: set[str],
+    ) -> None:
+        self._protocol_names = protocol_names
+        self._typing_module_names = typing_module_names
+        self.violations: list[tuple[int, str]] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if _is_protocol_declaration(
+            node,
+            protocol_names=self._protocol_names,
+            typing_module_names=self._typing_module_names,
+        ):
+            return
+        if "TaskBroker" in node.name:
+            self.violations.append((node.lineno, f"concrete broker class {node.name}"))
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._record_task_publication_method(node)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._record_task_publication_method(node)
+        self.generic_visit(node)
+
+    def _record_task_publication_method(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> None:
+        if node.name in _FORBIDDEN_TASK_PUBLICATION_METHODS:
+            self.violations.append((node.lineno, f"executable method {node.name}"))
+
+
+def _find_alternative_task_publishers(source: str) -> list[tuple[int, str]]:
+    """Find concrete task-publication mechanisms in one Python source unit.
+
+    Consumer-owned ``Protocol`` methods describe the canonical TaskMarket port;
+    they are type contracts, not executable brokers. Concrete functions and
+    classes remain blocking violations.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [(exc.lineno or 1, f"syntax error prevents broker audit: {exc.msg}")]
+
+    protocol_names, typing_module_names = _protocol_import_aliases(tree)
+    visitor = _AlternativeTaskPublisherVisitor(
+        protocol_names=protocol_names,
+        typing_module_names=typing_module_names,
+    )
+    visitor.visit(tree)
+    return visitor.violations
 
 
 def _build_utf8_env() -> dict[str, str]:
@@ -351,12 +457,6 @@ def test_no_alternative_task_publication_in_mainline() -> None:
     # Note: create_task is allowed in task lifecycle services (task_lifecycle_service)
     # and asyncio task groups (task_group). Only publish/claim work items are
     # restricted to task_market canonical source.
-    forbidden_patterns = [
-        r"def\s+publish_work_item\b",
-        r"class\s+\w*TaskBroker\w*",
-        r"def\s+claim_work_item\b",
-    ]
-
     violations: list[str] = []
 
     for py_file in cells_dir.rglob("*.py"):
@@ -372,16 +472,38 @@ def test_no_alternative_task_publication_in_mainline() -> None:
         except (UnicodeDecodeError, OSError):
             continue
 
-        for i, line in enumerate(content.splitlines(), 1):
-            for pattern in forbidden_patterns:
-                if re.search(pattern, line):
-                    stripped = line.strip()
-                    if not stripped.startswith("#"):
-                        violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{i}: {stripped}")
+        for line_no, reason in _find_alternative_task_publishers(content):
+            violations.append(f"{py_file.relative_to(BACKEND_ROOT)}:{line_no}: {reason}")
 
     assert len(violations) == 0, f"Found {len(violations)} alternative task publication mechanisms:\n" + "\n".join(
         violations[:10]
     )
+
+
+def test_task_market_protocol_port_is_not_an_alternative_broker() -> None:
+    """A canonical broker dependency Protocol must not count as a publisher."""
+    source = """
+from typing import Protocol as BrokerProtocol
+
+class TaskMarketPort(BrokerProtocol):
+    def publish_work_item(self, command: object) -> object: ...
+    def claim_work_item(self, query: object) -> object: ...
+"""
+
+    assert _find_alternative_task_publishers(source) == []
+
+
+def test_concrete_task_publisher_is_an_alternative_broker() -> None:
+    """A concrete publisher outside TaskMarket must remain a blocking violation."""
+    source = """
+class RoguePublisher:
+    def publish_work_item(self, command: object) -> object:
+        return command
+"""
+
+    violations = _find_alternative_task_publishers(source)
+
+    assert violations == [(3, "executable method publish_work_item")]
 
 
 def test_task_state_must_go_through_task_market() -> None:

@@ -40,6 +40,7 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion impo
 )
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
     _bind_transaction_attempt,
+    _require_bound_transaction_attempt,
     _resolve_transaction_turn_id,
     _start_transaction_invocation,
 )
@@ -79,6 +80,11 @@ class TransactionTurnExecutor:
         response_schema: type | None,
     ) -> RoleTurnResult:
         """Execute one non-streaming role turn via ``TransactionKernel``."""
+        _require_bound_transaction_attempt(
+            request,
+            role=role,
+            workspace=self.kernel.workspace,
+        )
         tk = create_transaction_kernel(self.kernel, role, profile, request)
         turn_id = _resolve_transaction_turn_id(request, observer_run_id)
 
@@ -143,7 +149,7 @@ class TransactionTurnExecutor:
             tk_result=tk_result,
             response_schema=response_schema,
             runtime_tool_policy_audit=runtime_tool_policy_audit,
-            tool_filter_audit=tool_filter_audit,
+            tool_filter_audit=tool_filter_audit or {},
             context_gateway=context_gateway,
             context_result=context_result,
         )
@@ -159,9 +165,18 @@ class TransactionTurnExecutor:
         uep_publisher: UEPEventPublisher,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Execute one streaming role turn via ``TransactionKernel``."""
-        tk = create_transaction_kernel(self.kernel, role, profile, request)
-        invocation_id = _start_transaction_invocation(request)
+        invocation_id = _start_transaction_invocation(
+            request,
+            role=role,
+            workspace=self.kernel.workspace,
+        )
         _bind_transaction_attempt(request, invocation_id=invocation_id, attempt=0)
+        _require_bound_transaction_attempt(
+            request,
+            role=role,
+            workspace=self.kernel.workspace,
+        )
+        tk = create_transaction_kernel(self.kernel, role, profile, request)
         turn_id = _resolve_transaction_turn_id(request, stream_run_id)
 
         invocation_setup = await build_transaction_invocation_setup(
@@ -216,7 +231,7 @@ class TransactionTurnExecutor:
             messages=messages,
             tool_definitions=tool_definitions,
             tool_choice_override=tool_surface.tool_choice_override,
-            tool_filter_audit=tool_filter_audit,
+            tool_filter_audit=tool_filter_audit or {},
             context_gateway=context_gateway,
             context_result=context_result,
         ):

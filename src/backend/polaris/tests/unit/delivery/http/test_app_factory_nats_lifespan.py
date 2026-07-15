@@ -25,6 +25,18 @@ def _patch_lifespan_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_shutdown_local_nats_runtime() -> None:
         return None
 
+    async def fake_start_factory_settlement_runtime(
+        workspace: str,
+        *,
+        enable_wake_bridge: bool,
+        wake_bridge_required: bool,
+    ) -> object:
+        del workspace, enable_wake_bridge, wake_bridge_required
+        return object()
+
+    async def fake_stop_factory_settlement_runtime(_workspace: str) -> bool:
+        return True
+
     monkeypatch.setattr("polaris.infrastructure.di.container.reset_container", lambda: None)
     monkeypatch.setattr("polaris.infrastructure.di.container.get_container", fake_get_container)
     monkeypatch.setattr("polaris.cells.resident.autonomy.public.service.reset_resident_services", lambda: None)
@@ -38,6 +50,18 @@ def _patch_lifespan_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "polaris.infrastructure.messaging.nats.server_runtime.shutdown_local_nats_runtime",
         fake_shutdown_local_nats_runtime,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.factory.pipeline.public.start_factory_settlement_runtime",
+        fake_start_factory_settlement_runtime,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.factory.pipeline.public.stop_factory_settlement_runtime",
+        fake_stop_factory_settlement_runtime,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.events.fact_stream.public.bootstrap_fact_stream_workspace",
+        lambda _command: None,
     )
 
 
@@ -99,7 +123,7 @@ async def test_lifespan_continues_when_nats_optional_bootstrap_fails(
     _patch_lifespan_dependencies(monkeypatch)
 
     async def fake_ensure_local_nats_runtime(_url: str) -> None:
-        raise RuntimeError("nats-server executable not found for managed local runtime")
+        raise OSError("nats socket is unavailable")
 
     monkeypatch.setattr(
         "polaris.infrastructure.messaging.nats.server_runtime.ensure_local_nats_runtime",

@@ -62,6 +62,7 @@ depends_on:
 - chief_engineer.blueprint
 - code_intelligence.engine
 - context.engine
+- events.fact_stream
 - director.execution
 - factory.cognitive_runtime
 - factory.verification_guard
@@ -75,6 +76,7 @@ depends_on:
 - roles.profile
 - roles.session
 - runtime.task_market
+- runtime.task_runtime
 - runtime.projection
 - runtime.execution_broker
 - runtime.state_owner

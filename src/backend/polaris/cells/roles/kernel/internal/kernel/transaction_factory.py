@@ -32,11 +32,20 @@ from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import (
     execute_single_tool,
     reset_cached_tool_gateway_turn_boundary,
 )
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
+    TransactionIdentityError,
+    _require_bound_transaction_attempt,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_context_output_budget_tokens
+from polaris.cells.roles.kernel.internal.llm_caller.request_facts import project_role_request_facts
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
+from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
+)
+from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -65,6 +74,52 @@ def _first_non_empty(*values: Any) -> str:
     return ""
 
 
+def _resolve_turn_transition_id(request: RoleTurnRequest) -> str:
+    """Return the stable execution transition identity bound before kernel creation."""
+
+    metadata = getattr(request, "metadata", None)
+    metadata_map = metadata if isinstance(metadata, dict) else {}
+    attempt_transition = str(metadata_map.get("transaction_attempt_id") or "").strip()
+    compatibility_transition = str(metadata_map.get("turn_transition_id") or "").strip()
+    if not attempt_transition:
+        if compatibility_transition:
+            raise TransactionIdentityError(
+                "turn_transition_id has no bound transaction attempt producer",
+                code="transaction_identity_unbound",
+            )
+        return ""
+    identity = _require_bound_transaction_attempt(request)
+    if compatibility_transition and compatibility_transition != identity.transition_id:
+        raise TransactionIdentityError(
+            "turn_transition_id cannot override transaction_attempt_id",
+            code="transaction_identity_mismatch",
+        )
+    return identity.transition_id
+
+
+def _resolve_durable_workspace(request: RoleTurnRequest, kernel: RoleExecutionKernel) -> str:
+    """Resolve one durable workspace and reject request/kernel identity drift.
+
+    A role request must never redirect a durable fact to a canonical project
+    cache when the role kernel is bound to a distinct fresh workspace.
+    """
+
+    request_workspace = str(getattr(request, "workspace", "") or "").strip()
+    kernel_workspace = str(getattr(kernel, "workspace", "") or "").strip()
+    if not request_workspace:
+        return kernel_workspace
+    if not kernel_workspace:
+        return request_workspace
+    request_identity = resolve_workspace_runtime_identity(request_workspace)
+    kernel_identity = resolve_workspace_runtime_identity(kernel_workspace)
+    if request_identity.workspace_abs != kernel_identity.workspace_abs:
+        raise RuntimeError(
+            "durable turn workspace identity mismatch "
+            f"request={request_identity.workspace_abs!r} kernel={kernel_identity.workspace_abs!r}"
+        )
+    return request_identity.workspace_abs
+
+
 def _resolve_existing_output_budget_tokens(context_override: dict[str, Any]) -> int | None:
     """Delegate to the ONE llm_caller key scan (budget_policy blueprint Phase 1).
 
@@ -85,56 +140,22 @@ def _assert_task_runtime_guard_allows_tool(request: Any) -> None:
             metadata.get("task_runtime_guard"),
         )
     )
-    session_id = _first_non_empty(
-        context_override.get("task_runtime_session_id"),
-        metadata.get("task_runtime_session_id"),
-        context_override.get("session_id"),
-        metadata.get("session_id"),
-    )
-    if not guard_enabled and not session_id:
+    if not guard_enabled:
         return
 
-    workspace = _first_non_empty(
-        context_override.get("workspace"),
-        metadata.get("workspace"),
-        getattr(request, "workspace", ""),
-    )
-    task_id = _first_non_empty(
-        context_override.get("task_id"),
-        context_override.get("pm_task_id"),
-        context_override.get("target_task_id"),
-        metadata.get("task_id"),
-        metadata.get("pm_task_id"),
-        metadata.get("target_task_id"),
-        getattr(request, "task_id", ""),
-    )
-    missing = [
-        name
-        for name, value in (
-            ("workspace", workspace),
-            ("task_id", task_id),
-            ("task_runtime_session_id", session_id),
+    authority = context_override.get("task_runtime_execution_attempt_authority")
+    if not isinstance(authority, TaskRuntimeExecutionAttemptAuthorityV1):
+        raise RuntimeError(
+            "director_tool_execution_guard_misconfigured: missing task_runtime_execution_attempt_authority"
         )
-        if not value
-    ]
-    if missing:
-        raise RuntimeError("director_tool_execution_guard_misconfigured: missing " + ",".join(missing))
 
-    from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
-
-    result = TaskRuntimeService(workspace).heartbeat_execution(
-        task_id,
-        session_id=session_id,
+    verdict = authority.heartbeat(
         lease_ttl_seconds=120,
+        lock_timeout_seconds=5.0,
         context_summary="transaction_kernel_tool_guard",
     )
-    if result.get("success") is True:
-        return
-    reason = str(result.get("reason") or "task_runtime_guard_blocked").strip()
-    raise RuntimeError(
-        "director_tool_execution_cancelled: task_runtime_guard_blocked "
-        f"reason={reason} task_id={task_id} session_id={session_id}"
-    )
+    if verdict.success is not True:
+        raise RuntimeError(f"director_tool_execution_guard_heartbeat_rejected:{verdict.code}")
 
 
 def create_transaction_kernel(
@@ -184,10 +205,7 @@ def create_transaction_kernel(
         max_tokens_floor: Any | None = None,
     ) -> dict[str, Any]:
         override: dict[str, Any]
-        if isinstance(getattr(provider_request, "context_override", None), dict):
-            override = dict(provider_request.context_override or {})
-        else:
-            override = {}
+        override = dict(role_request_fact_projection.context_override)
         incoming_choice_is_none = isinstance(tool_choice, str) and tool_choice.strip().lower() == "none"
         explicit_tool_disable = (
             isinstance(override.get("_transaction_kernel_forced_tool_definitions"), list)
@@ -285,6 +303,10 @@ def create_transaction_kernel(
     kernel_weakref = weakref.ref(kernel)
     provider_profile = profile
     provider_request = request
+    role_request_fact_projection = project_role_request_facts(
+        context_override=getattr(provider_request, "context_override", None),
+        metadata=getattr(provider_request, "metadata", None),
+    )
 
     class _LLMProvider:
         """Encapsulated LLM provider for TransactionKernel."""
@@ -469,6 +491,10 @@ def create_transaction_kernel(
         tool_executor=tool_runtime,
         synthesis_llm=None,
     )
+    durable_commit_required = bool(str(request.run_id or "").strip() and str(request.task_id or "").strip())
+    durable_workspace = (
+        _resolve_durable_workspace(request, kernel) if durable_commit_required else str(request.workspace or "").strip()
+    )
 
     return TransactionKernel(
         llm_provider=llm_provider,
@@ -478,8 +504,9 @@ def create_transaction_kernel(
             role_id=role,
             run_id=str(request.run_id or "").strip(),
             task_id=str(request.task_id or "").strip(),
-            durable_commit_required=bool(str(request.run_id or "").strip() and str(request.task_id or "").strip()),
-            workspace=str(request.workspace or "").strip(),
+            transition_id=_resolve_turn_transition_id(request),
+            durable_commit_required=durable_commit_required,
+            workspace=durable_workspace,
             mutation_guard_mode="strict" if role == "director" else "warn",
             recon_required=resolve_recon_required(role, provider_profile),
         ),

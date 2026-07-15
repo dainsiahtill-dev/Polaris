@@ -33,14 +33,12 @@
     ]
   },
   "neighbors": [
-    "director.execution",
-    "policy.permission",
-    "policy.workspace_guard",
+    "control_plane.run_ledger",
+    "runtime.task_market",
     "roles.runtime",
-    "runtime.projection",
     "audit.evidence",
-    "events.fact_stream",
-    "audit.verdict"
+    "audit.verdict",
+    "llm.dialogue"
   ],
   "state_owners": [
     "runtime/state/qa/*"

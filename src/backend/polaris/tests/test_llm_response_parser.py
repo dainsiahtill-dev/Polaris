@@ -35,6 +35,26 @@ def test_parser_handles_anthropic_style_payload():
     assert LLMResponseParser.extract_finish_reason(payload) == "end_turn"
 
 
+def test_parser_detects_truncated_anthropic_thinking_block() -> None:
+    payload = {
+        "content": [
+            {
+                "type": "thinking",
+                "thinking": "partial Chief Engineer portfolio reasoning",
+                "signature": "opaque-provider-signature",
+            }
+        ],
+        "stop_reason": "max_tokens",
+    }
+
+    assert LLMResponseParser.extract_text(payload) == ""
+    assert LLMResponseParser.extract_reasoning(payload) == "partial Chief Engineer portfolio reasoning"
+    finalized = LLMResponseParser.finalize_response(payload)
+    assert finalized.ok is False
+    assert finalized.thinking == "partial Chief Engineer portfolio reasoning"
+    assert "finish_reason=max_tokens" in str(finalized.error)
+
+
 def test_parser_handles_openai_responses_payload():
     payload = {
         "object": "response",

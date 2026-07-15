@@ -10,6 +10,7 @@ from polaris.application.health import get_lancedb_status
 from polaris.bootstrap.config import SettingsUpdate
 from polaris.cells.director.execution.public import rebind_director_service
 from polaris.cells.events.fact_stream.public.service import set_debug_tracing_enabled
+from polaris.cells.instances.public.service import normalize_instance_id
 from polaris.cells.runtime.artifact_store.public.service import build_snapshot
 from polaris.cells.runtime.projection.public.service import resolve_workspace_runtime_context
 from polaris.cells.storage.layout.public.service import (
@@ -144,6 +145,12 @@ def _active_workspace_from_request(request: Request | None) -> str:
     return ""
 
 
+def _current_process_instance_id() -> str:
+    """Project the controlled process identity without guessing a default."""
+
+    return normalize_instance_id(os.environ.get("KERNELONE_INSTANCE_ID", ""))
+
+
 def _build_runtime_fingerprint_response(request: Request | None = None) -> dict[str, Any]:
     """Expose the process-startup backend source fingerprint for freshness gates."""
 
@@ -160,6 +167,7 @@ def _build_runtime_fingerprint_response(request: Request | None = None) -> dict[
         "pid": os.getpid(),
         "startup_time": _SERVER_STARTUP_TIME,
         "uptime_seconds": round(max(0.0, time.monotonic() - _SERVER_START_MONOTONIC), 3),
+        "instance_id": _current_process_instance_id(),
         "workspace": _active_workspace_from_request(request),
         "backend_root": str(backend_root),
         "source": "runtime/fingerprint:process_startup",

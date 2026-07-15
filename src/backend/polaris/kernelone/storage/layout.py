@@ -330,6 +330,32 @@ class StorageRoots:
     history_root: str
 
 
+@dataclass(frozen=True)
+class WorkspaceRuntimeIdentity:
+    """Immutable binding between one workspace and its runtime storage root.
+
+    Runtime data may physically live below a shared cache base, but its identity
+    must always retain the fully resolved workspace and the selected runtime
+    root.  Consumers use ``token`` as an auditable namespace, never a
+    canonical-project fallback.
+    """
+
+    workspace_abs: str
+    workspace_key: str
+    runtime_root: str
+    token: str
+
+    def to_record(self) -> dict[str, str]:
+        """Return a detached JSON-safe storage binding record."""
+
+        return {
+            "workspace_abs": self.workspace_abs,
+            "workspace_key": self.workspace_key,
+            "runtime_root": self.runtime_root,
+            "token": self.token,
+        }
+
+
 def _truthy_env(value: str, default: bool = True) -> bool:
     raw = str(value or "").strip().lower()
     if not raw:
@@ -670,6 +696,30 @@ def resolve_storage_roots(workspace: str, ramdisk_root: str | None = None) -> St
     cache first.
     """
     return _resolve_storage_roots_impl(workspace, ramdisk_root)
+
+
+def resolve_workspace_runtime_identity(
+    workspace: str,
+    *,
+    ramdisk_root: str | None = None,
+) -> WorkspaceRuntimeIdentity:
+    """Resolve the explicit workspace/runtime identity for durable runtime data.
+
+    The token is stable for the same resolved workspace and runtime root, while
+    two fresh workspaces remain distinct even when their runtime bases share a
+    global cache directory.
+    """
+
+    roots = resolve_storage_roots(workspace, ramdisk_root=ramdisk_root)
+    workspace_abs = os.path.realpath(roots.workspace_abs)
+    runtime_root = os.path.realpath(roots.runtime_project_root)
+    token_source = "\x00".join((workspace_abs, roots.workspace_key, runtime_root)).encode("utf-8")
+    return WorkspaceRuntimeIdentity(
+        workspace_abs=workspace_abs,
+        workspace_key=roots.workspace_key,
+        runtime_root=runtime_root,
+        token=hashlib.sha256(token_source).hexdigest()[:24],
+    )
 
 
 def normalize_logical_rel_path(rel_path: str) -> str:

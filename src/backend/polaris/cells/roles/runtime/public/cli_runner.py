@@ -14,17 +14,26 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleSessionCommandV1,
     ExecuteRoleTaskCommandV1,
     IRoleRuntime,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from polaris.cells.runtime.task_runtime.public import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+)
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +52,108 @@ class CliRunner:
     def __init__(self, runtime: IRoleRuntime) -> None:
         self._runtime = runtime
 
+    @staticmethod
+    def _bootstrap_fact_stream_workspace(workspace: str, maintenance_reason: str) -> None:
+        """Delegate formal role-CLI startup to the platform bootstrap service."""
+
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=workspace,
+                streams=fact_stream_bootstrap_streams(),
+                maintenance_reason=maintenance_reason,
+            )
+        )
+
+    @staticmethod
+    def _claim_task_execution_attempt(
+        *,
+        role_id: str,
+        workspace: str,
+        task_id: str,
+        objective: str,
+        run_id: str,
+    ) -> tuple[TaskRuntimeService, int, TaskRuntimeExecutionAttemptIdentityV1]:
+        """Materialize and claim CLI task authority through TaskRuntime."""
+
+        task_runtime = TaskRuntimeService(workspace)
+        task_row = task_runtime.ensure_task_row(
+            external_task_id=task_id,
+            subject=f"CLI role task: {task_id}",
+            description=objective,
+            metadata={
+                "source": "roles.runtime.public.cli_runner.execute_role",
+                "role": role_id,
+                "execution_identity_required": True,
+            },
+        )
+        task_runtime_task_id = task_runtime.normalize_task_id(task_row.get("id"))
+        if task_runtime_task_id is None:
+            raise RuntimeError("cli_task_execution_task_id_invalid")
+        claim = task_runtime.claim_execution(
+            task_runtime_task_id,
+            worker_id=f"cli:{role_id}",
+            role_id=role_id,
+            run_id=run_id,
+            selection_source="roles.runtime.public.cli_runner.execute_role",
+            external_task_id=task_id,
+            context_summary=objective,
+            metadata={"source": "roles.runtime.public.cli_runner.execute_role"},
+        )
+        session = claim.get("session") if isinstance(claim, dict) else None
+        attempt_record = claim.get("execution_attempt") if isinstance(claim, dict) else None
+        if (
+            not bool(claim.get("success"))
+            or not isinstance(session, Mapping)
+            or not isinstance(attempt_record, Mapping)
+        ):
+            reason = str(claim.get("reason") or "unknown") if isinstance(claim, dict) else "invalid_claim_result"
+            raise RuntimeError(f"cli_task_execution_claim_failed:{reason}")
+        identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
+        if (
+            identity.workspace != workspace
+            or identity.task_id != task_runtime_task_id
+            or identity.external_task_id != task_id
+            or identity.role_id != role_id
+            or identity.run_id != run_id
+            or identity.session_id != str(session.get("session_id") or "").strip()
+            or identity.attempt != session.get("attempt")
+        ):
+            raise RuntimeError("cli_task_execution_attempt_session_mismatch")
+        return task_runtime, task_runtime_task_id, identity
+
+    @staticmethod
+    def _settle_task_execution(
+        *,
+        task_runtime: TaskRuntimeService,
+        task_runtime_task_id: int,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        result_ok: bool | None,
+        summary: str,
+    ) -> None:
+        """Settle one CLI TaskRuntime claim without hiding settlement failures."""
+
+        if result_ok is True:
+            outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1 = "completed"
+        elif result_ok is False:
+            outcome = "failed"
+        else:
+            outcome = "suspended"
+        if task_runtime_task_id != execution_attempt.task_id:
+            raise RuntimeError("cli_task_execution_attempt_task_mismatch")
+        settlement = task_runtime.settle_execution_attempt(
+            SettleTaskRuntimeExecutionAttemptCommandV1(
+                workspace=execution_attempt.workspace,
+                identity=execution_attempt,
+                outcome=outcome,
+                summary=summary,
+                lock_timeout_seconds=5.0,
+                metadata={"source": "roles.runtime.public.cli_runner.execute_role"},
+            )
+        )
+        if not bool(settlement.get("success")):
+            reason = str(settlement.get("reason") or "unknown")
+            raise RuntimeError(f"cli_task_execution_settlement_failed:{reason}")
+
     async def run_interactive(
         self,
         role: str,
@@ -57,6 +168,8 @@ class CliRunner:
             welcome_message: Optional banner to print before the REPL starts.
         """
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        self._bootstrap_fact_stream_workspace(workspace, "roles_runtime_cli_interactive_startup")
 
         # Access RoleRuntimeService-specific method via casting
         runtime_svc = self._runtime
@@ -144,6 +257,7 @@ class CliRunner:
         Returns:
             dict with 'result' key containing RoleExecutionResultV1 as dict.
         """
+        self._bootstrap_fact_stream_workspace(workspace, "roles_runtime_cli_oneshot_startup")
         session_id = str(uuid.uuid4())[:8]
         command = ExecuteRoleSessionCommandV1(
             role=role,
@@ -188,6 +302,7 @@ class CliRunner:
         Returns:
             dict with 'initial_goal', 'iterations', 'history', 'final_result'.
         """
+        self._bootstrap_fact_stream_workspace(workspace, "roles_runtime_cli_autonomous_startup")
         session_id = str(uuid.uuid4())[:8]
         history = []
         current_goal = goal
@@ -254,6 +369,8 @@ class CliRunner:
             port: Server bind port.
         """
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        self._bootstrap_fact_stream_workspace(workspace, "roles_runtime_cli_server_startup")
 
         # Access RoleRuntimeService-specific method via casting
         runtime_svc = self._runtime
@@ -386,6 +503,7 @@ class CliRunner:
 
         payload = dict(context)
         workspace = str(payload.get("workspace") or ".").strip() or "."
+        self._bootstrap_fact_stream_workspace(workspace, "roles_runtime_cli_execute_startup")
         session_id = str(payload.get("session_id") or "").strip()
         metadata = dict(payload.get("metadata") or {})
         context_map = dict(payload.get("context") or {})
@@ -421,20 +539,49 @@ class CliRunner:
                 )
             )
         else:
-            result = await self._runtime.execute_role_task(
-                ExecuteRoleTaskCommandV1(
-                    role=role_id,
-                    task_id=str(payload.get("task_id") or "adhoc-task").strip(),
-                    workspace=workspace,
-                    objective=str(payload.get("message") or payload.get("input") or "").strip() or "execute role task",
-                    run_id=str(payload.get("run_id") or "").strip() or None,
-                    session_id=str(payload.get("session_id") or "").strip() or None,
-                    domain=domain_token or None,
-                    context=context_map,
-                    metadata=dict(payload.get("metadata") or {}),
-                    timeout_seconds=payload.get("timeout_seconds"),
-                    stream=bool(payload.get("stream", False)),
+            task_id = str(payload.get("task_id") or "").strip()
+            if not task_id:
+                raise ValueError("task_id is required when execute_role is used without session_id")
+            objective = str(payload.get("message") or payload.get("input") or "").strip() or "execute role task"
+            run_id = str(payload.get("run_id") or "").strip()
+            task_runtime, task_runtime_task_id, execution_attempt = self._claim_task_execution_attempt(
+                role_id=role_id,
+                workspace=workspace,
+                task_id=task_id,
+                objective=objective,
+                run_id=run_id,
+            )
+            try:
+                result = await self._runtime.execute_role_task(
+                    ExecuteRoleTaskCommandV1(
+                        role=role_id,
+                        task_id=task_id,
+                        workspace=workspace,
+                        objective=objective,
+                        run_id=run_id or None,
+                        domain=domain_token or None,
+                        context=context_map,
+                        metadata=metadata,
+                        timeout_seconds=payload.get("timeout_seconds"),
+                        stream=bool(payload.get("stream", False)),
+                        execution_attempt=execution_attempt,
+                    )
                 )
+            except BaseException:
+                self._settle_task_execution(
+                    task_runtime=task_runtime,
+                    task_runtime_task_id=task_runtime_task_id,
+                    execution_attempt=execution_attempt,
+                    result_ok=None,
+                    summary="CLI task execution raised before a result was returned",
+                )
+                raise
+            self._settle_task_execution(
+                task_runtime=task_runtime,
+                task_runtime_task_id=task_runtime_task_id,
+                execution_attempt=execution_attempt,
+                result_ok=result.ok,
+                summary=str(result.output or result.error_message or result.status or "").strip(),
             )
         return {
             "ok": result.ok,

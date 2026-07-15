@@ -94,7 +94,9 @@ class DirectorService:
         batch_size = self.max_workers if self.execution_mode == "parallel" else 1
         batch = ready_tasks[: max(1, int(batch_size or 1))]
         if self.execution_mode == "parallel" and len(batch) > 1:
-            raw_results = list(await asyncio.gather(*[self._execute_task(task) for task in batch], return_exceptions=True))
+            raw_results = list(
+                await asyncio.gather(*[self._execute_task(task) for task in batch], return_exceptions=True)
+            )
             results = [
                 self._exception_result(batch[index], item) if isinstance(item, BaseException) else item
                 for index, item in enumerate(raw_results)
@@ -294,6 +296,20 @@ async def main() -> int:
     if not workspace.exists():
         logger.error(f"Error: Workspace does not exist: {workspace}")
         return 1
+
+    from polaris.cells.events.fact_stream.public import (
+        BootstrapFactStreamWorkspaceCommandV1,
+        bootstrap_fact_stream_workspace,
+        fact_stream_bootstrap_streams,
+    )
+
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="director_service_cli_startup",
+        )
+    )
 
     service = DirectorService(
         workspace=workspace,

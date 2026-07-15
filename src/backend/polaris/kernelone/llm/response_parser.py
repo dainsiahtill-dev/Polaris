@@ -101,6 +101,9 @@ class LLMResponseParser:
                 text = cls._stringify_content(value)
                 if text:
                     return text
+        reasoning = cls._extract_reasoning_blocks(payload.get("content"))
+        if reasoning:
+            return reasoning
         output = payload.get("output")
         reasoning = cls._extract_reasoning_from_output(output)
         if reasoning:
@@ -210,30 +213,42 @@ class LLMResponseParser:
                     text = cls._stringify_content(value)
                     if text:
                         return text
+            reasoning = cls._extract_reasoning_blocks(message.get("content"))
+            if reasoning:
+                return reasoning
         return ""
 
     @classmethod
     def _extract_reasoning_from_output(cls, output: Any) -> str:
-        if isinstance(output, list):
-            items: list[str] = []
-            for item in output:
-                text = cls._extract_reasoning_from_output(item)
-                if text:
-                    items.append(text)
-            return "\n".join(items).strip()
-        if isinstance(output, dict):
-            item_type = str(output.get("type") or "").strip().lower()
-            if "reasoning" in item_type or "thinking" in item_type:
-                for key in ("summary", "text", "content"):
-                    value = output.get(key)
-                    text = cls._stringify_content(value)
-                    if text:
-                        return text
-            for key in cls._REASONING_KEYS:
-                value = output.get(key)
-                text = cls._stringify_content(value)
+        return cls._extract_reasoning_blocks(output)
+
+    @classmethod
+    def _extract_reasoning_blocks(cls, value: Any) -> str:
+        """Extract reasoning from typed provider content blocks.
+
+        Anthropic-compatible reasoning models emit top-level ``content`` items
+        such as ``{"type": "thinking", "thinking": "..."}``. These are
+        neither visible text nor top-level reasoning fields, so treating them
+        as empty loses both truncation evidence and the provider failure class.
+        """
+
+        if isinstance(value, list):
+            items = [cls._extract_reasoning_blocks(item) for item in value]
+            return "\n".join(item for item in items if item).strip()
+        if not isinstance(value, dict):
+            return ""
+
+        item_type = str(value.get("type") or "").strip().lower()
+        if "reasoning" in item_type or "thinking" in item_type:
+            for key in (*cls._REASONING_KEYS, "summary", "text", "content"):
+                text = cls._stringify_content(value.get(key))
                 if text:
                     return text
+
+        for key in cls._REASONING_KEYS:
+            text = cls._stringify_content(value.get(key))
+            if text:
+                return text
         return ""
 
     @classmethod

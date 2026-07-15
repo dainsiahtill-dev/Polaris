@@ -20,6 +20,10 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     StageResult,
 )
 from polaris.cells.factory.pipeline.public.types import FactoryStartRequest
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.http.app_factory import create_app
 from polaris.delivery.http.routers import factory as factory_router_module
@@ -46,11 +50,15 @@ def _complete_task_row(
         selection_source="factory_router_test",
     )
     assert claimed["success"] is True
-    completed = task_runtime.complete_execution(
-        task_id,
-        session_id=str(claimed["session"]["session_id"]),
-        result_summary="test completed",
-        metadata=metadata,
+    identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(claimed["execution_attempt"])
+    completed = task_runtime.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="completed",
+            summary="test completed",
+            metadata=metadata or {},
+        )
     )
     assert completed["success"] is True
     return completed
@@ -72,11 +80,15 @@ def _fail_task_row(
         selection_source="factory_router_test",
     )
     assert claimed["success"] is True
-    failed = task_runtime.fail_execution(
-        task_id,
-        session_id=str(claimed["session"]["session_id"]),
-        error=error,
-        metadata=metadata,
+    identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(claimed["execution_attempt"])
+    failed = task_runtime.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="failed",
+            summary=error,
+            metadata=metadata or {},
+        )
     )
     assert failed["success"] is True
     return failed

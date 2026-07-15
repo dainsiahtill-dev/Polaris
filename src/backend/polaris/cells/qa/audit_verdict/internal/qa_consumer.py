@@ -9,9 +9,15 @@ import subprocess
 import threading
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public.contracts import AppendRunLedgerEventCommandV1
-from polaris.cells.control_plane.run_ledger.public.service import append_run_ledger_event
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.cells.qa.audit_verdict.internal.evidence_commit import (
+    commit_qa_evidence,
+    commit_qa_verdict,
+)
 from polaris.cells.qa.audit_verdict.internal.qa_service import QAService
+from polaris.cells.qa.audit_verdict.internal.verdict_engine import (
+    classify_qa_audit_failure,
+)
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
@@ -20,17 +26,6 @@ from polaris.cells.runtime.task_market.public.contracts import (
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
 
 logger = logging.getLogger(__name__)
-_REQUEUE_STAGE_BY_VERDICT: dict[str, str] = {
-    "REQUEUE_EXEC": "pending_exec",
-    "RETRY_EXEC": "pending_exec",
-    "REQUEUE_DESIGN": "pending_design",
-    "RETRY_DESIGN": "pending_design",
-    "REQUEUE_QA": "pending_qa",
-    "RETRY_QA": "pending_qa",
-    "NEEDS_REVIEW": "waiting_human",
-    "WAITING_HUMAN": "waiting_human",
-    "HITL": "waiting_human",
-}
 _VALID_ROUTE_STAGES = frozenset({"pending_design", "pending_exec", "pending_qa", "waiting_human"})
 _CODE_FILE_EXTENSIONS = frozenset(
     {
@@ -179,7 +174,6 @@ def _qa_findings_count(findings: Any) -> int:
 
 _QA_LLM_AUDIT_ENABLED_ENV = "KERNELONE_QA_LLM_AUDIT_ENABLED"
 _QA_LLM_AUDIT_TIMEOUT_ENV = "KERNELONE_QA_LLM_AUDIT_TIMEOUT_SECONDS"
-_QA_VERDICT_ENGINE_MODE_ENV = "KERNELONE_QA_VERDICT_ENGINE_MODE"
 _BOOL_TRUE = {"1", "true", "yes", "on", "enabled"}
 _BOOL_FALSE = {"0", "false", "no", "off", "disabled"}
 _VERIFY_SCRIPT_NAMES = frozenset({"verify.js", "scripts/verify.js"})
@@ -221,63 +215,41 @@ def _read_bool_env(name: str, *, default: bool = False) -> bool:
     return default
 
 
-def _qa_verdict_engine_mode() -> str:
-    raw = os.environ.get(_QA_VERDICT_ENGINE_MODE_ENV, "engine").strip().lower()
-    if raw in {"off", "disabled", "false", "0"}:
-        return "off"
-    if raw in {"engine", "authoritative"}:
-        return "engine"
-    return "shadow"
+def _qa_verdict_projection_payload(envelope: dict[str, Any], diff: dict[str, Any]) -> dict[str, Any]:
+    projection = dict(envelope)
+    projection["local_evidence_diff"] = dict(diff)
+    return projection
 
 
-def _qa_verdict_engine_shadow_payload(envelope: dict[str, Any], diff: dict[str, Any]) -> dict[str, Any]:
-    classification = envelope.get("classification")
-    classification_map = classification if isinstance(classification, dict) else {}
-    mode = _qa_verdict_engine_mode()
-    return {
-        "schema_version": "qa.verdict_engine_shadow.v1",
-        "authoritative": mode == "engine",
-        "mode": mode,
-        "content_hash": str(envelope.get("content_hash") or ""),
-        "verdict": str(envelope.get("verdict") or ""),
-        "next_stage": str(envelope.get("next_stage") or ""),
-        "terminal_status": str(envelope.get("terminal_status") or ""),
-        "failure_class": str(classification_map.get("failure_class") or ""),
-        "route": str(classification_map.get("route") or ""),
-        "repairable_by_director": bool(classification_map.get("repairable_by_director")),
-        "responsible_layer": str(classification_map.get("responsible_layer") or ""),
-        "owner": str(classification_map.get("owner") or ""),
-        "severity": str(classification_map.get("severity") or ""),
-        "requires_ce_replan": bool(classification_map.get("requires_ce_replan")),
-        "requires_pm_revision": bool(classification_map.get("requires_pm_revision")),
-        "classification": dict(classification_map),
-        "envelope": dict(envelope),
-        "diff": diff,
-    }
-
-
-def _apply_authoritative_verdict_engine_route(
+def _canonical_route_from_projection(
     *,
-    fallback_verdict: str,
-    fallback_next_stage: str,
-    fallback_terminal_status: str,
     engine_payload: dict[str, Any],
 ) -> tuple[str, str, str]:
-    """Use the verdict engine route only when explicitly promoted.
+    """Validate and return the sole route authorized by the canonical envelope."""
 
-    Shadow remains an available audit mode. In authoritative mode the engine
-    must either provide a route or fail closed back to QA infrastructure instead
-    of silently falling through to consumer-local routing.
-    """
-
-    if _qa_verdict_engine_mode() != "engine":
-        return fallback_verdict, fallback_next_stage, fallback_terminal_status
-    if not engine_payload or engine_payload.get("error"):
+    if engine_payload.get("schema_version") != "qa.verdict_envelope.v1" or engine_payload.get("error"):
+        return "BLOCKED", "pending_qa", ""
+    ledger = engine_payload.get("ledger")
+    ledger_map = ledger if isinstance(ledger, dict) else {}
+    evidence = engine_payload.get("evidence")
+    evidence_map = evidence if isinstance(evidence, dict) else {}
+    conflict_matrix = evidence_map.get("conflict_matrix")
+    conflict_map = conflict_matrix if isinstance(conflict_matrix, dict) else {}
+    conflicts = conflict_map.get("conflicts")
+    if (
+        ledger_map.get("source") != "run_ledger_projection"
+        or ledger_map.get("available") is not True
+        or not isinstance(conflicts, list)
+        or conflicts
+        or not str(engine_payload.get("content_hash") or "").strip()
+    ):
         return "BLOCKED", "pending_qa", ""
     verdict = str(engine_payload.get("verdict") or "BLOCKED").strip().upper() or "BLOCKED"
     next_stage = str(engine_payload.get("next_stage") or "").strip().lower()
     terminal_status = str(engine_payload.get("terminal_status") or "").strip().lower()
     if next_stage and next_stage not in _VALID_ROUTE_STAGES:
+        return "BLOCKED", "pending_qa", ""
+    if verdict == "PASS" and (engine_payload.get("ok") is not True or next_stage or terminal_status != "resolved"):
         return "BLOCKED", "pending_qa", ""
     if not next_stage and not terminal_status:
         terminal_status = "resolved" if verdict == "PASS" else ""
@@ -296,27 +268,6 @@ def _qa_llm_audit_timeout_seconds() -> float:
         if value > 0:
             return min(value, 900.0)
     return 180.0
-
-
-def _resolve_qa_route(audit_result: dict[str, Any]) -> tuple[str, str, str]:
-    """Resolve QA route from audit result.
-
-    Returns:
-        ``(verdict, next_stage, terminal_status)``.
-        One of ``next_stage`` / ``terminal_status`` will be non-empty.
-    """
-    verdict = str(audit_result.get("verdict") or "FAIL").strip().upper() or "FAIL"
-    explicit_stage = str(audit_result.get("next_stage") or "").strip().lower()
-    if explicit_stage in _VALID_ROUTE_STAGES:
-        return verdict, explicit_stage, ""
-    if verdict == "PASS":
-        return verdict, "", "resolved"
-    if verdict in {"FAIL", "REJECT", "REJECTED"}:
-        return verdict, "", "rejected"
-    mapped_stage = _REQUEUE_STAGE_BY_VERDICT.get(verdict, "")
-    if mapped_stage:
-        return verdict, mapped_stage, ""
-    return verdict, "", "rejected"
 
 
 def _iter_payload_strings(value: Any, *, _depth: int = 0) -> list[str]:
@@ -504,39 +455,10 @@ def _package_scripts_gate_failure(workspace: str, payload: dict[str, Any]) -> st
 
 
 # RANK 1 (Reflexion / Actor-Critic): the critic's precise findings must reach the
-# actor in a usable form. A content FAIL previously died in a terminal reject (and
-# even when requeued, acknowledge_task_stage pops last_failure, which the Director
-# is the only reader of) — so the critique was structurally invisible. These helpers
-# route bounce-eligible findings through the same last_failure channel the
-# deterministic gates already use.
-_QA_FINDINGS_REQUEUE_ENV = "KERNELONE_QA_FINDINGS_REQUEUE"
-_QA_FINDINGS_REQUEUE_DISABLED = {"off", "none", "disabled", "false", "0"}
+# Keep findings compact when a canonical envelope routes repair to the Director.
 _QA_FEEDBACK_MAX_FINDINGS = 5
 _QA_FEEDBACK_MAX_CHARS = 600
-# A Director success-ack resets the market's per-stage attempt budget, so without a
-# cross-stage cap a content FAIL the weak model cannot satisfy would ping-pong
-# QA<->Director until lease/wall-clock exhaustion. Bound it with a small per-task cap.
-_QA_FINDINGS_MAX_BOUNCES_ENV = "KERNELONE_QA_FINDINGS_MAX_BOUNCES"
-_DEFAULT_QA_FINDINGS_MAX_BOUNCES = 2
 _QA_FEEDBACK_COUNTERS_KEY = "feedback_counters"
-_QA_FINDINGS_COUNTER_KEY = "qa_findings_to_pending_exec"
-
-
-def _qa_findings_requeue_enabled() -> bool:
-    return os.environ.get(_QA_FINDINGS_REQUEUE_ENV, "").strip().lower() not in _QA_FINDINGS_REQUEUE_DISABLED
-
-
-def _qa_findings_max_bounces() -> int:
-    """Resolve the per-task RANK 1 requeue cap (env override, else 2). Clamped to >=0."""
-    raw = os.environ.get(_QA_FINDINGS_MAX_BOUNCES_ENV, "").strip()
-    if raw:
-        try:
-            value = int(raw)
-        except ValueError:
-            return _DEFAULT_QA_FINDINGS_MAX_BOUNCES
-        if value >= 0:
-            return value
-    return _DEFAULT_QA_FINDINGS_MAX_BOUNCES
 
 
 def _normalize_feedback_counters(raw: Any) -> dict[str, int]:
@@ -589,6 +511,13 @@ def _format_qa_requeue_feedback(audit_result: dict[str, Any], verdict: str) -> s
     if reason:
         return f"QA requested Director retry ({verdict}): {reason}"[:_QA_FEEDBACK_MAX_CHARS]
     return f"QA requested Director retry ({verdict})."[:_QA_FEEDBACK_MAX_CHARS]
+
+
+def _failure_class_for_observed_verdict(verdict: str) -> str:
+    """Map a local observation token to typed evidence, never to a transition."""
+
+    failure_class, _ = classify_qa_audit_failure({"verdict": verdict})
+    return failure_class
 
 
 def _normalize_path_values(raw: Any) -> list[str]:
@@ -807,19 +736,13 @@ class QAConsumer:
             if enable_llm_audit is not None
             else _read_bool_env(_QA_LLM_AUDIT_ENABLED_ENV, default=False)
         )
-        # RANK 1 cross-stage bounce bound (I3-r28): per-task count of content-FAIL
-        # requeues this run. A Director success-ack resets the market's per-stage
-        # attempt budget, so this in-memory cap is what makes an unsatisfiable
-        # critique terminal-reject instead of ping-ponging until lease exhaustion.
-        self._qa_findings_bounce_counts: dict[str, int] = {}
-
         # Initialize QA service
         from polaris.cells.qa.audit_verdict.internal.qa_service import QAConfig
 
         qa_config = QAConfig(workspace=self._workspace, enable_auto_audit=False)
         self._qa_svc = QAService(qa_config)
 
-    def _build_verdict_engine_shadow(
+    def _build_canonical_verdict_projection(
         self,
         *,
         task_id: str,
@@ -830,20 +753,27 @@ class QAConsumer:
         fallback_verdict: str,
         fallback_next_stage: str = "",
         fallback_terminal_status: str = "",
+        barrier_receipt: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Build a non-authoritative Verdict Engine comparison payload."""
+        """Build the sole authoritative verdict from barrier-read evidence."""
 
-        if _qa_verdict_engine_mode() == "off":
-            return {}
         try:
             from polaris.cells.qa.audit_verdict.internal.verdict_engine import (
                 QAVerdictEngine,
                 diff_verdicts,
             )
 
+            canonical_payload = dict(payload)
+            receipt = dict(barrier_receipt or {})
+            if receipt.get("append_id"):
+                canonical_payload["min_append_id"] = receipt["append_id"]
+            if receipt.get("event_hash"):
+                canonical_payload["min_event_hash"] = receipt["event_hash"]
+            if not receipt:
+                canonical_payload["min_append_id"] = "qa-evidence-append-receipt-missing"
             envelope = QAVerdictEngine(self._workspace).build_envelope(
                 task_id=task_id,
-                payload=payload,
+                payload=canonical_payload,
                 gate_name=gate_name,
                 gate_summary=gate_summary,
                 audit_result=audit_result,
@@ -855,14 +785,16 @@ class QAConsumer:
                 engine_envelope=envelope,
             )
             if diff.get("mismatch"):
-                logger.warning("QA verdict engine shadow mismatch for task %s: %s", task_id, diff)
-            return _qa_verdict_engine_shadow_payload(envelope.to_dict(), diff)
+                logger.info("QA local evidence differs from canonical verdict for task %s: %s", task_id, diff)
+            return _qa_verdict_projection_payload(envelope.to_dict(), diff)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return {
-                "schema_version": "qa.verdict_engine_shadow.v1",
+                "schema_version": "qa.verdict_projection_error.v1",
                 "authoritative": False,
-                "mode": _qa_verdict_engine_mode(),
                 "error": str(exc),
+                "verdict": "BLOCKED",
+                "next_stage": "pending_qa",
+                "terminal_status": "",
             }
 
     def poll_once(self) -> list[dict[str, Any]]:
@@ -1001,73 +933,162 @@ class QAConsumer:
         summary: str,
         verdict: str = "FAIL",
         audit_result: dict[str, Any] | None = None,
-        next_stage: str = "",
-        terminal_status: str = "",
         failure_reason: str = "",
-    ) -> bool:
-        """Append QA verdict evidence to the platform Run Ledger when token-scoped."""
+    ) -> dict[str, str] | None:
+        """Append QA evidence and return its projection-barrier coordinates."""
 
         job_token = _extract_control_plane_job_token(payload)
         if not job_token:
-            return False
+            return None
         run_id = str(job_token.get("run_id") or payload.get("run_id") or payload.get("source_run_id") or "").strip()
-        if not run_id:
-            raise ValueError("QA Run Ledger event requires job_token.run_id")
+        return commit_qa_evidence(
+            workspace=self._workspace,
+            run_id=run_id,
+            task_id=task_id,
+            gate_name=gate_name,
+            ok=ok,
+            summary=summary,
+            verdict=verdict,
+            audit_result=audit_result,
+            failure_reason=failure_reason,
+            job_token=job_token,
+        ).to_dict()
 
-        audit = dict(audit_result or {})
-        findings = audit.get("findings", [])
-        metrics = audit.get("metrics")
-        clean_summary = str(summary or gate_name).strip()
-        physical_evidence = {
-            "task_id": task_id,
-            "audit_id": str(audit.get("audit_id") or ""),
-            "verdict": str(verdict or "").strip().upper() or "FAIL",
-            "next_stage": str(next_stage or "").strip(),
-            "terminal_status": str(terminal_status or "").strip(),
-            "failure_reason": str(failure_reason or "").strip(),
-            "findings_count": _qa_findings_count(findings),
-            "metrics": metrics if isinstance(metrics, dict) else {},
-            "modalities": {
-                "qa": {
-                    "present": True,
-                    "ok": bool(ok),
-                    "detail": clean_summary,
-                    "verdict": str(verdict or "").strip().upper() or "FAIL",
-                    "findings_count": _qa_findings_count(findings),
-                }
-            },
-            "qa_verifiers": [
-                {
-                    "id": str(audit.get("audit_id") or task_id),
-                    "name": gate_name,
-                    "kind": "qa",
-                    "modality": "qa",
-                    "ok": bool(ok),
-                    "detail": clean_summary,
-                }
-            ],
-        }
-        shadow = audit.get("qa_verdict_engine_shadow")
-        if isinstance(shadow, dict):
-            physical_evidence["qa_verdict_engine_shadow"] = shadow
-        append_run_ledger_event(
-            AppendRunLedgerEventCommandV1(
+    def _apply_canonical_verdict_transition(
+        self,
+        *,
+        task_id: str,
+        lease_token: str,
+        payload: dict[str, Any],
+        audit_result: dict[str, Any],
+        engine_payload: dict[str, Any],
+        evidence_commit_receipt: dict[str, str] | None,
+        feedback_counters: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Commit a canonical verdict, then apply its authorized route."""
+
+        verdict, next_stage, terminal_status = _canonical_route_from_projection(
+            engine_payload=engine_payload,
+        )
+        job_token = _extract_control_plane_job_token(payload)
+        run_id = str(job_token.get("run_id") or payload.get("run_id") or payload.get("source_run_id") or "").strip()
+        final_receipt: dict[str, str] = {}
+        try:
+            if not run_id:
+                raise ValueError("canonical QA verdict commit requires run_id")
+            if not evidence_commit_receipt:
+                raise ValueError("canonical QA verdict commit requires evidence barrier coordinates")
+            final_receipt = commit_qa_verdict(
                 workspace=self._workspace,
                 run_id=run_id,
-                event={
-                    "event_type": "gate_evaluated",
-                    "stage": "qa",
-                    "gate": {
-                        "name": gate_name,
-                        "ok": bool(ok),
-                        "summary": clean_summary,
-                    },
-                    "job_token": job_token,
-                    "physical_evidence": physical_evidence,
+                task_id=task_id,
+                envelope=engine_payload,
+                evidence_commit_receipt=evidence_commit_receipt,
+                job_token=job_token,
+            ).to_dict()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            failure_metadata = _qa_control_plane_metadata(
+                payload,
+                {
+                    "qa_verdict_projection": engine_payload,
+                    "qa_verdict_commit_failed": True,
+                    "qa_verdict_commit_error": str(exc),
                 },
             )
-        )
-        return True
+            transition = self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code="QA_verdict_commit_failed",
+                    error_message=str(exc),
+                    requeue_stage="pending_qa",
+                    metadata=failure_metadata,
+                )
+            )
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "verdict": "BLOCKED",
+                "status": str(transition.status or "pending_qa"),
+                "reason": "qa_verdict_commit_failed",
+            }
+
+        metadata: dict[str, Any] = {
+            "qa_next_stage": next_stage,
+            "qa_terminal_status": terminal_status,
+            "qa_verdict_projection": engine_payload,
+            "qa_verdict_commit_receipt": final_receipt,
+        }
+        if feedback_counters:
+            metadata[_QA_FEEDBACK_COUNTERS_KEY] = dict(feedback_counters)
+        metadata = _qa_control_plane_metadata(payload, metadata)
+
+        if next_stage in {"pending_design", "pending_exec", "pending_qa"}:
+            transition = self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code=f"QA_{verdict}_canonical_route",
+                    error_message=_format_qa_requeue_feedback(audit_result, verdict),
+                    requeue_stage=next_stage,
+                    metadata=metadata,
+                )
+            )
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "verdict": verdict,
+                "status": str(transition.status or next_stage),
+                "reason": "canonical_qa_route",
+            }
+
+        command_kwargs: dict[str, Any] = {
+            "workspace": self._workspace,
+            "task_id": task_id,
+            "lease_token": lease_token,
+            "summary": f"Canonical QA verdict: {verdict}",
+            "metadata": {
+                **metadata,
+                "verdict": verdict,
+                "audit_id": str(audit_result.get("audit_id") or ""),
+                "findings": list(audit_result.get("findings") or []),
+                "metrics": dict(audit_result.get("metrics") or {}),
+            },
+        }
+        if next_stage == "waiting_human":
+            command_kwargs["next_stage"] = next_stage
+        elif terminal_status in {"resolved", "rejected"}:
+            command_kwargs["terminal_status"] = terminal_status
+        else:
+            transition = self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code="QA_canonical_route_missing",
+                    error_message="Canonical QA envelope did not authorize a valid transition",
+                    requeue_stage="pending_qa",
+                    metadata=metadata,
+                )
+            )
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "verdict": "BLOCKED",
+                "status": str(transition.status or "pending_qa"),
+                "reason": "canonical_route_missing",
+            }
+
+        transition = self._svc.acknowledge_task_stage(AcknowledgeTaskStageCommandV1(**command_kwargs))
+        return {
+            "task_id": task_id,
+            "ok": bool(transition.ok) and verdict == "PASS" and terminal_status == "resolved",
+            "verdict": verdict,
+            "status": str(transition.status or terminal_status or next_stage),
+            "reason": "canonical_qa_route",
+        }
 
     def _claim_and_process_one(self) -> dict[str, Any] | None:
         """Attempt to claim one PENDING_QA task and process it.
@@ -1101,49 +1122,39 @@ class QAConsumer:
             # requeues to pending_exec so the Director can correct course.
             verify_failure = self._run_step_verify(payload)
             if verify_failure:
-                shadow = self._build_verdict_engine_shadow(
-                    task_id=task_id,
-                    payload=payload,
-                    gate_name="qa_step_verify",
-                    gate_summary=verify_failure,
-                    audit_result={"verdict": "FAIL", "findings": [verify_failure]},
-                    fallback_verdict="FAIL",
-                    fallback_next_stage="pending_exec",
-                )
-                self._append_qa_gate_to_run_ledger(
+                audit_result = {
+                    "verdict": "FAIL",
+                    "findings": [verify_failure],
+                    "failure_class": FailureClassV1.COMPILER_OR_TEST_FAILURE.value,
+                    "responsible_layer": "director",
+                }
+                receipt = self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
                     payload=payload,
                     gate_name="qa_step_verify",
                     ok=False,
                     summary=verify_failure,
                     verdict="FAIL",
-                    audit_result={
-                        "verdict": "FAIL",
-                        "findings": [verify_failure],
-                        "qa_verdict_engine_shadow": shadow,
-                    },
+                    audit_result=audit_result,
                     failure_reason="step_verify_failed",
                 )
-                self._svc.fail_task_stage(
-                    FailTaskStageCommandV1(
-                        workspace=self._workspace,
-                        task_id=task_id,
-                        lease_token=lease_token,
-                        error_code="QA_step_verify_failed",
-                        error_message=verify_failure,
-                        requeue_stage="pending_exec",
-                        metadata=_qa_control_plane_metadata(
-                            payload,
-                            {"qa_verdict_engine_shadow": shadow} if shadow else {},
-                        ),
-                    )
+                engine = self._build_canonical_verdict_projection(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_step_verify",
+                    gate_summary=verify_failure,
+                    audit_result=audit_result,
+                    fallback_verdict="FAIL",
+                    barrier_receipt=receipt,
                 )
-                return {
-                    "task_id": task_id,
-                    "ok": False,
-                    "verdict": "FAIL",
-                    "reason": "step_verify_failed",
-                }
+                return self._apply_canonical_verdict_transition(
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    payload=payload,
+                    audit_result=audit_result,
+                    engine_payload=engine,
+                    evidence_commit_receipt=receipt,
+                )
 
             # I3-r18 fail-closed syntax gate: a grep-based step verify can PASS on
             # a file that does not parse (r18: main.js with a stray ';' inside an
@@ -1153,49 +1164,39 @@ class QAConsumer:
             # only when no checker could run (node absent / unknown ext / timeout).
             syntax_failure = self._run_syntax_gate(payload)
             if syntax_failure:
-                shadow = self._build_verdict_engine_shadow(
-                    task_id=task_id,
-                    payload=payload,
-                    gate_name="qa_syntax",
-                    gate_summary=syntax_failure,
-                    audit_result={"verdict": "FAIL", "findings": [syntax_failure]},
-                    fallback_verdict="FAIL",
-                    fallback_next_stage="pending_exec",
-                )
-                self._append_qa_gate_to_run_ledger(
+                audit_result = {
+                    "verdict": "FAIL",
+                    "findings": [syntax_failure],
+                    "failure_class": FailureClassV1.COMPILER_OR_TEST_FAILURE.value,
+                    "responsible_layer": "director",
+                }
+                receipt = self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
                     payload=payload,
                     gate_name="qa_syntax",
                     ok=False,
                     summary=syntax_failure,
                     verdict="FAIL",
-                    audit_result={
-                        "verdict": "FAIL",
-                        "findings": [syntax_failure],
-                        "qa_verdict_engine_shadow": shadow,
-                    },
+                    audit_result=audit_result,
                     failure_reason="syntax_failed",
                 )
-                self._svc.fail_task_stage(
-                    FailTaskStageCommandV1(
-                        workspace=self._workspace,
-                        task_id=task_id,
-                        lease_token=lease_token,
-                        error_code="QA_syntax_failed",
-                        error_message=syntax_failure,
-                        requeue_stage="pending_exec",
-                        metadata=_qa_control_plane_metadata(
-                            payload,
-                            {"qa_verdict_engine_shadow": shadow} if shadow else {},
-                        ),
-                    )
+                engine = self._build_canonical_verdict_projection(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_syntax",
+                    gate_summary=syntax_failure,
+                    audit_result=audit_result,
+                    fallback_verdict="FAIL",
+                    barrier_receipt=receipt,
                 )
-                return {
-                    "task_id": task_id,
-                    "ok": False,
-                    "verdict": "FAIL",
-                    "reason": "syntax_failed",
-                }
+                return self._apply_canonical_verdict_transition(
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    payload=payload,
+                    audit_result=audit_result,
+                    engine_payload=engine,
+                    evidence_commit_receipt=receipt,
+                )
 
             # Factory artifacts can be syntactically valid yet hollow (r16:
             # scripts/verify.js checked package name/version while the contract
@@ -1204,258 +1205,74 @@ class QAConsumer:
             # contract misses before the LLM reviewer can rubber-stamp them.
             contract_failure = self._run_contract_gate(payload)
             if contract_failure:
-                shadow = self._build_verdict_engine_shadow(
-                    task_id=task_id,
-                    payload=payload,
-                    gate_name="qa_contract",
-                    gate_summary=contract_failure,
-                    audit_result={"verdict": "FAIL", "findings": [contract_failure]},
-                    fallback_verdict="FAIL",
-                    fallback_next_stage="pending_exec",
-                )
-                self._append_qa_gate_to_run_ledger(
+                audit_result = {
+                    "verdict": "FAIL",
+                    "findings": [contract_failure],
+                    "failure_class": FailureClassV1.IMPLEMENTATION_DEFECT.value,
+                    "responsible_layer": "director",
+                }
+                receipt = self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
                     payload=payload,
                     gate_name="qa_contract",
                     ok=False,
                     summary=contract_failure,
                     verdict="FAIL",
-                    audit_result={
-                        "verdict": "FAIL",
-                        "findings": [contract_failure],
-                        "qa_verdict_engine_shadow": shadow,
-                    },
+                    audit_result=audit_result,
                     failure_reason="contract_gate_failed",
                 )
-                self._svc.fail_task_stage(
-                    FailTaskStageCommandV1(
-                        workspace=self._workspace,
-                        task_id=task_id,
-                        lease_token=lease_token,
-                        error_code="QA_contract_gate_failed",
-                        error_message=contract_failure,
-                        requeue_stage="pending_exec",
-                        metadata=_qa_control_plane_metadata(
-                            payload,
-                            {"qa_verdict_engine_shadow": shadow} if shadow else {},
-                        ),
-                    )
+                engine = self._build_canonical_verdict_projection(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_contract",
+                    gate_summary=contract_failure,
+                    audit_result=audit_result,
+                    fallback_verdict="FAIL",
+                    barrier_receipt=receipt,
                 )
-                return {
-                    "task_id": task_id,
-                    "ok": False,
-                    "verdict": "FAIL",
-                    "reason": "contract_gate_failed",
-                }
+                return self._apply_canonical_verdict_transition(
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    payload=payload,
+                    audit_result=audit_result,
+                    engine_payload=engine,
+                    evidence_commit_receipt=receipt,
+                )
 
             # Run QA audit
             audit_result = self._run_qa_audit(task_id, payload)
 
-            verdict, next_stage, terminal_status = _resolve_qa_route(audit_result)
-            # RANK 1 (Reflexion/Actor-Critic): a content FAIL with actionable findings
-            # must hand them to the Director, not die in a terminal reject. acknowledge_
-            # task_stage pops last_failure and the Director only reads payload["last_failure"],
-            # so a 'rejected' verdict's findings are structurally invisible. Route the bounce
-            # through the same last_failure channel the deterministic gates use (-> pending_exec)
-            # so the critique reaches the next attempt. Bounded by the market retry/dead-letter cap.
-            audit_findings = audit_result.get("findings", [])
             feedback_counters = _qa_feedback_counters_from_payload(payload)
-            persisted_bounce_count = feedback_counters.get(_QA_FINDINGS_COUNTER_KEY, 0)
-            local_bounce_count = self._qa_findings_bounce_counts.get(task_id, 0)
-            qa_findings_bounce_count = max(persisted_bounce_count, local_bounce_count)
-            findings_bounce_eligible = (
-                terminal_status == "rejected"
-                and not next_stage
-                and _qa_findings_requeue_enabled()
-                and _qa_findings_are_actionable(audit_findings)
+            observed_verdict = str(audit_result.get("verdict") or "FAIL").strip().upper() or "FAIL"
+            if not str(audit_result.get("failure_class") or "").strip():
+                failure_class, responsible_layer = classify_qa_audit_failure(audit_result)
+                audit_result["failure_class"] = failure_class
+                audit_result["responsible_layer"] = responsible_layer
+            receipt = self._append_qa_gate_to_run_ledger(
+                task_id=task_id,
+                payload=payload,
+                gate_name="qa_evidence",
+                ok=observed_verdict == "PASS",
+                summary=f"QA evidence observed: {observed_verdict}",
+                verdict=observed_verdict,
+                audit_result=audit_result,
             )
-            if findings_bounce_eligible and qa_findings_bounce_count < _qa_findings_max_bounces():
-                next_bounce_count = qa_findings_bounce_count + 1
-                self._qa_findings_bounce_counts[task_id] = next_bounce_count
-                feedback_counters[_QA_FINDINGS_COUNTER_KEY] = next_bounce_count
-                shadow = self._build_verdict_engine_shadow(
-                    task_id=task_id,
-                    payload=payload,
-                    audit_result=audit_result,
-                    fallback_verdict=verdict,
-                    fallback_next_stage="pending_exec",
-                    fallback_terminal_status="",
-                )
-                if shadow:
-                    audit_result["qa_verdict_engine_shadow"] = shadow
-                self._append_qa_gate_to_run_ledger(
-                    task_id=task_id,
-                    payload=payload,
-                    gate_name="qa_verdict",
-                    ok=False,
-                    summary=_format_qa_findings_feedback(audit_findings, verdict),
-                    verdict=verdict,
-                    audit_result=audit_result,
-                    next_stage="pending_exec",
-                    failure_reason="qa_findings_requeued",
-                )
-                self._svc.fail_task_stage(
-                    FailTaskStageCommandV1(
-                        workspace=self._workspace,
-                        task_id=task_id,
-                        lease_token=lease_token,
-                        error_code="QA_audit_failed",
-                        error_message=_format_qa_findings_feedback(audit_findings, verdict),
-                        requeue_stage="pending_exec",
-                        metadata=_qa_control_plane_metadata(
-                            payload,
-                            {
-                                _QA_FEEDBACK_COUNTERS_KEY: feedback_counters,
-                                "qa_verdict_engine_shadow": shadow,
-                            }
-                            if shadow
-                            else {_QA_FEEDBACK_COUNTERS_KEY: feedback_counters},
-                        ),
-                    )
-                )
-                return {
-                    "task_id": task_id,
-                    "ok": False,
-                    "verdict": verdict,
-                    "reason": "qa_findings_requeued",
-                }
-            if findings_bounce_eligible:
-                audit_result["qa_findings_bounce_limit_reached"] = True
-
-            shadow = self._build_verdict_engine_shadow(
+            engine = self._build_canonical_verdict_projection(
                 task_id=task_id,
                 payload=payload,
                 audit_result=audit_result,
-                fallback_verdict=verdict,
-                fallback_next_stage=next_stage,
-                fallback_terminal_status=terminal_status,
+                fallback_verdict=observed_verdict,
+                barrier_receipt=receipt,
             )
-            if shadow:
-                audit_result["qa_verdict_engine_shadow"] = shadow
-                verdict, next_stage, terminal_status = _apply_authoritative_verdict_engine_route(
-                    fallback_verdict=verdict,
-                    fallback_next_stage=next_stage,
-                    fallback_terminal_status=terminal_status,
-                    engine_payload=shadow,
-                )
-                if shadow.get("authoritative"):
-                    audit_result["qa_verdict_engine_authoritative"] = shadow
-
-            # Reaching here means this task is terminating or advancing (not a RANK 1
-            # requeue): drop its bounce counter so a future task_id reuse starts clean.
-            self._qa_findings_bounce_counts.pop(task_id, None)
-
-            if next_stage and next_stage != "waiting_human":
-                self._append_qa_gate_to_run_ledger(
-                    task_id=task_id,
-                    payload=payload,
-                    gate_name="qa_verdict",
-                    ok=False,
-                    summary=_format_qa_requeue_feedback(audit_result, verdict),
-                    verdict=verdict,
-                    audit_result=audit_result,
-                    next_stage=next_stage,
-                    terminal_status=terminal_status,
-                    failure_reason="qa_requeue",
-                )
-                requeue = self._svc.fail_task_stage(
-                    FailTaskStageCommandV1(
-                        workspace=self._workspace,
-                        task_id=task_id,
-                        lease_token=lease_token,
-                        error_code=f"QA_{verdict}_requeue",
-                        error_message=_format_qa_requeue_feedback(audit_result, verdict),
-                        requeue_stage=next_stage,
-                        metadata=_qa_control_plane_metadata(
-                            payload,
-                            {
-                                _QA_FEEDBACK_COUNTERS_KEY: feedback_counters,
-                                "qa_next_stage": next_stage,
-                                "qa_terminal_status": terminal_status,
-                                "qa_verdict_engine_shadow": shadow,
-                            },
-                        ),
-                    )
-                )
-                return {
-                    "task_id": task_id,
-                    "ok": bool(requeue.ok),
-                    "verdict": verdict,
-                    "status": str(requeue.status or ""),
-                    "reason": "qa_requeue",
-                }
-
-            ack_payload: dict[str, Any] = {
-                "verdict": verdict,
-                "audit_id": audit_result.get("audit_id", ""),
-                "findings": audit_result.get("findings", []),
-                "score": audit_result.get("score", 0.0),
-                "metrics": audit_result.get("metrics", {}),
-                "qa_next_stage": next_stage,
-                "qa_terminal_status": terminal_status,
-            }
-            if feedback_counters:
-                ack_payload[_QA_FEEDBACK_COUNTERS_KEY] = feedback_counters
-            if shadow:
-                ack_payload["qa_verdict_engine_shadow"] = shadow
-            ack_payload = _qa_control_plane_metadata(payload, ack_payload)
-            qa_ledger_appended = self._append_qa_gate_to_run_ledger(
+            return self._apply_canonical_verdict_transition(
                 task_id=task_id,
+                lease_token=lease_token,
                 payload=payload,
-                gate_name="qa_verdict",
-                ok=terminal_status == "resolved" and verdict == "PASS",
-                summary=f"QA verdict: {verdict}",
-                verdict=verdict,
                 audit_result=audit_result,
-                next_stage=next_stage,
-                terminal_status=terminal_status,
+                engine_payload=engine,
+                evidence_commit_receipt=receipt,
+                feedback_counters=feedback_counters,
             )
-            if terminal_status in {"resolved", "rejected"} and not qa_ledger_appended:
-                self._svc.fail_task_stage(
-                    FailTaskStageCommandV1(
-                        workspace=self._workspace,
-                        task_id=task_id,
-                        lease_token=lease_token,
-                        error_code="QA_run_ledger_append_missing",
-                        error_message="QA terminal verdict requires Run Ledger evidence before acknowledgement.",
-                        requeue_stage="pending_qa",
-                        metadata=_qa_control_plane_metadata(
-                            payload,
-                            {
-                                **ack_payload,
-                                "qa_terminal_ack_blocked": True,
-                                "qa_terminal_ack_blocker": "run_ledger_append_missing",
-                            },
-                        ),
-                    )
-                )
-                return {
-                    "task_id": task_id,
-                    "ok": False,
-                    "verdict": verdict,
-                    "status": "pending_qa",
-                    "reason": "run_ledger_append_missing",
-                }
-
-            command_kwargs: dict[str, Any] = {
-                "workspace": self._workspace,
-                "task_id": task_id,
-                "lease_token": lease_token,
-                "summary": f"QA verdict: {verdict}",
-                "metadata": ack_payload,
-            }
-            if next_stage:
-                command_kwargs["next_stage"] = next_stage
-            else:
-                command_kwargs["terminal_status"] = terminal_status
-
-            ack = self._svc.acknowledge_task_stage(AcknowledgeTaskStageCommandV1(**command_kwargs))
-            return {
-                "task_id": task_id,
-                "ok": bool(ack.ok),
-                "verdict": verdict,
-                "status": str(ack.status or ""),
-            }
 
         except Exception as exc:
             logger.exception("QA consumer failed for task %s: %s", task_id, exc)
@@ -1463,7 +1280,7 @@ class QAConsumer:
                 self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
                     payload=payload,
-                    gate_name="qa_exception",
+                    gate_name="qa_evidence_exception",
                     ok=False,
                     summary=str(exc),
                     verdict="FAIL",
@@ -1682,8 +1499,6 @@ class QAConsumer:
             "metrics": dict(audit.metrics),
             "score": audit.metrics.get("files_audited", 0) * 10 if audit.verdict == "PASS" else 0.0,
         }
-        if audit.metrics.get("missing_director_changed_files_evidence"):
-            result["next_stage"] = "pending_exec"
         llm_review = await self._run_qa_llm_review_async(
             task_id=task_id,
             task_subject=task_subject,

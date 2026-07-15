@@ -10,7 +10,8 @@ import asyncio
 import logging
 import os
 import secrets as _secrets
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +27,31 @@ logger = logging.getLogger(__name__)
 # ``is_auth_token_discovery_enabled``.
 _effective_token: str = ""
 _token_was_auto_generated: bool = False
+
+SyncCleanupCallback = Callable[[], None]
+AsyncCleanupCallback = Callable[[], Awaitable[None]]
+
+
+def _run_sync_cleanup_callbacks(
+    callbacks: tuple[tuple[str, SyncCleanupCallback], ...],
+) -> None:
+    """Run every synchronous cleanup callback without masking another failure."""
+    for name, callback in callbacks:
+        try:
+            callback()
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.error("Lifespan cleanup failed for %s: %s", name, exc, exc_info=True)
+
+
+async def _run_async_cleanup_callbacks(
+    callbacks: tuple[tuple[str, AsyncCleanupCallback], ...],
+) -> None:
+    """Run every awaitable cleanup callback without masking another failure."""
+    for name, callback in callbacks:
+        try:
+            await callback()
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.error("Lifespan cleanup failed for %s: %s", name, exc, exc_info=True)
 
 
 def get_effective_token() -> str:
@@ -44,9 +70,18 @@ def is_auth_token_discovery_enabled() -> bool:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager."""
     from polaris.bootstrap.assembly import assemble_core_services
+    from polaris.cells.events.fact_stream.public import (
+        BootstrapFactStreamWorkspaceCommandV1,
+        bootstrap_fact_stream_workspace,
+        fact_stream_bootstrap_streams,
+    )
+    from polaris.cells.factory.pipeline.public import (
+        start_factory_settlement_runtime,
+        stop_factory_settlement_runtime,
+    )
     from polaris.cells.instances.public.service import maybe_start_instance_watchdog
     from polaris.cells.resident.autonomy.public.service import reset_resident_services
     from polaris.delivery.http.resident_autotick import maybe_start_resident_autotick
@@ -67,6 +102,23 @@ async def lifespan(app: FastAPI):
     )
     from polaris.kernelone.process import terminate_external_loop_pm_processes
 
+    async def cleanup_startup_resources() -> None:
+        """Release idempotent process resources after a failed startup stage."""
+
+        _run_sync_cleanup_callbacks(
+            (
+                ("context receipt lookup", clear_context_retrieve_receipt_lookup),
+                ("file event publisher", clear_file_event_broadcaster_publisher),
+                ("log JetStream publisher", shutdown_log_jetstream_publisher),
+            )
+        )
+        await _run_async_cleanup_callbacks(
+            (
+                ("default NATS client", close_default_client),
+                ("managed NATS runtime", shutdown_local_nats_runtime),
+            )
+        )
+
     reset_container()
     reset_resident_services()
     container = await get_container()
@@ -80,7 +132,7 @@ async def lifespan(app: FastAPI):
     if nats_enabled:
         try:
             await ensure_local_nats_runtime(str(getattr(nats_settings, "url", "") or ""))
-        except (RuntimeError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             log_method = logger.critical if nats_required else logger.warning
             log_method(
                 "[startup] Managed NATS bootstrap failed%s: %s",
@@ -89,6 +141,8 @@ async def lifespan(app: FastAPI):
                 exc_info=True,
             )
             if nats_required:
+                await cleanup_startup_resources()
+                reset_resident_services()
                 raise
     else:
         logger.info("[startup] NATS bootstrap skipped because settings.nats.enabled is false.")
@@ -98,12 +152,14 @@ async def lifespan(app: FastAPI):
     # the application in a half-initialised state silently accepting requests.
     try:
         assemble_core_services(container, settings=app.state.settings)
-    except (RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.critical(
             "[startup] Bootstrap assembly failed – application cannot start safely: %s",
             exc,
             exc_info=True,
         )
+        await cleanup_startup_resources()
+        reset_resident_services()
         raise
 
     app.state.container = container
@@ -131,31 +187,62 @@ async def lifespan(app: FastAPI):
                 f"[startup] terminated stale PM loop processes for workspace={workspace}: {stale_pids}",
             )
 
-    # Opt-in unattended ignition for the Resident autonomy loop (default off).
-    resident_autotick_task = maybe_start_resident_autotick(workspace)
-    instance_watchdog_task = maybe_start_instance_watchdog()
+    resident_autotick_task = None
+    instance_watchdog_task = None
+    settlement_runtime_started = False
+    try:
+        if workspace:
+            bootstrap_fact_stream_workspace(
+                BootstrapFactStreamWorkspaceCommandV1(
+                    workspace=workspace,
+                    streams=fact_stream_bootstrap_streams(),
+                    maintenance_reason="http_app_lifespan_startup",
+                )
+            )
+        # Opt-in unattended ignition for the Resident autonomy loop (default off).
+        resident_autotick_task = maybe_start_resident_autotick(workspace)
+        instance_watchdog_task = maybe_start_instance_watchdog()
+        if workspace:
+            await start_factory_settlement_runtime(
+                workspace,
+                enable_wake_bridge=nats_enabled,
+                wake_bridge_required=nats_enabled and nats_required,
+            )
+            settlement_runtime_started = True
 
-    yield
-
-    if instance_watchdog_task is not None:
-        instance_watchdog_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await instance_watchdog_task
-    if resident_autotick_task is not None:
-        resident_autotick_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await resident_autotick_task
-    with suppress(Exception):
-        clear_context_retrieve_receipt_lookup()
-    with suppress(Exception):
-        clear_file_event_broadcaster_publisher()
-    with suppress(Exception):
-        await close_default_client()
-    with suppress(Exception):
-        shutdown_log_jetstream_publisher()
-    with suppress(Exception):
-        await shutdown_local_nats_runtime()
-    reset_resident_services()
+        yield
+    finally:
+        if instance_watchdog_task is not None:
+            instance_watchdog_task.cancel()
+            try:
+                await instance_watchdog_task
+            except asyncio.CancelledError:
+                logger.debug("Instance watchdog cancelled during lifespan shutdown")
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.error("Instance watchdog shutdown failed: %s", exc, exc_info=True)
+        if resident_autotick_task is not None:
+            resident_autotick_task.cancel()
+            try:
+                await resident_autotick_task
+            except asyncio.CancelledError:
+                logger.debug("Resident autotick cancelled during lifespan shutdown")
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.error("Resident autotick shutdown failed: %s", exc, exc_info=True)
+        if settlement_runtime_started:
+            try:
+                await stop_factory_settlement_runtime(workspace)
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.error(
+                    "Factory settlement runtime shutdown failed for workspace=%s: %s",
+                    workspace,
+                    exc,
+                    exc_info=True,
+                )
+        await cleanup_startup_resources()
+        try:
+            reset_resident_services()
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.error("Resident service reset failed during lifespan shutdown: %s", exc, exc_info=True)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

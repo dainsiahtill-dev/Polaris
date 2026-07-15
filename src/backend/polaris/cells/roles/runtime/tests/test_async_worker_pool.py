@@ -26,6 +26,10 @@ from polaris.cells.roles.runtime.internal.worker_pool import (
     WorkerTask,
     create_async_worker_pool,
 )
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,6 +43,25 @@ def work_dir(tmp_path: Path) -> Path:
     return work_dir
 
 
+def _execution_attempt_identity(
+    task_id: int,
+    *,
+    worker_id: str,
+    role_id: str,
+) -> TaskRuntimeExecutionAttemptIdentityV1:
+    return TaskRuntimeExecutionAttemptIdentityV1(
+        workspace="/tmp/fake-task-runtime",
+        task_id=task_id,
+        external_task_id="",
+        session_id=f"session-{task_id}",
+        attempt=1,
+        role_id=role_id,
+        worker_id=worker_id,
+        run_id="",
+        lease_expires_at="2099-01-01T00:00:00+00:00",
+    )
+
+
 class _FakeTaskRuntime:
     def __init__(
         self,
@@ -46,8 +69,7 @@ class _FakeTaskRuntime:
         complete_result: dict[str, Any] | None = None,
         fail_result: dict[str, Any] | None = None,
     ) -> None:
-        self.completed: list[dict[str, Any]] = []
-        self.failed: list[dict[str, Any]] = []
+        self.settlements: list[SettleTaskRuntimeExecutionAttemptCommandV1] = []
         self.complete_result = complete_result or {"success": True}
         self.fail_result = fail_result or {"success": True}
 
@@ -68,19 +90,27 @@ class _FakeTaskRuntime:
         ]
 
     def claim_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
+        worker_id = str(kwargs["worker_id"])
+        role_id = str(kwargs["role_id"])
         return {
             "success": True,
             "task": self.list_ready_task_rows()[0],
             "session": {"session_id": f"session-{task_id}"},
+            "execution_attempt": _execution_attempt_identity(
+                int(task_id),
+                worker_id=worker_id,
+                role_id=role_id,
+            ).to_record(),
         }
 
-    def complete_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
-        self.completed.append({"task_id": task_id, **kwargs})
-        return dict(self.complete_result)
-
-    def fail_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
-        self.failed.append({"task_id": task_id, **kwargs})
-        return dict(self.fail_result)
+    def settle_execution_attempt(self, command: SettleTaskRuntimeExecutionAttemptCommandV1) -> dict[str, Any]:
+        assert isinstance(command, SettleTaskRuntimeExecutionAttemptCommandV1)
+        assert command.identity.task_id == 7
+        assert command.identity.session_id == "session-7"
+        assert command.outcome in {"completed", "failed"}
+        self.settlements.append(command)
+        result = self.complete_result if command.outcome == "completed" else self.fail_result
+        return dict(result)
 
 
 @pytest.mark.asyncio
@@ -137,14 +167,19 @@ async def test_async_worker_consumes_task_runtime_rows(work_dir: Path) -> None:
 
     assert task is not None
     assert task.task_id == 7
-    assert task.session_id == "session-7"
+    assert task.execution_attempt is not None
+    assert task.execution_attempt.task_id == 7
+    assert task.execution_attempt.session_id == "session-7"
+    assert task.execution_attempt.attempt == 1
+    assert task.execution_attempt.role_id == "async_worker_pool"
+    assert task.execution_attempt.worker_id == "test-worker-runtime"
 
     await worker._execute_worker_task(task)
 
-    assert len(runtime.completed) == 1
-    assert runtime.completed[0]["task_id"] == 7
-    assert runtime.completed[0]["session_id"] == "session-7"
-    assert runtime.failed == []
+    assert len(runtime.settlements) == 1
+    settlement = runtime.settlements[0]
+    assert settlement.identity == task.execution_attempt
+    assert settlement.outcome == "completed"
 
 
 @pytest.mark.asyncio
@@ -178,13 +213,18 @@ async def test_async_worker_projects_task_runtime_finalization_failure(work_dir:
         env={},
         timeout=30,
         metadata={"test": "runtime_finalization_failure"},
-        session_id="session-7",
+        execution_attempt=_execution_attempt_identity(
+            7,
+            worker_id=config.worker_id,
+            role_id="async_worker_pool",
+        ),
     )
 
     await worker._execute_worker_task(task)
 
-    assert len(runtime.completed) == 1
-    assert runtime.failed == []
+    assert len(runtime.settlements) == 1
+    assert runtime.settlements[0].identity == task.execution_attempt
+    assert runtime.settlements[0].outcome == "completed"
     assert len(callback_results) == 1
     result = callback_results[0]
     assert result.success is False
@@ -215,22 +255,26 @@ async def test_async_worker_failure_uses_task_runtime_fail_execution(work_dir: P
     worker = AsyncWorker(config, task_runtime=runtime)
     task = WorkerTask(
         task_id=7,
-        command=f"{sys.executable} -c \"import sys; sys.exit(7)\"",
+        command=f'{sys.executable} -c "import sys; sys.exit(7)"',
         work_dir=work_dir,
         env={},
         timeout=30,
         metadata={"test": "runtime_failure"},
-        session_id="session-7",
+        execution_attempt=_execution_attempt_identity(
+            7,
+            worker_id=config.worker_id,
+            role_id="async_worker_pool",
+        ),
     )
 
     await worker._execute_worker_task(task)
 
-    assert runtime.completed == []
-    assert len(runtime.failed) == 1
-    assert runtime.failed[0]["task_id"] == 7
-    assert runtime.failed[0]["session_id"] == "session-7"
-    assert runtime.failed[0]["error"]
-    assert runtime.failed[0]["metadata"] == {"worker_id": "test-worker-runtime"}
+    assert len(runtime.settlements) == 1
+    settlement = runtime.settlements[0]
+    assert settlement.identity == task.execution_attempt
+    assert settlement.outcome == "failed"
+    assert settlement.summary
+    assert settlement.metadata == {"worker_id": "test-worker-runtime"}
 
 
 def test_sync_worker_failure_uses_task_runtime_fail_execution(work_dir: Path) -> None:
@@ -244,22 +288,26 @@ def test_sync_worker_failure_uses_task_runtime_fail_execution(work_dir: Path) ->
     worker = Worker(config, task_runtime=runtime)
     task = WorkerTask(
         task_id=7,
-        command=f"{sys.executable} -c \"import sys; sys.exit(7)\"",
+        command=f'{sys.executable} -c "import sys; sys.exit(7)"',
         work_dir=work_dir,
         env={},
         timeout=30,
         metadata={"test": "runtime_failure"},
-        session_id="session-7",
+        execution_attempt=_execution_attempt_identity(
+            7,
+            worker_id=config.worker_id,
+            role_id="worker_pool",
+        ),
     )
 
     worker._execute_worker_task(task)
 
-    assert runtime.completed == []
-    assert len(runtime.failed) == 1
-    assert runtime.failed[0]["task_id"] == 7
-    assert runtime.failed[0]["session_id"] == "session-7"
-    assert runtime.failed[0]["error"]
-    assert runtime.failed[0]["metadata"] == {"worker_id": "test-sync-worker-runtime"}
+    assert len(runtime.settlements) == 1
+    settlement = runtime.settlements[0]
+    assert settlement.identity == task.execution_attempt
+    assert settlement.outcome == "failed"
+    assert settlement.summary
+    assert settlement.metadata == {"worker_id": "test-sync-worker-runtime"}
 
 
 def test_sync_worker_projects_task_runtime_finalization_failure(work_dir: Path) -> None:
@@ -303,13 +351,18 @@ def test_sync_worker_projects_task_runtime_finalization_failure(work_dir: Path) 
         env={},
         timeout=30,
         metadata={"test": "runtime_finalization_failure"},
-        session_id="session-7",
+        execution_attempt=_execution_attempt_identity(
+            7,
+            worker_id=config.worker_id,
+            role_id="worker_pool",
+        ),
     )
 
     worker._execute_worker_task(task)
 
-    assert len(runtime.completed) == 1
-    assert runtime.failed == []
+    assert len(runtime.settlements) == 1
+    assert runtime.settlements[0].identity == task.execution_attempt
+    assert runtime.settlements[0].outcome == "completed"
     assert len(callback_results) == 1
     result = callback_results[0]
     assert result.success is False

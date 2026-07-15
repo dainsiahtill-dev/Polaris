@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs.contracts import DurabilityMode, FileDurabilityError, validate_durability
 from polaris.kernelone.fs.types import FileWriteReceipt
 
 
@@ -76,13 +77,57 @@ class LocalFileSystemAdapter:
                 handle.write(data)
         return len(data)
 
-    def append_text(self, path: str, content: str, *, encoding: str = "utf-8") -> int:
-        """Append string content to end of file."""
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+    def append_text(
+        self,
+        path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+        durability: DurabilityMode = "buffered",
+    ) -> int:
+        """Append text and complete the selected durability stage before success."""
+
+        normalized_durability = validate_durability(durability)
         data = str(content)
-        with open(path, "a", encoding=encoding) as handle:
-            handle.write(data)
+        stage = "prepare"
+        target = Path(path)
+        file_existed = target.exists()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            stage = "write"
+            # Preserve Python's native text newline behavior for legacy buffered
+            # callers; JSONL producers already provide their own trailing newline.
+            with open(path, "a", encoding=encoding) as handle:
+                handle.write(data)
+                if normalized_durability in {"flush", "fsync"}:
+                    stage = "flush"
+                    handle.flush()
+                if normalized_durability == "fsync":
+                    stage = "fsync"
+                    os.fsync(handle.fileno())
+            if normalized_durability == "fsync" and not file_existed:
+                stage = "parent_fsync"
+                self._fsync_created_file_parent(target.parent)
+        except OSError as exc:
+            raise FileDurabilityError(
+                path=path,
+                durability=normalized_durability,
+                stage=stage,
+            ) from exc
         return len(data.encode(encoding))
+
+    @staticmethod
+    def _fsync_created_file_parent(parent: Path) -> None:
+        """Persist a new POSIX directory entry; Windows has no matching guarantee."""
+
+        if os.name == "nt":
+            return
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        fd = os.open(str(parent), flags)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     def write_json_atomic(self, path: str, data: Any, *, indent: int = 2) -> FileWriteReceipt:
         """Serialize data to JSON and write atomically."""

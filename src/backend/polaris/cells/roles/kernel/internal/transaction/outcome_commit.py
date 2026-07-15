@@ -13,7 +13,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from polaris.cells.events.fact_stream.public import AppendFactEventCommandV1, append_fact_event
+from polaris.cells.events.fact_stream.public import (
+    AppendFactEventCommandV1,
+    FactStreamProvenanceV1,
+    QueryFactEventsV1,
+    append_fact_event,
+    query_fact_events,
+)
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchReceipt,
@@ -26,6 +32,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnFailureClass,
     TurnOutcome,
 )
+from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 TURN_OUTCOME_STREAM = "roles.kernel.turn_outcomes"
 TURN_OUTCOME_EVENT_TYPE = "turn_outcome_committed"
@@ -50,6 +57,7 @@ def commit_turn_result(
     workspace: str,
     run_id: str,
     task_id: str,
+    transition_id: str,
     ledger: TurnLedger,
     result: Mapping[str, Any] | None,
     completion_status: str,
@@ -57,20 +65,36 @@ def commit_turn_result(
 ) -> DurableTurnCommit:
     """Build and atomically persist the canonical result for one turn.
 
-    The operation is idempotent by ``(run_id, task_id, turn_id)`` and rejects
-    a replay whose payload differs from the already committed outcome.
+    The operation is idempotent by its typed workspace/run/task/turn/transition
+    provenance and rejects a replay whose payload differs from the already
+    committed outcome.
 
     Complexity:
-        O(e + p) time and O(e + p) memory, where ``e`` is the number of tool
-        executions and ``p`` is the serialized outcome size. The underlying
-        JSONL store currently performs an O(n) idempotency lookup per stream.
+        O(e + p + n) time and O(e + p) memory, where ``e`` is the number of
+        tool executions, ``p`` is the serialized outcome size, and ``n`` is
+        the number of prior facts for this task when checking unscoped legacy
+        events. The underlying JSONL store also performs an O(n) idempotency
+        lookup per stream.
     """
 
     normalized_workspace = str(workspace or "").strip()
     normalized_run_id = str(run_id or "").strip()
     normalized_task_id = str(task_id or "").strip()
-    if not normalized_workspace or not normalized_run_id or not normalized_task_id:
-        raise TurnOutcomeCommitError("workspace, run_id, and task_id are required for durable turn commit")
+    normalized_transition_id = str(transition_id or "").strip()
+    if not normalized_workspace or not normalized_run_id or not normalized_task_id or not normalized_transition_id:
+        raise TurnOutcomeCommitError(
+            "workspace, run_id, task_id, and transition_id are required for durable turn commit"
+        )
+
+    storage_identity = resolve_workspace_runtime_identity(normalized_workspace)
+    provenance = FactStreamProvenanceV1(
+        workspace=storage_identity.workspace_abs,
+        run_id=normalized_run_id,
+        task_id=normalized_task_id,
+        turn_id=str(ledger.turn_id),
+        transition_id=normalized_transition_id,
+    )
+    _reject_unscoped_legacy_transition(provenance)
 
     result_payload = dict(result or {})
     failure_class = _failure_class_for(
@@ -91,14 +115,26 @@ def commit_turn_result(
     outcome_payload = outcome.model_dump(mode="json", exclude={"commit_ref"})
     outcome_hash = _stable_hash(outcome_payload)
     event_payload = {
-        "schema_version": "roles.kernel.turn_outcome_fact.v1",
+        "schema_version": "roles.kernel.turn_outcome_fact.v2",
         "run_id": normalized_run_id,
         "task_id": normalized_task_id,
         "turn_id": str(ledger.turn_id),
+        "transition_id": normalized_transition_id,
+        "provenance": provenance.to_record(),
+        "storage_identity": storage_identity.to_record(),
         "outcome_hash": outcome_hash,
         "outcome": outcome_payload,
     }
-    idempotency_key = f"{normalized_run_id}:{normalized_task_id}:{ledger.turn_id}"
+    idempotency_key = ":".join(
+        (
+            TURN_OUTCOME_STREAM,
+            storage_identity.token,
+            normalized_run_id,
+            normalized_task_id,
+            str(ledger.turn_id),
+            normalized_transition_id,
+        )
+    )
     try:
         appended = append_fact_event(
             AppendFactEventCommandV1(
@@ -110,6 +146,7 @@ def commit_turn_result(
                 run_id=normalized_run_id,
                 task_id=normalized_task_id,
                 correlation_id=str(ledger.turn_id),
+                provenance=provenance,
                 idempotency_key=idempotency_key,
             )
         )
@@ -170,6 +207,38 @@ def _execution_from_result(
         receipt=receipt,
         side_effect_class=side_effect_class,
     )
+
+
+def _reject_unscoped_legacy_transition(provenance: FactStreamProvenanceV1) -> None:
+    """Fail closed when a v1 fact cannot prove transition-level equivalence."""
+
+    offset = 0
+    while True:
+        result = query_fact_events(
+            QueryFactEventsV1(
+                workspace=provenance.workspace,
+                stream=TURN_OUTCOME_STREAM,
+                limit=1000,
+                offset=offset,
+                run_id=provenance.run_id,
+                task_id=provenance.task_id,
+            )
+        )
+        for event in result.events:
+            payload = event.get("payload")
+            if not isinstance(payload, Mapping):
+                continue
+            if (
+                payload.get("schema_version") == "roles.kernel.turn_outcome_fact.v1"
+                and str(payload.get("turn_id") or "").strip() == provenance.turn_id
+            ):
+                raise TurnOutcomeCommitError(
+                    "legacy turn outcome lacks transition provenance; explicit migration is required "
+                    f"run_id={provenance.run_id!r} task_id={provenance.task_id!r} turn_id={provenance.turn_id!r}"
+                )
+        if result.next_offset == 0:
+            return
+        offset = result.next_offset
 
 
 def _closing_from_result(

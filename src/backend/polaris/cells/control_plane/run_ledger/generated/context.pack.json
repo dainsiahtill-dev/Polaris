@@ -1,0 +1,38 @@
+{
+  "id": "control_plane.run_ledger",
+  "kind": "capability",
+  "owner": "control-plane",
+  "public": true,
+  "owned_paths": [
+    "polaris/cells/control_plane/run_ledger/**"
+  ],
+  "contracts": {
+    "commands": [],
+    "queries": [
+      "ReadRunLedgerProjectionQueryV1"
+    ],
+    "events": [],
+    "results": [
+      "RunLedgerProjectionResultV1"
+    ],
+    "errors": [
+      "ControlPlaneRunLedgerV1Error"
+    ]
+  },
+  "depends_on": [
+    "events.fact_stream",
+    "runtime.task_runtime"
+  ],
+  "state_owners": [
+    "runtime/control_plane/ledger/*"
+  ],
+  "effects_allowed": [
+    "fs.write:runtime/control_plane/ledger/*",
+    "fs.read:runtime/control_plane/ledger/*",
+    "fs.read:runtime/factory/ledger/*"
+  ],
+  "verify_targets": [
+    "polaris/cells/control_plane/run_ledger/tests/test_public_service.py",
+    "polaris/tests/unit/delivery/http/routers/test_control_plane_router.py"
+  ]
+}

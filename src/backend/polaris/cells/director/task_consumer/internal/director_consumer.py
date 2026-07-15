@@ -1374,7 +1374,7 @@ class DirectorExecutionConsumer:
                 worker_role="director",
                 task_role=task_role,
                 counterparty_task_id=counterparty_task_id,
-                handoff=handoff,
+                handoff=handoff.to_record(),
                 claimed_item=claimed_item,
                 counterparty_item=counterparty_item,
             )
@@ -1875,8 +1875,7 @@ class DirectorExecutionConsumer:
             )
 
         unresolved_requests = (
-            routing.index.unmatched_owner_handoff_requests
-            or routing.index.unknown_owner_handoff_requests
+            routing.index.unmatched_owner_handoff_requests or routing.index.unknown_owner_handoff_requests
         )
         if routing.has_unresolved_handoffs or unresolved_requests:
             handoff_request = unresolved_requests[0] if unresolved_requests else None
@@ -1989,8 +1988,7 @@ class DirectorExecutionConsumer:
 
         if not isinstance(route_result, OwnerReworkRouteResultV1):
             protocol_error = TypeError(
-                "route_owner_rework returned an unexpected result type: "
-                f"{type(route_result).__name__}"
+                f"route_owner_rework returned an unexpected result type: {type(route_result).__name__}"
             )
             logger.error(
                 "Owner-handoff route result protocol violation: task_id=%s owner_task_id=%s handoff_id=%s",

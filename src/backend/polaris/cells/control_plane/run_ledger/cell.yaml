@@ -33,7 +33,9 @@ public_contracts:
     - RunLedgerProjectionResultV1
   errors:
     - ControlPlaneRunLedgerV1Error
-depends_on: []
+depends_on:
+  - events.fact_stream
+  - runtime.task_runtime
 subgraphs:
   - execution_governance_pipeline
 state_owners:
@@ -55,3 +57,5 @@ verification:
       evidence ages out; production projection defaults must remain
       runtime/control_plane/ledger only.
   smoke_commands: []
+generated_artifacts:
+  - generated/context.pack.json

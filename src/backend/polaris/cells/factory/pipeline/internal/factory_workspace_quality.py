@@ -21,19 +21,16 @@ Behavior preservation notes:
 from __future__ import annotations
 
 import ast
-import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from polaris.kernelone.benchmark.factory_audit import check_workspace_delivery_depth_contract
-from polaris.kernelone.fs.text_ops import write_text_atomic
 
 from . import factory_stage_helpers as helpers
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
@@ -71,17 +68,6 @@ _LONG_RUNNING_WEB_START_MARKERS = (
 _NESTED_JAVAC_DIAGNOSTIC_TIMEOUT_SECONDS = 30.0
 
 
-@dataclass(frozen=True)
-class WorkspaceQualityFilePatch:
-    """Controlled local patch emitted by workspace-quality repair helpers."""
-
-    source_tool: str
-    path: str
-    content_before: str
-    content_after: str
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-
 def _npm_start_runs_long_lived_web_server(script: str) -> bool:
     normalized = re.sub(r"\s+", " ", str(script or "").strip().lower())
     if not normalized:
@@ -92,55 +78,14 @@ def _npm_start_runs_long_lived_web_server(script: str) -> bool:
 
 
 class WorkspaceQualityRunner:
-    """Builds and runs workspace quality (npm test/build) commands."""
+    """Build and run quality commands without mutating target artifacts.
+
+    Factory owns measurement and failure evidence only. Any source, manifest,
+    or test repair must execute through the Director runtime authority.
+    """
 
     def __init__(self, workspace: Path) -> None:
         self.workspace = Path(workspace)
-        self._repair_receipts: list[dict[str, Any]] = []
-
-    def consume_repair_receipts(self) -> list[dict[str, Any]]:
-        receipts = [dict(item) for item in self._repair_receipts]
-        self._repair_receipts.clear()
-        return receipts
-
-    def _workspace_relative_path(self, path: Path) -> str | None:
-        try:
-            return path.resolve().relative_to(self.workspace.resolve()).as_posix()
-        except ValueError:
-            return None
-
-    def _apply_workspace_quality_patch(self, patch: WorkspaceQualityFilePatch) -> dict[str, Any] | None:
-        relative_path = str(patch.path or "").strip().replace("\\", "/")
-        if not relative_path or relative_path.startswith("../") or relative_path.startswith("/"):
-            return None
-        path = (self.workspace / relative_path).resolve()
-        if self._workspace_relative_path(path) != relative_path:
-            return None
-        try:
-            current = path.read_text(encoding="utf-8")
-        except OSError:
-            return None
-        if current != patch.content_before or patch.content_before == patch.content_after:
-            return None
-
-        before_hash = hashlib.sha256(patch.content_before.encode("utf-8")).hexdigest()
-        after_hash = hashlib.sha256(patch.content_after.encode("utf-8")).hexdigest()
-        write_text_atomic(str(path), patch.content_after)
-        receipt = {
-            "schema_version": "factory.workspace_quality.repair_patch_receipt.v1",
-            "source": "factory.workspace_quality",
-            "source_tool": patch.source_tool,
-            "path": relative_path,
-            "operation": "write_file",
-            "before_hash": before_hash,
-            "after_hash": after_hash,
-            "metadata": dict(patch.metadata),
-            "authoritative": False,
-            "runtime_migration_required": True,
-            "preferred_owner": "director.runtime.repair_kernel",
-        }
-        self._repair_receipts.append(receipt)
-        return receipt
 
     def workspace_package_has_external_dependencies(self) -> bool:
         package_path = (self.workspace / "package.json").resolve()
@@ -433,228 +378,6 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
         if (self.workspace / "src" / "main.py").is_file():
             commands.append([sys.executable, "src/main.py"])
         return commands
-
-    # Patterns that indicate npm install failed due to a hallucinated dependency
-    # (a package that does not exist on the registry, or a version that does not exist).
-    _NPM_HALLUCINATED_DEP_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"notarget\s+No matching version found for\s+(?P<name>[^\s@]+)@", re.IGNORECASE),
-        re.compile(r"code\s+ETARGET.*?notarget.*?(?P<name>[^\s@]+)@", re.IGNORECASE | re.DOTALL),
-        re.compile(r"code\s+E404.*?(?P<name>[^\s@]+)@(?P<version>[^\s]+)", re.IGNORECASE | re.DOTALL),
-    )
-
-    def repair_hallucinated_npm_dependencies(self, stderr: str) -> list[str]:
-        """Remove hallucinated dependencies from package.json.
-
-        Parses npm install stderr for packages that don't exist on the
-        registry and removes them from all dependency sections.
-        Returns the list of removed package names.
-        """
-        package_path = (self.workspace / "package.json").resolve()
-        if not package_path.exists():
-            return []
-        removed: list[str] = []
-        for pattern in self._NPM_HALLUCINATED_DEP_PATTERNS:
-            for match in pattern.finditer(stderr):
-                name = match.group("name").strip()
-                if name and name not in removed:
-                    removed.append(name)
-        if not removed:
-            return []
-        try:
-            payload = json.loads(package_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return []
-        if not isinstance(payload, dict):
-            return []
-        actually_removed: list[str] = []
-        for dep_key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
-            deps = payload.get(dep_key)
-            if not isinstance(deps, dict):
-                continue
-            for name in removed:
-                if name in deps:
-                    del deps[name]
-                    if name not in actually_removed:
-                        actually_removed.append(name)
-        if not actually_removed:
-            return []
-        relative_path = self._workspace_relative_path(package_path)
-        if not relative_path:
-            return []
-        receipt = self._apply_workspace_quality_patch(
-            WorkspaceQualityFilePatch(
-                source_tool="factory_workspace_quality.hallucinated_npm_dependency",
-                path=relative_path,
-                content_before=package_path.read_text(encoding="utf-8"),
-                content_after=json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-                metadata={
-                    "removed_dependencies": list(actually_removed),
-                    "dependency_sections": [
-                        key
-                        for key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
-                        if isinstance(payload.get(key), dict)
-                    ],
-                },
-            )
-        )
-        return actually_removed if receipt is not None else []
-
-    # Regex for CJS destructuring require: const { X } = require("./path")
-    _CJS_DESTRUCTURE_REQUIRE = re.compile(r"const\s*\{([^}]+)\}\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)")
-    # Regex for CJS direct class/function export: module.exports = ClassName
-    _CJS_DIRECT_EXPORT = re.compile(r"module\.exports\s*=\s*([A-Za-z_$][\w$]*)\s*;")
-
-    def repair_cjs_export_import_mismatch(self) -> list[dict[str, str]]:
-        """Fix CJS destructuring imports that target direct-export modules.
-
-        Common Director LLM error pattern:
-        - Model file: ``module.exports = Dream;`` (direct export)
-        - Consumer: ``const { Dream } = require("./models/Dream");`` (destructure)
-
-        The destructuring yields ``undefined`` because the module exports the
-        class directly, not an object with a ``Dream`` property.
-
-        Fix: convert destructure to direct assignment in consumer files.
-        """
-        js_files = [p for p in self.workspace.rglob("*.js") if p.is_file() and "node_modules" not in p.parts]
-        if not js_files:
-            return []
-
-        # Build map: resolved module path -> exported name (for direct exports)
-        direct_exports: dict[str, str] = {}
-        for js_file in js_files:
-            try:
-                content = js_file.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            match = self._CJS_DIRECT_EXPORT.search(content)
-            if match:
-                # Key: absolute resolved path without extension
-                direct_exports[str(js_file.resolve().with_suffix(""))] = match.group(1)
-
-        if not direct_exports:
-            return []
-
-        repairs: list[dict[str, str]] = []
-        for js_file in js_files:
-            try:
-                content = js_file.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            modified = False
-            file_repairs: list[dict[str, str]] = []
-            new_lines: list[str] = []
-            for line in content.split("\n"):
-                match = self._CJS_DESTRUCTURE_REQUIRE.search(line)
-                if match:
-                    names = [n.strip() for n in match.group(1).split(",") if n.strip()]
-                    require_path = match.group(2)
-                    # Resolve the require path relative to the importing file
-                    if require_path.startswith("."):
-                        resolved = (js_file.parent / require_path).resolve()
-                        resolved_key = str(resolved.with_suffix(""))
-                        if resolved_key in direct_exports:
-                            exported_name = direct_exports[resolved_key]
-                            # Only fix if the destructured name matches the direct export
-                            if exported_name in names:
-                                # Convert: const { X } = require("./path") -> const X = require("./path")
-                                indent = line[: len(line) - len(line.lstrip())]
-                                line = f'{indent}const {exported_name} = require("{require_path}");'
-                                modified = True
-                                file_repairs.append(
-                                    {
-                                        "file": str(js_file.relative_to(self.workspace)),
-                                        "fix": f"destructure_to_direct:{exported_name}",
-                                    }
-                                )
-                new_lines.append(line)
-            if modified:
-                relative_path = self._workspace_relative_path(js_file)
-                if not relative_path:
-                    continue
-                receipt = self._apply_workspace_quality_patch(
-                    WorkspaceQualityFilePatch(
-                        source_tool="factory_workspace_quality.cjs_export_import_mismatch",
-                        path=relative_path,
-                        content_before=content,
-                        content_after="\n".join(new_lines),
-                        metadata={"repairs": list(file_repairs)},
-                    )
-                )
-                if receipt is not None:
-                    repairs.extend(file_repairs)
-
-        return repairs
-
-    # Regex for Node.js assert.strictEqual / assert.equal with string literals
-    _ASSERT_EQUAL_PATTERN = re.compile(r"(assert\.(?:strictEqual|equal|deepStrictEqual|deepEqual))\s*\(")
-    # Detect whitespace-only assertion difference from npm test stderr
-    _WHITESPACE_DIFF_PATTERN = re.compile(r"'\s*([^']*?)\s*'\s*!==\s*'\s*([^']*?)\s*'")
-
-    def repair_test_trim_mismatch(self, test_stderr: str) -> list[str]:
-        """Fix test assertions that fail due to whitespace/trim differences.
-
-        When npm test fails with ERR_ASSERTION showing a whitespace-only
-        difference (e.g. ' Tide ' !== 'Tide'), this method patches the test
-        files by wrapping string comparisons with .trim().
-        """
-        if not self._WHITESPACE_DIFF_PATTERN.search(test_stderr):
-            return []
-
-        test_files = [p for p in self.workspace.rglob("test_*.js") if p.is_file() and "node_modules" not in p.parts]
-        test_files.extend(p for p in self.workspace.rglob("*.test.js") if p.is_file() and "node_modules" not in p.parts)
-        if not test_files:
-            return []
-
-        patched: list[str] = []
-        for test_file in test_files:
-            try:
-                content = test_file.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            # Find strictEqual/equal assertions and add .trim() to property accesses
-            modified = False
-            lines = content.split("\n")
-            for i, line in enumerate(lines):
-                if self._ASSERT_EQUAL_PATTERN.search(line) and ".trim()" not in line:
-                    # Only add .trim() when the expected value is a string literal
-                    # (i.e. the second argument is in quotes). Skip numeric/boolean comparisons.
-                    has_string_expected = bool(re.search(r',\s*["\']', line))
-                    if not has_string_expected:
-                        continue
-                    # Add .trim() to property access patterns like obj.field or obj[key]
-                    # Match patterns: result.field, dream.title, item.text, etc.
-                    patched_line = re.sub(
-                        r"\b([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)+)\s*(,|\))",
-                        lambda m: (
-                            f"{m.group(1)}.trim(){m.group(2)}"
-                            if ".trim()" not in m.group(0)
-                            and "assert" not in m.group(1)
-                            and "require" not in m.group(1)
-                            else m.group(0)
-                        ),
-                        line,
-                    )
-                    if patched_line != line:
-                        lines[i] = patched_line
-                        modified = True
-            if modified:
-                relative_path = self._workspace_relative_path(test_file)
-                if not relative_path:
-                    continue
-                receipt = self._apply_workspace_quality_patch(
-                    WorkspaceQualityFilePatch(
-                        source_tool="factory_workspace_quality.test_trim_mismatch",
-                        path=relative_path,
-                        content_before=content,
-                        content_after="\n".join(lines),
-                        metadata={"stderr_pattern": "whitespace_only_assertion_diff"},
-                    )
-                )
-                if receipt is not None:
-                    patched.append(str(test_file.relative_to(self.workspace)))
-
-        return patched
 
     def run_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
         started_at = datetime.now(timezone.utc).isoformat()

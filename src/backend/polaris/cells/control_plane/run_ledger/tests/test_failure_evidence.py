@@ -31,6 +31,30 @@ def test_normalize_failure_class_canonicalizes_known_values() -> None:
     assert normalize_failure_class("pm-runtime-exception") == FailureClassV1.ROLE_ADAPTER_EXCEPTION.value
 
 
+def test_failure_class_covers_cross_layer_qa_failures_without_pass_state() -> None:
+    qa_failure_members = (
+        FailureClassV1.EXECUTION_EVIDENCE_MISSING,
+        FailureClassV1.IMPLEMENTATION_DEFECT,
+        FailureClassV1.IMPLEMENTATION_DEFECT_BOUNCE_LIMIT,
+        FailureClassV1.DEFERRED_FOLLOWUP_REQUIRED,
+        FailureClassV1.BLUEPRINT_SCOPE_MISMATCH,
+        FailureClassV1.BLUEPRINT_VERIFY_INVALID,
+        FailureClassV1.CONTRACT_AMBIGUOUS,
+        FailureClassV1.TEST_ENVIRONMENT_FAILURE,
+        FailureClassV1.ACCEPTANCE_INVALID,
+        FailureClassV1.SECURITY_POLICY_VIOLATION,
+        FailureClassV1.RESOURCE_BUDGET_EXHAUSTED,
+        FailureClassV1.PROGRESS_STALLED,
+        FailureClassV1.TASK_BOUNDARY_FAILED,
+        FailureClassV1.TASKBOARD_DEADLOCK,
+        FailureClassV1.LEDGER_PROJECTION_INCOMPLETE,
+    )
+
+    for member in qa_failure_members:
+        assert normalize_failure_class(member.value.lower()) == member.value
+    assert "PASSED" not in FailureClassV1.__members__
+
+
 def test_normalize_failure_class_preserves_unknown_values() -> None:
     assert normalize_failure_class("new_platform_failure") == "new_platform_failure"
     assert normalize_failure_class(None, default=FailureClassV1.TOOL_LIFECYCLE_UNKNOWN) == (

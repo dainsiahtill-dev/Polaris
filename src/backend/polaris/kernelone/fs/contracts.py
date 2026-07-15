@@ -15,9 +15,31 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, cast, runtime_checkable
 
 from polaris.kernelone.fs.types import FileWriteReceipt
+
+DurabilityMode: TypeAlias = Literal["buffered", "flush", "fsync"]
+
+
+class FileDurabilityError(OSError):
+    """Raised when an explicitly requested append durability stage fails."""
+
+    def __init__(self, *, path: str, durability: DurabilityMode, stage: str) -> None:
+        super().__init__(
+            f"append durability failed path={path!r} durability={durability!r} stage={stage!r}",
+        )
+        self.path = path
+        self.durability = durability
+        self.stage = stage
+
+
+def validate_durability(value: str) -> DurabilityMode:
+    """Return one supported durability mode or reject an unknown value."""
+
+    if value not in {"buffered", "flush", "fsync"}:
+        raise ValueError("durability must be one of: buffered, flush, fsync")
+    return cast(DurabilityMode, value)
 
 
 @runtime_checkable
@@ -86,10 +108,20 @@ class KernelFileSystemAdapter(Protocol):
         """
         ...
 
-    def append_text(self, path: str, content: str, *, encoding: str = "utf-8") -> int:
+    def append_text(
+        self,
+        path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+        durability: DurabilityMode = "buffered",
+    ) -> int:
         """Append string content to end of file.
 
-        Creates the file if it does not exist.
+        Creates the file if it does not exist. ``flush`` flushes Python's
+        userspace buffer; ``fsync`` additionally makes the file descriptor
+        durable before returning. Implementations must raise on a requested
+        durability-stage failure and must not return a success byte count.
         """
         ...
 

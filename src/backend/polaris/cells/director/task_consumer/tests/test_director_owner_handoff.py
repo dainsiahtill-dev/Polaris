@@ -347,9 +347,7 @@ def test_owner_handoff_multiple_owners_fails_closed_before_route(
     consumer, service = consumer_and_service
     owner_a = _handoff_request("owner-a", "src/a.py")
     owner_b = _handoff_request("owner-b", "src/b.py")
-    service.query_status.return_value = SimpleNamespace(
-        items=({"task_id": "owner-a"}, {"task_id": "owner-b"})
-    )
+    service.query_status.return_value = SimpleNamespace(items=({"task_id": "owner-a"}, {"task_id": "owner-b"}))
 
     with patch.object(consumer, "_execute_task", side_effect=_raise_owner_handoff(_failure(owner_a, owner_b))):
         result = consumer._process_claim(_claim())
@@ -359,9 +357,7 @@ def test_owner_handoff_multiple_owners_fails_closed_before_route(
     service.route_owner_rework.assert_not_called()
     fail_command = service.fail_task_stage.call_args.args[0]
     assert fail_command.requeue_stage == "pending_design"
-    assert fail_command.metadata["owner_handoff_evidence"]["owner_handoff_routing"][
-        "matched_owner_handoff_count"
-    ] == 2
+    assert fail_command.metadata["owner_handoff_evidence"]["owner_handoff_routing"]["matched_owner_handoff_count"] == 2
 
 
 def test_owner_handoff_route_exception_is_observable_and_requeued(
@@ -408,7 +404,7 @@ def test_owner_rework_preparation_precedes_director_adapter_execution(
             code="owner_rework_execution_prepared",
             reason="prepared",
             task_id=claim.task_id,
-            handoff_id=command.authorization.handoff.handoff_id,
+            handoff_id=str(command.authorization.handoff["handoff_id"]),
             task_role=task_role,
             runtime_task_id="42",
         )

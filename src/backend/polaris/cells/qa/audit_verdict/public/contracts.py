@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
+    FailureClassV1,
     normalize_failure_class as normalize_run_ledger_failure_class,
 )
 
@@ -289,9 +289,14 @@ class QaAuditResultV1:
 
 @dataclass(frozen=True)
 class QaFailureClassificationV1:
-    """Typed QA failure routing decision."""
+    """Typed QA routing decision with an optional canonical failure class.
 
-    failure_class: str
+    Successful QA verdicts carry ``failure_class=None``. Failure paths must use
+    :class:`FailureClassV1` values through
+    :func:`build_qa_failure_classification_v1`.
+    """
+
+    failure_class: str | None
     route: str
     reason: str
     repairable_by_director: bool
@@ -304,7 +309,11 @@ class QaFailureClassificationV1:
     schema_version: str = "polaris.qa_failure_classification.v1"
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "failure_class", _require_non_empty("failure_class", self.failure_class))
+        if self.failure_class is not None:
+            failure_class = _require_non_empty("failure_class", self.failure_class)
+            if failure_class.casefold() == "passed":
+                raise ValueError("PASSED is a QA verdict state, not a failure class")
+            object.__setattr__(self, "failure_class", failure_class)
         object.__setattr__(self, "route", _require_non_empty("route", self.route))
         object.__setattr__(self, "reason", _require_non_empty("reason", self.reason))
         object.__setattr__(self, "severity", _require_non_empty("severity", self.severity))
@@ -328,110 +337,80 @@ class QaFailureClassificationV1:
         }
 
 
-class QaFailureClassV1(str, Enum):
-    """Canonical QA failure classes carried by QA verdict envelopes."""
-
-    PASSED = "PASSED"
-    INCOMPLETE_MATERIALIZATION = "INCOMPLETE_MATERIALIZATION"
-    MISSING_ENTRYPOINT_TARGET = "MISSING_ENTRYPOINT_TARGET"
-    TOOL_DISPATCH_DROPPED = "TOOL_DISPATCH_DROPPED"
-    REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED = "REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED"
-    NO_MATERIALIZED_EFFECT = "NO_MATERIALIZED_EFFECT"
-    EXECUTION_EVIDENCE_MISSING = "EXECUTION_EVIDENCE_MISSING"
-    IMPLEMENTATION_DEFECT = "IMPLEMENTATION_DEFECT"
-    COMPILER_OR_TEST_FAILURE = "COMPILER_OR_TEST_FAILURE"
-    IMPLEMENTATION_DEFECT_BOUNCE_LIMIT = "IMPLEMENTATION_DEFECT_BOUNCE_LIMIT"
-    DEPENDENCY_NOT_UNLOCKED = "DEPENDENCY_NOT_UNLOCKED"
-    DEFERRED_FOLLOWUP_REQUIRED = "DEFERRED_FOLLOWUP_REQUIRED"
-    BLUEPRINT_SCOPE_MISMATCH = "BLUEPRINT_SCOPE_MISMATCH"
-    BLUEPRINT_VERIFY_INVALID = "BLUEPRINT_VERIFY_INVALID"
-    CONTRACT_AMBIGUOUS = "CONTRACT_AMBIGUOUS"
-    TEST_ENVIRONMENT_FAILURE = "TEST_ENVIRONMENT_FAILURE"
-    ACCEPTANCE_INVALID = "ACCEPTANCE_INVALID"
-    SECURITY_POLICY_VIOLATION = "SECURITY_POLICY_VIOLATION"
-    RESOURCE_BUDGET_EXHAUSTED = "RESOURCE_BUDGET_EXHAUSTED"
-    PROGRESS_STALLED = "PROGRESS_STALLED"
-    MODEL_PROVIDER_FAILURE = "MODEL_PROVIDER_FAILURE"
-    MODEL_PROVIDER_TIMEOUT = "MODEL_PROVIDER_TIMEOUT"
-    TASK_BOUNDARY_FAILED = "TASK_BOUNDARY_FAILED"
-    TOOL_LIFECYCLE_FAILED = "TOOL_LIFECYCLE_FAILED"
-    TASKBOARD_DEADLOCK = "TASKBOARD_DEADLOCK"
-    LEDGER_PROJECTION_INCOMPLETE = "LEDGER_PROJECTION_INCOMPLETE"
-
-
 _QA_FAILURE_CLASS_ALIASES = {
-    "passed": QaFailureClassV1.PASSED.value,
-    "incomplete_materialization": QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
-    "missing_entrypoint_target": QaFailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
-    "tool_dispatch_dropped": QaFailureClassV1.TOOL_DISPATCH_DROPPED.value,
-    "required_tool_text_fallback_not_dispatched": (QaFailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value),
-    "no_materialized_effect": QaFailureClassV1.NO_MATERIALIZED_EFFECT.value,
-    "execution_evidence_missing": QaFailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
-    "implementation_defect": QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
-    "compiler_or_test_failure": QaFailureClassV1.COMPILER_OR_TEST_FAILURE.value,
-    "implementation_defect_bounce_limit": QaFailureClassV1.IMPLEMENTATION_DEFECT_BOUNCE_LIMIT.value,
-    "dependency_not_unlocked": QaFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value,
-    "deferred_followup_required": QaFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value,
-    "scope_mismatch": QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
-    "blueprint_scope_mismatch": QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
-    "blueprint_verify_invalid": QaFailureClassV1.BLUEPRINT_VERIFY_INVALID.value,
-    "contract_ambiguous": QaFailureClassV1.CONTRACT_AMBIGUOUS.value,
-    "test_environment_failure": QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
-    "acceptance_invalid": QaFailureClassV1.ACCEPTANCE_INVALID.value,
-    "security_policy_violation": QaFailureClassV1.SECURITY_POLICY_VIOLATION.value,
-    "resource_budget_exhausted": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
-    "progress_stalled": QaFailureClassV1.PROGRESS_STALLED.value,
-    "model_provider_failure": QaFailureClassV1.MODEL_PROVIDER_FAILURE.value,
-    "model_provider_timeout": QaFailureClassV1.MODEL_PROVIDER_TIMEOUT.value,
+    "incomplete_materialization": FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+    "missing_entrypoint_target": FailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
+    "tool_dispatch_dropped": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+    "required_tool_text_fallback_not_dispatched": (
+        FailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value
+    ),
+    "no_materialized_effect": FailureClassV1.NO_MATERIALIZED_EFFECT.value,
+    "execution_evidence_missing": FailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+    "implementation_defect": FailureClassV1.IMPLEMENTATION_DEFECT.value,
+    "compiler_or_test_failure": FailureClassV1.COMPILER_OR_TEST_FAILURE.value,
+    "implementation_defect_bounce_limit": FailureClassV1.IMPLEMENTATION_DEFECT_BOUNCE_LIMIT.value,
+    "dependency_not_unlocked": FailureClassV1.DEPENDENCY_NOT_UNLOCKED.value,
+    "deferred_followup_required": FailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value,
+    "scope_mismatch": FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
+    "blueprint_scope_mismatch": FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
+    "blueprint_verify_invalid": FailureClassV1.BLUEPRINT_VERIFY_INVALID.value,
+    "contract_ambiguous": FailureClassV1.CONTRACT_AMBIGUOUS.value,
+    "test_environment_failure": FailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
+    "acceptance_invalid": FailureClassV1.ACCEPTANCE_INVALID.value,
+    "security_policy_violation": FailureClassV1.SECURITY_POLICY_VIOLATION.value,
+    "resource_budget_exhausted": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+    "progress_stalled": FailureClassV1.PROGRESS_STALLED.value,
+    "model_provider_failure": FailureClassV1.MODEL_PROVIDER_FAILURE.value,
+    "model_provider_timeout": FailureClassV1.MODEL_PROVIDER_TIMEOUT.value,
 }
 
 QA_ARTIFACT_FAILURE_CLASSES = frozenset(
     {
-        QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
-        QaFailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
-        QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
-        QaFailureClassV1.COMPILER_OR_TEST_FAILURE.value,
+        FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+        FailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
+        FailureClassV1.IMPLEMENTATION_DEFECT.value,
+        FailureClassV1.COMPILER_OR_TEST_FAILURE.value,
     }
 )
 
-QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS = QaFailureClassV1.TASK_BOUNDARY_FAILED.value
-QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS = QaFailureClassV1.TOOL_LIFECYCLE_FAILED.value
+QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS = FailureClassV1.TASK_BOUNDARY_FAILED.value
+QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS = FailureClassV1.TOOL_LIFECYCLE_FAILED.value
 
 QA_PLATFORM_FAILURE_CLASSES = frozenset(
     {
-        QaFailureClassV1.TOOL_DISPATCH_DROPPED.value,
-        QaFailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value,
-        QaFailureClassV1.NO_MATERIALIZED_EFFECT.value,
-        QaFailureClassV1.TASKBOARD_DEADLOCK.value,
-        QaFailureClassV1.LEDGER_PROJECTION_INCOMPLETE.value,
-        QaFailureClassV1.MODEL_PROVIDER_FAILURE.value,
-        QaFailureClassV1.MODEL_PROVIDER_TIMEOUT.value,
+        FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+        FailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value,
+        FailureClassV1.NO_MATERIALIZED_EFFECT.value,
+        FailureClassV1.TASKBOARD_DEADLOCK.value,
+        FailureClassV1.LEDGER_PROJECTION_INCOMPLETE.value,
+        FailureClassV1.MODEL_PROVIDER_FAILURE.value,
+        FailureClassV1.MODEL_PROVIDER_TIMEOUT.value,
         QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS,
     }
 )
 
 
-def _qa_failure_class_key(value: str) -> str:
+def _qa_failure_class_key(value: str | FailureClassV1) -> str:
     return "_".join(str(value or "").strip().lower().replace("-", "_").split())
 
 
-def _normalize_qa_failure_class(value: str) -> str:
-    token = _require_non_empty("failure_class", value)
-    run_ledger_token = normalize_run_ledger_failure_class(token)
+def _normalize_qa_failure_class(value: str | FailureClassV1) -> str:
+    run_ledger_token = normalize_run_ledger_failure_class(value)
+    token = _require_non_empty("failure_class", run_ledger_token)
     return _QA_FAILURE_CLASS_ALIASES.get(
         _qa_failure_class_key(run_ledger_token),
         _QA_FAILURE_CLASS_ALIASES.get(_qa_failure_class_key(token), run_ledger_token.upper()),
     )
 
 
-def normalize_qa_failure_class(value: str) -> str:
+def normalize_qa_failure_class(value: str | FailureClassV1) -> str:
     """Normalize QA failure-class tokens to the canonical contract form."""
 
     return _normalize_qa_failure_class(value)
 
 
 def project_qa_failure_execution_state(
-    failure_class: str,
+    failure_class: str | FailureClassV1 | None,
     *,
     default: str = QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS,
 ) -> str:
@@ -449,7 +428,7 @@ def project_qa_failure_execution_state(
 
 def build_qa_failure_classification_v1(
     *,
-    failure_class: str,
+    failure_class: str | FailureClassV1,
     route: str,
     reason: str,
     repairable_by_director: bool,
@@ -462,14 +441,39 @@ def build_qa_failure_classification_v1(
 ) -> QaFailureClassificationV1:
     """Build the canonical QA failure classification contract."""
 
+    normalized_failure_class = _normalize_qa_failure_class(failure_class)
+    if normalized_failure_class.casefold() == "passed":
+        raise ValueError("PASSED is a QA verdict state, not a failure class")
     return QaFailureClassificationV1(
-        failure_class=_normalize_qa_failure_class(failure_class),
+        failure_class=normalized_failure_class,
         route=_require_non_empty("route", route),
         reason=_require_non_empty("reason", reason),
         repairable_by_director=bool(repairable_by_director),
         severity=_require_non_empty("severity", severity),
         requires_ce_replan=bool(requires_ce_replan),
         requires_pm_revision=bool(requires_pm_revision),
+        owner=str(owner or "").strip(),
+        responsible_layer=str(responsible_layer or "").strip(),
+        evidence_refs=_to_string_tuple(evidence_refs),
+    )
+
+
+def build_qa_pass_classification_v1(
+    *,
+    reason: str,
+    route: str = "resolved",
+    owner: str = "qa",
+    responsible_layer: str = "qa",
+    evidence_refs: tuple[str, ...] | list[str] | set[str] | None = None,
+) -> QaFailureClassificationV1:
+    """Build QA routing metadata for a successful verdict without a failure."""
+
+    return QaFailureClassificationV1(
+        failure_class=None,
+        route=_require_non_empty("route", route),
+        reason=_require_non_empty("reason", reason),
+        repairable_by_director=False,
+        severity="info",
         owner=str(owner or "").strip(),
         responsible_layer=str(responsible_layer or "").strip(),
         evidence_refs=_to_string_tuple(evidence_refs),
@@ -649,7 +653,6 @@ __all__ = [
     "QaAuditError",
     "QaAuditErrorV1",
     "QaAuditResultV1",
-    "QaFailureClassV1",
     "QaFailureClassificationV1",
     "QaVerdictEnvelopeV1",
     "QaVerdictIssuedEventV1",
@@ -660,6 +663,7 @@ __all__ = [
     "VisualAuditFindingV1",
     "VisualQaAuditResultV1",
     "build_qa_failure_classification_v1",
+    "build_qa_pass_classification_v1",
     "normalize_qa_failure_class",
     "project_qa_failure_execution_state",
 ]

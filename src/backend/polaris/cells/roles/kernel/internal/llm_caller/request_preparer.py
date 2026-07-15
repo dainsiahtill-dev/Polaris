@@ -41,9 +41,10 @@ from .helpers import (
     messages_to_input,
     resolve_max_tokens,
     resolve_platform_retry_max,
-    resolve_temperature,
+    resolve_temperature_with_source,
     resolve_timeout_seconds,
 )
+from .request_facts import copy_final_request_evidence_context_fields
 from .response_types import PreparedLLMRequest
 
 if TYPE_CHECKING:
@@ -80,29 +81,6 @@ _RESIDENT_AGI_PARTICIPATION_FLAGS = (
     "capability_surface",
     "decision_boundary",
 )
-_FINAL_REQUEST_EVIDENCE_CONTEXT_KEYS = (
-    "pm_contract",
-    "ce_blueprint",
-    "chief_engineer_blueprint",
-    "task_contract",
-    "module_interface_contract",
-    "actual_sibling_exports",
-    "interface_discrepancy_context",
-    "architecture_or_file_plan",
-    "architecture_plan",
-    "file_plan",
-    "construction_plan",
-    "delivery_plan_document",
-    "delivery_depth_contract",
-    "behavior_contract",
-    "acceptance_contract",
-    "manifest_entrypoint_contract",
-    "execution_contract",
-    "task_metadata",
-    "metadata",
-)
-
-
 # Retry caps/floors are single-sourced in polaris.kernelone.llm.budget_policy
 # (blueprint Phase 1); local names kept as compatibility aliases.
 # 5th floor (2026-06-15): reserved output budget for the reasoning-truncation re-ask.
@@ -156,27 +134,6 @@ def _ensure_current_user_message_final(
 
     normalized_messages.append({"role": "user", "content": current_user_token})
     return normalized_messages
-
-
-def _copy_final_request_evidence_context_fields(context_override: Any) -> dict[str, Any]:
-    if not isinstance(context_override, dict):
-        return {}
-    result: dict[str, Any] = {}
-    for key in _FINAL_REQUEST_EVIDENCE_CONTEXT_KEYS:
-        value = context_override.get(key)
-        if value in (None, "", []):
-            continue
-        if isinstance(value, dict):
-            if value:
-                result[key] = dict(value)
-            continue
-        if isinstance(value, (list, tuple, set)):
-            copied = [item for item in value if item not in (None, "")]
-            if copied:
-                result[key] = copied
-            continue
-        result[key] = value
-    return result
 
 
 def _tool_surface_explicitly_disabled(override: dict[str, Any]) -> bool:
@@ -738,10 +695,14 @@ class LLMRequestPreparer:
             max_tokens,
             override if isinstance(override, dict) else None,
         )
+        temperature_decision = resolve_temperature_with_source(
+            temperature,
+            override if isinstance(override, dict) else None,
+        )
         request_options: dict[str, Any] = {
             # ADR-0090 W2.6: escalated mutation retries override temperature via
             # the transaction-kernel channel (deterministic transcription phase).
-            "temperature": resolve_temperature(temperature, override if isinstance(override, dict) else None),
+            "temperature": temperature_decision.value,
             "max_tokens": request_max_tokens,
             "timeout": request_timeout_seconds,
         }
@@ -988,6 +949,7 @@ class LLMRequestPreparer:
                 "capability_profile_ref": capability_profile_ref if isinstance(capability_profile_ref, dict) else {},
                 "context_projection_id": context_projection_id,
                 "context_result_id": context_result_id,
+                "request_sampling": temperature_decision.to_context(),
                 "director_execution_profile": director_execution_profile,
                 "director_execution_strategy": director_execution_strategy,
                 "director_execution_envelope": director_execution_envelope,
@@ -996,7 +958,7 @@ class LLMRequestPreparer:
                 "resident_agi_audit_context": resident_agi_audit_context,
                 "prompt_profile_audit": prompt_profile_audit,
                 "selected_prompt_profile_ids": selected_prompt_profile_ids,
-                **_copy_final_request_evidence_context_fields(prompt_profile_context_override),
+                **copy_final_request_evidence_context_fields(prompt_profile_context_override),
                 **_tool_contract_context_fields(prompt_profile_context_override),
                 # ADR-0090 W1.5: carry the STRUCTURED message array alongside the
                 # flattened input so OpenAI-compatible providers can preserve real

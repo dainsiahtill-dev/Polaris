@@ -12,9 +12,19 @@ from typing import Any, Coroutine, TypeVar
 
 # Cross-Cell import must go through the public boundary of `audit.verdict`.
 from polaris.cells.audit.verdict.public.service import ReviewGate, get_review_gate
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.cells.qa.audit_verdict.internal.evidence_commit import (
+    commit_qa_evidence,
+    commit_qa_verdict,
+)
 from polaris.cells.qa.audit_verdict.internal.qa_agent import QAAgent
 from polaris.cells.qa.audit_verdict.internal.qa_consumer import QAConsumer
-from polaris.cells.qa.audit_verdict.internal.qa_service import AuditResult, QAConfig, QAService
+from polaris.cells.qa.audit_verdict.internal.qa_service import (
+    AuditResult,
+    QaAuditEvidenceV1,
+    QAConfig,
+    QAService,
+)
 from polaris.cells.qa.audit_verdict.internal.quality_service import QualityService, get_quality_service
 from polaris.cells.qa.audit_verdict.public.contracts import (
     ClaimQaTaskCommandV1,
@@ -80,32 +90,86 @@ def _finding_from_issue(issue: Mapping[str, Any]) -> str:
         return f"{file_path}: {message}"
     return message
 
+
+def _qa_evidence_to_audit_dict(evidence: QaAuditEvidenceV1) -> dict[str, Any]:
+    findings = tuple(_finding_from_issue(issue) for issue in evidence.issues)
+    observed_verdict = evidence.observed_verdict
+    return {
+        "audit_id": evidence.audit_id,
+        "verdict": observed_verdict,
+        "ok": observed_verdict == "PASS",
+        "failure_class": ("" if observed_verdict == "PASS" else FailureClassV1.IMPLEMENTATION_DEFECT.value),
+        "responsible_layer": "qa",
+        "findings": list(findings),
+        "metrics": dict(evidence.metrics),
+        "evidence_schema_version": evidence.schema_version,
+        "evidence_authoritative": False,
+    }
+
+
 def _qa_result_to_audit_dict(result: QaAuditResultV1) -> dict[str, Any]:
+    """Project a persisted public result back into non-authoritative evidence."""
+
+    metrics = result.metadata.get("metrics", {})
     return {
         "verdict": result.verdict,
         "ok": bool(result.ok),
         "score": float(result.score),
         "findings": list(result.findings),
         "suggestions": list(result.suggestions),
-        "metrics": dict(result.metadata.get("metrics", {})) if isinstance(result.metadata, dict) else {},
+        "metrics": dict(metrics) if isinstance(metrics, Mapping) else {},
+        "evidence_authoritative": False,
     }
+
+
+def _qa_command_payload(command: RunQaAuditCommandV1) -> dict[str, Any]:
+    """Build the structured QA input without hiding control-plane authority."""
+
+    criteria = dict(command.criteria)
+    payload: dict[str, Any] = {
+        "task_id": command.task_id,
+        "workspace": command.workspace,
+        "run_id": command.run_id or str(criteria.get("run_id") or ""),
+        "criteria": criteria,
+        "evidence_paths": list(command.evidence_paths),
+        "target_files": list(_string_tuple(criteria.get("target_files"))),
+        "changed_files": list(_string_tuple(criteria.get("changed_files"))),
+    }
+    for key in (
+        "job_token",
+        "control_plane_job_token",
+        "capability_token",
+        "metadata",
+        "source_run_id",
+        "factory_run_id",
+        "project_id",
+        "last_effect_append_id",
+        "last_effect_receipt_hash",
+    ):
+        if key in criteria:
+            payload[key] = criteria[key]
+    return payload
+
 
 def _build_qa_verdict_envelope(
     *,
     command: RunQaAuditCommandV1,
     audit_result: dict[str, Any],
+    barrier_receipt: Mapping[str, str] | None = None,
 ) -> QaVerdictEnvelopeV1:
     from polaris.cells.qa.audit_verdict.internal.verdict_engine import QAVerdictEngine
 
-    payload = {
-        "task_id": command.task_id,
-        "workspace": command.workspace,
-        "run_id": command.run_id or "",
-        "criteria": dict(command.criteria),
-        "evidence_paths": list(command.evidence_paths),
-        "target_files": list(_string_tuple(command.criteria.get("target_files"))),
-        "changed_files": list(_string_tuple(command.criteria.get("changed_files"))),
-    }
+    payload = _qa_command_payload(command)
+    receipt = dict(barrier_receipt or {})
+    if receipt.get("append_id"):
+        payload["min_append_id"] = receipt["append_id"]
+    if receipt.get("event_hash"):
+        payload["min_event_hash"] = receipt["event_hash"]
+    if audit_result and not receipt:
+        # Any local QA observation must be durably committed before it can
+        # affect an authoritative verdict. This sentinel makes an accidental
+        # uncommitted call fail closed in the barrier conflict matrix.
+        payload["min_append_id"] = "qa-evidence-append-receipt-missing"
     return QAVerdictEngine(command.workspace).build_envelope(
         task_id=command.task_id,
         payload=payload,
@@ -142,17 +206,19 @@ def build_qa_verdict_envelope(
 def _result_with_envelope(
     result: QaAuditResultV1,
     envelope: QaVerdictEnvelopeV1,
+    *,
+    final_verdict_receipt: Mapping[str, str] | None = None,
 ) -> QaAuditResultV1:
     envelope_payload = envelope.to_dict()
     classification = envelope_payload.get("classification")
     classification_map = classification if isinstance(classification, dict) else {}
     return QaAuditResultV1(
-        ok=result.ok,
+        ok=envelope.ok,
         task_id=result.task_id,
         workspace=result.workspace,
-        verdict=result.verdict,
-        score=result.score,
-        findings=result.findings,
+        verdict=envelope.verdict,
+        score=1.0 if envelope.ok and envelope.verdict == "PASS" else 0.0,
+        findings=envelope.findings,
         suggestions=result.suggestions,
         metadata={
             **dict(result.metadata),
@@ -161,6 +227,8 @@ def _result_with_envelope(
             "responsible_layer": str(classification_map.get("responsible_layer") or ""),
             "repairable_by_director": bool(classification_map.get("repairable_by_director")),
             "qa_verdict_content_hash": envelope.content_hash,
+            "qa_verdict_committed": bool(final_verdict_receipt),
+            "qa_verdict_commit_receipt": dict(final_verdict_receipt or {}),
         },
     )
 
@@ -180,23 +248,87 @@ def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
             require_changed_files=bool(criteria.get("require_changed_files", False)),
         )
     )
-    if not isinstance(audit, AuditResult):
-        raise TypeError("QAService.audit_task must return AuditResult")
+    if not isinstance(audit, QaAuditEvidenceV1):
+        raise TypeError("QAService.audit_task must return QaAuditEvidenceV1")
 
     findings = tuple(_finding_from_issue(issue) for issue in audit.issues)
     base_result = QaAuditResultV1(
-        ok=audit.verdict == "PASS",
+        ok=False,
         task_id=command.task_id,
         workspace=command.workspace,
-        verdict=audit.verdict,
-        score=1.0 if audit.verdict == "PASS" else 0.0,
+        verdict="EVIDENCE_ONLY",
+        score=0.0,
         findings=findings,
         suggestions=(),
+        metadata={
+            "audit_evidence": {
+                "schema_version": audit.schema_version,
+                "audit_id": audit.audit_id,
+                "target": audit.target,
+                "authoritative": audit.authoritative,
+                "observed_verdict": audit.observed_verdict,
+                "issues": [dict(issue) for issue in audit.issues],
+                "metrics": dict(audit.metrics),
+                "timestamp": audit.timestamp.isoformat(),
+            },
+            "metrics": dict(audit.metrics),
+        },
     )
-    envelope = _build_qa_verdict_envelope(command=command, audit_result=_qa_result_to_audit_dict(base_result))
-    result = _result_with_envelope(base_result, envelope)
+    audit_payload = _qa_evidence_to_audit_dict(audit)
+    command_payload = _qa_command_payload(command)
+    run_id = str(command_payload.get("run_id") or "").strip()
+    barrier_receipt: dict[str, str] | None = None
+    if run_id:
+        job_token_raw = (
+            command_payload.get("job_token")
+            or command_payload.get("control_plane_job_token")
+            or command_payload.get("capability_token")
+        )
+        job_token = dict(job_token_raw) if isinstance(job_token_raw, Mapping) else {}
+        barrier_receipt = commit_qa_evidence(
+            workspace=command.workspace,
+            run_id=run_id,
+            task_id=command.task_id,
+            gate_name="qa_evidence",
+            ok=bool(audit_payload.get("ok")),
+            summary=f"QA audit evidence observed {audit.observed_verdict}",
+            verdict=audit.observed_verdict,
+            audit_result=audit_payload,
+            failure_reason=("" if audit.observed_verdict == "PASS" else "local QA evidence contains errors"),
+            job_token=job_token,
+        ).to_dict()
+    envelope = _build_qa_verdict_envelope(
+        command=command,
+        audit_result=audit_payload,
+        barrier_receipt=barrier_receipt,
+    )
+    final_verdict_receipt: dict[str, str] | None = None
+    if run_id:
+        if not barrier_receipt:
+            raise RuntimeError("canonical QA verdict requires a committed evidence barrier")
+        job_token_raw = (
+            command_payload.get("job_token")
+            or command_payload.get("control_plane_job_token")
+            or command_payload.get("capability_token")
+        )
+        job_token = dict(job_token_raw) if isinstance(job_token_raw, Mapping) else {}
+        final_verdict_receipt = commit_qa_verdict(
+            workspace=command.workspace,
+            run_id=run_id,
+            task_id=command.task_id,
+            envelope=envelope.to_dict(),
+            evidence_commit_receipt=barrier_receipt,
+            job_token=job_token,
+        ).to_dict()
+    result = _result_with_envelope(
+        base_result,
+        envelope,
+        final_verdict_receipt=final_verdict_receipt,
+    )
     # 持久化最新判定，供后续只读上下文信号（verdict_history）回读。失败不得影响审计本身。
-    _persist_qa_verdict(command.task_id, command.workspace, result, run_id=command.run_id or str(criteria.get("run_id") or "") or None)
+    _persist_qa_verdict(
+        command.task_id, command.workspace, result, run_id=command.run_id or str(criteria.get("run_id") or "") or None
+    )
     return result
 
 
@@ -236,7 +368,7 @@ def _persist_qa_verdict(
                 "updated_at": now,
             },
         )
-    except Exception:  # noqa: BLE001 - 持久化是旁路，绝不能影响审计主流程
+    except (OSError, RuntimeError, TypeError, ValueError):
         logger.debug("persist qa verdict failed", exc_info=True)
 
 
@@ -295,6 +427,7 @@ def get_qa_verdict(query: GetQaVerdictQueryV1) -> QaAuditResultV1:
         metadata=_mapping_metadata_from_payload(payload),
     )
 
+
 def _mapping_metadata_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _dict_value(payload, "metadata")
     for key in ("qa_verdict_envelope", "failure_class", "responsible_layer"):
@@ -307,6 +440,7 @@ def _mapping_metadata_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]
 def _dict_value(payload: Mapping[str, Any], key: str) -> dict[str, Any]:
     value = payload.get(key)
     return dict(value) if isinstance(value, dict) else {}
+
 
 def get_qa_verdict_envelope(query: GetQaVerdictQueryV1) -> QaVerdictEnvelopeV1:
     """Read the latest canonical QA verdict envelope for a task."""

@@ -16,15 +16,195 @@ from polaris.cells.events.fact_stream.internal.debug_trace import (
     sanitize_headers,
     set_debug_tracing_enabled,
 )
-from polaris.kernelone.events.sourcing import EventSourcingError, JsonlEventStore
+from polaris.kernelone.events.sourcing import (
+    EventSourcingError,
+    JsonlEventStore,
+    append_if_guarded_snapshot as _append_if_guarded_snapshot,
+    read_guarded_fact_snapshot as _read_guarded_fact_snapshot,
+)
+from polaris.kernelone.fs import LockedRegularFileError, LockedRegularFileSetV1, LockMaintenanceProofV1
+from polaris.kernelone.fs.locked_regular_file import default_platform_lock_root
 
 from .contracts import (
     AppendFactEventCommandV1,
+    AppendIfGuardedSnapshotCommandV1,
+    EnrollFactStreamStreamsCommandV1,
     FactEventAppendedV1,
     FactStreamError,
+    FactStreamHeadV1,
+    FactStreamLockIdentityV1,
+    FactStreamLockKeyEvidenceV1,
+    FactStreamMaintenanceProofV1,
+    FactStreamMaintenanceReceiptV1,
+    FactStreamProvenanceV1,
     FactStreamQueryResultV1,
+    GuardedFactAppendedV1,
+    GuardedFactSnapshotV1,
+    ProvisionFactStreamLockAuthorityCommandV1,
     QueryFactEventsV1,
+    QueryFactStreamHeadV1,
+    ReadGuardedFactSnapshotCommandV1,
 )
+
+
+def provision_fact_stream_lock_authority(
+    command: ProvisionFactStreamLockAuthorityCommandV1,
+) -> FactStreamMaintenanceReceiptV1:
+    """Provision one immutable FactStream lock authority for maintenance.
+
+    ``maintenance_reason`` is audit-facing command intent. It never changes
+    the established binding and is deliberately not persisted in authority
+    state, which remains limited to physical identity and format fields.
+    """
+
+    store, root = _maintenance_store(command.workspace, command.platform_lock_root)
+    identity = store.storage_identity
+    try:
+        kernel_proof = LockedRegularFileSetV1.provision_authority(
+            platform_lock_root=root,
+            storage_identity_token=identity.token,
+            runtime_root=identity.runtime_root,
+        )
+    except LockedRegularFileError as exc:
+        raise _maintenance_failure("provision_fact_stream_lock_authority", exc) from exc
+    except (ValueError, EventSourcingError) as exc:
+        raise _maintenance_failure("provision_fact_stream_lock_authority", exc) from exc
+
+    proofs: tuple[FactStreamMaintenanceProofV1, ...] = (_project_maintenance_proof(kernel_proof),)
+    if command.streams:
+        # Compatibility for the earlier combined public command. New callers use
+        # the dedicated enrollment command or the bootstrap application service.
+        enrollment = enroll_fact_stream_streams(
+            EnrollFactStreamStreamsCommandV1(
+                workspace=command.workspace,
+                streams=command.streams,
+                maintenance_reason=command.maintenance_reason,
+                platform_lock_root=command.platform_lock_root,
+            )
+        )
+        proofs += enrollment.proofs
+    return FactStreamMaintenanceReceiptV1(
+        workspace=identity.workspace_abs,
+        storage_identity_token=identity.token,
+        maintenance_reason=command.maintenance_reason,
+        operation="provision_authority",
+        streams=command.streams,
+        proofs=proofs,
+    )
+
+
+def enroll_fact_stream_streams(
+    command: EnrollFactStreamStreamsCommandV1,
+) -> FactStreamMaintenanceReceiptV1:
+    """Enroll stream lock keys without provisioning or repairing authority."""
+
+    store, root = _maintenance_store(command.workspace, command.platform_lock_root)
+    identity = store.storage_identity
+    logical_paths = tuple(store.stream_logical_path(stream) for stream in command.streams)
+    try:
+        proof = LockedRegularFileSetV1.enroll_stream_lock_keys(
+            platform_lock_root=root,
+            storage_identity_token=identity.token,
+            runtime_root=identity.runtime_root,
+            logical_paths=logical_paths,
+        )
+    except LockedRegularFileError as exc:
+        raise _maintenance_failure("enroll_fact_stream_streams", exc) from exc
+    except (ValueError, EventSourcingError) as exc:
+        raise _maintenance_failure("enroll_fact_stream_streams", exc) from exc
+    return FactStreamMaintenanceReceiptV1(
+        workspace=identity.workspace_abs,
+        storage_identity_token=identity.token,
+        maintenance_reason=command.maintenance_reason,
+        operation="enroll_streams",
+        streams=command.streams,
+        proofs=(_project_maintenance_proof(proof),),
+    )
+
+
+def _project_maintenance_proof(proof: LockMaintenanceProofV1) -> FactStreamMaintenanceProofV1:
+    """Project immutable KernelOne maintenance evidence into the Cell contract."""
+
+    return FactStreamMaintenanceProofV1(
+        operation=proof.operation,
+        verdict=proof.verdict,
+        storage_identity_token=proof.storage_identity,
+        runtime_root=proof.runtime_root,
+        format_revision=proof.format_revision,
+        root_identity=FactStreamLockIdentityV1(
+            device=proof.root_identity.device,
+            inode=proof.root_identity.inode,
+        ),
+        anchor_identity=FactStreamLockIdentityV1(
+            device=proof.anchor_identity.device,
+            inode=proof.anchor_identity.inode,
+        ),
+        realm_identity=FactStreamLockIdentityV1(
+            device=proof.realm_identity.device,
+            inode=proof.realm_identity.inode,
+        ),
+        lock_keys=tuple(
+            FactStreamLockKeyEvidenceV1(
+                logical_path=item.logical_path,
+                lock_key=item.lock_key,
+                verdict=item.verdict,
+                identity=FactStreamLockIdentityV1(
+                    device=item.identity.device,
+                    inode=item.identity.inode,
+                ),
+            )
+            for item in proof.lock_keys
+        ),
+        final_validation=proof.final_validation,
+    )
+
+
+def _maintenance_store(
+    workspace: str,
+    platform_lock_root: str | None,
+) -> tuple[JsonlEventStore, str]:
+    """Resolve immutable authority inputs for one explicit maintenance call."""
+
+    store = JsonlEventStore(workspace)
+    return store, platform_lock_root or default_platform_lock_root()
+
+
+def _maintenance_failure(operation: str, exc: Exception) -> FactStreamError:
+    """Preserve exact KernelOne maintenance evidence at the public boundary."""
+
+    if isinstance(exc, LockedRegularFileError):
+        return FactStreamError(str(exc), code=exc.code, details=dict(exc.details))
+    return FactStreamError(
+        f"{operation} failed: {exc}",
+        code=_fact_stream_failure_code("lock_authority_provision", exc),
+        details=_failure_details(exc),
+    )
+
+
+def read_guarded_fact_snapshot(command: ReadGuardedFactSnapshotCommandV1) -> GuardedFactSnapshotV1:
+    """Prepare a strict immutable two-stream witness through FactStream."""
+
+    try:
+        return _read_guarded_fact_snapshot(command)
+    except (ValueError, EventSourcingError) as exc:
+        raise FactStreamError(
+            f"read_guarded_fact_snapshot failed: {exc}",
+            code=_guarded_failure_code(exc),
+            details=_guarded_failure_details(exc),
+        ) from exc
+
+
+def append_if_guarded_snapshot(command: AppendIfGuardedSnapshotCommandV1) -> GuardedFactAppendedV1:
+    """Commit one fsync target fact only when its proof still matches."""
+
+    try:
+        return _append_if_guarded_snapshot(command)
+    except (ValueError, EventSourcingError) as exc:
+        raise FactStreamError(
+            f"append_if_guarded_snapshot failed: {exc}",
+            code=_guarded_failure_code(exc),
+            details=_guarded_failure_details(exc),
+        ) from exc
 
 
 def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
@@ -41,13 +221,22 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
     store: JsonlEventStore | None = None
     try:
         store = JsonlEventStore(command.workspace)
-        metadata = _compact_metadata(
+        effective_run_id, effective_task_id = _resolve_provenance_envelope(
+            command=command,
+            workspace_abs=store.storage_identity.workspace_abs,
+        )
+        metadata: dict[str, Any] = _compact_metadata(
             {
-                "run_id": command.run_id,
-                "task_id": command.task_id,
+                "run_id": effective_run_id,
+                "task_id": effective_task_id,
                 "correlation_id": command.correlation_id,
                 "idempotency_key": idempotency_key,
             }
+        )
+        _add_provenance_metadata(
+            metadata=metadata,
+            provenance=command.provenance,
+            storage_identity=store.storage_identity.to_record(),
         )
         event = store.append(
             stream=command.stream,
@@ -55,11 +244,13 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
             source=command.source,
             payload=command.payload,
             event_version=1,
-            aggregate_id=command.task_id or command.run_id or None,
+            aggregate_id=effective_task_id or effective_run_id,
             correlation_id=command.correlation_id,
             metadata=metadata,
             expected_seq=command.expected_seq,
             idempotency_key=idempotency_key,
+            durability=command.durability,
+            strict_integrity=command.strict_integrity,
         )
     except (ValueError, EventSourcingError) as exc:
         # Translate generic store failures to FactStreamError so callers
@@ -68,18 +259,16 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
         # Note: the idempotent drift raise inside this try raises
         # FactStreamError (a RuntimeError subclass) which is NOT in this
         # except tuple, so it propagates unchanged.
-        code = "append_failed"
-        message = str(exc)
-        if "expected_seq drift" in message:
-            code = "expected_seq_drift"
-        elif "idempotency conflict" in message:
-            code = "idempotency_conflict"
+        code = _fact_stream_failure_code("append", exc)
         details: dict[str, Any] = {
             "workspace": command.workspace,
             "stream": command.stream,
             "event_type": command.event_type,
             "expected_seq": command.expected_seq,
+            "durability": command.durability,
+            "strict_integrity": command.strict_integrity,
         }
+        details.update(_failure_details(exc))
         if code == "expected_seq_drift" and idempotency_key and store is not None:
             existing = _find_existing_idempotent_event(
                 store=store,
@@ -133,16 +322,19 @@ def query_fact_events(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
             event_type=query.event_type,
             run_id=query.run_id,
             task_id=query.task_id,
+            strict_integrity=query.strict_integrity,
         )
     except (ValueError, EventSourcingError) as exc:
         raise FactStreamError(
             f"query_fact_events failed: {exc}",
-            code="query_failed",
+            code=_fact_stream_failure_code("query", exc),
             details={
                 "workspace": query.workspace,
                 "stream": query.stream,
                 "offset": query.offset,
                 "limit": query.limit,
+                "strict_integrity": query.strict_integrity,
+                **_failure_details(exc),
             },
         ) from exc
 
@@ -156,6 +348,32 @@ def query_fact_events(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
     )
 
 
+def query_fact_stream_head(query: QueryFactStreamHeadV1) -> FactStreamHeadV1:
+    """Return the durable stream cursor through the FactStream boundary."""
+
+    try:
+        store = JsonlEventStore(query.workspace)
+        current_seq = store.current_seq(query.stream, strict_integrity=query.strict_integrity)
+    except (ValueError, EventSourcingError) as exc:
+        raise FactStreamError(
+            f"query_fact_stream_head failed: {exc}",
+            code=_fact_stream_failure_code("head_query", exc),
+            details={
+                "workspace": query.workspace,
+                "stream": query.stream,
+                "strict_integrity": query.strict_integrity,
+                **_failure_details(exc),
+            },
+        ) from exc
+    return FactStreamHeadV1(
+        workspace=query.workspace,
+        stream=query.stream,
+        storage_path=store.stream_logical_path(query.stream),
+        current_seq=current_seq,
+        next_expected_seq=current_seq + 1,
+    )
+
+
 def _compact_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     compact: dict[str, Any] = {}
     for key, value in payload.items():
@@ -163,6 +381,112 @@ def _compact_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         if token:
             compact[str(key)] = token
     return compact
+
+
+def _fact_stream_failure_code(operation: str, exc: Exception) -> str:
+    """Map KernelOne strict evidence to stable FactStream failure codes."""
+
+    if isinstance(exc, EventSourcingError):
+        if exc.code in _STRICT_FAILURE_CODES:
+            return "strict_stream_corruption"
+        return exc.code
+    return f"{operation}_failed"
+
+
+_STRICT_FAILURE_CODES = frozenset(
+    {
+        "torn_tail",
+        "sequence_violation",
+        "stream_corruption",
+        "strict_record_corruption",
+        "unknown_schema_version",
+        "unknown_event_version",
+    }
+)
+
+
+def _guarded_failure_code(exc: Exception) -> str:
+    """Project guarded strict failures without operation-specific generic codes."""
+
+    raw_code = str(getattr(exc, "code", "") or "").strip()
+    if raw_code in _STRICT_FAILURE_CODES:
+        return "strict_stream_corruption"
+    return raw_code or "fact_stream_error"
+
+
+def _guarded_failure_details(exc: Exception) -> dict[str, Any]:
+    """Preserve strict parser evidence beneath the stable public category."""
+
+    details = _failure_details(exc)
+    raw_code = str(getattr(exc, "code", "") or "").strip()
+    if raw_code in _STRICT_FAILURE_CODES:
+        details["strict_failure_code"] = raw_code
+    return details
+
+
+def _failure_details(exc: Exception) -> dict[str, Any]:
+    """Detach KernelOne typed evidence for a FactStream public failure."""
+
+    details = getattr(exc, "details", None)
+    detached = dict(details) if isinstance(details, dict) else {}
+    raw_code = str(getattr(exc, "code", "") or "").strip()
+    if raw_code in _STRICT_FAILURE_CODES:
+        detached.setdefault("strict_failure_code", raw_code)
+    return detached
+
+
+def _add_provenance_metadata(
+    *,
+    metadata: dict[str, Any],
+    provenance: FactStreamProvenanceV1 | None,
+    storage_identity: dict[str, str],
+) -> None:
+    """Attach already-validated transition provenance."""
+
+    if provenance is None:
+        return
+    metadata["provenance"] = provenance.to_record()
+    metadata["storage_identity"] = dict(storage_identity)
+
+
+def _resolve_provenance_envelope(
+    *,
+    command: AppendFactEventCommandV1,
+    workspace_abs: str,
+) -> tuple[str | None, str | None]:
+    """Resolve one run/task envelope and reject contradictory provenance."""
+
+    provenance = command.provenance
+    if provenance is None:
+        return command.run_id, command.task_id
+
+    mismatches: list[str] = []
+    if provenance.workspace != workspace_abs:
+        mismatches.append("workspace")
+    if command.run_id is not None and command.run_id != provenance.run_id:
+        mismatches.append("run_id")
+    if command.task_id is not None and command.task_id != provenance.task_id:
+        mismatches.append("task_id")
+    if mismatches:
+        raise FactStreamError(
+            "fact provenance workspace/run/task does not match the append command envelope "
+            f"fields={','.join(mismatches)}",
+            code="provenance_mismatch",
+            details={
+                "fields": tuple(mismatches),
+                "command_workspace": command.workspace,
+                "resolved_workspace": workspace_abs,
+                "provenance_workspace": provenance.workspace,
+                "command_run_id": command.run_id,
+                "provenance_run_id": provenance.run_id,
+                "command_task_id": command.task_id,
+                "provenance_task_id": provenance.task_id,
+            },
+        )
+
+    # Compatibility boundary: omitted optional command fields inherit the
+    # required typed provenance values; explicit fields must match exactly.
+    return command.run_id or provenance.run_id, command.task_id or provenance.task_id
 
 
 def _event_to_dict(record: dict[str, Any]) -> dict[str, Any]:
@@ -190,18 +514,27 @@ def _event_to_dict(record: dict[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "AppendFactEventCommandV1",
+    "AppendIfGuardedSnapshotCommandV1",
     "FactEventAppendedV1",
     "FactStreamError",
+    "FactStreamHeadV1",
+    "FactStreamProvenanceV1",
     "FactStreamQueryResultV1",
+    "GuardedFactAppendedV1",
+    "GuardedFactSnapshotV1",
     "QueryFactEventsV1",
+    "QueryFactStreamHeadV1",
+    "ReadGuardedFactSnapshotCommandV1",
     "append_fact_event",
-    # debug trace public surface
+    "append_if_guarded_snapshot",
     "configure_debug_tracing",
     "emit_debug_event",
     "install_global_debug_hooks",
     "is_debug_tracing_enabled",
     "log_stream_token",
     "query_fact_events",
+    "query_fact_stream_head",
+    "read_guarded_fact_snapshot",
     "sanitize_headers",
     "set_debug_tracing_enabled",
 ]

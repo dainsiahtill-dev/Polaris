@@ -27,9 +27,13 @@ from polaris.cells.factory.pipeline.internal.bench_service import (
 from polaris.cells.factory.pipeline.public import (
     TERMINAL_RUN_STATUSES,
     FactoryConfig,
+    FactoryPipelineError,
     FactoryRun,
     FactoryRunService,
     FactoryRunStatus as ServiceRunStatus,
+    RecoverStaleFactoryWorkspaceOwnerCommandV1,
+    RecoverStaleFactoryWorkspaceOwnerResultV1,
+    recover_stale_factory_workspace_owner,
 )
 from polaris.cells.factory.pipeline.public.types import (
     FactoryControlRequest,
@@ -1906,20 +1910,42 @@ def _attach_control_plane_projection(
     bundle["factory_run_id"] = run.id
     bundle["workspace"] = str(workspace)
     bundle["run_identity"] = identity
+    projection_errors: list[dict[str, str]] = []
     try:
         projection = read_run_ledger_projection(
             ReadRunLedgerProjectionQueryV1(workspace=str(workspace), run_id=run.id)
         ).projection
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        projection_errors.append(
+            {
+                "code": "RUN_LEDGER_PROJECTION_UNAVAILABLE",
+                "message": str(exc)[:300],
+                "exception_type": type(exc).__name__,
+            }
+        )
+    else:
+        bundle["control_plane_projection"] = projection
+        bundle["run_ledger_projection"] = projection
+
+    try:
+        task_runtime_projection = TaskRuntimeService(str(workspace)).query_observable_task_rows_projection()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        projection_errors.append(
+            {
+                "code": "TASK_RUNTIME_PROJECTION_UNAVAILABLE",
+                "message": str(exc)[:300],
+                "exception_type": type(exc).__name__,
+            }
+        )
+    else:
+        bundle["task_runtime_projection"] = task_runtime_projection.to_authority_dict()
+
+    if projection_errors:
         bundle["control_plane_projection_error"] = {
             "schema_version": "factory.control_plane_projection_error.v1",
-            "code": "CONTROL_PLANE_PROJECTION_UNAVAILABLE",
-            "message": str(exc)[:300],
-            "exception_type": type(exc).__name__,
+            "code": "CONTROL_PLANE_PROJECTION_INCOMPLETE",
+            "errors": projection_errors,
         }
-        return
-    bundle["control_plane_projection"] = projection
-    bundle["run_ledger_projection"] = projection
 
 
 async def _persist_run_summary(
@@ -1970,9 +1996,8 @@ async def _execute_run_with_service(
             return
         history_raw = current_run.metadata.get("quality_rework_history")
         history: list[Any] = list(history_raw) if isinstance(history_raw, list) else []
-        intermediate_failure = (
-            dict(current_run.metadata.get("failure")) if isinstance(current_run.metadata.get("failure"), dict) else {}
-        )
+        failure_raw = current_run.metadata.get("failure")
+        intermediate_failure = dict(failure_raw) if isinstance(failure_raw, dict) else {}
         entry = {
             "cycle": cycle,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2457,6 +2482,57 @@ async def _control_factory_run_core(
     )
 
 
+async def _recover_stale_factory_workspace_owner_core(
+    run_id: str,
+    payload: RecoverStaleFactoryWorkspaceOwnerCommandV1,
+    state: AppState,
+) -> RecoverStaleFactoryWorkspaceOwnerResultV1:
+    bound_workspace = _resolve_workspace(state)
+    requested_workspace = str(Path(payload.workspace).expanduser().resolve())
+    if requested_workspace != bound_workspace:
+        raise StructuredHTTPException(
+            status_code=409,
+            code="factory_workspace_binding_mismatch",
+            message="Factory stale-owner recovery is bound to the backend workspace",
+            details={
+                "bound_workspace": bound_workspace,
+                "requested_workspace": requested_workspace,
+                "run_id": run_id,
+            },
+        )
+    if payload.run_id != run_id:
+        raise StructuredHTTPException(
+            status_code=409,
+            code="factory_run_binding_mismatch",
+            message="Factory stale-owner recovery run_id does not match the route",
+            details={
+                "route_run_id": run_id,
+                "command_run_id": payload.run_id,
+                "workspace": bound_workspace,
+            },
+        )
+
+    command = RecoverStaleFactoryWorkspaceOwnerCommandV1(
+        workspace=bound_workspace,
+        run_id=run_id,
+        expected_fencing_token=payload.expected_fencing_token,
+        reason=payload.reason,
+    )
+    try:
+        return await recover_stale_factory_workspace_owner(
+            command,
+            service_factory=_get_service,
+        )
+    except FactoryPipelineError as exc:
+        status_code = 500 if exc.code == "factory_workspace_run_lease_storage_error" else 409
+        raise StructuredHTTPException(
+            status_code=status_code,
+            code=exc.code,
+            message=str(exc),
+            details=exc.details,
+        ) from exc
+
+
 async def _get_factory_run_artifacts_core(
     run_id: str,
     state: AppState,
@@ -2541,6 +2617,24 @@ async def control_factory_run_v2(
 ) -> FactoryRunStatusContract:
     """Control a run. This phase only supports cancel."""
     return await _control_factory_run_core(run_id=run_id, payload=payload, workspace=workspace, state=state)
+
+
+@router.post(
+    "/v2/factory/runs/{run_id}/actions/recover-stale-workspace-owner",
+    response_model=RecoverStaleFactoryWorkspaceOwnerResultV1,
+)
+async def recover_stale_factory_workspace_owner_v2(
+    run_id: str,
+    payload: RecoverStaleFactoryWorkspaceOwnerCommandV1,
+    state: AppState = Depends(get_state),
+) -> RecoverStaleFactoryWorkspaceOwnerResultV1:
+    """Explicitly fence and release one stale workspace owner."""
+
+    return await _recover_stale_factory_workspace_owner_core(
+        run_id=run_id,
+        payload=payload,
+        state=state,
+    )
 
 
 @router.get("/v2/factory/runs/{run_id}/artifacts", response_model=FactoryRunArtifactsResponse)

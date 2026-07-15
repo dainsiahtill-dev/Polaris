@@ -61,6 +61,7 @@ depends_on:
 - runtime.task_runtime
 - factory.cognitive_runtime
 - storage.layout
+- events.fact_stream
 - roles.scout
 subgraphs:
 - execution_governance_pipeline

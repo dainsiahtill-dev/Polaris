@@ -6,10 +6,11 @@ import logging
 import re
 import shutil
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Mapping, NoReturn, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, NoReturn, Sequence, TypedDict, cast
 
 from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
@@ -17,22 +18,55 @@ from polaris.cells.events.fact_stream.public.contracts import (
     FactStreamError,
     FactStreamQueryResultV1,
     QueryFactEventsV1,
+    QueryFactStreamHeadV1,
 )
-from polaris.cells.events.fact_stream.public.service import append_fact_event, query_fact_events
+from polaris.cells.events.fact_stream.public.service import (
+    append_fact_event,
+    query_fact_events,
+    query_fact_stream_head,
+)
 from polaris.cells.runtime.task_runtime.internal.task_board import (
     InvalidTaskStateTransitionError,
     Task,
     TaskBoard,
+    TaskBoardFileLockTimeoutError,
+    TaskFactoryRunBindingConflictError,
     TaskStatus,
+)
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    TASK_RUNTIME_EXECUTION_SOURCE_V1,
+    TASK_RUNTIME_EXECUTION_STREAM_V1,
+    AdmitDirectedEffectParentCommandV1,
+    DirectedEffectOperationResultV1,
+    HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+    OpenTaskRuntimeExecutionAttemptAuthorityCommandV1,
+    OwnerReworkExecutionPreparationCodeV1,
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptAuthorityOpenCodeV1,
+    TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1,
+    TaskRuntimeExecutionAttemptHeartbeatCodeV1,
+    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptSettlementCodeV1,
+    TaskRuntimeExecutionAttemptSettlementVerdictV1,
+    TaskRuntimeExecutionAttemptValidationCodeV1,
+    TaskRuntimeExecutionAttemptValidationVerdictV1,
+    TaskRuntimeExecutionFactV1,
+    ValidateTaskRuntimeExecutionAttemptQueryV1,
 )
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.registry import get_default_adapter
 from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
 
+from .directed_effect_operation import (
+    DirectedEffectOperationRepository,
+    DirectedEffectSettlementPreBarrierVerdictV1,
+)
 from .execution_session import (
     TaskExecutionSession,
     TaskExecutionSessionWriteReceipt,
     _coerce_fact_event_seq,
+    _json_compatible_copy,
     build_task_execution_bulk_suspend_result,
     build_task_execution_claim_attempt,
     build_task_execution_claim_next_result,
@@ -60,15 +94,26 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from polaris.cells.runtime.task_runtime.public.contracts import (
+        BindRuntimeTaskToFactoryRunCommandV1,
+        ExpiredFactoryRunSessionFenceResultV1,
+        FenceExpiredFactoryRunSessionsCommandV1,
+        ObservableTaskRowsProjectionV1,
         OwnerReworkExecutionPreparationResultV1,
         PrepareOwnerReworkExecutionCommandV1,
+        RuntimeTaskFactoryRunBindingCodeV1,
+        RuntimeTaskFactoryRunBindingResultV1,
     )
+    from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeExecutionAttemptAuthorityV1
 
 _TASK_ID_PATTERN = re.compile(r"^task-(\d+)(?:-|$)", re.IGNORECASE)
-_TASK_RUNTIME_EXECUTION_STREAM = "task_runtime.execution"
+_TASK_SESSION_FILE_PATTERN = re.compile(r"^task_(\d+)\.session\.json$")
+_FACT_APPEND_CAS_MAX_ATTEMPTS = 64
+_EXECUTION_ATTEMPT_SETTLEMENT_LOCK_TIMEOUT_SECONDS = 5.0
 _OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1 = "task-runtime.owner-rework-execution-authorization/1"
 _OWNER_REWORK_HANDOFFS_METADATA_KEY = "owner_rework_handoffs"
 _OWNER_REWORK_EXECUTION_AUTHORIZATION_METADATA_KEY = "owner_rework_execution_authorization"
+_OWNER_REWORK_ROUTE_SCHEMA_V1 = "task-market.owner-rework-route/1"
+_OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE = "resolved_only"
 _REEXECUTION_METADATA_DROP_KEYS = frozenset(
     {
         "adapter_phase",
@@ -100,6 +145,172 @@ class _LockedSessionSuspendResult:
 
     session: TaskExecutionSession | None
     session_written: bool
+    blocker: DirectedEffectSettlementPreBarrierVerdictV1 | None = None
+
+
+class _ExecutionEventFailureEvidence(TypedDict):
+    """Detached, source-aware append failure evidence owned by TaskRuntime."""
+
+    schema_version: Literal["task-runtime.execution-event-failure/1"]
+    source: Literal["fact_stream", "task_runtime"]
+    stage: str
+    code: str
+    error_type: str
+    details: dict[str, Any]
+
+
+class _ExecutionEventProjectionEvidence(TypedDict):
+    """Detached evidence for a durable fact lacking its realtime projection."""
+
+    schema_version: Literal["task-runtime.execution-event-projection/1"]
+    source: Literal["task_runtime"]
+    stage: Literal["event_publish"]
+    code: Literal["factory_execution_event_publish_returned_false"]
+    status: Literal["not_published"]
+    details: dict[str, Any]
+
+
+def _execution_event_failure_evidence(
+    exc: RuntimeError | ValueError,
+    *,
+    stage: str,
+) -> _ExecutionEventFailureEvidence:
+    """Project append failure evidence without classifying generic errors as FactStream failures."""
+
+    if isinstance(exc, FactStreamError):
+        return {
+            "schema_version": "task-runtime.execution-event-failure/1",
+            "source": "fact_stream",
+            "stage": stage,
+            "code": exc.code,
+            "error_type": type(exc).__name__,
+            "details": _json_compatible_copy(dict(exc.details)),
+        }
+
+    generic_code = "task_runtime_execution_event_runtime_error"
+    if isinstance(exc, ValueError):
+        generic_code = "task_runtime_execution_event_validation_error"
+    return {
+        "schema_version": "task-runtime.execution-event-failure/1",
+        "source": "task_runtime",
+        "stage": stage,
+        "code": generic_code,
+        "error_type": type(exc).__name__,
+        "details": {"message": sanitize_summary(exc, max_chars=300)},
+    }
+
+
+def _execution_event_projection_evidence(
+    *,
+    factory_run_id: str,
+    fact_event_id: str,
+    fact_stream: str,
+    fact_event_seq: int | None,
+) -> _ExecutionEventProjectionEvidence:
+    """Build detached evidence for a durable fact whose realtime wakeup was declined."""
+
+    durable_fact: dict[str, Any] = {
+        "event_id": fact_event_id,
+        "stream": fact_stream,
+    }
+    if fact_event_seq is not None:
+        durable_fact["event_seq"] = fact_event_seq
+    return {
+        "schema_version": "task-runtime.execution-event-projection/1",
+        "source": "task_runtime",
+        "stage": "event_publish",
+        "code": "factory_execution_event_publish_returned_false",
+        "status": "not_published",
+        "details": {
+            "factory_run_id": factory_run_id,
+            "durable_fact": durable_fact,
+        },
+    }
+
+
+def _normalize_owner_rework_handoff_record(value: object) -> dict[str, Any]:
+    """Validate TaskMarket's serialized handoff at the TaskRuntime boundary."""
+
+    if not isinstance(value, Mapping):
+        raise ValueError("owner-rework handoff evidence must be a mapping")
+
+    def required_text(field: str) -> str:
+        normalized = str(value.get(field) or "").strip()
+        if not normalized:
+            raise ValueError(f"owner-rework handoff evidence is missing {field}")
+        return normalized
+
+    schema_version = required_text("schema_version")
+    if schema_version != _OWNER_REWORK_ROUTE_SCHEMA_V1:
+        raise ValueError("owner-rework handoff evidence schema is unsupported")
+    dependency_mode = required_text("dependency_mode")
+    if dependency_mode != _OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE:
+        raise ValueError("owner-rework handoff dependency mode is unsupported")
+    owner_reopened = value.get("owner_reopened")
+    if not isinstance(owner_reopened, bool):
+        raise ValueError("owner-rework handoff owner_reopened must be a bool")
+
+    failure_metadata = value.get("failure_metadata")
+    evidence_metadata = value.get("evidence_metadata")
+    metadata = value.get("metadata")
+    if not isinstance(failure_metadata, Mapping) or not failure_metadata:
+        raise ValueError("owner-rework handoff failure_metadata must be a non-empty mapping")
+    if not isinstance(evidence_metadata, Mapping) or not evidence_metadata:
+        raise ValueError("owner-rework handoff evidence_metadata must be a non-empty mapping")
+    if not isinstance(metadata, Mapping):
+        raise ValueError("owner-rework handoff metadata must be a mapping")
+
+    return {
+        "schema_version": schema_version,
+        "handoff_id": required_text("handoff_id"),
+        "owner_task_id": required_text("owner_task_id"),
+        "requester_task_id": required_text("requester_task_id"),
+        "owner_previous_status": required_text("owner_previous_status"),
+        "requester_previous_status": required_text("requester_previous_status"),
+        "owner_reopened": owner_reopened,
+        "dependency_mode": dependency_mode,
+        "failure_metadata": dict(failure_metadata),
+        "evidence_metadata": dict(evidence_metadata),
+        "metadata": dict(metadata),
+        "routed_at": required_text("routed_at"),
+    }
+
+
+def _build_factory_run_binding_result(
+    *,
+    ok: bool,
+    code: RuntimeTaskFactoryRunBindingCodeV1,
+    reason: str,
+    workspace: str,
+    task_id: str,
+    factory_run_id: str,
+    existing_factory_run_id: str = "",
+    row_updated: bool = False,
+    event_recorded: bool = False,
+    idempotent: bool = False,
+    task_row: Mapping[str, Any] | None = None,
+    execution_event: Mapping[str, Any] | None = None,
+) -> RuntimeTaskFactoryRunBindingResultV1:
+    """Build the public binding result without importing contracts at module load."""
+
+    from polaris.cells.runtime.task_runtime.public.contracts import (
+        RuntimeTaskFactoryRunBindingResultV1,
+    )
+
+    return RuntimeTaskFactoryRunBindingResultV1(
+        ok=ok,
+        code=code,
+        reason=reason,
+        workspace=workspace,
+        task_id=task_id,
+        factory_run_id=factory_run_id,
+        existing_factory_run_id=existing_factory_run_id,
+        row_updated=row_updated,
+        event_recorded=event_recorded,
+        idempotent=idempotent,
+        task_row=dict(task_row or {}),
+        execution_event=dict(execution_event or {}),
+    )
 
 
 def _raise_retired_entity_api(method: str, replacement: str) -> NoReturn:
@@ -170,16 +381,229 @@ class TaskRuntimeService:
         self._workspace = workspace_token
         self._board = board or TaskBoard(workspace=workspace_token)
         self._kernel_fs = KernelFileSystem(workspace_token, get_default_adapter())
-        # Per-task-id locks guard the read-modify-write cycle on session files.
+        # Per-task-id locks guard only the read-modify-write cycle on session
+        # files. The only FactStream work permitted under this lock is the
+        # narrow DEO registry admission/pre-barrier chain; projection uses a
+        # distinct lock and never acquires a session lock.
         self._session_locks: dict[int, threading.RLock] = {}
         self._session_locks_meta = threading.Lock()
+        self._settlement_projection_locks: dict[int, threading.RLock] = {}
+        self._settlement_projection_locks_meta = threading.Lock()
         self._last_session_write_receipt: TaskExecutionSessionWriteReceipt | None = None
         self._session_write_receipts_by_identity: dict[tuple[int, str], TaskExecutionSessionWriteReceipt] = {}
         self._session_write_receipt_lock = threading.Lock()
+        self._execution_fact_append_lock = threading.Lock()
 
     @property
     def workspace(self) -> str:
         return self._workspace
+
+    @staticmethod
+    def _after_directed_effect_linearization_lock(
+        operation: Literal["parent_admission", "settlement"],
+        identity: TaskRuntimeExecutionAttemptIdentityV1,
+    ) -> None:
+        """Deterministic test seam after the cooperative session lock is held."""
+
+        del operation, identity
+
+    def admit_directed_effect_parent(
+        self,
+        command: AdmitDirectedEffectParentCommandV1,
+    ) -> DirectedEffectOperationResultV1:
+        """Linearize parent admission against every inactive session writer.
+
+        Lock order is fixed: this service's per-task ``RLock``, the
+        cooperative session-file lock, then repository-owned FactStream locks.
+        No TaskBoard transaction or projection runs in the critical section.
+        """
+
+        identity = command.execution_attempt
+        if command.workspace != self.workspace or identity.workspace != command.workspace:
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="workspace_mismatch",
+                evidence={
+                    "command_workspace": command.workspace,
+                    "service_workspace": self.workspace,
+                    "identity_workspace": identity.workspace,
+                },
+            )
+        if command.task_id != identity.task_id:
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="task_mismatch",
+                evidence={
+                    "command_task_id": command.task_id,
+                    "identity_task_id": identity.task_id,
+                },
+            )
+
+        repository = DirectedEffectOperationRepository()
+        timeout = _EXECUTION_ATTEMPT_SETTLEMENT_LOCK_TIMEOUT_SECONDS
+        started_at = time.monotonic()
+        session_lock = self._get_session_lock(identity.task_id)
+        if not session_lock.acquire(timeout=timeout):
+            return self._directed_effect_attempt_validation_failure(
+                repository,
+                identity,
+                code="file_lock_timeout",
+                evidence={"lock_scope": "local_session", "lock_timeout_seconds": timeout},
+            )
+        try:
+            remaining = timeout - (time.monotonic() - started_at)
+            if remaining < 0:
+                return self._directed_effect_attempt_validation_failure(
+                    repository,
+                    identity,
+                    code="file_lock_timeout",
+                    evidence={"lock_scope": "local_session", "lock_timeout_seconds": timeout},
+                )
+            try:
+                with self._board._file_lock(
+                    self._session_file_lock_path(identity.task_id),
+                    timeout_seconds=remaining,
+                ):
+                    self._after_directed_effect_linearization_lock(
+                        "parent_admission",
+                        identity,
+                    )
+                    return self._admit_directed_effect_parent_locked(
+                        command,
+                        repository=repository,
+                    )
+            except TaskBoardFileLockTimeoutError:
+                return self._directed_effect_attempt_validation_failure(
+                    repository,
+                    identity,
+                    code="file_lock_timeout",
+                    evidence={
+                        "lock_scope": "cooperative_session_file",
+                        "lock_timeout_seconds": timeout,
+                    },
+                )
+            except OSError as exc:
+                return self._directed_effect_attempt_validation_failure(
+                    repository,
+                    identity,
+                    code="session_corrupt",
+                    evidence={
+                        "stage": "cooperative_session_file_lock",
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    },
+                )
+        finally:
+            session_lock.release()
+
+    def _admit_directed_effect_parent_locked(
+        self,
+        command: AdmitDirectedEffectParentCommandV1,
+        *,
+        repository: DirectedEffectOperationRepository,
+    ) -> DirectedEffectOperationResultV1:
+        """Validate the locked session and invoke the registry-only repository."""
+
+        identity = command.execution_attempt
+        try:
+            session = self._read_session_locked(
+                identity.task_id,
+                raise_infrastructure_errors=True,
+            )
+        except (OSError, UnicodeError, RuntimeError, ValueError) as exc:
+            return self._directed_effect_attempt_validation_failure(
+                repository,
+                identity,
+                code="session_corrupt",
+                evidence={
+                    "stage": "locked_session_read",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                },
+            )
+        if session is None:
+            return self._directed_effect_attempt_validation_failure(
+                repository,
+                identity,
+                code="session_not_found",
+                evidence={"session_path": self._session_logical_path(identity.task_id)},
+            )
+        observed = self._execution_attempt_identity_from_session(session)
+        evidence = {"observed": observed.to_record()}
+        mismatch_code = self._execution_attempt_mismatch_code(identity, session)
+        if mismatch_code is not None:
+            return self._directed_effect_attempt_validation_failure(
+                repository,
+                identity,
+                code=mismatch_code,
+                evidence=evidence,
+            )
+        if session.status != "active":
+            return self._directed_effect_attempt_validation_failure(
+                repository,
+                identity,
+                code="session_not_active",
+                evidence=evidence,
+            )
+        if session.is_expired(now=utc_now()):
+            return self._directed_effect_attempt_validation_failure(
+                repository,
+                identity,
+                code="session_lease_expired",
+                evidence=evidence,
+            )
+        return repository.admit_parent_with_validated_authority(command)
+
+    def _directed_effect_attempt_validation_failure(
+        self,
+        repository: DirectedEffectOperationRepository,
+        identity: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        code: TaskRuntimeExecutionAttemptValidationCodeV1,
+        evidence: Mapping[str, Any],
+    ) -> DirectedEffectOperationResultV1:
+        verdict = self._execution_attempt_validation_verdict(
+            valid=False,
+            code=code,
+            identity=identity,
+            evidence=evidence,
+        )
+        return repository.attempt_validation_failure_result(verdict)
+
+    def _directed_effect_inactive_pre_barrier_locked(
+        self,
+        session: TaskExecutionSession,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        """Strictly check one session while both session locks are held."""
+
+        identity = self._execution_attempt_identity_from_session(session)
+        return DirectedEffectOperationRepository().settlement_pre_barrier(identity)
+
+    @staticmethod
+    def _directed_effect_inactive_block_record(
+        task_id: int,
+        verdict: DirectedEffectSettlementPreBarrierVerdictV1,
+    ) -> dict[str, Any]:
+        """Return typed refusal evidence without projecting an inactive row."""
+
+        evidence = dict(verdict.evidence)
+        execution_event = {
+            "ok": False,
+            "reason": verdict.code,
+            "code": verdict.code,
+            "error": verdict.code,
+            "evidence": evidence,
+        }
+        return {
+            "ok": False,
+            "success": False,
+            "code": verdict.code,
+            "reason": verdict.code,
+            "task_id": str(task_id),
+            "evidence": evidence,
+            "execution_event": execution_event,
+            "execution_events": (),
+        }
 
     def last_session_write_receipt(self) -> TaskExecutionSessionWriteReceipt | None:
         """Return the last successful execution-session write receipt anchor."""
@@ -191,7 +615,7 @@ class TaskRuntimeService:
     def _owner_rework_execution_result(
         *,
         ok: bool,
-        code: str,
+        code: OwnerReworkExecutionPreparationCodeV1,
         reason: str,
         task_id: str,
         handoff_id: str = "",
@@ -269,35 +693,27 @@ class TaskRuntimeService:
                 task_id=task_id,
             )
 
-        from polaris.cells.runtime.task_market.public.contracts import OwnerReworkHandoffV1
-
         handoff = getattr(authorization, "handoff", None)
-        if not isinstance(handoff, OwnerReworkHandoffV1):
-            return self._owner_rework_execution_result(
-                ok=False,
-                code="owner_rework_authorization_malformed",
-                reason="owner rework authorization handoff is not typed",
-                task_id=task_id,
-            )
         try:
-            canonical_handoff = OwnerReworkHandoffV1.from_record(handoff.to_record())
-        except (AttributeError, TypeError, ValueError):
+            canonical_handoff = _normalize_owner_rework_handoff_record(handoff)
+        except ValueError:
             return self._owner_rework_execution_result(
                 ok=False,
                 code="owner_rework_authorization_malformed",
                 reason="owner rework authorization handoff is malformed",
                 task_id=task_id,
             )
+        handoff_id = str(canonical_handoff["handoff_id"])
 
         task_role = str(getattr(authorization, "task_role", "") or "").strip().lower()
         counterparty_task_id = str(getattr(authorization, "counterparty_task_id", "") or "").strip()
         if task_role == "owner":
-            expected_task_id = canonical_handoff.owner_task_id
-            expected_counterparty_task_id = canonical_handoff.requester_task_id
-            role_allowed = canonical_handoff.owner_reopened
+            expected_task_id = str(canonical_handoff["owner_task_id"])
+            expected_counterparty_task_id = str(canonical_handoff["requester_task_id"])
+            role_allowed = bool(canonical_handoff["owner_reopened"])
         elif task_role == "requester":
-            expected_task_id = canonical_handoff.requester_task_id
-            expected_counterparty_task_id = canonical_handoff.owner_task_id
+            expected_task_id = str(canonical_handoff["requester_task_id"])
+            expected_counterparty_task_id = str(canonical_handoff["owner_task_id"])
             role_allowed = True
         else:
             expected_task_id = ""
@@ -309,7 +725,7 @@ class TaskRuntimeService:
                 code="owner_rework_handoff_mismatch",
                 reason="owner rework task role or counterparty does not match handoff",
                 task_id=task_id,
-                handoff_id=canonical_handoff.handoff_id,
+                handoff_id=handoff_id,
                 task_role=task_role,
             )
 
@@ -324,7 +740,7 @@ class TaskRuntimeService:
                 code="owner_rework_authorization_malformed",
                 reason="owner rework authorization item evidence is malformed",
                 task_id=task_id,
-                handoff_id=canonical_handoff.handoff_id,
+                handoff_id=handoff_id,
                 task_role=task_role,
             )
         if (
@@ -341,7 +757,7 @@ class TaskRuntimeService:
                 code="owner_rework_claim_evidence_invalid",
                 reason="owner rework authorization does not prove the active Director lease",
                 task_id=task_id,
-                handoff_id=canonical_handoff.handoff_id,
+                handoff_id=handoff_id,
                 task_role=task_role,
             )
         if str(counterparty_item.get("task_id") or "").strip() != counterparty_task_id:
@@ -350,32 +766,32 @@ class TaskRuntimeService:
                 code="owner_rework_counterparty_evidence_invalid",
                 reason="owner rework authorization counterparty item does not match handoff",
                 task_id=task_id,
-                handoff_id=canonical_handoff.handoff_id,
+                handoff_id=handoff_id,
                 task_role=task_role,
             )
 
         for item in (claimed_item, counterparty_item):
             metadata = item.get("metadata")
             handoffs = metadata.get(_OWNER_REWORK_HANDOFFS_METADATA_KEY) if isinstance(metadata, Mapping) else None
-            record = handoffs.get(canonical_handoff.handoff_id) if isinstance(handoffs, Mapping) else None
+            record = handoffs.get(handoff_id) if isinstance(handoffs, Mapping) else None
             try:
-                item_handoff = OwnerReworkHandoffV1.from_record(record)
-            except (TypeError, ValueError):
+                item_handoff = _normalize_owner_rework_handoff_record(record)
+            except ValueError:
                 return self._owner_rework_execution_result(
                     ok=False,
                     code="owner_rework_handoff_evidence_invalid",
                     reason="owner rework authorization item lacks a valid matching handoff",
                     task_id=task_id,
-                    handoff_id=canonical_handoff.handoff_id,
+                    handoff_id=handoff_id,
                     task_role=task_role,
                 )
-            if item_handoff.to_record() != canonical_handoff.to_record():
+            if item_handoff != canonical_handoff:
                 return self._owner_rework_execution_result(
                     ok=False,
                     code="owner_rework_handoff_evidence_invalid",
                     reason="owner rework authorization item handoff conflicts with claim evidence",
                     task_id=task_id,
-                    handoff_id=canonical_handoff.handoff_id,
+                    handoff_id=handoff_id,
                     task_role=task_role,
                 )
 
@@ -386,7 +802,7 @@ class TaskRuntimeService:
                 code="runtime_task_not_found",
                 reason="TaskRuntime has no execution row for the claimed owner rework task",
                 task_id=task_id,
-                handoff_id=canonical_handoff.handoff_id,
+                handoff_id=handoff_id,
                 task_role=task_role,
             )
         runtime_task_id = self.normalize_task_id(observable_row.get("id"))
@@ -396,13 +812,13 @@ class TaskRuntimeService:
                 code="runtime_task_invalid",
                 reason="TaskRuntime execution row has no valid task id",
                 task_id=task_id,
-                handoff_id=canonical_handoff.handoff_id,
+                handoff_id=handoff_id,
                 task_role=task_role,
             )
 
         authorization_record = {
             "schema_version": _OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
-            "handoff_id": canonical_handoff.handoff_id,
+            "handoff_id": handoff_id,
             "task_id": task_id,
             "task_role": task_role,
             "counterparty_task_id": counterparty_task_id,
@@ -418,7 +834,7 @@ class TaskRuntimeService:
                     code="runtime_task_not_found",
                     reason="TaskRuntime execution row disappeared before preparation",
                     task_id=task_id,
-                    handoff_id=canonical_handoff.handoff_id,
+                    handoff_id=handoff_id,
                     task_role=task_role,
                     runtime_task_id=str(runtime_task_id),
                 )
@@ -433,7 +849,7 @@ class TaskRuntimeService:
                         code="owner_rework_authorization_conflict",
                         reason="TaskRuntime has malformed owner rework authorization state",
                         task_id=task_id,
-                        handoff_id=canonical_handoff.handoff_id,
+                        handoff_id=handoff_id,
                         task_role=task_role,
                         runtime_task_id=str(runtime_task_id),
                     )
@@ -444,7 +860,7 @@ class TaskRuntimeService:
                         code="owner_rework_authorization_conflict",
                         reason="TaskRuntime task is already prepared for a different owner rework authorization",
                         task_id=task_id,
-                        handoff_id=canonical_handoff.handoff_id,
+                        handoff_id=handoff_id,
                         task_role=task_role,
                         runtime_task_id=str(runtime_task_id),
                     )
@@ -459,7 +875,7 @@ class TaskRuntimeService:
                     code="owner_rework_execution_already_prepared",
                     reason="matching owner rework execution is already active",
                     task_id=task_id,
-                    handoff_id=canonical_handoff.handoff_id,
+                    handoff_id=handoff_id,
                     task_role=task_role,
                     runtime_task_id=str(runtime_task_id),
                     idempotent=True,
@@ -470,7 +886,7 @@ class TaskRuntimeService:
                     code="runtime_execution_lease_conflict",
                     reason="TaskRuntime has an active execution lease for this task",
                     task_id=task_id,
-                    handoff_id=canonical_handoff.handoff_id,
+                    handoff_id=handoff_id,
                     task_role=task_role,
                     runtime_task_id=str(runtime_task_id),
                 )
@@ -484,7 +900,7 @@ class TaskRuntimeService:
                     code="owner_rework_execution_already_prepared",
                     reason="matching owner rework execution is already prepared",
                     task_id=task_id,
-                    handoff_id=canonical_handoff.handoff_id,
+                    handoff_id=handoff_id,
                     task_role=task_role,
                     runtime_task_id=str(runtime_task_id),
                     idempotent=True,
@@ -505,7 +921,7 @@ class TaskRuntimeService:
                         code="runtime_task_not_found",
                         reason="TaskRuntime could not reopen the owner rework execution row",
                         task_id=task_id,
-                        handoff_id=canonical_handoff.handoff_id,
+                        handoff_id=handoff_id,
                         task_role=task_role,
                         runtime_task_id=str(runtime_task_id),
                     )
@@ -523,7 +939,7 @@ class TaskRuntimeService:
                     code="runtime_task_not_found",
                     reason="TaskRuntime execution row disappeared while recording authorization",
                     task_id=task_id,
-                    handoff_id=canonical_handoff.handoff_id,
+                    handoff_id=handoff_id,
                     task_role=task_role,
                     runtime_task_id=str(runtime_task_id),
                 )
@@ -533,7 +949,7 @@ class TaskRuntimeService:
                 task_row=dict(prepared_row),
                 session=self._read_session(runtime_task_id),
                 details={
-                    "handoff_id": canonical_handoff.handoff_id,
+                    "handoff_id": handoff_id,
                     "task_role": task_role,
                     "counterparty_task_id": counterparty_task_id,
                     "lease_token_sha256": authorization_record["lease_token_sha256"],
@@ -545,7 +961,7 @@ class TaskRuntimeService:
             code="owner_rework_execution_prepared",
             reason="TaskRuntime owner rework execution is prepared",
             task_id=task_id,
-            handoff_id=canonical_handoff.handoff_id,
+            handoff_id=handoff_id,
             task_role=task_role,
             runtime_task_id=str(runtime_task_id),
             reopened=reopened,
@@ -565,7 +981,447 @@ class TaskRuntimeService:
 
         return self._board.list_all()
 
-    def reset_records(self, *, keep_plan: bool = False) -> dict[str, object]:
+    def _reset_authority_conflicts(
+        self,
+        task_rows: Sequence[Mapping[str, Any]],
+        *,
+        factory_run_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return Factory authority conflicts from observable row projections.
+
+        This is deliberately read-model-only.  Callers that need to decide
+        whether a Factory run is settled must not consume raw ``TaskBoard``
+        entities, because a late execution fact may supersede a row file.
+        Reset keeps its raw entity traversal in the owner mutation method that
+        emits its tombstone facts.
+        """
+
+        conflicts: list[dict[str, Any]] = []
+        observed_task_ids: set[int] = set()
+        for task_row_source in task_rows:
+            task_row = dict(task_row_source)
+            task_id = self.normalize_task_id(task_row.get("id"))
+            if task_id is None:
+                logger.warning("Skipping TaskRuntime authority row without a valid task id")
+                continue
+            observed_task_ids.add(task_id)
+            metadata = task_row.get("metadata")
+            metadata_map = metadata if isinstance(metadata, Mapping) else {}
+            row_factory_run_id = str(metadata_map.get("factory_run_id") or "").strip()
+            fact_factory_run_id = self._execution_fact_factory_run_id(task_row)
+            for source, owner in (
+                ("task_row", row_factory_run_id),
+                ("execution_fact", fact_factory_run_id),
+            ):
+                if owner and owner != factory_run_id:
+                    conflicts.append(
+                        {
+                            "kind": "foreign_factory_run_binding",
+                            "task_id": str(task_id),
+                            "source": source,
+                            "existing_factory_run_id": owner,
+                            "requested_factory_run_id": factory_run_id,
+                        }
+                    )
+
+            session = self._read_session(task_id)
+            if session is None or session.status != "active":
+                continue
+            lease_expired = session.is_expired(now=utc_now())
+            session_metadata = session.metadata if isinstance(session.metadata, Mapping) else {}
+            session_factory_run_id = str(
+                row_factory_run_id
+                or fact_factory_run_id
+                or session_metadata.get("factory_run_id")
+                or session.run_id
+                or ""
+            ).strip()
+            conflicts.append(
+                {
+                    "kind": (
+                        "active_expired_session"
+                        if lease_expired
+                        else (
+                            "active_foreign_session"
+                            if session_factory_run_id != factory_run_id
+                            else "active_session_not_settled"
+                        )
+                    ),
+                    "task_id": str(task_id),
+                    "session_id": session.session_id,
+                    "session_run_id": session.run_id,
+                    "existing_factory_run_id": session_factory_run_id,
+                    "requested_factory_run_id": factory_run_id,
+                    "lease_expires_at": session.lease_expires_at,
+                    "lease_expired": lease_expired,
+                    "ownership": ("foreign" if session_factory_run_id != factory_run_id else "requested_factory_run"),
+                }
+            )
+        for session_path in self._board.tasks_dir.glob("task_*.session.json"):
+            match = _TASK_SESSION_FILE_PATTERN.fullmatch(session_path.name)
+            if match is None:
+                continue
+            task_id = int(match.group(1))
+            if task_id in observed_task_ids:
+                continue
+            session = self._read_session(task_id)
+            if session is None or session.status != "active":
+                continue
+            lease_expired = session.is_expired(now=utc_now())
+            session_metadata = session.metadata if isinstance(session.metadata, Mapping) else {}
+            session_factory_run_id = str(session_metadata.get("factory_run_id") or session.run_id or "").strip()
+            conflicts.append(
+                {
+                    "kind": (
+                        "active_expired_session"
+                        if lease_expired
+                        else (
+                            "active_orphan_session"
+                            if session_factory_run_id == factory_run_id
+                            else "active_foreign_session"
+                        )
+                    ),
+                    "task_id": str(task_id),
+                    "session_id": session.session_id,
+                    "session_run_id": session.run_id,
+                    "existing_factory_run_id": session_factory_run_id,
+                    "requested_factory_run_id": factory_run_id,
+                    "lease_expires_at": session.lease_expires_at,
+                    "lease_expired": lease_expired,
+                    "ownership": ("foreign" if session_factory_run_id != factory_run_id else "requested_factory_run"),
+                }
+            )
+        return conflicts
+
+    @staticmethod
+    def _session_factory_run_id(
+        session: TaskExecutionSession,
+        task_row: Mapping[str, Any] | None = None,
+    ) -> str:
+        """Resolve one session's Factory authority without parsing prompt text."""
+
+        row = task_row or {}
+        metadata = row.get("metadata")
+        metadata_map = metadata if isinstance(metadata, Mapping) else {}
+        session_metadata = session.metadata if isinstance(session.metadata, Mapping) else {}
+        fact = metadata_map.get("task_runtime_execution_fact")
+        fact_map = fact if isinstance(fact, Mapping) else {}
+        return str(
+            row.get("factory_run_id")
+            or metadata_map.get("factory_run_id")
+            or fact_map.get("factory_run_id")
+            or session_metadata.get("factory_run_id")
+            or session.run_id
+            or ""
+        ).strip()
+
+    def fence_expired_factory_run_sessions(
+        self,
+        command: FenceExpiredFactoryRunSessionsCommandV1,
+    ) -> ExpiredFactoryRunSessionFenceResultV1:
+        """Fence expired active sessions under explicit Factory authority.
+
+        The operation is fail-closed: any active unexpired or foreign session
+        prevents stale-owner recovery. Expired sessions are changed to
+        non-resumable suspension and carry durable execution-fact evidence.
+        """
+
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            ExpiredFactoryRunSessionFenceResultV1,
+        )
+
+        authority = command.factory_run_id
+        tasks_dir = self._board.tasks_dir
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        reset_lock_path = tasks_dir / ".task_runtime.reset.lock"
+        with self._board._file_lock(reset_lock_path):
+            projection = self.query_observable_task_rows_projection()
+            task_rows_by_id = {
+                task_id: dict(row)
+                for row in projection.rows
+                if (task_id := self.normalize_task_id(row.get("id"))) is not None
+            }
+            task_ids = set(task_rows_by_id)
+            for session_path in tasks_dir.glob("task_*.session.json"):
+                match = _TASK_SESSION_FILE_PATTERN.fullmatch(session_path.name)
+                if match is not None:
+                    task_ids.add(int(match.group(1)))
+
+            conflicts: list[dict[str, Any]] = []
+            candidates: list[tuple[int, TaskExecutionSession]] = []
+            observed_at = utc_now()
+            for task_id in sorted(task_ids):
+                session = self._read_session(task_id)
+                if session is None or session.status != "active":
+                    continue
+                task_row = task_rows_by_id.get(task_id, {})
+                owner = self._session_factory_run_id(session, task_row)
+                expired = session.is_expired(now=observed_at)
+                if owner != authority or not expired:
+                    conflicts.append(
+                        {
+                            "kind": ("active_foreign_session" if owner != authority else "active_unexpired_session"),
+                            "task_id": str(task_id),
+                            "session_id": session.session_id,
+                            "existing_factory_run_id": owner,
+                            "requested_factory_run_id": authority,
+                            "lease_expires_at": session.lease_expires_at,
+                            "lease_expired": expired,
+                        }
+                    )
+                    continue
+                candidates.append((task_id, session))
+
+            if conflicts:
+                return ExpiredFactoryRunSessionFenceResultV1(
+                    ok=False,
+                    code="active_session_conflict",
+                    workspace=str(self.workspace),
+                    factory_run_id=authority,
+                    conflicts=tuple(conflicts),
+                )
+
+            fenced_session_ids: list[str] = []
+            execution_events: list[dict[str, Any]] = []
+            fence_failures: list[dict[str, Any]] = []
+            for task_id, observed_session in candidates:
+                session_lock = self._get_session_lock(task_id)
+                with (
+                    session_lock,
+                    self._board._file_lock(self._session_file_lock_path(task_id)),
+                ):
+                    current = self._read_session_locked(task_id)
+                    if current is None:
+                        fence_failures.append(
+                            {
+                                "kind": "session_disappeared_before_fence",
+                                "task_id": str(task_id),
+                                "session_id": observed_session.session_id,
+                            }
+                        )
+                        continue
+                    owner = self._session_factory_run_id(
+                        current,
+                        task_rows_by_id.get(task_id, {}),
+                    )
+                    if (
+                        current.session_id != observed_session.session_id
+                        or current.status != "active"
+                        or owner != authority
+                        or not current.is_expired(now=utc_now())
+                    ):
+                        fence_failures.append(
+                            {
+                                "kind": "session_changed_before_fence",
+                                "task_id": str(task_id),
+                                "session_id": current.session_id,
+                                "session_status": current.status,
+                                "existing_factory_run_id": owner,
+                                "lease_expires_at": current.lease_expires_at,
+                            }
+                        )
+                        continue
+                    pre_barrier = self._directed_effect_inactive_pre_barrier_locked(current)
+                    if not pre_barrier.allowed:
+                        fence_failures.append(
+                            {
+                                "kind": pre_barrier.code,
+                                "code": pre_barrier.code,
+                                "task_id": str(task_id),
+                                "session_id": current.session_id,
+                                "evidence": dict(pre_barrier.evidence),
+                            }
+                        )
+                        continue
+                    previous_expiry = current.lease_expires_at
+                    current.mark_suspended(reason=command.reason, resumable=False)
+                    current.metadata["factory_stale_session_fence"] = {
+                        "schema_version": "task-runtime.factory-stale-session-fence/1",
+                        "factory_run_id": authority,
+                        "reason": command.reason,
+                        "previous_lease_expires_at": previous_expiry,
+                        "fenced_at": current.released_at,
+                    }
+                    if not self._write_session_locked(current):
+                        fence_failures.append(
+                            {
+                                "kind": "session_write_rejected",
+                                "task_id": str(task_id),
+                                "session_id": current.session_id,
+                            }
+                        )
+                        continue
+
+                fence_metadata = self._build_runtime_metadata(
+                    session=current,
+                    effective_status="blocked",
+                    resume_state="fenced",
+                    extra_metadata={
+                        "factory_run_id": authority,
+                        "factory_stale_session_fenced": True,
+                    },
+                )
+                runtime_execution = dict(fence_metadata.get("runtime_execution") or {})
+                runtime_execution.update(
+                    {
+                        "effective_status": "blocked",
+                        "raw_status": "blocked",
+                        "resume_state": "fenced",
+                        "resume_available": False,
+                    }
+                )
+                fence_metadata["runtime_execution"] = runtime_execution
+                fence_metadata["resume_state"] = "fenced"
+                fence_metadata["resume_available"] = False
+                updated = self._board.update(
+                    task_id,
+                    status=TaskStatus.BLOCKED,
+                    assignee="",
+                    metadata=fence_metadata,
+                )
+                row = self._augment_task_row(
+                    updated.to_dict() if updated is not None else {"id": task_id, "status": "blocked"}
+                )
+                if updated is None:
+                    fence_failures.append(
+                        {
+                            "kind": "task_row_update_rejected",
+                            "task_id": str(task_id),
+                            "session_id": current.session_id,
+                        }
+                    )
+                    continue
+                row_metadata = dict(row.get("metadata") or {})
+                row_runtime_execution = dict(row_metadata.get("runtime_execution") or {})
+                row_runtime_execution.update(
+                    {
+                        "effective_status": "blocked",
+                        "raw_status": "blocked",
+                        "resume_state": "fenced",
+                        "resume_available": False,
+                    }
+                )
+                row_metadata["runtime_execution"] = row_runtime_execution
+                row.update(
+                    {
+                        "status": "blocked",
+                        "state": "blocked",
+                        "execution_state": "blocked",
+                        "running": False,
+                        "resume_state": "fenced",
+                        "resume_available": False,
+                        "metadata": row_metadata,
+                    }
+                )
+                event = self._append_execution_event(
+                    "factory_stale_session_fenced",
+                    task_row=row,
+                    session=current,
+                    details={
+                        "factory_run_id": authority,
+                        "reason": sanitize_summary(command.reason),
+                        "previous_lease_expires_at": previous_expiry,
+                    },
+                )
+                if (
+                    event.get("ok") is not True
+                    or not str(event.get("fact_event_id") or "").strip()
+                    or _coerce_fact_event_seq(event.get("fact_event_seq")) is None
+                ):
+                    fence_failures.append(
+                        {
+                            "kind": "execution_event_append_failed",
+                            "task_id": str(task_id),
+                            "session_id": current.session_id,
+                        }
+                    )
+                    continue
+                fenced_session_ids.append(current.session_id)
+                execution_events.append(event)
+
+            if fence_failures:
+                return ExpiredFactoryRunSessionFenceResultV1(
+                    ok=False,
+                    code="session_fence_failed",
+                    workspace=str(self.workspace),
+                    factory_run_id=authority,
+                    fenced_session_ids=tuple(fenced_session_ids),
+                    conflicts=tuple(fence_failures),
+                    execution_events=tuple(execution_events),
+                )
+
+            return ExpiredFactoryRunSessionFenceResultV1(
+                ok=True,
+                code=("expired_sessions_fenced" if candidates else "no_expired_sessions"),
+                workspace=str(self.workspace),
+                factory_run_id=authority,
+                fenced_session_ids=tuple(fenced_session_ids),
+                execution_events=tuple(execution_events),
+            )
+
+    def query_factory_run_settlement(self, *, factory_run_id: str) -> dict[str, object]:
+        """Return stable TaskRuntime evidence for Factory child settlement."""
+
+        authority = str(factory_run_id or "").strip()
+        if not authority:
+            raise ValueError("factory_run_id must be a non-empty string")
+        tasks_dir = self._board.tasks_dir
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        reset_lock_path = tasks_dir / ".task_runtime.reset.lock"
+        with self._board._file_lock(reset_lock_path):
+            projection = self.query_observable_task_rows_projection()
+            observable_rows = projection.rows_for_factory_run(authority)
+            conflicts = self._reset_authority_conflicts(
+                projection.rows,
+                factory_run_id=authority,
+            )
+        active_sessions = [
+            dict(conflict) for conflict in conflicts if str(conflict.get("kind") or "").startswith("active_")
+        ]
+        return {
+            "schema_version": "task-runtime.factory-run-settlement/1",
+            "factory_run_id": authority,
+            "settled": not conflicts,
+            "active_session_count": len(active_sessions),
+            "active_sessions": active_sessions,
+            "conflict_count": len(conflicts),
+            "conflicts": [dict(conflict) for conflict in conflicts],
+            "observable_source": projection.source,
+            "observable_authoritative": projection.authoritative,
+            "observable_row_count": len(observable_rows),
+            "proof_sources": [
+                "task_runtime.observable_task_rows",
+                "task_runtime.execution_session_files",
+            ],
+        }
+
+    @staticmethod
+    def _reset_conflict_result(
+        *,
+        factory_run_id: str,
+        conflicts: Sequence[Mapping[str, Any]],
+    ) -> dict[str, object]:
+        return {
+            "ok": False,
+            "code": "task_runtime_reset_authority_conflict",
+            "reason": "TaskRuntime reset refused foreign ownership or an active execution session",
+            "factory_run_id": factory_run_id,
+            "conflicts": [dict(conflict) for conflict in conflicts],
+            "conflict_count": len(conflicts),
+            "cleared_paths": [],
+            "failed_paths": [],
+            "cleared_count": 0,
+            "failed_count": 0,
+            "tombstone_events": [],
+            "tombstone_count": 0,
+        }
+
+    def reset_records(
+        self,
+        *,
+        keep_plan: bool = False,
+        factory_run_id: str | None = None,
+    ) -> dict[str, object]:
         """Clear canonical taskboard rows and execution sessions.
 
         This intentionally lives in the runtime.task_runtime cell because
@@ -573,8 +1429,86 @@ class TaskRuntimeService:
         orchestration may call this public capability, but other cells must not
         delete these files directly.
         """
+        authority = str(factory_run_id or "").strip()
+        tasks_dir = self._board.tasks_dir
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        reset_lock_path = tasks_dir / ".task_runtime.reset.lock"
+        with self._board._file_lock(reset_lock_path):
+            projection = self.query_observable_task_rows_projection()
+            conflicts = self._reset_authority_conflicts(projection.rows, factory_run_id=authority)
+            if conflicts:
+                logger.warning(
+                    "TaskRuntime reset rejected: factory_run_id=%s conflicts=%s",
+                    authority or "<missing>",
+                    len(conflicts),
+                )
+                return self._reset_conflict_result(
+                    factory_run_id=authority,
+                    conflicts=conflicts,
+                )
+            return self._reset_records_authorized(
+                keep_plan=keep_plan,
+                factory_run_id=authority,
+            )
+
+    def _reset_records_authorized(
+        self,
+        *,
+        keep_plan: bool,
+        factory_run_id: str,
+    ) -> dict[str, object]:
+        """Commit one preflight-approved reset while the stable reset lock is held."""
+
         cleared_paths: list[str] = []
         failed_paths: list[str] = []
+        tombstone_events: list[dict[str, Any]] = []
+        tombstoned_task_files: set[str] = set()
+
+        tasks = self._list_file_task_entities()
+        for task in tasks:
+            task_id = int(task.id)
+            task_file_name = f"task_{task_id}.json"
+            task_row = self._augment_task_row(task.to_dict())
+            previous_status = str(task_row.get("status") or "")
+            task_metadata = dict(task_row.get("metadata") or {})
+            runtime_execution = dict(task_metadata.get("runtime_execution") or {})
+            runtime_execution.update(
+                {
+                    "effective_status": "removed",
+                    "raw_status": "removed",
+                    "resume_available": False,
+                }
+            )
+            task_metadata["runtime_execution"] = runtime_execution
+            tombstone_row = {
+                **task_row,
+                "status": "removed",
+                "state": "removed",
+                "execution_state": "removed",
+                "running": False,
+                "resume_available": False,
+                "metadata": task_metadata,
+            }
+            event = self._append_execution_event(
+                "runtime_reset_removed",
+                task_row=tombstone_row,
+                session=None,
+                details={
+                    "previous_status": previous_status,
+                    "reset_keep_plan": bool(keep_plan),
+                    "reset_factory_run_id": factory_run_id,
+                },
+            )
+            fact_event_seq = _coerce_fact_event_seq(event.get("fact_event_seq"))
+            if not str(event.get("fact_event_id") or "").strip() or fact_event_seq is None:
+                logger.warning(
+                    "TaskRuntime reset refused to delete task %s because its tombstone fact was not committed",
+                    task_id,
+                )
+                failed_paths.append(str(self._board.tasks_dir / task_file_name))
+                continue
+            tombstone_events.append(event)
+            tombstoned_task_files.add(task_file_name)
 
         with self._board.transaction():
             tasks_dir = self._board.tasks_dir
@@ -582,7 +1516,14 @@ class TaskRuntimeService:
             for child in sorted(tasks_dir.iterdir(), key=lambda item: str(item)):
                 if keep_plan and child.name == "plan.json":
                     continue
-                if child.name in {".max_id", ".max_id.lock"}:
+                if child.name == ".max_id" or child.name.endswith(".lock"):
+                    continue
+                if (
+                    child.name.startswith("task_")
+                    and child.name.endswith(".json")
+                    and not child.name.endswith(".session.json")
+                    and child.name not in tombstoned_task_files
+                ):
                     continue
                 try:
                     if child.is_dir():
@@ -612,10 +1553,18 @@ class TaskRuntimeService:
         unique_cleared = sorted(set(cleared_paths))
         unique_failed = sorted({path for path in failed_paths if path not in set(unique_cleared)})
         return {
+            "ok": not unique_failed,
+            "code": "task_runtime_reset_completed" if not unique_failed else "task_runtime_reset_incomplete",
+            "reason": "TaskRuntime reset completed" if not unique_failed else "TaskRuntime reset had failed paths",
+            "factory_run_id": factory_run_id,
+            "conflicts": [],
+            "conflict_count": 0,
             "cleared_paths": unique_cleared,
             "failed_paths": unique_failed,
             "cleared_count": len(unique_cleared),
             "failed_count": len(unique_failed),
+            "tombstone_events": tombstone_events,
+            "tombstone_count": len(tombstone_events),
         }
 
     def reset_task_rows_for_reexecution(self, *, source: str = "") -> dict[str, Any]:
@@ -992,6 +1941,16 @@ class TaskRuntimeService:
                 return dict(row)
         return None
 
+    @staticmethod
+    def _execution_fact_factory_run_id(task_row: Mapping[str, Any]) -> str:
+        """Return Factory run identity recorded by the latest execution fact."""
+
+        metadata = task_row.get("metadata")
+        metadata_map = metadata if isinstance(metadata, Mapping) else {}
+        fact = metadata_map.get("task_runtime_execution_fact")
+        fact_map = fact if isinstance(fact, Mapping) else {}
+        return str(fact_map.get("factory_run_id") or "").strip()
+
     def create(
         self,
         *,
@@ -1120,6 +2079,149 @@ class TaskRuntimeService:
             execution_events=(created_event, *reverse_dependency_events, execution_event),
         )
 
+    def bind_task_to_factory_run(
+        self,
+        command: BindRuntimeTaskToFactoryRunCommandV1,
+    ) -> RuntimeTaskFactoryRunBindingResultV1:
+        """Bind an existing task row to one Factory run with fact evidence.
+
+        ``ensure_task_row`` remains creation-only. This explicit boundary owns
+        write-once binding, conflict detection, and recovery when a prior row
+        write succeeded but its execution-fact append did not.
+
+        Complexity:
+            O(r + f + n) time and O(r + f + n) memory for observable lookup
+            plus one O(n) row compare-and-set, where ``n`` is row size.
+        """
+
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            BindRuntimeTaskToFactoryRunCommandV1,
+        )
+
+        if not isinstance(command, BindRuntimeTaskToFactoryRunCommandV1):
+            raise TypeError("command must be BindRuntimeTaskToFactoryRunCommandV1")
+        if Path(command.workspace).resolve() != Path(self.workspace).resolve():
+            raise ValueError("command workspace must match TaskRuntimeService workspace")
+
+        observable_row = self._resolve_observable_task_row(command.task_id)
+        if observable_row is None:
+            return _build_factory_run_binding_result(
+                ok=False,
+                code="task_not_found",
+                reason="TaskRuntime row does not exist",
+                workspace=self.workspace,
+                task_id=command.task_id,
+                factory_run_id=command.factory_run_id,
+            )
+        normalized_task_id = self.normalize_task_id(observable_row.get("id"))
+        if normalized_task_id is None:
+            return _build_factory_run_binding_result(
+                ok=False,
+                code="task_not_found",
+                reason="TaskRuntime row has no canonical numeric identity",
+                workspace=self.workspace,
+                task_id=command.task_id,
+                factory_run_id=command.factory_run_id,
+                task_row=observable_row,
+            )
+
+        fact_factory_run_id = self._execution_fact_factory_run_id(observable_row)
+        if fact_factory_run_id and fact_factory_run_id != command.factory_run_id:
+            return _build_factory_run_binding_result(
+                ok=False,
+                code="factory_run_binding_conflict",
+                reason="TaskRuntime execution fact is bound to another Factory run",
+                workspace=self.workspace,
+                task_id=str(normalized_task_id),
+                factory_run_id=command.factory_run_id,
+                existing_factory_run_id=fact_factory_run_id,
+                task_row=observable_row,
+            )
+        try:
+            mutation = self._board.bind_factory_run_id(
+                normalized_task_id,
+                command.factory_run_id,
+            )
+        except TaskFactoryRunBindingConflictError as exc:
+            return _build_factory_run_binding_result(
+                ok=False,
+                code="factory_run_binding_conflict",
+                reason=str(exc),
+                workspace=self.workspace,
+                task_id=str(normalized_task_id),
+                factory_run_id=command.factory_run_id,
+                existing_factory_run_id=exc.existing_factory_run_id,
+                task_row=observable_row,
+            )
+        if mutation is None:
+            return _build_factory_run_binding_result(
+                ok=False,
+                code="task_not_found",
+                reason="TaskRuntime row disappeared before Factory run binding",
+                workspace=self.workspace,
+                task_id=str(normalized_task_id),
+                factory_run_id=command.factory_run_id,
+            )
+
+        row = self._augment_task_row(mutation.task.to_dict())
+        if not mutation.row_updated and fact_factory_run_id == command.factory_run_id:
+            return _build_factory_run_binding_result(
+                ok=True,
+                code="factory_run_already_bound",
+                reason="Factory run binding already has execution-fact evidence",
+                workspace=self.workspace,
+                task_id=str(normalized_task_id),
+                factory_run_id=command.factory_run_id,
+                existing_factory_run_id=command.factory_run_id,
+                event_recorded=True,
+                idempotent=True,
+                task_row=row,
+            )
+
+        execution_event = self._append_execution_event(
+            "factory_run_bound",
+            task_row=row,
+            session=None,
+            details={
+                "factory_run_id": command.factory_run_id,
+                "previous_factory_run_id": mutation.previous_factory_run_id,
+                "row_updated": mutation.row_updated,
+            },
+        )
+        event_recorded = bool(execution_event.get("fact_event_id"))
+        if execution_event.get("ok") is not True or not event_recorded:
+            return _build_factory_run_binding_result(
+                ok=False,
+                code="execution_event_append_failed",
+                reason="Factory run binding did not reach the execution fact stream",
+                workspace=self.workspace,
+                task_id=str(normalized_task_id),
+                factory_run_id=command.factory_run_id,
+                existing_factory_run_id=command.factory_run_id,
+                row_updated=mutation.row_updated,
+                event_recorded=event_recorded,
+                task_row=row,
+                execution_event=execution_event,
+            )
+
+        return _build_factory_run_binding_result(
+            ok=True,
+            code="factory_run_bound" if mutation.row_updated else "factory_run_binding_recovered",
+            reason=(
+                "Factory run binding persisted and recorded"
+                if mutation.row_updated
+                else "Factory run binding execution-fact evidence recovered"
+            ),
+            workspace=self.workspace,
+            task_id=str(normalized_task_id),
+            factory_run_id=command.factory_run_id,
+            existing_factory_run_id=command.factory_run_id,
+            row_updated=mutation.row_updated,
+            event_recorded=True,
+            task_row=row,
+            execution_event=execution_event,
+        )
+
     def get(self, task_id: Any) -> Task | None:
         _raise_retired_entity_api("get", "get_task")
 
@@ -1157,7 +2259,7 @@ class TaskRuntimeService:
         """
         try:
             observable_rows = self.list_observable_task_rows()
-        except (RuntimeError, ValueError) as exc:
+        except ValueError as exc:
             logger.warning(
                 "Failed to load observable task rows for get_task lookup: %s",
                 exc,
@@ -1301,11 +2403,16 @@ class TaskRuntimeService:
     ) -> dict[str, Any] | None:
         """Reopen a task and return the runtime row projection with event evidence."""
 
-        _task, row, execution_event, downstream_events = self._reopen_with_execution_event(
+        _task, row, execution_event, downstream_events, blocker = self._reopen_with_execution_event(
             task_id,
             reason=reason,
             metadata=metadata,
         )
+        if blocker is not None:
+            normalized = self.normalize_task_id(task_id)
+            if normalized is None:
+                return None
+            return self._directed_effect_inactive_block_record(normalized, blocker)
         if row is None:
             return None
         execution_events = ((execution_event,) if execution_event is not None else ()) + tuple(downstream_events)
@@ -1340,11 +2447,13 @@ class TaskRuntimeService:
         if normalized is None:
             return None
 
-        _task, _reopened_row, reopened_event, downstream_events = self._reopen_with_execution_event(
+        _task, _reopened_row, reopened_event, downstream_events, blocker = self._reopen_with_execution_event(
             normalized,
             reason=reason,
             metadata=metadata,
         )
+        if blocker is not None:
+            return self._directed_effect_inactive_block_record(normalized, blocker)
         if _reopened_row is None:
             return None
 
@@ -1408,11 +2517,25 @@ class TaskRuntimeService:
         if normalized is None or task is None:
             return None
 
-        session = self._read_session(normalized)
         cancel_reason = sanitize_summary(reason or "duplicate_task")
-        if session is not None and not is_terminal_session_status(session.status):
-            session.mark_suspended(reason=cancel_reason, resumable=False)
-            self._write_session(session, allow_terminal_downgrade=True)
+        with (
+            self._get_session_lock(normalized),
+            self._board._file_lock(self._session_file_lock_path(normalized)),
+        ):
+            session = self._read_session_locked(normalized)
+            if session is not None:
+                pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
+                if not pre_barrier.allowed:
+                    return self._directed_effect_inactive_block_record(
+                        normalized,
+                        pre_barrier,
+                    )
+            if session is not None and not is_terminal_session_status(session.status):
+                session.mark_suspended(reason=cancel_reason, resumable=False)
+                self._write_session_locked(
+                    session,
+                    allow_terminal_downgrade=True,
+                )
 
         merged_metadata = {
             "dedup_merged_into": primary_task_id,
@@ -1481,10 +2604,24 @@ class TaskRuntimeService:
             return None
 
         failure_reason = sanitize_summary(reason or "role_adapter_failed")
-        session = self._read_session(normalized)
-        if session is not None and not is_terminal_session_status(session.status):
-            session.mark_failed(error=failure_reason)
-            self._write_session(session, allow_terminal_downgrade=True)
+        with (
+            self._get_session_lock(normalized),
+            self._board._file_lock(self._session_file_lock_path(normalized)),
+        ):
+            session = self._read_session_locked(normalized)
+            if session is not None:
+                pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
+                if not pre_barrier.allowed:
+                    return self._directed_effect_inactive_block_record(
+                        normalized,
+                        pre_barrier,
+                    )
+            if session is not None and not is_terminal_session_status(session.status):
+                session.mark_failed(error=failure_reason)
+                self._write_session_locked(
+                    session,
+                    allow_terminal_downgrade=True,
+                )
 
         merged_metadata = dict(metadata or {})
         merged_metadata.setdefault("role_adapter_failure_reason", failure_reason)
@@ -1533,10 +2670,31 @@ class TaskRuntimeService:
         *,
         reason: str = "",
         metadata: dict[str, Any] | None = None,
-    ) -> tuple[Task | None, dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]]]:
+    ) -> tuple[
+        Task | None,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        list[dict[str, Any]],
+        DirectedEffectSettlementPreBarrierVerdictV1 | None,
+    ]:
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
-            return None, None, None, []
+            return None, None, None, [], None
+        with (
+            self._get_session_lock(normalized),
+            self._board._file_lock(self._session_file_lock_path(normalized)),
+        ):
+            session = self._read_session_locked(normalized)
+            if session is not None:
+                pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
+                if not pre_barrier.allowed:
+                    return None, None, None, [], pre_barrier
+            if session is not None:
+                session.mark_suspended(reason=reason or "task_reopened", resumable=True)
+                self._write_session_locked(
+                    session,
+                    allow_terminal_downgrade=True,
+                )
         task = self._board.reopen(
             normalized,
             reason=reason,
@@ -1544,11 +2702,7 @@ class TaskRuntimeService:
             allow_terminal_reopen=True,
         )
         if task is None:
-            return None, None, None, []
-        session = self._read_session(normalized)
-        if session is not None:
-            session.mark_suspended(reason=reason or "task_reopened", resumable=True)
-            self._write_session(session, allow_terminal_downgrade=True)
+            return None, None, None, [], None
         row = self._augment_task_row(task.to_dict())
         execution_event = self._append_execution_event(
             "reopened",
@@ -1560,7 +2714,7 @@ class TaskRuntimeService:
             reopened_task_id=normalized,
             dependent_ids=self._row_blocks_ids(row),
         )
-        return task, row, execution_event, downstream_events
+        return task, row, execution_event, downstream_events, None
 
     def list_all(
         self,
@@ -1967,7 +3121,7 @@ class TaskRuntimeService:
         return query_fact_events(
             QueryFactEventsV1(
                 workspace=self.workspace,
-                stream=_TASK_RUNTIME_EXECUTION_STREAM,
+                stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
                 limit=limit,
                 offset=offset,
             )
@@ -2018,7 +3172,11 @@ class TaskRuntimeService:
             task_id = str(row.get("task_id") or row.get("id") or "").strip()
             if task_id:
                 latest_by_task[task_id] = row
-        rows = list(latest_by_task.values())
+        rows = [
+            row
+            for row in latest_by_task.values()
+            if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "removed"
+        ]
         rows.sort(key=self._row_sort_key)
         return rows
 
@@ -2094,7 +3252,12 @@ class TaskRuntimeService:
                 payload_task_id = str(payload.get("task_id") or payload.get("id") or "").strip()
                 if payload_task_id != target_task_id:
                     continue
-                return self._project_execution_fact_event_row(event)
+                row = self._project_execution_fact_event_row(event)
+                if row is None:
+                    return None
+                if str(row.get("execution_state") or row.get("status") or "").strip().lower() == "removed":
+                    return None
+                return row
 
             if offset <= 0:
                 return None
@@ -2130,6 +3293,40 @@ class TaskRuntimeService:
         if readiness.get("ready") is True:
             return self._fact_only_task_row_read_model_rows()
         return self._transitional_task_row_read_model_rows()
+
+    def query_observable_task_rows_projection(self) -> ObservableTaskRowsProjectionV1:
+        """Return observable rows together with their authority provenance.
+
+        Completion, QA, and dependency-control consumers must require
+        ``authoritative``. Compatibility and UI consumers may display degraded
+        rows, but the source marker prevents them from becoming a second
+        execution truth.
+
+        Complexity:
+            O(r + f) time and memory in degraded migration mode; O(f) when the
+            fact-only cutover is ready.
+        """
+
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            ObservableTaskRowsProjectionV1,
+        )
+
+        readiness = self.task_row_read_model_cutover_readiness()
+        authoritative = readiness.get("ready") is True
+        if authoritative:
+            rows = self._fact_only_task_row_read_model_rows()
+            source = "task_runtime.execution_fact"
+        else:
+            rows = self._transitional_task_row_read_model_rows()
+            source = "task_runtime.transitional_file_fallback"
+        return ObservableTaskRowsProjectionV1(
+            workspace=self.workspace,
+            source=source,
+            authoritative=authoritative,
+            degraded=not authoritative,
+            rows=tuple(rows),
+            readiness=readiness,
+        )
 
     def _project_observable_task_rows(
         self,
@@ -2228,6 +3425,22 @@ class TaskRuntimeService:
         rows: list[dict[str, Any]],
         fact_rows: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        """Project facts as authority and retain files only for uncovered tasks.
+
+        A task row backed by ``task_runtime.execution`` must be projected from
+        that fact without merging mutable file state back into it.  Merging the
+        two representations made the transitional projection structurally
+        different from the fact-only projection even when every task had a
+        complete fact snapshot, permanently preventing the SSoT cutover.
+
+        File rows remain a migration fallback solely for task ids that have no
+        execution fact.  Once a fact exists, its complete ``task_row_snapshot``
+        and event fields are the canonical observable representation.
+
+        Complexity:
+            O(r + f) time and memory over file rows and latest fact rows.
+        """
+
         latest_by_task: dict[str, dict[str, Any]] = {
             task_id: dict(fact_row) for fact_row in fact_rows if (task_id := self._observable_row_task_id(fact_row))
         }
@@ -2243,13 +3456,7 @@ class TaskRuntimeService:
             if not fact_row:
                 overlaid.append(row_map)
                 continue
-            metadata = dict(row_map.get("metadata") or {})
-            fact_metadata = dict(fact_row.get("metadata") or {})
-            fact_metadata["previous_status"] = str(row_map.get("status") or row_map.get("state") or "")
-            metadata.update(fact_metadata)
-            row_map.update({key: value for key, value in fact_row.items() if key not in {"id", "task_id", "metadata"}})
-            row_map["metadata"] = metadata
-            overlaid.append(row_map)
+            overlaid.append(dict(fact_row))
             seen.add(task_id)
 
         for task_id, fact_row in latest_by_task.items():
@@ -2376,13 +3583,17 @@ class TaskRuntimeService:
             if claim_result.get("success"):
                 claim_task = claim_result.get("task")
                 claim_session = claim_result.get("session")
-                return build_task_execution_claim_next_result(
+                result = build_task_execution_claim_next_result(
                     success=True,
                     reason="",
                     task_row=claim_task if isinstance(claim_task, dict) else None,
                     session=claim_session if isinstance(claim_session, dict) else None,
                     attempts=attempts,
                 )
+                attempt_record = claim_result.get("execution_attempt")
+                if isinstance(attempt_record, dict):
+                    result["execution_attempt"] = dict(attempt_record)
+                return result
 
             # Continue to next candidate on lease_conflict, task_terminal, task_blocked
             reason = str(claim_result.get("reason") or "").strip()
@@ -2439,156 +3650,147 @@ class TaskRuntimeService:
             return build_task_execution_claim_result(success=False, reason="task_not_found")
 
         latest_fact_row = self._find_latest_execution_fact_row_for_task(normalized)
-        session_lock = self._get_session_lock(normalized)
-        with session_lock:
-            existing_session = self._read_session(normalized)
+        # The dependency projection may read task rows, execution facts, and
+        # session-backed runtime state.  Take this fail-closed read snapshot
+        # before the session RMW lock: re-entering the cooperative session
+        # file lock from inside that critical section is not supported.
+        dependencies_unresolved = self._task_has_unresolved_dependencies(task)
+        existing_session: TaskExecutionSession | None = None
+        session: TaskExecutionSession | None = None
+        resume_from_previous = False
+        claim_renewed = False
+        rejection_reason = ""
+        terminal_session_to_reconcile: TaskExecutionSession | None = None
+        fact_terminal_rejection = False
+        fact_status = ""
+
+        # This is the sole read-modify-write critical section for a persisted
+        # session claim. The locked helpers deliberately avoid reacquiring the
+        # cooperative file lock, which would otherwise split the decision and
+        # write across processes (or deadlock with non-reentrant file locks).
+        with (
+            self._get_session_lock(normalized),
+            self._board._file_lock(self._session_file_lock_path(normalized)),
+        ):
+            existing_session = self._read_session_locked(normalized)
             if existing_session is not None:
                 terminal_session_status = _terminal_task_status_for_session(existing_session.status)
                 if terminal_session_status is not None:
                     if self._row_authorizes_retry_over_terminal_session(task, existing_session):
-                        # Deliberate retry: the row left its terminal state
-                        # through the sanctioned state-machine path AFTER the
-                        # session terminalised, so the row is authoritative.
-                        # Rotate the stale terminal session through the
-                        # explicit downgrade path and continue with the claim.
-                        existing_session = self._rotate_terminal_session_for_retry(existing_session)
+                        existing_session = self._rotate_terminal_session_for_retry_locked(existing_session)
                     else:
-                        # Stale row: the terminal session is authoritative.
-                        # Reconcile the row to the terminal verdict and reject
-                        # the claim; reconcile failures become structured
-                        # rejection evidence, never an exception.
-                        row, reconcile_error, execution_event = self._apply_terminal_session_reconcile(
-                            normalized,
-                            session=existing_session,
-                            extra_metadata=metadata,
+                        terminal_session_to_reconcile = existing_session
+
+            if terminal_session_to_reconcile is None:
+                if latest_fact_row is not None:
+                    fact_status = str(latest_fact_row.get("status") or "").strip().lower()
+                    if is_terminal_task_row_status(fact_status):
+                        rejection_reason = "task_terminal"
+                        fact_terminal_rejection = True
+                if not rejection_reason and task.is_terminal:
+                    rejection_reason = "task_terminal"
+                if not rejection_reason and dependencies_unresolved:
+                    rejection_reason = "task_blocked"
+
+                if not rejection_reason:
+                    active_session: TaskExecutionSession | None = None
+                    if (
+                        existing_session is not None
+                        and existing_session.status == "active"
+                        and not existing_session.is_expired(now=utc_now())
+                    ):
+                        active_session = existing_session
+                    if active_session is not None:
+                        same_owner = (
+                            active_session.worker_id == str(worker_id or "").strip()
+                            and active_session.role_id == str(role_id or "").strip()
                         )
-                        if row is None:
-                            row = self._augment_task_row(task.to_dict())
-                        return build_task_execution_claim_result(
-                            success=False,
-                            reason="task_terminal",
-                            task_row=row,
-                            session=existing_session,
-                            reconciled_from_terminal_session=not reconcile_error,
-                            reconcile_error=reconcile_error,
-                            execution_event=execution_event,
+                        if not same_owner:
+                            rejection_reason = "lease_conflict"
+                        else:
+                            active_session.renew(
+                                lease_ttl_seconds=lease_ttl_seconds,
+                                context_summary=context_summary,
+                            )
+                            self._write_session_locked(active_session)
+                            session = active_session
+                            claim_renewed = True
+                    else:
+                        resume_from_previous = bool(
+                            existing_session is not None
+                            and existing_session.resumable
+                            and (
+                                existing_session.status == "suspended"
+                                or (existing_session.status == "active" and existing_session.is_expired(now=utc_now()))
+                            )
                         )
+                        attempt = self._resolve_next_attempt(task, existing_session)
+                        resume_count = (
+                            int(existing_session.resume_count + 1) if resume_from_previous and existing_session else 0
+                        )
+                        session = TaskExecutionSession.create(
+                            task_id=normalized,
+                            role_id=role_id,
+                            worker_id=worker_id,
+                            run_id=run_id,
+                            lease_ttl_seconds=lease_ttl_seconds,
+                            attempt=attempt,
+                            resume_count=resume_count,
+                            origin="resume" if resume_from_previous else "claim",
+                            selection_source=selection_source,
+                            external_task_id=external_task_id
+                            or str(task.metadata.get("external_task_id") or "").strip(),
+                            context_summary=context_summary,
+                            metadata={
+                                "previous_session_id": (
+                                    existing_session.session_id if existing_session is not None else ""
+                                ),
+                            },
+                        )
+                        self._write_session_locked(session)
 
-            # Authoritative latest-terminal-fact check: if no terminal session
-            # has reconciled the row but the latest execution fact says the
-            # task reached a terminal verdict, reject the claim without
-            # mutating the raw row.  This prevents reclaiming a completed/
-            # failed/cancelled/timeout task whose only authoritative evidence
-            # lives in the fact stream.
-            if latest_fact_row is not None:
-                fact_status = str(latest_fact_row.get("status") or "").strip().lower()
-                if is_terminal_task_row_status(fact_status):
-                    rejection = build_task_execution_claim_result(
-                        success=False,
-                        reason="task_terminal",
-                        task_row=dict(latest_fact_row),
-                    )
-                    # Surface that the rejection is anchored on the execution
-                    # fact stream rather than the raw row.  The result shape
-                    # is intentionally identical to the existing
-                    # ``task_terminal`` branch so claim-next consumers see the
-                    # same reason token.
-                    rejection["execution_fact_authoritative"] = True
-                    rejection["source"] = "task_runtime.execution_fact"
-                    rejection["fact_status"] = fact_status
-                    return rejection
-
-            if task.is_terminal:
-                return build_task_execution_claim_result(
-                    success=False,
-                    reason="task_terminal",
-                    task_row=self._augment_task_row(task.to_dict()),
-                )
-            if self._task_has_unresolved_dependencies(task):
-                return build_task_execution_claim_result(
-                    success=False,
-                    reason="task_blocked",
-                    task_row=self._augment_task_row(task.to_dict()),
-                )
-
-            if (
-                existing_session is not None
-                and existing_session.status == "active"
-                and not existing_session.is_expired(now=utc_now())
-            ):
-                same_owner = (
-                    existing_session.worker_id == str(worker_id or "").strip()
-                    and existing_session.role_id == str(role_id or "").strip()
-                )
-                if not same_owner:
-                    return build_task_execution_claim_result(
-                        success=False,
-                        reason="lease_conflict",
-                        task_row=self._augment_task_row(task.to_dict()),
-                        session=existing_session,
-                    )
-                existing_session.renew(
-                    lease_ttl_seconds=lease_ttl_seconds,
-                    context_summary=context_summary,
-                )
-                self._write_session(existing_session)
-                updated = self._board.update(
-                    normalized,
-                    status=TaskStatus.IN_PROGRESS,
-                    assignee=str(worker_id or "").strip(),
-                    metadata=self._build_runtime_metadata(
-                        session=existing_session,
-                        effective_status="in_progress",
-                        resume_state="resumed" if existing_session.resume_count > 0 else "",
-                        extra_metadata=metadata,
-                    ),
-                    allow_execution_status=True,
-                )
-                row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-                execution_event = self._append_execution_event(
-                    "claim_renewed",
-                    task_row=row,
-                    session=existing_session,
-                    details={"selection_source": selection_source},
-                )
-                return build_task_execution_claim_result(
-                    success=True,
-                    reason="claim_renewed",
-                    task_row=row,
-                    session=existing_session,
-                    resumed=existing_session.resume_count > 0,
-                    claim_applied=True,
-                    execution_event=execution_event,
-                )
-
-            resume_from_previous = bool(
-                existing_session is not None
-                and existing_session.resumable
-                and (
-                    existing_session.status == "suspended"
-                    or (existing_session.status == "active" and existing_session.is_expired(now=utc_now()))
-                )
+        if terminal_session_to_reconcile is not None:
+            row, reconcile_error, execution_event = self._apply_terminal_session_reconcile(
+                normalized,
+                session=terminal_session_to_reconcile,
+                extra_metadata=metadata,
             )
-            attempt = self._resolve_next_attempt(task, existing_session)
-            resume_count = int(existing_session.resume_count + 1) if resume_from_previous and existing_session else 0
-
-            session = TaskExecutionSession.create(
-                task_id=normalized,
-                role_id=role_id,
-                worker_id=worker_id,
-                run_id=run_id,
-                lease_ttl_seconds=lease_ttl_seconds,
-                attempt=attempt,
-                resume_count=resume_count,
-                origin="resume" if resume_from_previous else "claim",
-                selection_source=selection_source,
-                external_task_id=external_task_id or str(task.metadata.get("external_task_id") or "").strip(),
-                context_summary=context_summary,
-                metadata={
-                    "previous_session_id": existing_session.session_id if existing_session is not None else "",
-                },
+            if row is None:
+                row = self._augment_task_row(task.to_dict())
+            result = build_task_execution_claim_result(
+                success=False,
+                reason="task_terminal",
+                task_row=row,
+                session=terminal_session_to_reconcile,
+                reconciled_from_terminal_session=not reconcile_error,
+                reconcile_error=reconcile_error,
+                execution_event=execution_event,
             )
-            self._write_session(session)
+            return self._claim_result_with_execution_attempt(result, terminal_session_to_reconcile)
+
+        if rejection_reason:
+            task_row = (
+                dict(latest_fact_row)
+                if fact_terminal_rejection and latest_fact_row is not None
+                else self._augment_task_row(task.to_dict())
+            )
+            result = build_task_execution_claim_result(
+                success=False,
+                reason=rejection_reason,
+                task_row=task_row,
+                session=existing_session if rejection_reason == "lease_conflict" else None,
+            )
+            if fact_terminal_rejection:
+                result["execution_fact_authoritative"] = True
+                result["source"] = "task_runtime.execution_fact"
+                result["fact_status"] = fact_status
+            return self._claim_result_with_execution_attempt(
+                result,
+                existing_session if rejection_reason == "lease_conflict" else None,
+            )
+
+        if session is None:
+            raise RuntimeError("claim execution completed without a session decision")
 
         updated_task = self._board.update(
             normalized,
@@ -2597,27 +3799,31 @@ class TaskRuntimeService:
             metadata=self._build_runtime_metadata(
                 session=session,
                 effective_status="in_progress",
-                resume_state="resumed" if resume_from_previous else "",
+                resume_state=("resumed" if session.resume_count > 0 else ""),
                 extra_metadata=metadata,
             ),
             allow_execution_status=True,
         )
         row = self._augment_task_row(updated_task.to_dict() if updated_task is not None else task.to_dict())
         execution_event = self._append_execution_event(
-            "claimed",
+            "claim_renewed" if claim_renewed else "claimed",
             task_row=row,
             session=session,
-            details={"selection_source": selection_source, "resumed": resume_from_previous},
+            details={
+                "selection_source": selection_source,
+                "resumed": resume_from_previous,
+            },
         )
-        return build_task_execution_claim_result(
+        result = build_task_execution_claim_result(
             success=True,
-            reason="claimed",
+            reason="claim_renewed" if claim_renewed else "claimed",
             task_row=row,
             session=session,
-            resumed=resume_from_previous,
+            resumed=session.resume_count > 0,
             claim_applied=True,
             execution_event=execution_event,
         )
+        return self._claim_result_with_execution_attempt(result, session)
 
     def heartbeat_execution(
         self,
@@ -2647,6 +3853,12 @@ class TaskRuntimeService:
                 return build_task_execution_heartbeat_result(
                     success=False,
                     reason="session_not_active",
+                    session=session,
+                )
+            if session.is_expired(now=utc_now()):
+                return build_task_execution_heartbeat_result(
+                    success=False,
+                    reason="session_lease_expired",
                     session=session,
                 )
 
@@ -2690,178 +3902,636 @@ class TaskRuntimeService:
             execution_event=execution_event,
         )
 
-    def complete_execution(
+    def heartbeat_execution_attempt(
         self,
-        task_id: Any,
-        *,
-        session_id: str,
-        result_summary: str = "",
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Finalize a claimed task as completed."""
-        normalized, task = self._task_entity_for_transition(task_id)
-        if normalized is None:
-            return build_task_execution_transition_result(success=False, reason="invalid_task_id")
-        if task is None:
-            return build_task_execution_transition_result(success=False, reason="task_not_found")
-        session_lock = self._get_session_lock(normalized)
-        with session_lock:
-            session = self._read_session(normalized)
-            if session is None:
-                return build_task_execution_transition_result(success=False, reason="session_not_found")
-            if str(session.session_id) != str(session_id or "").strip():
-                return build_task_execution_transition_result(
+        command: HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+    ) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
+        """Atomically renew one identity-fenced execution attempt within a deadline.
+
+        The local per-session lock and its cooperative file lock are held from
+        the authoritative session read through durable renewal and fact
+        projection. This prevents a validate-then-renew race between a stale
+        caller and a concurrent terminal transition.
+        """
+
+        identity = command.identity
+        if command.workspace != self.workspace or identity.workspace != command.workspace:
+            return self._execution_attempt_heartbeat_verdict(
+                success=False,
+                code="workspace_mismatch",
+                identity=identity,
+                evidence_anchor={
+                    "command_workspace": command.workspace,
+                    "service_workspace": self.workspace,
+                    "identity_workspace": identity.workspace,
+                },
+            )
+
+        started_at = time.monotonic()
+        session_lock = self._get_session_lock(identity.task_id)
+        lock_acquired = session_lock.acquire(timeout=command.lock_timeout_seconds)
+        if not lock_acquired:
+            return self._execution_attempt_heartbeat_verdict(
+                success=False,
+                code="file_lock_timeout",
+                identity=identity,
+                evidence_anchor={
+                    "lock_scope": "local_session",
+                    "lock_timeout_seconds": command.lock_timeout_seconds,
+                },
+            )
+        try:
+            remaining_seconds = command.lock_timeout_seconds - (time.monotonic() - started_at)
+            if remaining_seconds < 0:
+                return self._execution_attempt_heartbeat_verdict(
                     success=False,
-                    reason="session_mismatch",
-                    session=session,
+                    code="file_lock_timeout",
+                    identity=identity,
+                    evidence_anchor={
+                        "lock_scope": "local_session",
+                        "lock_timeout_seconds": command.lock_timeout_seconds,
+                    },
                 )
+            try:
+                with self._board._file_lock(
+                    self._session_file_lock_path(identity.task_id),
+                    timeout_seconds=remaining_seconds,
+                ):
+                    return self._heartbeat_execution_attempt_locked(command)
+            except TaskBoardFileLockTimeoutError:
+                return self._execution_attempt_heartbeat_verdict(
+                    success=False,
+                    code="file_lock_timeout",
+                    identity=identity,
+                    evidence_anchor={
+                        "lock_scope": "cooperative_session_file",
+                        "lock_timeout_seconds": command.lock_timeout_seconds,
+                    },
+                )
+        finally:
+            session_lock.release()
 
-            session.mark_completed(result_summary=result_summary)
-            self._write_session(session)
-        dependent_rows_before = self._dependent_rows_blocked_by(normalized)
-        updated = self._board.update(
-            normalized,
-            status=TaskStatus.COMPLETED,
-            metadata=self._build_runtime_metadata(
-                session=session,
-                effective_status="completed",
-                resume_state="",
-                extra_metadata=metadata,
-            ),
-            allow_terminal_status=True,
-        )
-        row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-        dependency_events = self._apply_dependency_completion_side_effects(
-            completed_task_id=normalized,
-            dependent_rows_before=dependent_rows_before,
-        )
-        execution_event = self._append_execution_event(
-            "completed",
-            task_row=row,
-            session=session,
-            details={"result_summary": sanitize_summary(result_summary)},
-        )
-        result = self._build_terminal_execution_transition_result(
-            reason="completed",
-            task_row=row,
-            session=session,
-            execution_event=execution_event,
-        )
-        return self._with_dependency_execution_events(result, dependency_events)
-
-    def fail_execution(
+    def _heartbeat_execution_attempt_locked(
         self,
-        task_id: Any,
-        *,
-        session_id: str,
-        error: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Finalize a claimed task as failed."""
-        normalized, task = self._task_entity_for_transition(task_id)
-        if normalized is None:
-            return build_task_execution_transition_result(success=False, reason="invalid_task_id")
-        if task is None:
-            return build_task_execution_transition_result(success=False, reason="task_not_found")
-        session_lock = self._get_session_lock(normalized)
-        with session_lock:
-            session = self._read_session(normalized)
-            if session is None:
-                return build_task_execution_transition_result(success=False, reason="session_not_found")
-            if str(session.session_id) != str(session_id or "").strip():
-                return build_task_execution_transition_result(
-                    success=False,
-                    reason="session_mismatch",
+        command: HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+    ) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
+        """Renew one attempt while both session locks are already held."""
+
+        identity = command.identity
+        session_path = self._session_logical_path(identity.task_id)
+        session = self._read_session_locked(identity.task_id)
+        if session is None:
+            return self._execution_attempt_heartbeat_verdict(
+                success=False,
+                code="session_not_found",
+                identity=identity,
+                evidence_anchor={"session_path": session_path},
+            )
+
+        observed_identity = self._execution_attempt_identity_from_session(session)
+        evidence_anchor: dict[str, Any] = {"observed_identity": observed_identity.to_record()}
+        mismatch_code = self._execution_attempt_mismatch_code(identity, session)
+        if mismatch_code is not None:
+            return self._execution_attempt_heartbeat_verdict(
+                success=False,
+                code=mismatch_code,
+                identity=identity,
+                evidence_anchor=evidence_anchor,
+            )
+        if session.status != "active":
+            return self._execution_attempt_heartbeat_verdict(
+                success=False,
+                code="session_not_active",
+                identity=identity,
+                evidence_anchor=evidence_anchor,
+            )
+        if session.is_expired(now=utc_now()):
+            return self._execution_attempt_heartbeat_verdict(
+                success=False,
+                code="session_lease_expired",
+                identity=identity,
+                evidence_anchor=evidence_anchor,
+            )
+
+        session.renew(
+            lease_ttl_seconds=command.lease_ttl_seconds,
+            context_summary=command.context_summary,
+        )
+        if not self._write_session_locked(session):
+            row = self._reconcile_terminal_task_row(identity.task_id, session=session)
+            return self._execution_attempt_heartbeat_verdict(
+                success=False,
+                code="session_terminal_preserved",
+                identity=identity,
+                evidence_anchor={
+                    **evidence_anchor,
+                    "task_row": dict(row or {}),
+                    **self._session_write_receipt_details_for_session(session),
+                },
+            )
+
+        try:
+            task = self._board.update(
+                identity.task_id,
+                metadata=self._build_runtime_metadata(
                     session=session,
+                    effective_status="in_progress",
+                    resume_state="resumed" if session.resume_count > 0 else "",
+                ),
+            )
+            row = (
+                project_task_row_runtime_state(
+                    task.to_dict(),
+                    task_status_value=task.status.value,
+                    session=session,
+                    terminal_session_superseded=False,
                 )
-
-            session.mark_failed(error=error)
-            self._write_session(session)
-        updated = self._board.update(
-            normalized,
-            status=TaskStatus.FAILED,
-            metadata=self._build_runtime_metadata(
+                if task is not None
+                else None
+            )
+            if not isinstance(row, dict):
+                raise RuntimeError("task_row_missing_after_heartbeat_renewal")
+            execution_event = self._append_execution_event(
+                "heartbeat_renewed",
+                task_row=row,
                 session=session,
-                effective_status="failed",
-                resume_state="",
-                extra_metadata=metadata,
-            ),
-            allow_terminal_status=True,
-        )
-        row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-        execution_event = self._append_execution_event(
-            "failed",
-            task_row=row,
-            session=session,
-            details={"error": sanitize_summary(error)},
-        )
-        return self._build_terminal_execution_transition_result(
-            reason="failed",
-            task_row=row,
-            session=session,
-            execution_event=execution_event,
+                details={
+                    "lease_ttl_seconds": command.lease_ttl_seconds,
+                    "context_summary": sanitize_summary(command.context_summary),
+                },
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.error(
+                "TaskRuntime heartbeat projection failed after renewal: task_id=%s session_id=%s error=%s",
+                identity.task_id,
+                identity.session_id,
+                exc,
+            )
+            return self._execution_attempt_heartbeat_verdict(
+                success=False,
+                code="row_projection_failed",
+                identity=identity,
+                evidence_anchor={
+                    **evidence_anchor,
+                    **self._session_write_receipt_details_for_session(session),
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                },
+            )
+
+        renewed_identity = self._execution_attempt_identity_from_session(session)
+        evidence_anchor.update(self._session_write_receipt_details_for_session(session))
+        evidence_anchor.update(self._row_write_receipt_details_for_task(row))
+        evidence_anchor["execution_event"] = dict(execution_event)
+        return self._execution_attempt_heartbeat_verdict(
+            success=True,
+            code="heartbeat_renewed",
+            identity=identity,
+            renewed_identity=renewed_identity,
+            evidence_anchor=evidence_anchor,
         )
 
-    def suspend_execution(
+    def _execution_attempt_heartbeat_verdict(
         self,
-        task_id: Any,
         *,
-        session_id: str,
-        reason: str,
-        metadata: dict[str, Any] | None = None,
+        success: bool,
+        code: TaskRuntimeExecutionAttemptHeartbeatCodeV1,
+        identity: TaskRuntimeExecutionAttemptIdentityV1,
+        renewed_identity: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+        evidence_anchor: Mapping[str, Any] | None = None,
+    ) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
+        """Build one detached typed heartbeat outcome at the owner boundary."""
+
+        return TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
+            success=success,
+            code=code,
+            workspace=self.workspace,
+            identity=identity,
+            renewed_identity=renewed_identity,
+            evidence_anchor=dict(evidence_anchor or {}),
+        )
+
+    @staticmethod
+    def _execution_attempt_mismatch_code(
+        identity: TaskRuntimeExecutionAttemptIdentityV1,
+        session: TaskExecutionSession,
+        *,
+        allow_terminal_settlement_lease: bool = False,
+    ) -> (
+        Literal[
+            "session_task_mismatch",
+            "session_mismatch",
+            "attempt_mismatch",
+            "role_mismatch",
+            "worker_mismatch",
+            "run_mismatch",
+            "external_task_id_mismatch",
+            "lease_version_mismatch",
+        ]
+        | None
+    ):
+        """Return the first stable identity mismatch for a locked session."""
+
+        if session.task_id != identity.task_id:
+            return "session_task_mismatch"
+        if session.session_id != identity.session_id:
+            return "session_mismatch"
+        if session.attempt != identity.attempt:
+            return "attempt_mismatch"
+        if session.role_id != identity.role_id:
+            return "role_mismatch"
+        if session.worker_id != identity.worker_id:
+            return "worker_mismatch"
+        if session.run_id != identity.run_id:
+            return "run_mismatch"
+        if session.external_task_id != identity.external_task_id:
+            return "external_task_id_mismatch"
+        expected_lease_expires_at = session.lease_expires_at
+        if allow_terminal_settlement_lease and session.status != "active":
+            expected_lease_expires_at = str(
+                session.metadata.get("settlement_identity_lease_expires_at") or expected_lease_expires_at
+            ).strip()
+        if expected_lease_expires_at != identity.lease_expires_at:
+            return "lease_version_mismatch"
+        return None
+
+    def settle_execution_attempt(
+        self,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
     ) -> dict[str, Any]:
-        """Suspend a claimed task so it can be resumed later."""
-        normalized, task = self._task_entity_for_transition(task_id)
-        if normalized is None:
-            return build_task_execution_transition_result(success=False, reason="invalid_task_id")
-        if task is None:
-            return build_task_execution_transition_result(success=False, reason="task_not_found")
+        """Settle one attempt through a session commit then lock-free projection.
+
+        Lock order is fixed.  The bounded session lock pair (local lock then
+        cooperative session-file lock) covers session reread, identity and
+        lease validation, the strict DEO registry pre-barrier,
+        terminal-transition-id persistence, and winner selection. It is
+        released before TaskBoard, execution-fact append, dependency, or
+        runtime.v2 projection. A distinct bounded projection lock serializes
+        those idempotent effects without ever acquiring a session lock.
+        """
+
+        identity = command.identity
+        if command.workspace != self.workspace or identity.workspace != command.workspace:
+            return self._execution_attempt_settlement_result(
+                success=False,
+                code="workspace_mismatch",
+                command=command,
+                evidence={"service_workspace": self.workspace},
+            )
+        normalized, task = self._task_entity_for_transition(identity.task_id)
+        if normalized is None or task is None:
+            return self._execution_attempt_settlement_result(
+                success=False,
+                code="session_not_found",
+                command=command,
+            )
+
+        started_at = time.monotonic()
         session_lock = self._get_session_lock(normalized)
-        with session_lock:
-            session = self._read_session(normalized)
-            if session is None:
-                return build_task_execution_transition_result(success=False, reason="session_not_found")
-            if str(session.session_id) != str(session_id or "").strip():
-                return build_task_execution_transition_result(
+        if not session_lock.acquire(timeout=command.lock_timeout_seconds):
+            return self._execution_attempt_settlement_result(
+                success=False,
+                code="file_lock_timeout",
+                command=command,
+                evidence={"lock_scope": "local_session"},
+            )
+        try:
+            remaining = command.lock_timeout_seconds - (time.monotonic() - started_at)
+            if remaining < 0:
+                return self._execution_attempt_settlement_result(
                     success=False,
-                    reason="session_mismatch",
+                    code="file_lock_timeout",
+                    command=command,
+                    evidence={"lock_scope": "local_session"},
+                )
+            try:
+                with self._board._file_lock(self._session_file_lock_path(normalized), timeout_seconds=remaining):
+                    self._after_directed_effect_linearization_lock(
+                        "settlement",
+                        identity,
+                    )
+                    locked_result, session = self._settle_execution_attempt_locked(command)
+            except TaskBoardFileLockTimeoutError:
+                return self._execution_attempt_settlement_result(
+                    success=False,
+                    code="file_lock_timeout",
+                    command=command,
+                    evidence={"lock_scope": "cooperative_session_file"},
+                )
+        finally:
+            session_lock.release()
+
+        if session is None:
+            return locked_result
+        return self._project_settled_execution_attempt(
+            command,
+            task=task,
+            session=session,
+        )
+
+    def _settle_execution_attempt_locked(
+        self,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+    ) -> tuple[dict[str, Any], TaskExecutionSession | None]:
+        """Select and persist the winner without projection or external I/O.
+
+        The caller holds both session locks.  This method may only read or
+        write the one session file and may strict-read the DEO registry through
+        FactStream. It deliberately returns the persisted winner snapshot for
+        the second, idempotent projection phase.
+        """
+
+        identity = command.identity
+        session = self._read_session_locked(identity.task_id)
+        if session is None:
+            return self._execution_attempt_settlement_result(False, "session_not_found", command), None
+        mismatch_code = self._execution_attempt_mismatch_code(
+            identity,
+            session,
+            allow_terminal_settlement_lease=True,
+        )
+        if mismatch_code is not None:
+            return self._execution_attempt_settlement_result(False, mismatch_code, command, session=session), None
+
+        expected_status = command.outcome
+        if session.status == "active":
+            if session.is_expired(now=utc_now()):
+                return self._execution_attempt_settlement_result(
+                    False,
+                    "session_lease_expired",
+                    command,
                     session=session,
+                ), None
+            pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
+            if not pre_barrier.allowed:
+                return self._execution_attempt_settlement_result(
+                    False,
+                    cast(TaskRuntimeExecutionAttemptSettlementCodeV1, pre_barrier.code),
+                    command,
+                    session=session,
+                    evidence={"directed_effect_pre_barrier": dict(pre_barrier.evidence)},
+                ), None
+            session.metadata["settlement_identity_lease_expires_at"] = identity.lease_expires_at
+            if command.outcome == "completed":
+                session.mark_completed(result_summary=command.summary)
+            elif command.outcome == "failed":
+                session.mark_failed(error=command.summary)
+            else:
+                session.mark_suspended(reason=command.summary, resumable=True)
+            if not self._write_session_locked(session):
+                return self._execution_attempt_settlement_result(
+                    False,
+                    "session_terminal_preserved",
+                    command,
+                    session=session,
+                ), None
+        elif session.status != expected_status:
+            return self._execution_attempt_settlement_result(
+                False,
+                "terminal_outcome_conflict",
+                command,
+                session=session,
+                evidence={"persisted_outcome": session.status},
+            ), None
+        elif not str(session.terminal_transition_id or "").strip():
+            # Legacy settled sessions can be recovered only after their durable
+            # projection key is persisted under the same identity fence.
+            session.ensure_terminal_transition_id()
+            if not self._write_session_locked(session):
+                return self._execution_attempt_settlement_result(
+                    False,
+                    "session_terminal_preserved",
+                    command,
+                    session=session,
+                ), None
+
+        return self._execution_attempt_settlement_result(
+            True,
+            "settled",
+            command,
+            session=session,
+        ), session
+
+    def _project_settled_execution_attempt(
+        self,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        *,
+        task: Task,
+        session: TaskExecutionSession,
+    ) -> dict[str, Any]:
+        """Apply winner-only, replay-safe TaskBoard and fact projections.
+
+        Lock order is session locks, then no lock, then projection locks.  This
+        phase must never acquire a session lock or call ``_augment_task_row``;
+        it uses the phase-A snapshot exclusively.  A process crash after
+        session persistence leaves the canonical winner recoverable: the
+        terminal transition id deduplicates the fact and the TaskBoard receipt
+        identifies a completed projection.
+        """
+
+        task_id = command.identity.task_id
+        started_at = time.monotonic()
+        projection_lock = self._get_settlement_projection_lock(task_id)
+        if not projection_lock.acquire(timeout=command.lock_timeout_seconds):
+            return self._execution_attempt_settlement_result(
+                False,
+                "file_lock_timeout",
+                command,
+                session=session,
+                evidence={"lock_scope": "local_settlement_projection"},
+            )
+        try:
+            remaining = command.lock_timeout_seconds - (time.monotonic() - started_at)
+            if remaining < 0:
+                return self._execution_attempt_settlement_result(
+                    False,
+                    "file_lock_timeout",
+                    command,
+                    session=session,
+                    evidence={"lock_scope": "local_settlement_projection"},
+                )
+            with self._board._file_lock(
+                self._settlement_projection_file_lock_path(task_id),
+                timeout_seconds=remaining,
+            ):
+                return self._project_settled_execution_attempt_locked(
+                    command,
+                    task=task,
+                    session=session,
+                )
+        except TaskBoardFileLockTimeoutError:
+            return self._execution_attempt_settlement_result(
+                False,
+                "file_lock_timeout",
+                command,
+                session=session,
+                evidence={"lock_scope": "cooperative_settlement_projection"},
+            )
+        finally:
+            projection_lock.release()
+
+    def _project_settled_execution_attempt_locked(
+        self,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        *,
+        task: Task,
+        session: TaskExecutionSession,
+    ) -> dict[str, Any]:
+        """Project one settled snapshot while the independent projection lock is held."""
+
+        projected_row = self._board.get(command.identity.task_id)
+        if projected_row is not None:
+            receipt = self._settlement_projection_receipt(projected_row.to_dict())
+            if self._settlement_projection_receipt_matches(receipt, command=command, session=session):
+                return self._execution_attempt_settlement_result(
+                    True,
+                    "settlement_idempotent",
+                    command,
+                    session=session,
+                    idempotent=True,
+                    evidence={"task": projected_row.to_dict(), "projection_receipt": receipt},
                 )
 
-            session.mark_suspended(reason=reason, resumable=True)
-            session_written = self._write_session(session)
-            if not session_written:
-                row = self._reconcile_terminal_task_row(normalized, session=session)
-                return build_task_execution_transition_result(
-                    success=False,
-                    reason="session_terminal_preserved",
-                    task_row=row,
+        if command.outcome == "completed":
+            status = TaskStatus.COMPLETED
+            effective_status, resume_state, assignee = "completed", "", None
+            details = {"result_summary": sanitize_summary(command.summary)}
+        elif command.outcome == "failed":
+            status = TaskStatus.FAILED
+            effective_status, resume_state, assignee = "failed", "", None
+            details = {"error": sanitize_summary(command.summary)}
+        else:
+            status = TaskStatus.BLOCKED
+            effective_status, resume_state, assignee = "pending", "resumable", ""
+            details = {"reason": sanitize_summary(command.summary)}
+        try:
+            updated = self._board.update(
+                command.identity.task_id,
+                status=status,
+                assignee=assignee,
+                metadata=self._build_runtime_metadata(
                     session=session,
-                )
-        updated = self._board.update(
-            normalized,
-            status=TaskStatus.BLOCKED,
-            assignee="",
-            metadata=self._build_runtime_metadata(
+                    effective_status=effective_status,
+                    resume_state=resume_state,
+                    extra_metadata=dict(command.metadata),
+                ),
+                allow_terminal_status=command.outcome in {"completed", "failed"},
+                allow_execution_status=True,
+            )
+            if updated is None:
+                raise RuntimeError("settled task row was not found during projection")
+            row = self._augment_task_row_with_session(updated.to_dict(), session=session)
+            event = self._append_execution_event(command.outcome, task_row=row, session=session, details=details)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return self._execution_attempt_settlement_result(
+                False,
+                "row_projection_failed",
+                command,
                 session=session,
-                effective_status="pending",
-                resume_state="resumable",
-                extra_metadata=metadata,
-            ),
-        )
-        row = self._augment_task_row(updated.to_dict() if updated is not None else task.to_dict())
-        execution_event = self._append_execution_event(
-            "suspended",
-            task_row=row,
+                evidence={"error_type": type(exc).__name__, "error_message": str(exc)},
+            )
+        if not bool(event.get("ok")):
+            return self._execution_attempt_settlement_result(
+                False,
+                "row_projection_failed",
+                command,
+                session=session,
+                evidence={"task": row, "execution_event": event},
+            )
+        projection_receipt = {
+            "terminal_transition_id": session.terminal_transition_id,
+            "outcome": command.outcome,
+            "fact_event_id": str(event.get("fact_event_id") or "").strip(),
+            "fact_event_seq": event.get("fact_event_seq"),
+        }
+        try:
+            receipt_row = self._board.update(
+                command.identity.task_id,
+                metadata={"task_runtime_settlement": projection_receipt},
+                allow_terminal_status=command.outcome in {"completed", "failed"},
+                allow_execution_status=True,
+            )
+            if receipt_row is None:
+                raise RuntimeError("settled task row was not found while recording projection receipt")
+            row = self._augment_task_row_with_session(receipt_row.to_dict(), session=session)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return self._execution_attempt_settlement_result(
+                False,
+                "row_projection_failed",
+                command,
+                session=session,
+                evidence={
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                    "execution_event": event,
+                    "projection_receipt": projection_receipt,
+                },
+            )
+        result = self._execution_attempt_settlement_result(
+            True,
+            "settled",
+            command,
             session=session,
-            details={"reason": sanitize_summary(reason)},
+            idempotent=False,
+            evidence={"task": row, "execution_event": event, "projection_receipt": projection_receipt},
         )
-        return self._build_terminal_execution_transition_result(
-            reason="suspended",
-            task_row=row,
-            session=session,
-            execution_event=execution_event,
+        if command.outcome == "completed":
+            dependency_events = self._apply_dependency_completion_side_effects(
+                completed_task_id=command.identity.task_id,
+                dependent_rows_before=self._dependent_rows_blocked_by(command.identity.task_id),
+            )
+            result["dependency_events"] = dependency_events
+        return result
+
+    @staticmethod
+    def _settlement_projection_receipt(row: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the detached terminal-projection receipt stored on a task row."""
+
+        metadata = row.get("metadata")
+        metadata_map = metadata if isinstance(metadata, Mapping) else {}
+        receipt = metadata_map.get("task_runtime_settlement")
+        return dict(receipt) if isinstance(receipt, Mapping) else {}
+
+    @staticmethod
+    def _settlement_projection_receipt_matches(
+        receipt: Mapping[str, Any],
+        *,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        session: TaskExecutionSession,
+    ) -> bool:
+        """Return whether a durable receipt proves this winner was fully projected."""
+
+        return (
+            str(receipt.get("terminal_transition_id") or "").strip()
+            == str(session.terminal_transition_id or "").strip()
+            and str(receipt.get("outcome") or "").strip() == command.outcome
+            and bool(str(receipt.get("fact_event_id") or "").strip())
         )
+
+    def _execution_attempt_settlement_result(
+        self,
+        success: bool,
+        code: TaskRuntimeExecutionAttemptSettlementCodeV1,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        *,
+        session: TaskExecutionSession | None = None,
+        idempotent: bool = False,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        verdict = TaskRuntimeExecutionAttemptSettlementVerdictV1(
+            success=success,
+            code=code,
+            workspace=self.workspace,
+            identity=command.identity,
+            outcome=command.outcome,
+            idempotent=idempotent,
+            evidence=dict(evidence or {}),
+        )
+        result = verdict.to_record()
+        if session is not None:
+            result["session"] = session.to_dict()
+        result.update(dict(evidence or {}))
+        return result
 
     def suspend_active_executions_for_run(
         self,
@@ -2910,6 +4580,14 @@ class TaskRuntimeService:
                     run_id=normalized_run_id,
                     reason=reason,
                 )
+                if suspend_result.blocker is not None:
+                    failed.append(
+                        self._directed_effect_inactive_block_record(
+                            task_id,
+                            suspend_result.blocker,
+                        )
+                    )
+                    continue
                 session = suspend_result.session
                 if session is None:
                     continue
@@ -2981,6 +4659,13 @@ class TaskRuntimeService:
         if session.status != "active":
             return _LockedSessionSuspendResult(session=None, session_written=False)
 
+        pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
+        if not pre_barrier.allowed:
+            return _LockedSessionSuspendResult(
+                session=session,
+                session_written=False,
+                blocker=pre_barrier,
+            )
         session.mark_suspended(reason=reason, resumable=True)
         return _LockedSessionSuspendResult(
             session=session,
@@ -3300,13 +4985,376 @@ class TaskRuntimeService:
                 self._session_locks[task_id] = threading.RLock()
             return self._session_locks[task_id]
 
+    def _get_settlement_projection_lock(self, task_id: int) -> threading.RLock:
+        """Return the per-task lock for effects after session winner selection."""
+
+        with self._settlement_projection_locks_meta:
+            if task_id not in self._settlement_projection_locks:
+                self._settlement_projection_locks[task_id] = threading.RLock()
+            return self._settlement_projection_locks[task_id]
+
     def _session_file_lock_path(self, task_id: int) -> Path:
         """Return the cooperative cross-process lock path for one session file."""
 
         return Path(self._kernel_fs.resolve_path(f"runtime/tasks/.task_{int(task_id)}.session.json.lock"))
 
+    def _settlement_projection_file_lock_path(self, task_id: int) -> Path:
+        """Return the independent cooperative lock for settlement projections."""
+
+        return Path(self._kernel_fs.resolve_path(f"runtime/tasks/.task_{int(task_id)}.settlement.lock"))
+
     def _session_logical_path(self, task_id: int) -> str:
         return f"runtime/tasks/task_{int(task_id)}.session.json"
+
+    def _execution_attempt_identity_from_session(
+        self,
+        session: TaskExecutionSession,
+    ) -> TaskRuntimeExecutionAttemptIdentityV1:
+        """Project the canonical execution-attempt identity from a session."""
+
+        return TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=self.workspace,
+            task_id=int(session.task_id),
+            external_task_id=str(session.external_task_id or "").strip(),
+            session_id=session.session_id,
+            attempt=int(session.attempt),
+            role_id=session.role_id,
+            worker_id=session.worker_id,
+            run_id=session.run_id,
+            lease_expires_at=session.lease_expires_at,
+        )
+
+    def _claim_result_with_execution_attempt(
+        self,
+        result: dict[str, Any],
+        session: TaskExecutionSession | None,
+    ) -> dict[str, Any]:
+        """Add a stable typed attempt projection without changing claim semantics."""
+
+        if session is not None:
+            result["execution_attempt"] = self._execution_attempt_identity_from_session(session).to_record()
+        return result
+
+    def _execution_attempt_validation_verdict(
+        self,
+        *,
+        valid: bool,
+        code: TaskRuntimeExecutionAttemptValidationCodeV1,
+        identity: TaskRuntimeExecutionAttemptIdentityV1,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> TaskRuntimeExecutionAttemptValidationVerdictV1:
+        """Build a detached, fail-closed execution-attempt verdict."""
+
+        return TaskRuntimeExecutionAttemptValidationVerdictV1(
+            valid=valid,
+            code=code,
+            workspace=self.workspace,
+            identity=identity,
+            evidence=dict(evidence or {}),
+        )
+
+    def validate_execution_attempt(
+        self,
+        query: ValidateTaskRuntimeExecutionAttemptQueryV1,
+    ) -> TaskRuntimeExecutionAttemptValidationVerdictV1:
+        """Validate one persisted execution attempt without renewing or writing it."""
+
+        identity = query.identity
+        if query.workspace != self.workspace or identity.workspace != query.workspace:
+            return self._execution_attempt_validation_verdict(
+                valid=False,
+                code="workspace_mismatch",
+                identity=identity,
+                evidence={
+                    "query_workspace": query.workspace,
+                    "service_workspace": self.workspace,
+                    "identity_workspace": identity.workspace,
+                },
+            )
+
+        started_at = time.monotonic()
+        session_lock = self._get_session_lock(identity.task_id)
+        if not session_lock.acquire(timeout=query.lock_timeout_seconds):
+            return self._execution_attempt_validation_verdict(
+                valid=False,
+                code="file_lock_timeout",
+                identity=identity,
+                evidence={"lock_scope": "local_session", "lock_timeout_seconds": query.lock_timeout_seconds},
+            )
+        try:
+            remaining = query.lock_timeout_seconds - (time.monotonic() - started_at)
+            if remaining < 0:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="file_lock_timeout",
+                    identity=identity,
+                    evidence={"lock_scope": "local_session", "lock_timeout_seconds": query.lock_timeout_seconds},
+                )
+            try:
+                with self._board._file_lock(
+                    self._session_file_lock_path(identity.task_id),
+                    timeout_seconds=remaining,
+                ):
+                    return self._validate_execution_attempt_locked(identity)
+            except TaskBoardFileLockTimeoutError:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="file_lock_timeout",
+                    identity=identity,
+                    evidence={
+                        "lock_scope": "cooperative_session_file",
+                        "lock_timeout_seconds": query.lock_timeout_seconds,
+                    },
+                )
+        finally:
+            session_lock.release()
+
+    def open_execution_attempt_authority(
+        self,
+        command: OpenTaskRuntimeExecutionAttemptAuthorityCommandV1,
+    ) -> TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1:
+        """Open a non-durable authority only while validation locks are held.
+
+        This operation deliberately performs no heartbeat, session write, row
+        projection, or FactStream append. Constructing the local handle inside
+        the validation critical section linearizes open against terminal settle.
+        """
+
+        if not isinstance(command, OpenTaskRuntimeExecutionAttemptAuthorityCommandV1):
+            raise TypeError("command must be OpenTaskRuntimeExecutionAttemptAuthorityCommandV1")
+        identity = command.identity
+        if command.workspace != self.workspace or identity.workspace != command.workspace:
+            validation = self._execution_attempt_validation_verdict(
+                valid=False,
+                code="workspace_mismatch",
+                identity=identity,
+                evidence={
+                    "command_workspace": command.workspace,
+                    "service_workspace": self.workspace,
+                    "identity_workspace": identity.workspace,
+                },
+            )
+            return self._execution_attempt_authority_open_verdict(validation)
+
+        started_at = time.monotonic()
+        session_lock = self._get_session_lock(identity.task_id)
+        if not session_lock.acquire(timeout=command.lock_timeout_seconds):
+            validation = self._execution_attempt_validation_verdict(
+                valid=False,
+                code="file_lock_timeout",
+                identity=identity,
+                evidence={"lock_scope": "local_session", "lock_timeout_seconds": command.lock_timeout_seconds},
+            )
+            return self._execution_attempt_authority_open_verdict(validation)
+        try:
+            remaining = command.lock_timeout_seconds - (time.monotonic() - started_at)
+            if remaining < 0:
+                validation = self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="file_lock_timeout",
+                    identity=identity,
+                    evidence={"lock_scope": "local_session", "lock_timeout_seconds": command.lock_timeout_seconds},
+                )
+                return self._execution_attempt_authority_open_verdict(validation)
+            try:
+                with self._board._file_lock(
+                    self._session_file_lock_path(identity.task_id),
+                    timeout_seconds=remaining,
+                ):
+                    try:
+                        validation = self._validate_execution_attempt_locked(
+                            identity,
+                            raise_infrastructure_errors=True,
+                        )
+                    except (OSError, UnicodeError, RuntimeError, ValueError) as exc:
+                        return self._execution_attempt_authority_open_infrastructure_failure(
+                            identity,
+                            stage="session_read",
+                            exc=exc,
+                        )
+                    return self._execution_attempt_authority_open_verdict(validation)
+            except TaskBoardFileLockTimeoutError:
+                validation = self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="file_lock_timeout",
+                    identity=identity,
+                    evidence={
+                        "lock_scope": "cooperative_session_file",
+                        "lock_timeout_seconds": command.lock_timeout_seconds,
+                    },
+                )
+                return self._execution_attempt_authority_open_verdict(validation)
+            except (OSError, UnicodeError, RuntimeError, ValueError) as exc:
+                return self._execution_attempt_authority_open_infrastructure_failure(
+                    identity,
+                    stage="cooperative_session_file_lock",
+                    exc=exc,
+                )
+        finally:
+            session_lock.release()
+
+    def _execution_attempt_authority_open_infrastructure_failure(
+        self,
+        identity: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        stage: str,
+        exc: BaseException,
+    ) -> TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1:
+        """Return a detached, typed refusal for authority-open infrastructure failures."""
+
+        return TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1(
+            success=False,
+            code="authority_open_internal_error",
+            workspace=self.workspace,
+            identity=identity,
+            evidence={
+                "stage": stage,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+            },
+        )
+
+    def _execution_attempt_authority_open_verdict(
+        self,
+        validation: TaskRuntimeExecutionAttemptValidationVerdictV1,
+    ) -> TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1:
+        """Map a locked validation result to a detached, fail-closed open verdict."""
+
+        if not validation.valid:
+            return TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1(
+                success=False,
+                code=cast(TaskRuntimeExecutionAttemptAuthorityOpenCodeV1, validation.code),
+                workspace=self.workspace,
+                identity=validation.identity,
+                evidence=validation.evidence,
+            )
+        try:
+            authority = self._create_execution_attempt_authority_locked(validation.identity)
+        except Exception as exc:  # noqa: BLE001 - construction must not claim authority on failure.
+            return self._execution_attempt_authority_open_infrastructure_failure(
+                validation.identity,
+                stage="authority_construction",
+                exc=exc,
+            )
+        return TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1(
+            success=True,
+            code="valid",
+            workspace=self.workspace,
+            identity=validation.identity,
+            authority=authority,
+            evidence=validation.evidence,
+        )
+
+    @staticmethod
+    def _create_execution_attempt_authority_locked(
+        identity: TaskRuntimeExecutionAttemptIdentityV1,
+    ) -> TaskRuntimeExecutionAttemptAuthorityV1:
+        """Construct the process-local capability after the durable check passes."""
+
+        from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeExecutionAttemptAuthorityV1
+
+        return TaskRuntimeExecutionAttemptAuthorityV1(identity)
+
+    def _validate_execution_attempt_locked(
+        self,
+        identity: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        raise_infrastructure_errors: bool = False,
+    ) -> TaskRuntimeExecutionAttemptValidationVerdictV1:
+        """Validate one attempt while its local and cooperative locks are held."""
+
+        with self._board.transaction():
+            session_path = self._session_logical_path(identity.task_id)
+            session = self._read_session_locked(
+                identity.task_id,
+                raise_infrastructure_errors=raise_infrastructure_errors,
+            )
+            if session is None:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="session_not_found",
+                    identity=identity,
+                    evidence={"task_id": identity.task_id, "session_path": session_path},
+                )
+
+            observed_identity = self._execution_attempt_identity_from_session(session)
+            evidence = {"observed": observed_identity.to_record()}
+            if session.task_id != identity.task_id:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="session_task_mismatch",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            if session.session_id != identity.session_id:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="session_mismatch",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            if session.attempt != identity.attempt:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="attempt_mismatch",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            if session.role_id != identity.role_id:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="role_mismatch",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            if session.worker_id != identity.worker_id:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="worker_mismatch",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            if session.run_id != identity.run_id:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="run_mismatch",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            if session.external_task_id != identity.external_task_id:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="external_task_id_mismatch",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            if session.lease_expires_at != identity.lease_expires_at:
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="lease_version_mismatch",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            if session.status != "active":
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="session_not_active",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            if session.is_expired(now=utc_now()):
+                return self._execution_attempt_validation_verdict(
+                    valid=False,
+                    code="session_lease_expired",
+                    identity=identity,
+                    evidence=evidence,
+                )
+            return self._execution_attempt_validation_verdict(
+                valid=True,
+                code="valid",
+                identity=identity,
+                evidence=evidence,
+            )
 
     @staticmethod
     def _session_payload_text(payload: Any) -> str:
@@ -3397,7 +5445,12 @@ class TaskRuntimeService:
         ):
             return self._read_session_locked(task_id)
 
-    def _read_session_locked(self, task_id: int) -> TaskExecutionSession | None:
+    def _read_session_locked(
+        self,
+        task_id: int,
+        *,
+        raise_infrastructure_errors: bool = False,
+    ) -> TaskExecutionSession | None:
         """Read a session while the caller holds both per-task session locks."""
 
         logical_path = self._session_logical_path(task_id)
@@ -3405,14 +5458,30 @@ class TaskRuntimeService:
             return None
         try:
             payload = self._kernel_fs.read_json(logical_path)
-        except (RuntimeError, ValueError) as exc:
+        except (OSError, UnicodeError, RuntimeError):
+            if raise_infrastructure_errors:
+                raise
+            logger.warning("Failed to read task runtime session %s", logical_path, exc_info=True)
+            return None
+        except ValueError as exc:
+            if raise_infrastructure_errors:
+                raise
             logger.warning("Failed to read task runtime session %s: %s", logical_path, exc)
             return None
         if not isinstance(payload, dict):
+            if raise_infrastructure_errors:
+                raise ValueError("task runtime session payload must be an object")
             return None
         try:
             return TaskExecutionSession.from_dict(payload)
-        except (RuntimeError, ValueError) as exc:
+        except (OSError, UnicodeError, RuntimeError):
+            if raise_infrastructure_errors:
+                raise
+            logger.warning("Failed to parse task runtime session %s", logical_path, exc_info=True)
+            return None
+        except ValueError as exc:
+            if raise_infrastructure_errors:
+                raise
             logger.warning("Failed to parse task runtime session %s: %s", logical_path, exc)
             return None
 
@@ -3439,6 +5508,21 @@ class TaskRuntimeService:
         allow_terminal_downgrade: bool = False,
     ) -> bool:
         session_path = self._session_logical_path(session.task_id)
+        if is_terminal_session_status(session.status):
+            persisted_session = self._read_session_locked(session.task_id)
+            same_session = (
+                persisted_session is not None
+                and str(persisted_session.session_id or "").strip() == str(session.session_id or "").strip()
+            )
+            persisted_transition_id = (
+                str(persisted_session.terminal_transition_id or "").strip()
+                if same_session and persisted_session is not None
+                else ""
+            )
+            if persisted_transition_id:
+                session.terminal_transition_id = persisted_transition_id
+            else:
+                session.ensure_terminal_transition_id()
         if not allow_terminal_downgrade and not is_terminal_session_status(session.status):
             terminal_session = self._find_terminal_session_snapshot_locked(session)
             if terminal_session is not None:
@@ -3637,6 +5721,7 @@ class TaskRuntimeService:
         target.last_error = source.last_error
         target.last_result_summary = source.last_result_summary
         target.released_at = source.released_at
+        target.terminal_transition_id = source.terminal_transition_id
         target.metadata = dict(source.metadata)
 
     def _reconcile_terminal_task_row(
@@ -3838,10 +5923,22 @@ class TaskRuntimeService:
         keeps the terminal-monotonic write guard intact; ``resumable=False``
         makes the retry a fresh attempt instead of a resume.
         """
+        with (
+            self._get_session_lock(session.task_id),
+            self._board._file_lock(self._session_file_lock_path(session.task_id)),
+        ):
+            return self._rotate_terminal_session_for_retry_locked(session)
+
+    def _rotate_terminal_session_for_retry_locked(
+        self,
+        session: TaskExecutionSession,
+    ) -> TaskExecutionSession:
+        """Rotate a terminal session while the caller owns both session locks."""
+
         session.metadata["rotated_from_terminal_status"] = str(session.status or "")
         session.metadata["rotated_reason"] = "deliberate_row_reset_retry"
         session.mark_suspended(reason="terminal_session_rotated_for_deliberate_retry", resumable=False)
-        self._write_session(session, allow_terminal_downgrade=True)
+        self._write_session_locked(session, allow_terminal_downgrade=True)
         return session
 
     def _dependent_rows_blocked_by(self, task_id: int) -> list[dict[str, Any]]:
@@ -3849,7 +5946,7 @@ class TaskRuntimeService:
 
         Boundary:
             This is pre-mutation evidence for dependency side effects owned by
-            ``TaskRuntimeService.complete_execution()``. Raw ``TaskBoard``
+            ``TaskRuntimeService.settle_execution_attempt()``. Raw ``TaskBoard``
             updates are row-local; dependency fan-out must stay in this service
             so every cross-row mutation can emit execution facts.
 
@@ -4120,6 +6217,20 @@ class TaskRuntimeService:
         session: TaskExecutionSession | None,
         details: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        event_type_str = str(event_type or "").strip().lower() or "unknown"
+        try:
+            transition_id, transition_timestamp = self._execution_transition_identity(
+                session=session,
+            )
+        except (RuntimeError, ValueError) as exc:
+            event_details = self._row_write_receipt_details_for_task(task_row)
+            event_details.update(self._session_write_receipt_details_for_session(session))
+            return build_task_runtime_execution_event_append_result(
+                event_type=event_type_str,
+                details=event_details,
+                append_error=f"execution transition identity unavailable: {exc}",
+                failure_evidence=_execution_event_failure_evidence(exc, stage="transition_identity"),
+            )
         event_details = self._row_write_receipt_details_for_task(task_row)
         event_details.update(self._session_write_receipt_details_for_session(session))
         for key, value in dict(details or {}).items():
@@ -4132,9 +6243,15 @@ class TaskRuntimeService:
             task_row=task_row,
             session=session,
             details=event_details,
+            timestamp=transition_timestamp,
         )
-        event_type_str = str(payload.get("event_type") or "unknown")
         try:
+            fact = TaskRuntimeExecutionFactV1.from_payload(
+                transition_id=transition_id,
+                payload=payload,
+            )
+            payload = fact.to_record()
+            event_type_str = fact.event_type
             appended = self._append_execution_fact(
                 event_type_str=event_type_str,
                 payload=payload,
@@ -4149,6 +6266,7 @@ class TaskRuntimeService:
                 event_type=event_type_str,
                 details=event_details,
                 append_error=str(exc),
+                failure_evidence=_execution_event_failure_evidence(exc, stage="fact_append"),
             )
         payload["fact_event_id"] = appended.event_id
         payload["fact_stream"] = appended.stream
@@ -4171,6 +6289,7 @@ class TaskRuntimeService:
                 fact_event_seq=appended.appended_seq,
                 details=event_details,
                 publish_error=str(exc),
+                failure_evidence=_execution_event_failure_evidence(exc, stage="event_publish"),
             )
         if not published:
             factory_run_id = str(payload.get("factory_run_id") or "").strip()
@@ -4183,6 +6302,12 @@ class TaskRuntimeService:
                     fact_event_seq=appended.appended_seq,
                     details=event_details,
                     publish_error="factory_execution_event_publish_returned_false",
+                    projection_evidence=_execution_event_projection_evidence(
+                        factory_run_id=factory_run_id,
+                        fact_event_id=appended.event_id,
+                        fact_stream=appended.stream,
+                        fact_event_seq=appended.appended_seq,
+                    ),
                 )
         return build_task_runtime_execution_event_append_result(
             event_type=event_type_str,
@@ -4193,6 +6318,31 @@ class TaskRuntimeService:
             details=event_details,
             published=published,
         )
+
+    def _execution_transition_identity(
+        self,
+        *,
+        session: TaskExecutionSession | None,
+    ) -> tuple[str, str | None]:
+        """Return one event identity and an optional stable transition time.
+
+        New terminal transitions already carry their identifier because
+        ``mark_completed``/``mark_failed`` generate it before the session write.
+        The write below is a compatibility migration for terminal sessions
+        persisted before the field existed. Non-terminal events always receive
+        a fresh identifier so heartbeat facts can never collapse.
+        """
+
+        if session is None or not is_terminal_session_status(session.status):
+            return f"task-transition-{uuid.uuid4().hex}", None
+
+        transition_id = str(session.terminal_transition_id or "").strip()
+        if not transition_id:
+            transition_id = session.ensure_terminal_transition_id()
+            if not self._write_session(session):
+                raise TaskExecutionSessionWriteConflictError("failed to persist terminal execution transition identity")
+        transition_timestamp = str(session.released_at or session.last_heartbeat_at or "").strip() or None
+        return transition_id, transition_timestamp
 
     def _row_write_receipt_details_for_task(self, task_row: Mapping[str, Any]) -> dict[str, Any]:
         """Return row-write receipt details for this task row identity."""
@@ -4239,25 +6389,101 @@ class TaskRuntimeService:
         event_type_str: str,
         payload: dict[str, Any],
     ) -> FactEventAppendedV1:
-        """Append through the FactStream-owned atomic sequence boundary."""
+        """Append through the TaskRuntime CAS boundary."""
 
-        return append_fact_event(
-            AppendFactEventCommandV1(
+        return self._append_execution_fact_with_cas(
+            event_type_str=event_type_str,
+            payload=payload,
+        )
+
+    def _next_execution_fact_expected_seq(self) -> int:
+        """Return the next canonical sequence for the execution fact stream.
+
+        The value is an optimistic CAS expectation, not an allocation.  The
+        FactStream remains the only sequence allocator and rejects a stale
+        expectation when another writer wins the race.
+
+        Complexity:
+            O(1) retained event memory and two bounded FactStream queries.
+        """
+
+        return query_fact_stream_head(
+            QueryFactStreamHeadV1(
                 workspace=self.workspace,
-                stream=_TASK_RUNTIME_EXECUTION_STREAM,
-                event_type=event_type_str,
-                payload=payload,
-                source="runtime.task_runtime",
-                run_id=str(payload.get("run_id") or "").strip() or None,
-                task_id=str(payload.get("task_id") or "").strip() or None,
-                correlation_id=str(payload.get("session_id") or "").strip() or None,
+                stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
             )
+        ).next_expected_seq
+
+    def _append_execution_fact_with_cas(
+        self,
+        *,
+        event_type_str: str,
+        payload: dict[str, Any],
+    ) -> FactEventAppendedV1:
+        """Append an execution fact with optimistic CAS and bounded retry.
+
+        Local writers are serialized to avoid needless self-contention; the
+        ``expected_seq`` contract still arbitrates independent services and
+        processes.  Only sequence drift is retryable.  Every other FactStream
+        failure propagates to the execution-event receipt as a hard append
+        failure.
+
+        Complexity:
+            O(a) constant-time cursor reads and append attempts for ``a`` CAS
+            retries, bounded by ``_FACT_APPEND_CAS_MAX_ATTEMPTS``; O(1)
+            auxiliary memory. Cursor recovery inside FactStream is O(n) only
+            when its sequence index is absent or corrupt.
+        """
+
+        idempotency_key = str(payload.get("idempotency_key") or "").strip() or None
+        replay_expected_seq: int | None = None
+        last_drift: FactStreamError | None = None
+        with self._execution_fact_append_lock:
+            for _attempt in range(_FACT_APPEND_CAS_MAX_ATTEMPTS):
+                expected_seq = (
+                    replay_expected_seq if replay_expected_seq is not None else self._next_execution_fact_expected_seq()
+                )
+                try:
+                    return append_fact_event(
+                        AppendFactEventCommandV1(
+                            workspace=self.workspace,
+                            stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
+                            event_type=event_type_str,
+                            payload=payload,
+                            source=TASK_RUNTIME_EXECUTION_SOURCE_V1,
+                            run_id=str(payload.get("run_id") or "").strip() or None,
+                            task_id=str(payload.get("task_id") or "").strip() or None,
+                            correlation_id=str(payload.get("session_id") or "").strip() or None,
+                            idempotency_key=idempotency_key,
+                            expected_seq=expected_seq,
+                        )
+                    )
+                except FactStreamError as exc:
+                    if exc.code != "expected_seq_drift":
+                        raise
+                    last_drift = exc
+                    existing_seq = _coerce_fact_event_seq(exc.details.get("existing_seq"))
+                    replay_expected_seq = existing_seq if idempotency_key and existing_seq is not None else None
+        raise FactStreamError(
+            "task_runtime.execution CAS retry budget exhausted",
+            code="execution_fact_cas_exhausted",
+            details={
+                "workspace": self.workspace,
+                "attempts": _FACT_APPEND_CAS_MAX_ATTEMPTS,
+                "last_error": str(last_drift or "expected_seq_drift"),
+            },
         )
 
     def _publish_factory_execution_event(self, payload: dict[str, Any]) -> bool:
         factory_run_id = str(payload.get("factory_run_id") or "").strip()
         if not factory_run_id:
             return False
+        fact_event_id = str(payload.get("fact_event_id") or "").strip()
+        if not fact_event_id:
+            raise ValueError("fact_event_id is required for runtime.v2 execution wakeup")
+        fact_event_seq = _coerce_fact_event_seq(payload.get("fact_event_seq"))
+        if fact_event_seq is None:
+            raise ValueError("fact_event_seq is required for runtime.v2 execution wakeup")
         try:
             roots = resolve_storage_roots(self.workspace)
             workspace_key = str(getattr(roots, "workspace_key", "") or "").strip()
@@ -4279,16 +6505,21 @@ class TaskRuntimeService:
             )
             envelope = {
                 "schema_version": "runtime.v2",
-                "event_id": f"task-runtime-{uuid.uuid4().hex[:12]}",
+                "event_id": fact_event_id,
                 "workspace_key": workspace_key,
                 "run_id": factory_run_id,
                 "channel": f"event.factory:{factory_run_id}",
                 "kind": "task_runtime_execution",
                 "ts": event_payload.get("timestamp") or utc_now_iso(),
-                "cursor": 0,
+                "cursor": fact_event_seq,
                 "trace_id": None,
                 "payload": event_payload,
-                "meta": {"source": "runtime.task_runtime"},
+                "meta": {
+                    "source": TASK_RUNTIME_EXECUTION_SOURCE_V1,
+                    "fact_event_id": fact_event_id,
+                    "fact_event_seq": fact_event_seq,
+                    "fact_stream": TASK_RUNTIME_EXECUTION_STREAM_V1,
+                },
             }
             return get_log_jetstream_publisher().publish(
                 subject=f"hp.runtime.{workspace_key}.event.factory.{factory_run_id}",
@@ -4304,14 +6535,30 @@ class TaskRuntimeService:
             return dict(row)
 
         session = self._read_session(task_id)
+        return self._augment_task_row_with_session(row, session=session)
+
+    def _augment_task_row_with_session(
+        self,
+        row: Mapping[str, Any],
+        *,
+        session: TaskExecutionSession | None,
+    ) -> dict[str, Any]:
+        """Project a row from a caller-owned session snapshot without locking.
+
+        Settlement projection uses the snapshot committed by its first phase;
+        re-reading here would reacquire the session lock while an outer caller
+        may still own its cooperative file lock.
+        """
+
+        row_copy = dict(row)
         terminal_session_superseded = False
         if session is not None:
             terminal_session_superseded = is_terminal_session_status(
                 session.status
-            ) and self._row_mapping_authorizes_retry_over_terminal_session(row, session)
+            ) and self._row_mapping_authorizes_retry_over_terminal_session(row_copy, session)
         return project_task_row_runtime_state(
-            row,
-            task_status_value=row.get("status"),
+            row_copy,
+            task_status_value=row_copy.get("status"),
             session=session,
             terminal_session_superseded=terminal_session_superseded,
         )
@@ -4332,9 +6579,17 @@ class TaskRuntimeService:
         )
 
 
-def reset_runtime_task_records(workspace: str) -> dict[str, object]:
+def reset_runtime_task_records(
+    workspace: str,
+    *,
+    keep_plan: bool = False,
+    factory_run_id: str | None = None,
+) -> dict[str, object]:
     """Clear runtime taskboard state through the owning cell service."""
-    return TaskRuntimeService(workspace).reset_records()
+    return TaskRuntimeService(workspace).reset_records(
+        keep_plan=keep_plan,
+        factory_run_id=factory_run_id,
+    )
 
 
 __all__ = ["TaskRuntimeService", "reset_runtime_task_records"]

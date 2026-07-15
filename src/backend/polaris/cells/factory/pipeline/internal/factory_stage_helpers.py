@@ -18,6 +18,8 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -56,12 +58,252 @@ _FILE_AS_DIRECTORY_SUFFIXES = frozenset(
 )
 _MAX_DECLARED_DELIVERY_TARGET_CHARS = 240
 _PATHLIKE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_./@+-]+$")
-_NO_MATERIALIZED_CHANGE_CODES = frozenset({"director_no_materialized_changes", "no_materialized_changes"})
-_NO_MATERIALIZED_CHANGE_ASSIGNMENT_RE = re.compile(
-    r"\b(?:error|error_code|materialization_error|materialization_mode)\s*[:=]\s*"
-    r"[\"']?(?:director_no_materialized_changes|no_materialized_changes)\b",
-    re.IGNORECASE,
-)
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalFactoryAuthority:
+    """Read-only authority projected from the canonical Run Ledger.
+
+    Factory stages may use this value to authorize state transitions. Session
+    status, report files, workspace contents, and free-form metadata are not
+    represented because they are diagnostic projections rather than execution
+    facts.
+    """
+
+    source_valid: bool
+    task_runtime_projection_authoritative: bool
+    task_runtime_converged: bool
+    task_boundary_present: bool
+    task_boundary_completed_verified: bool
+    qa_verdict_present: bool
+    qa_verdict_passed: bool
+    sequence_barrier_satisfied: bool
+    evidence_policy_passed: bool
+    projection_passed: bool
+    reason_code: str
+    detail: str
+    failure_class: str
+    responsible_layer: str
+    task_count: int
+    incomplete_task_ids: tuple[str, ...]
+    incomplete_runtime_task_ids: tuple[str, ...]
+    missing_task_boundary_ids: tuple[str, ...]
+
+    @property
+    def director_stage_authorized(self) -> bool:
+        """Return whether all owned tasks reached ``completed_verified``."""
+
+        return (
+            self.source_valid
+            and self.task_runtime_projection_authoritative
+            and self.task_runtime_converged
+            and self.task_boundary_present
+            and self.task_boundary_completed_verified
+        )
+
+    @property
+    def quality_stage_authorized(self) -> bool:
+        """Return whether canonical QA and evidence authorize final success."""
+
+        return (
+            self.director_stage_authorized
+            and self.qa_verdict_present
+            and self.qa_verdict_passed
+            and self.sequence_barrier_satisfied
+            and self.evidence_policy_passed
+            and self.projection_passed
+        )
+
+
+def evaluate_canonical_factory_authority(
+    projection: Mapping[str, Any] | None,
+    *,
+    sequence_barrier_satisfied: bool | None = None,
+) -> CanonicalFactoryAuthority:
+    """Evaluate Factory transition authority from one Run Ledger projection.
+
+    The evaluator is deliberately pure. The Run Ledger cell owns persistence
+    and aggregation; Factory only validates the typed projection shape and
+    derives a transition decision. The latest verdict per task is used so a
+    repaired task supersedes historical failures without erasing audit history.
+
+    Complexity:
+        O(t + g + m) time and O(t) memory for ``t`` task verdicts, ``g`` gate
+        events, and ``m`` evidence modalities.
+    """
+
+    payload = dict(projection or {})
+    source_valid = str(payload.get("source") or "").strip() == "run_ledger"
+
+    task_runtime = payload.get("task_runtime_projection")
+    task_runtime_map = task_runtime if isinstance(task_runtime, Mapping) else {}
+    runtime_readiness = task_runtime_map.get("readiness")
+    runtime_readiness_map = runtime_readiness if isinstance(runtime_readiness, Mapping) else {}
+    runtime_rows = task_runtime_map.get("rows")
+    runtime_row_items = (
+        [row for row in runtime_rows if isinstance(row, Mapping)] if isinstance(runtime_rows, list) else []
+    )
+    normalized_runtime_rows: dict[str, Mapping[str, Any]] = {
+        str(row.get("task_id") or row.get("id") or "").strip(): row
+        for row in runtime_row_items
+        if str(row.get("task_id") or row.get("id") or "").strip()
+    }
+    runtime_rows_authoritative = all(
+        row.get("source") == "task_runtime.execution_fact"
+        and row.get("status_source") == "task_runtime.execution_fact"
+        and isinstance(row.get("fact_event_seq"), int)
+        and not isinstance(row.get("fact_event_seq"), bool)
+        and int(row.get("fact_event_seq") or 0) >= 1
+        for row in normalized_runtime_rows.values()
+    )
+    task_runtime_projection_authoritative = (
+        task_runtime_map.get("schema_version") == "task_runtime.observable_task_rows_authority.v1"
+        and task_runtime_map.get("source") == "task_runtime.execution_fact"
+        and task_runtime_map.get("authoritative") is True
+        and task_runtime_map.get("degraded") is False
+        and runtime_readiness_map.get("ready") is True
+        and runtime_rows_authoritative
+    )
+    incomplete_runtime_task_ids = tuple(
+        sorted(
+            task_id
+            for task_id, row in normalized_runtime_rows.items()
+            if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "completed"
+        )
+    )
+    task_runtime_converged = (
+        task_runtime_projection_authoritative and bool(normalized_runtime_rows) and not incomplete_runtime_task_ids
+    )
+
+    task_boundary = payload.get("task_boundary")
+    task_boundary_map = task_boundary if isinstance(task_boundary, Mapping) else {}
+    latest_by_task = task_boundary_map.get("latest_by_task")
+    latest_by_task_map = latest_by_task if isinstance(latest_by_task, Mapping) else {}
+    normalized_verdicts: dict[str, Mapping[str, Any]] = {
+        str(task_id).strip(): verdict
+        for task_id, verdict in latest_by_task_map.items()
+        if str(task_id).strip() and isinstance(verdict, Mapping)
+    }
+    missing_task_boundary_ids = tuple(
+        sorted(task_id for task_id in normalized_runtime_rows if task_id not in normalized_verdicts)
+    )
+    failed_task_boundary_ids = tuple(
+        sorted(
+            task_id
+            for task_id, verdict in normalized_verdicts.items()
+            if not (
+                bool(verdict.get("ok")) and str(verdict.get("status") or "").strip().lower() == "completed_verified"
+            )
+        )
+    )
+    task_boundary_present = bool(normalized_verdicts)
+    incomplete_task_ids = tuple(
+        sorted(set(incomplete_runtime_task_ids) | set(missing_task_boundary_ids) | set(failed_task_boundary_ids))
+    )
+    task_boundary_completed_verified = (
+        task_boundary_present
+        and not failed_task_boundary_ids
+        and len(normalized_verdicts) == len(normalized_runtime_rows)
+    )
+    failed_verdict = next(
+        (normalized_verdicts[task_id] for task_id in failed_task_boundary_ids if task_id in normalized_verdicts),
+        None,
+    )
+    failure_class = str((failed_verdict or {}).get("failure_class") or "").strip()
+    responsible_layer = str((failed_verdict or {}).get("responsible_layer") or "").strip()
+
+    gates = payload.get("gates")
+    gate_rows = [item for item in gates if isinstance(item, Mapping)] if isinstance(gates, list) else []
+    qa_gate = next(
+        (gate for gate in reversed(gate_rows) if str(gate.get("name") or "").strip().lower() == "qa_verdict"),
+        None,
+    )
+    qa_verdict_present = qa_gate is not None
+    qa_verdict_passed = bool(qa_gate and qa_gate.get("ok"))
+    qa_projection_barrier_satisfied = bool(
+        qa_gate and str(qa_gate.get("append_id") or "").strip() and str(qa_gate.get("content_id") or "").strip()
+    )
+    canonical_sequence_barrier_satisfied = qa_projection_barrier_satisfied
+    if sequence_barrier_satisfied is not None:
+        canonical_sequence_barrier_satisfied = canonical_sequence_barrier_satisfied and bool(sequence_barrier_satisfied)
+
+    evidence_policy = payload.get("evidence_policy")
+    evidence_policy_map = evidence_policy if isinstance(evidence_policy, Mapping) else {}
+    missing_required = evidence_policy_map.get("missing_required_modalities")
+    failed_required = evidence_policy_map.get("failed_required_modalities")
+    evidence_policy_passed = (
+        bool(evidence_policy_map.get("integrity_ok"))
+        and bool(evidence_policy_map.get("outcome_ok"))
+        and not (missing_required if isinstance(missing_required, list) else [])
+        and not (failed_required if isinstance(failed_required, list) else [])
+    )
+    projection_passed = bool(payload.get("integrity_ok")) and bool(payload.get("outcome_ok"))
+
+    reason_code = "canonical_projection_authorized"
+    detail = "Canonical Run Ledger projection authorizes Factory completion"
+    if not source_valid:
+        reason_code = "run_ledger_projection_unavailable"
+        detail = "Canonical Run Ledger projection is missing or has a non-canonical source"
+    elif not task_runtime_projection_authoritative:
+        reason_code = "task_runtime_projection_not_authoritative"
+        detail = "TaskRuntime fact-only authority projection is missing or degraded"
+        failure_class = "TASK_RUNTIME_PROJECTION_NOT_AUTHORITATIVE"
+        responsible_layer = "execution_control_plane"
+    elif not normalized_runtime_rows:
+        reason_code = "task_runtime_tasks_missing"
+        detail = "TaskRuntime authority projection contains no owned task rows"
+        failure_class = "EXECUTION_EVIDENCE_MISSING"
+        responsible_layer = "execution_control_plane"
+    elif not task_boundary_present:
+        reason_code = "task_boundary_verdict_missing"
+        detail = "No per-task canonical TaskBoundary verdict is available"
+    elif failed_task_boundary_ids:
+        reason_code = "task_boundary_not_completed_verified"
+        detail = "One or more owned tasks did not reach completed_verified"
+    elif not task_runtime_converged:
+        reason_code = "task_runtime_not_converged"
+        detail = "One or more TaskRuntime rows are pending, blocked, active, or failed"
+        failure_class = "INCOMPLETE_MATERIALIZATION"
+        responsible_layer = "execution_control_plane"
+    elif missing_task_boundary_ids or not task_boundary_completed_verified:
+        reason_code = "task_boundary_verdict_missing"
+        detail = "One or more completed TaskRuntime tasks have no canonical TaskBoundary verdict"
+    elif not qa_verdict_present:
+        reason_code = "qa_verdict_missing"
+        detail = "Canonical Run Ledger projection has no qa_verdict gate"
+    elif not canonical_sequence_barrier_satisfied:
+        reason_code = "canonical_sequence_barrier_unsatisfied"
+        detail = "Canonical qa_verdict append/content coordinates were not observed before quality authorization"
+    elif not qa_verdict_passed:
+        reason_code = "qa_verdict_failed"
+        detail = "Canonical qa_verdict gate failed"
+    elif not evidence_policy_passed:
+        reason_code = "evidence_policy_failed"
+        detail = "Required evidence is missing or failed in the canonical projection"
+    elif not projection_passed:
+        reason_code = "run_ledger_projection_failed"
+        detail = "Canonical Run Ledger integrity or outcome projection failed"
+
+    return CanonicalFactoryAuthority(
+        source_valid=source_valid,
+        task_runtime_projection_authoritative=task_runtime_projection_authoritative,
+        task_runtime_converged=task_runtime_converged,
+        task_boundary_present=task_boundary_present,
+        task_boundary_completed_verified=task_boundary_completed_verified,
+        qa_verdict_present=qa_verdict_present,
+        qa_verdict_passed=qa_verdict_passed,
+        sequence_barrier_satisfied=canonical_sequence_barrier_satisfied,
+        evidence_policy_passed=evidence_policy_passed,
+        projection_passed=projection_passed,
+        reason_code=reason_code,
+        detail=detail,
+        failure_class=failure_class,
+        responsible_layer=responsible_layer,
+        task_count=len(normalized_runtime_rows),
+        incomplete_task_ids=incomplete_task_ids,
+        incomplete_runtime_task_ids=incomplete_runtime_task_ids,
+        missing_task_boundary_ids=missing_task_boundary_ids,
+    )
 
 
 def extend_artifacts(artifacts: list[str], *paths: str) -> None:
@@ -280,97 +522,6 @@ def has_director_progress(before: dict[str, int], after: dict[str, int]) -> bool
             "timeout",
         )
     )
-
-
-def has_director_execution_evidence(
-    *,
-    attempts: list[dict[str, Any]],
-    initial_stats: dict[str, int],
-    final_stats: dict[str, int],
-    converged: bool,
-) -> bool:
-    completed_delta = int(final_stats.get("completed") or 0) - int(initial_stats.get("completed") or 0)
-    failed_delta = int(final_stats.get("failed") or 0) - int(initial_stats.get("failed") or 0)
-    if completed_delta > 0 or failed_delta > 0:
-        return True
-
-    for attempt in attempts:
-        if bool(attempt.get("progress_made")):
-            return True
-        metadata = attempt.get("metadata")
-        if not isinstance(metadata, dict):
-            continue
-        counts = metadata.get("task_status_counts")
-        if not isinstance(counts, dict):
-            continue
-        try:
-            total = sum(int(value or 0) for value in counts.values())
-        except (TypeError, ValueError):
-            total = 0
-        if total > 0:
-            return True
-
-    return bool(converged and int(final_stats.get("completed") or 0) > 0)
-
-
-def metadata_indicates_execution(metadata: dict[str, Any]) -> bool:
-    if not isinstance(metadata, dict):
-        return False
-    counts = metadata.get("task_status_counts")
-    if not isinstance(counts, dict):
-        return False
-    try:
-        completed = int(counts.get("completed") or 0)
-        failed = int(counts.get("failed") or 0)
-        blocked = int(counts.get("blocked") or 0)
-        cancelled = int(counts.get("cancelled") or 0)
-    except (TypeError, ValueError):
-        return False
-    return (completed + failed + blocked + cancelled) > 0
-
-
-def is_director_no_materialized_changes(result: Any) -> bool:
-    if str(result.status or "").strip().lower() not in {"failed", "error"}:
-        return False
-    for value in (
-        getattr(result, "reason_code", ""),
-        getattr(result, "error_code", ""),
-        getattr(result, "error", ""),
-        getattr(result, "materialization_error", ""),
-        getattr(result, "materialization_mode", ""),
-    ):
-        if str(value or "").strip().lower() in _NO_MATERIALIZED_CHANGE_CODES:
-            return True
-    metadata = result.metadata if isinstance(result.metadata, dict) else {}
-    for value in (
-        metadata.get("reason_code"),
-        metadata.get("error_code"),
-        metadata.get("error"),
-        metadata.get("materialization_error"),
-        metadata.get("materialization_mode"),
-    ):
-        if str(value or "").strip().lower() in _NO_MATERIALIZED_CHANGE_CODES:
-            return True
-    message = str(result.message or "").strip().lower()
-    if _NO_MATERIALIZED_CHANGE_ASSIGNMENT_RE.search(message):
-        return True
-    failed_tasks = metadata.get("failed_tasks")
-    if isinstance(failed_tasks, list):
-        for item in failed_tasks:
-            if not isinstance(item, dict):
-                continue
-            for value in (
-                item.get("reason_code"),
-                item.get("error_code"),
-                item.get("error"),
-                item.get("materialization_error"),
-                item.get("materialization_mode"),
-            ):
-                if str(value or "").strip().lower() in _NO_MATERIALIZED_CHANGE_CODES:
-                    return True
-            if _NO_MATERIALIZED_CHANGE_ASSIGNMENT_RE.search(str(item.get("error_message") or "")):
-                return True
-    return False
 
 
 def bool_from_context_or_env(

@@ -77,6 +77,7 @@ DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_ROOT = (
 FACTORY_STAGE_EXECUTOR_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
 )
+FACTORY_PIPELINE_INTERNAL_ROOT = FACTORY_STAGE_EXECUTOR_PATH.parent
 FACTORY_WORKSPACE_QUALITY_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_workspace_quality.py"
 )
@@ -221,7 +222,20 @@ MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_unresolved_import_symbol_repair",
 }
 ALLOWED_EXECUTE_METHOD_LEGACY_DETERMINISTIC_REPAIR_CALLS: set[str] = set()
-FACTORY_WORKSPACE_QUALITY_DIRECT_WRITE_MIGRATION_DEBT: set[str] = set()
+FACTORY_PIPELINE_CONTROL_PLANE_WRITE_ALLOWLIST: dict[tuple[str, str, str], str] = {
+    ("bench_service.py", "_atomic_write_json", "write_json_atomic"): "internal bench session state",
+    ("bench_service.py", "append_event", "append_text_atomic"): "internal bench event stream",
+    ("bench_service.py", "register_session", "write_text_atomic"): "internal bench event stream bootstrap",
+    ("factory_artifact_store.py", "emit_audit_event", "write_text_atomic"): "workspace .polaris audit artifact",
+    ("factory_artifact_store.py", "write_text_artifact", "write_text_atomic"): "Factory control-plane artifact",
+    ("factory_run_admission.py", "_stable_exclusive_lock", "open(write-mode)"): "Factory lease lock",
+    ("factory_run_admission.py", "_write_locked", "write_json_atomic"): "Factory lease record",
+    ("factory_stage_executor.py", "_create_pre_director_snapshot", "write_json_atomic"): (
+        "workspace .polaris pre-Director snapshot manifest"
+    ),
+    ("factory_store.py", "_write_file_sync", "write_text_atomic"): "Factory run checkpoint",
+    ("factory_store.py", "_write_temp_file", "write_text_atomic"): "Factory run record",
+}
 
 
 def _read_text(path: Path) -> str:
@@ -625,24 +639,86 @@ def _legacy_strategy_host_write_primitives() -> list[str]:
     return violations
 
 
-def _factory_workspace_quality_repair_write_primitives() -> dict[str, list[str]]:
-    write_call_names = {
-        "open",
+def _factory_pipeline_write_primitive(node: ast.Call) -> str:
+    call_name = _call_name(node)
+    if call_name in {
+        "append_text_atomic",
         "write_bytes",
         "write_file",
+        "write_json_atomic",
         "write_text",
+        "write_text_atomic",
+    }:
+        return call_name
+    if _is_write_mode_open_call(node):
+        return "open(write-mode)"
+    return ""
+
+
+def _factory_pipeline_write_primitive_owners() -> set[tuple[str, str, str]]:
+    """Return every direct write sink and its owning Factory function."""
+
+    owners: set[tuple[str, str, str]] = set()
+    for path in _production_python_source_files(FACTORY_PIPELINE_INTERNAL_ROOT):
+        for function in _function_definitions(path):
+            for node in ast.walk(function):
+                if not isinstance(node, ast.Call):
+                    continue
+                primitive = _factory_pipeline_write_primitive(node)
+                if not primitive:
+                    continue
+                owners.add((path.name, function.name, primitive))
+    return owners
+
+
+def _factory_pipeline_unapproved_write_primitives() -> list[str]:
+    """Return Factory write sinks not bound to a control-plane artifact owner."""
+
+    unapproved = _factory_pipeline_write_primitive_owners() - set(FACTORY_PIPELINE_CONTROL_PLANE_WRITE_ALLOWLIST)
+    return sorted(":".join(owner) for owner in unapproved)
+
+
+def _workspace_quality_write_reachability(source: str) -> dict[str, list[str]]:
+    """Trace local helper calls that can reach a workspace write primitive."""
+
+    tree = ast.parse(source)
+    definitions = {
+        function.name: function
+        for function in ast.walk(tree)
+        if isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef)
     }
-    violations: dict[str, list[str]] = {}
-    for function in _function_definitions(FACTORY_WORKSPACE_QUALITY_PATH):
-        if not function.name.startswith("repair"):
-            continue
+    direct_sinks: dict[str, set[str]] = {}
+    local_calls: dict[str, set[str]] = {}
+    for name, function in definitions.items():
         for node in ast.walk(function):
             if not isinstance(node, ast.Call):
                 continue
-            call_name = _call_name(node)
-            if call_name in write_call_names or _is_write_mode_open_call(node):
-                violations.setdefault(function.name, []).append(call_name or "open(write-mode)")
-    return violations
+            primitive = _factory_pipeline_write_primitive(node)
+            if primitive:
+                direct_sinks.setdefault(name, set()).add(primitive)
+            called_name = _call_name(node)
+            if called_name in definitions and called_name != name:
+                local_calls.setdefault(name, set()).add(called_name)
+
+    memo: dict[str, set[str]] = {}
+
+    def reachable_sinks(name: str, visiting: set[str]) -> set[str]:
+        if name in memo:
+            return set(memo[name])
+        if name in visiting:
+            return set()
+        sinks = set(direct_sinks.get(name, set()))
+        next_visiting = {*visiting, name}
+        for called_name in local_calls.get(name, set()):
+            sinks.update(reachable_sinks(called_name, next_visiting))
+        memo[name] = set(sinks)
+        return sinks
+
+    return {
+        name: sorted(sinks)
+        for name in sorted(definitions)
+        if (sinks := reachable_sinks(name, set()))
+    }
 
 
 def _is_write_mode_open_call(node: ast.Call) -> bool:
@@ -650,11 +726,15 @@ def _is_write_mode_open_call(node: ast.Call) -> bool:
     if call_name != "open":
         return False
     mode: str | None = None
-    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
-        mode = node.args[1].value
+    positional_mode_index = 0 if isinstance(node.func, ast.Attribute) else 1
+    if len(node.args) > positional_mode_index:
+        positional_mode = node.args[positional_mode_index]
+        if isinstance(positional_mode, ast.Constant) and isinstance(positional_mode.value, str):
+            mode = positional_mode.value
     for keyword in node.keywords:
-        if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
-            mode = keyword.value.value
+        keyword_mode = keyword.value
+        if keyword.arg == "mode" and isinstance(keyword_mode, ast.Constant) and isinstance(keyword_mode.value, str):
+            mode = keyword_mode.value
     return mode is not None and any(flag in mode for flag in ("w", "a", "x", "+"))
 
 
@@ -669,11 +749,50 @@ def test_roles_adapters_does_not_own_director_repair_kernel_package() -> None:
     assert not (ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "strategy_catalog.py").exists()
 
 
-def test_factory_workspace_quality_repair_helpers_do_not_direct_write_files() -> None:
-    direct_write_repairs = _factory_workspace_quality_repair_write_primitives()
+def test_factory_pipeline_has_no_unapproved_workspace_write_primitive() -> None:
+    assert _factory_pipeline_unapproved_write_primitives() == []
+    assert _factory_pipeline_write_primitive_owners() == set(FACTORY_PIPELINE_CONTROL_PLANE_WRITE_ALLOWLIST)
+    assert all(reason.strip() for reason in FACTORY_PIPELINE_CONTROL_PLANE_WRITE_ALLOWLIST.values())
 
-    assert set(direct_write_repairs) <= FACTORY_WORKSPACE_QUALITY_DIRECT_WRITE_MIGRATION_DEBT
-    assert set(direct_write_repairs) == FACTORY_WORKSPACE_QUALITY_DIRECT_WRITE_MIGRATION_DEBT
+
+def test_factory_workspace_quality_has_no_direct_or_helper_indirect_write_path() -> None:
+    reachability = _workspace_quality_write_reachability(_read_text(FACTORY_WORKSPACE_QUALITY_PATH))
+
+    assert reachability == {}
+
+
+def test_factory_workspace_quality_fence_detects_hidden_apply_helper_write() -> None:
+    reachability = _workspace_quality_write_reachability(
+        """
+def _apply_hidden_patch(path, content):
+    path.write_text(content, encoding="utf-8")
+
+def check_then_apply(path, content):
+    _apply_hidden_patch(path, content)
+"""
+    )
+
+    assert reachability == {
+        "_apply_hidden_patch": ["write_text"],
+        "check_then_apply": ["write_text"],
+    }
+
+
+def test_factory_workspace_quality_shortcuts_are_retired_from_runner_and_stage() -> None:
+    workspace_quality_source = _read_text(FACTORY_WORKSPACE_QUALITY_PATH)
+    stage_calls = _called_function_names(FACTORY_STAGE_EXECUTOR_PATH)
+    retired_names = {
+        "WorkspaceQualityFilePatch",
+        "_apply_workspace_quality_patch",
+        "consume_repair_receipts",
+        "repair_cjs_export_import_mismatch",
+        "repair_hallucinated_npm_dependencies",
+        "repair_test_trim_mismatch",
+    }
+
+    assert retired_names.isdisjoint(stage_calls)
+    assert all(name not in workspace_quality_source for name in retired_names)
+    assert "write_text_atomic" not in workspace_quality_source
 
 
 def test_director_runtime_repair_public_contract_exports_are_in_graph_catalog() -> None:

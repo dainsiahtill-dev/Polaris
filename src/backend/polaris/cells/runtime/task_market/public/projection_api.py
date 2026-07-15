@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from polaris.cells.runtime.projection.task_market_projection import TaskMarketProjection
+from polaris.cells.runtime.task_market.internal.projection import TaskMarketProjection
 
 
 def get_dashboard(workspace: str) -> dict[str, Any]:

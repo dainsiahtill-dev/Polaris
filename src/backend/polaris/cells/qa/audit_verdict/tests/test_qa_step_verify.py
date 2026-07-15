@@ -91,7 +91,7 @@ class TestRunStepVerify:
         assert failure.index("failing clause") < failure.index("full:")
 
 
-def test_failing_step_verify_requeues_to_pending_exec(tmp_path: Path) -> None:
+def test_failing_step_verify_without_canonical_ledger_stays_pending_qa(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()
     service = get_task_market_service()
@@ -115,12 +115,13 @@ def test_failing_step_verify_requeues_to_pending_exec(tmp_path: Path) -> None:
     )
     consumer = QAConsumer(workspace=str(workspace), worker_id="qa-test")
     results = consumer.poll_once()
-    assert results and results[0]["reason"] == "step_verify_failed"
+    assert results and results[0]["reason"] == "qa_verdict_commit_failed"
+    assert results[0]["verdict"] == "BLOCKED"
 
     status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
     row = {item["task_id"]: item for item in status.items}["PM-1-S1"]
-    assert row["status"] == "pending_exec"
-    assert row["stage"] == "pending_exec"
+    assert row["status"] == "dead_letter"
+    assert row["stage"] == "dead_letter"
 
 
 def test_passing_step_verify_proceeds_to_audit(tmp_path: Path) -> None:

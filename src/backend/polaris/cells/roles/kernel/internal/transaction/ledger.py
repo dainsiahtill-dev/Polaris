@@ -48,6 +48,7 @@ class TransactionConfig:
     role_id: str = ""
     run_id: str = ""
     task_id: str = ""
+    transition_id: str = ""
     durable_commit_required: bool = False
     domain: Literal["document", "code"] = "document"
     workspace: str = ""

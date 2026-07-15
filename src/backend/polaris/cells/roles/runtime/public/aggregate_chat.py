@@ -1343,9 +1343,9 @@ def _build_aggregate_task_market_projection_pack(
     command: AggregateChatCompletionsCommandV1,
 ) -> dict[str, Any]:
     try:
-        from polaris.cells.runtime.projection.task_market_projection import TaskMarketProjection
+        from polaris.cells.runtime.task_market.public.projection_api import get_dashboard
 
-        summary = TaskMarketProjection(workspace=command.workspace).get_dashboard_summary()
+        summary = get_dashboard(command.workspace)
         active_items = summary.get("active_items")
         if isinstance(active_items, list):
             summary = dict(summary)

@@ -69,7 +69,7 @@ class _MockRequest:
     workspace: str = "."
     prompt_appendix: str = ""
     system_prompt: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=lambda: {"turn_request_id": "core-decomposition"})
     context_override: dict[str, Any] | None = field(default_factory=lambda: {"context_os_snapshot": {}})
     tool_results: list[dict[str, Any]] = field(default_factory=list)
 
@@ -137,6 +137,47 @@ async def _drive_stream(kernel: RoleExecutionKernel, events: list[Any]) -> list[
         ):
             collected.append(event_dict)
     return collected
+
+
+@pytest.mark.asyncio
+async def test_stream_binds_attempt_identity_before_creating_transaction_kernel() -> None:
+    captured_metadata: list[dict[str, Any]] = []
+
+    async def _fake_execute_stream(*_args: Any, **_kwargs: Any) -> Any:
+        if False:
+            yield None
+
+    transaction_kernel = MagicMock(execute_stream=_fake_execute_stream)
+
+    def factory(*args: Any, **_kwargs: Any) -> Any:
+        captured_metadata.append(dict(args[3].metadata))
+        return transaction_kernel
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor.create_transaction_kernel",
+            side_effect=factory,
+        ),
+        patch(
+            "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+            return_value=_context_gateway(),
+        ),
+    ):
+        async for _ in TransactionTurnExecutor(RoleExecutionKernel.create_default(workspace=".")).execute_stream(
+            role="pm",
+            profile=_MockProfile(),  # type: ignore[arg-type]
+            request=_MockRequest(),  # type: ignore[arg-type]
+            system_prompt="sys",
+            fingerprint=_MockFingerprint(),
+            stream_run_id="run_123",
+            uep_publisher=SimpleNamespace(publish_stream_event=AsyncMock()),  # type: ignore[arg-type]
+        ):
+            pass
+
+    assert len(captured_metadata) == 1
+    assert captured_metadata[0]["transaction_attempt"] == 0
+    assert captured_metadata[0]["transaction_invocation_id"]
+    assert captured_metadata[0]["transaction_attempt_id"].endswith("-0")
 
 
 class TestStreamEventTranslationMatrix:

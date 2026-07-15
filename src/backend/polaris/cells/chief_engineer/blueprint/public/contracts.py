@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from pathlib import PurePosixPath, PureWindowsPath
+from typing import Any, Literal
 
 
 def _require_non_empty(name: str, value: str) -> str:
@@ -25,6 +26,75 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     else:
         return ()
     return tuple(str(item).strip() for item in rows if str(item or "").strip())
+
+
+def _strict_unique_string_tuple(
+    name: str,
+    value: Any,
+    *,
+    require_items: bool = False,
+) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise TypeError(f"{name} must be a list or tuple of strings")
+
+    rows: list[str] = []
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        token = str(item).strip()
+        if not token:
+            raise ValueError(f"{name}[{index}] must be a non-empty string")
+        if token in seen:
+            continue
+        seen.add(token)
+        rows.append(token)
+    if require_items and not rows:
+        raise ValueError(f"{name} must contain at least one item")
+    return tuple(rows)
+
+
+def _normalize_relative_portfolio_path(name: str, value: str) -> str:
+    token = _require_non_empty(name, value)
+    if "\x00" in token or "://" in token or token.startswith("~"):
+        raise ValueError(f"{name} must be a workspace-relative path")
+
+    windows_path = PureWindowsPath(token)
+    normalized_path = PurePosixPath(token.replace("\\", "/"))
+    if windows_path.drive or windows_path.root or normalized_path.is_absolute():
+        raise ValueError(f"{name} must be a workspace-relative path")
+    if any(part == ".." for part in normalized_path.parts):
+        raise ValueError(f"{name} must not contain parent traversal")
+
+    parts = tuple(part for part in normalized_path.parts if part not in {"", "."})
+    if not parts:
+        raise ValueError(f"{name} must identify a path below the workspace root")
+    return PurePosixPath(*parts).as_posix()
+
+
+def _require_safe_filename_token(name: str, value: str) -> str:
+    token = _require_non_empty(name, value)
+    if token in {".", ".."} or any(char in token for char in ("/", "\\", "\x00")):
+        raise ValueError(f"{name} must be a safe filename token")
+    return token
+
+
+def _relative_path_tuple(
+    name: str,
+    value: Any,
+    *,
+    require_items: bool = False,
+) -> tuple[str, ...]:
+    raw_paths = _strict_unique_string_tuple(name, value, require_items=require_items)
+    paths: list[str] = []
+    seen: set[str] = set()
+    for index, raw_path in enumerate(raw_paths):
+        path = _normalize_relative_portfolio_path(f"{name}[{index}]", raw_path)
+        if path in seen:
+            continue
+        seen.add(path)
+        paths.append(path)
+    if require_items and not paths:
+        raise ValueError(f"{name} must contain at least one workspace-relative path")
+    return tuple(paths)
 
 
 def _json_safe_mapping(value: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -167,6 +237,434 @@ class GenerateTaskBlueprintCommandV1:
         object.__setattr__(self, "constraints", _to_dict_copy(self.constraints))
         object.__setattr__(self, "context", _to_dict_copy(self.context))
         object.__setattr__(self, "llm_blueprint", _to_dict_copy(self.llm_blueprint))
+
+
+@dataclass(frozen=True)
+class ChiefEngineerPortfolioTaskV1:
+    """Authoritative PM task facts supplied to a project-level CE portfolio.
+
+    The Chief Engineer may advise on these facts but cannot add target or scope
+    paths. Paths are normalized to workspace-relative POSIX form so downstream
+    scope intersections remain deterministic across operating systems.
+    """
+
+    task_id: str
+    objective: str
+    target_files: tuple[str, ...]
+    scope_paths: tuple[str, ...] = field(default_factory=tuple)
+    dependencies: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        task_id = _require_non_empty("task_id", self.task_id)
+        dependencies = _strict_unique_string_tuple("dependencies", self.dependencies)
+        if task_id in dependencies:
+            raise ValueError("dependencies must not contain the task's own task_id")
+
+        object.__setattr__(self, "task_id", task_id)
+        object.__setattr__(self, "objective", _require_non_empty("objective", self.objective))
+        object.__setattr__(
+            self,
+            "target_files",
+            _relative_path_tuple("target_files", self.target_files, require_items=True),
+        )
+        object.__setattr__(self, "scope_paths", _relative_path_tuple("scope_paths", self.scope_paths))
+        object.__setattr__(self, "dependencies", dependencies)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the normalized PM-authoritative task projection."""
+
+        return {
+            "task_id": self.task_id,
+            "objective": self.objective,
+            "target_files": list(self.target_files),
+            "scope_paths": list(self.scope_paths),
+            "dependencies": list(self.dependencies),
+        }
+
+
+@dataclass(frozen=True)
+class BuildChiefEngineerBlueprintPortfolioCommandV1:
+    """Build one advisory CE portfolio for a set of authoritative PM tasks."""
+
+    workspace: str
+    run_id: str
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...]
+    llm_blueprint: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tasks, (list, tuple)):
+            raise TypeError("tasks must be a list or tuple of ChiefEngineerPortfolioTaskV1")
+        if not self.tasks:
+            raise ValueError("tasks must contain at least one task")
+
+        tasks: list[ChiefEngineerPortfolioTaskV1] = []
+        seen_task_ids: set[str] = set()
+        for index, task in enumerate(self.tasks):
+            if not isinstance(task, ChiefEngineerPortfolioTaskV1):
+                raise TypeError(f"tasks[{index}] must be ChiefEngineerPortfolioTaskV1")
+            if task.task_id in seen_task_ids:
+                raise ValueError(f"duplicate task_id in portfolio command: {task.task_id}")
+            seen_task_ids.add(task.task_id)
+            tasks.append(task)
+
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "run_id", _require_non_empty("run_id", self.run_id))
+        object.__setattr__(self, "tasks", tuple(tasks))
+        object.__setattr__(self, "llm_blueprint", _to_dict_copy(self.llm_blueprint))
+
+
+@dataclass(frozen=True)
+class ChiefEngineerProjectInterfaceContractV1:
+    """Shared task/file ownership and advisory project interface declarations."""
+
+    contract_id: str
+    contract_ref: str
+    contract_hash: str
+    task_file_ownership: Mapping[str, tuple[str, ...]]
+    file_task_ownership: Mapping[str, tuple[str, ...]]
+    provider_declarations: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    consumer_declarations: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        contract_id = _require_safe_filename_token("contract_id", self.contract_id)
+        contract_ref = _require_non_empty("contract_ref", self.contract_ref)
+        path_part, separator, fragment = contract_ref.partition("#")
+        if separator != "#" or fragment != "project_interface_contract":
+            raise ValueError("contract_ref must target the project_interface_contract fragment")
+        normalized_path = _normalize_relative_portfolio_path("contract_ref", path_part)
+        normalized_ref = f"{normalized_path}#project_interface_contract"
+
+        if not isinstance(self.task_file_ownership, Mapping):
+            raise TypeError("task_file_ownership must be a mapping")
+        if not isinstance(self.file_task_ownership, Mapping):
+            raise TypeError("file_task_ownership must be a mapping")
+
+        task_file_ownership: dict[str, tuple[str, ...]] = {}
+        expected_file_owners: dict[str, list[str]] = {}
+        for raw_task_id, raw_paths in self.task_file_ownership.items():
+            task_id = _require_non_empty("task_file_ownership task_id", str(raw_task_id))
+            if task_id in task_file_ownership:
+                raise ValueError(f"duplicate task_file_ownership task_id: {task_id}")
+            paths = _relative_path_tuple(
+                f"task_file_ownership[{task_id!r}]",
+                raw_paths,
+                require_items=True,
+            )
+            task_file_ownership[task_id] = paths
+            for path in paths:
+                expected_file_owners.setdefault(path, []).append(task_id)
+
+        file_task_ownership: dict[str, tuple[str, ...]] = {}
+        for raw_path, raw_task_ids in self.file_task_ownership.items():
+            path = _normalize_relative_portfolio_path("file_task_ownership path", str(raw_path))
+            if path in file_task_ownership:
+                raise ValueError(f"duplicate normalized file_task_ownership path: {path}")
+            file_task_ownership[path] = _strict_unique_string_tuple(
+                f"file_task_ownership[{path!r}]",
+                raw_task_ids,
+                require_items=True,
+            )
+
+        expected_reverse = {path: tuple(task_ids) for path, task_ids in expected_file_owners.items()}
+        if file_task_ownership != expected_reverse:
+            raise ValueError("file_task_ownership must be the exact reverse of task_file_ownership")
+
+        def normalize_declarations(name: str, value: Any) -> tuple[dict[str, Any], ...]:
+            if not isinstance(value, (list, tuple)):
+                raise TypeError(f"{name} must be a list or tuple of mappings")
+            declarations: list[dict[str, Any]] = []
+            for index, declaration in enumerate(value):
+                if not isinstance(declaration, Mapping):
+                    raise TypeError(f"{name}[{index}] must be a mapping")
+                declarations.append(_json_safe_mapping(declaration))
+            return tuple(declarations)
+
+        object.__setattr__(self, "contract_id", contract_id)
+        object.__setattr__(self, "contract_ref", normalized_ref)
+        object.__setattr__(self, "contract_hash", _require_non_empty("contract_hash", self.contract_hash))
+        object.__setattr__(self, "task_file_ownership", task_file_ownership)
+        object.__setattr__(self, "file_task_ownership", file_task_ownership)
+        object.__setattr__(
+            self,
+            "provider_declarations",
+            normalize_declarations("provider_declarations", self.provider_declarations),
+        )
+        object.__setattr__(
+            self,
+            "consumer_declarations",
+            normalize_declarations("consumer_declarations", self.consumer_declarations),
+        )
+
+    def to_reference(self) -> dict[str, str]:
+        """Return the stable shared interface-contract identity."""
+
+        return {
+            "schema_version": "chief_engineer.project_interface_contract.reference.v1",
+            "project_interface_contract_id": self.contract_id,
+            "project_interface_contract_ref": self.contract_ref,
+            "project_interface_contract_hash": self.contract_hash,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the canonical shared project interface contract."""
+
+        return {
+            "schema_version": "chief_engineer.project_interface_contract.v1",
+            "project_interface_contract_id": self.contract_id,
+            "project_interface_contract_ref": self.contract_ref,
+            "project_interface_contract_hash": self.contract_hash,
+            "task_file_ownership": {task_id: list(paths) for task_id, paths in self.task_file_ownership.items()},
+            "file_task_ownership": {path: list(task_ids) for path, task_ids in self.file_task_ownership.items()},
+            "provider_declarations": [_json_safe_mapping(declaration) for declaration in self.provider_declarations],
+            "consumer_declarations": [_json_safe_mapping(declaration) for declaration in self.consumer_declarations],
+            "ownership_authority": "pm_authoritative_tasks",
+            "interface_declaration_authority": "chief_engineer_advisory_only",
+            "authoritative": False,
+        }
+
+
+@dataclass(frozen=True)
+class ChiefEngineerBlueprintPortfolioV1:
+    """Immutable project-level CE advice with task-scoped canonical overlays."""
+
+    portfolio_id: str
+    workspace: str
+    run_id: str
+    portfolio_path: str
+    portfolio_hash: str
+    task_ids: tuple[str, ...]
+    task_overlays: Mapping[str, Mapping[str, Any]]
+    scope_advisory: Mapping[str, Mapping[str, Any]]
+    project_interface_contract: ChiefEngineerProjectInterfaceContractV1
+    project_interface_contract_ref: str
+    project_interface_contract_hash: str
+    risk_flags: tuple[str, ...]
+    llm_blueprint_consumed: bool
+    usage_mode: Literal["advisory_overlay", "offline_diagnostic_only"]
+    authority: Literal["advisory_only"] = "advisory_only"
+    immutable: bool = True
+    handoff_ready: Literal[False] = False
+    execution_authorized: Literal[False] = False
+
+    def __post_init__(self) -> None:
+        portfolio_id = _require_safe_filename_token("portfolio_id", self.portfolio_id)
+        portfolio_hash = _require_non_empty("portfolio_hash", self.portfolio_hash)
+
+        portfolio_path = _normalize_relative_portfolio_path("portfolio_path", self.portfolio_path)
+        expected_path = f"runtime/blueprints/{portfolio_id}.json"
+        if portfolio_path != expected_path:
+            raise ValueError(f"portfolio_path must equal {expected_path!r}")
+
+        task_ids = _strict_unique_string_tuple("task_ids", self.task_ids, require_items=True)
+        if len(task_ids) != len(self.task_ids):
+            raise ValueError("task_ids must not contain duplicates")
+        if not isinstance(self.task_overlays, Mapping):
+            raise TypeError("task_overlays must be a mapping keyed by task_id")
+        if not isinstance(self.scope_advisory, Mapping):
+            raise TypeError("scope_advisory must be a mapping keyed by task_id")
+
+        expected_task_ids = set(task_ids)
+        if set(self.task_overlays) != expected_task_ids:
+            raise ValueError("task_overlays keys must exactly match task_ids")
+        if set(self.scope_advisory) != expected_task_ids:
+            raise ValueError("scope_advisory keys must exactly match task_ids")
+        if not isinstance(self.project_interface_contract, ChiefEngineerProjectInterfaceContractV1):
+            raise TypeError("project_interface_contract must be ChiefEngineerProjectInterfaceContractV1")
+        if set(self.project_interface_contract.task_file_ownership) != expected_task_ids:
+            raise ValueError("project_interface_contract task ownership must exactly match task_ids")
+
+        interface_ref = _require_non_empty(
+            "project_interface_contract_ref",
+            self.project_interface_contract_ref,
+        )
+        interface_hash = _require_non_empty(
+            "project_interface_contract_hash",
+            self.project_interface_contract_hash,
+        )
+        if interface_ref != self.project_interface_contract.contract_ref:
+            raise ValueError("project_interface_contract_ref must match the shared contract")
+        if interface_hash != self.project_interface_contract.contract_hash:
+            raise ValueError("project_interface_contract_hash must match the shared contract")
+
+        task_overlays: dict[str, dict[str, Any]] = {}
+        scope_advisory: dict[str, dict[str, Any]] = {}
+        required_overlay_keys = {
+            "authority",
+            "construction_plan",
+            "execution_authorized",
+            "handoff_ready",
+            "llm_blueprint_consumed",
+            "portfolio_hash",
+            "portfolio_id",
+            "portfolio_path",
+            "project_interface_contract_hash",
+            "project_interface_contract_ref",
+            "reference",
+            "risk_flags",
+            "scope_for_apply",
+            "usage_mode",
+        }
+        for task_id in task_ids:
+            overlay = self.task_overlays[task_id]
+            if not isinstance(overlay, Mapping):
+                raise TypeError(f"task_overlays[{task_id!r}] must be a mapping")
+            if set(overlay) != required_overlay_keys:
+                raise ValueError(f"task_overlays[{task_id!r}] does not match the canonical portfolio overlay shape")
+            construction_plan = overlay.get("construction_plan")
+            if not isinstance(construction_plan, Mapping):
+                raise TypeError(f"task_overlays[{task_id!r}].construction_plan must be a mapping")
+            if overlay.get("portfolio_id") != portfolio_id:
+                raise ValueError(f"task_overlays[{task_id!r}] portfolio_id binding mismatch")
+            if overlay.get("portfolio_path") != portfolio_path:
+                raise ValueError(f"task_overlays[{task_id!r}] portfolio_path binding mismatch")
+            if overlay.get("portfolio_hash") != portfolio_hash:
+                raise ValueError(f"task_overlays[{task_id!r}] portfolio_hash binding mismatch")
+            if overlay.get("project_interface_contract_ref") != interface_ref:
+                raise ValueError(f"task_overlays[{task_id!r}] interface ref binding mismatch")
+            if overlay.get("project_interface_contract_hash") != interface_hash:
+                raise ValueError(f"task_overlays[{task_id!r}] interface hash binding mismatch")
+            if overlay.get("authority") != "advisory_only":
+                raise ValueError(f"task_overlays[{task_id!r}] authority must be advisory_only")
+            if overlay.get("llm_blueprint_consumed") is not self.llm_blueprint_consumed:
+                raise ValueError(f"task_overlays[{task_id!r}] LLM consumption binding mismatch")
+            if overlay.get("usage_mode") != self.usage_mode:
+                raise ValueError(f"task_overlays[{task_id!r}] usage_mode binding mismatch")
+            if overlay.get("handoff_ready") is not False:
+                raise ValueError(f"task_overlays[{task_id!r}] cannot declare handoff readiness")
+            if overlay.get("execution_authorized") is not False:
+                raise ValueError(f"task_overlays[{task_id!r}] cannot authorize execution")
+
+            reference = overlay.get("reference")
+            if not isinstance(reference, Mapping):
+                raise TypeError(f"task_overlays[{task_id!r}].reference must be a mapping")
+            expected_reference = {
+                "schema_version": "chief_engineer.blueprint_portfolio.task_reference.v1",
+                "task_id": task_id,
+                "portfolio_id": portfolio_id,
+                "portfolio_path": portfolio_path,
+                "portfolio_hash": portfolio_hash,
+                "project_interface_contract_ref": interface_ref,
+                "project_interface_contract_hash": interface_hash,
+            }
+            if dict(reference) != expected_reference:
+                raise ValueError(f"task_overlays[{task_id!r}].reference binding mismatch")
+
+            task_overlays[task_id] = {
+                "construction_plan": _json_safe_mapping(construction_plan),
+                "scope_for_apply": list(
+                    _relative_path_tuple(
+                        f"task_overlays[{task_id!r}].scope_for_apply",
+                        overlay.get("scope_for_apply"),
+                    )
+                ),
+                "risk_flags": list(
+                    _strict_unique_string_tuple(
+                        f"task_overlays[{task_id!r}].risk_flags",
+                        overlay.get("risk_flags"),
+                    )
+                ),
+                "portfolio_id": portfolio_id,
+                "portfolio_path": portfolio_path,
+                "portfolio_hash": portfolio_hash,
+                "project_interface_contract_ref": interface_ref,
+                "project_interface_contract_hash": interface_hash,
+                "reference": expected_reference,
+                "llm_blueprint_consumed": self.llm_blueprint_consumed,
+                "usage_mode": self.usage_mode,
+                "authority": "advisory_only",
+                "handoff_ready": False,
+                "execution_authorized": False,
+            }
+
+            advisory = self.scope_advisory[task_id]
+            if not isinstance(advisory, Mapping):
+                raise TypeError(f"scope_advisory[{task_id!r}] must be a mapping")
+            scope_advisory[task_id] = _json_safe_mapping(advisory)
+
+        if not isinstance(self.llm_blueprint_consumed, bool):
+            raise TypeError("llm_blueprint_consumed must be a bool")
+        expected_usage_mode = "advisory_overlay" if self.llm_blueprint_consumed else "offline_diagnostic_only"
+        if self.usage_mode != expected_usage_mode:
+            raise ValueError(f"usage_mode must be {expected_usage_mode!r}")
+        if self.authority != "advisory_only":
+            raise ValueError("authority must be 'advisory_only'")
+        if self.immutable is not True:
+            raise ValueError("immutable portfolios cannot be disabled")
+        if self.handoff_ready is not False:
+            raise ValueError("portfolio cannot declare handoff readiness")
+        if self.execution_authorized is not False:
+            raise ValueError("portfolio cannot authorize execution")
+
+        object.__setattr__(self, "portfolio_id", portfolio_id)
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "run_id", _require_non_empty("run_id", self.run_id))
+        object.__setattr__(self, "portfolio_path", portfolio_path)
+        object.__setattr__(self, "portfolio_hash", portfolio_hash)
+        object.__setattr__(self, "task_ids", task_ids)
+        object.__setattr__(self, "task_overlays", task_overlays)
+        object.__setattr__(self, "scope_advisory", scope_advisory)
+        object.__setattr__(self, "project_interface_contract_ref", interface_ref)
+        object.__setattr__(self, "project_interface_contract_hash", interface_hash)
+        object.__setattr__(self, "risk_flags", _strict_unique_string_tuple("risk_flags", self.risk_flags))
+
+    def to_reference(self) -> dict[str, str]:
+        """Return the durable identity needed by downstream projections."""
+
+        return {
+            "schema_version": "chief_engineer.blueprint_portfolio.reference.v1",
+            "portfolio_id": self.portfolio_id,
+            "portfolio_path": self.portfolio_path,
+            "portfolio_hash": self.portfolio_hash,
+            "project_interface_contract_ref": self.project_interface_contract_ref,
+            "project_interface_contract_hash": self.project_interface_contract_hash,
+        }
+
+    @property
+    def reference(self) -> dict[str, str]:
+        """Return a fresh immutable-portfolio reference mapping."""
+
+        return self.to_reference()
+
+    def to_task_blueprint_context(self) -> dict[str, Any]:
+        """Return canonical evidence fields for ``generate_task_blueprint`` context."""
+
+        return {
+            "blueprint_portfolio_ref": self.portfolio_path,
+            "blueprint_portfolio_hash": self.portfolio_hash,
+            "project_interface_contract_ref": self.project_interface_contract_ref,
+            "project_interface_contract_hash": self.project_interface_contract_hash,
+            "project_interface_contract": self.project_interface_contract.to_dict(),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the canonical JSON payload persisted by the public service."""
+
+        return {
+            "schema_version": "chief_engineer.blueprint_portfolio.v1",
+            "kind": "chief_engineer_blueprint_portfolio",
+            "portfolio_id": self.portfolio_id,
+            "portfolio_path": self.portfolio_path,
+            "portfolio_hash": self.portfolio_hash,
+            "workspace": self.workspace,
+            "run_id": self.run_id,
+            "task_ids": list(self.task_ids),
+            "task_overlays": {task_id: _json_safe_mapping(self.task_overlays[task_id]) for task_id in self.task_ids},
+            "scope_advisory": {task_id: _json_safe_mapping(self.scope_advisory[task_id]) for task_id in self.task_ids},
+            "project_interface_contract": self.project_interface_contract.to_dict(),
+            "project_interface_contract_ref": self.project_interface_contract_ref,
+            "project_interface_contract_hash": self.project_interface_contract_hash,
+            "risk_flags": list(self.risk_flags),
+            "llm_blueprint_consumed": self.llm_blueprint_consumed,
+            "usage_mode": self.usage_mode,
+            "authority": self.authority,
+            "authoritative": False,
+            "mainline_authority": False,
+            "handoff_ready": self.handoff_ready,
+            "execution_authorized": self.execution_authorized,
+            "contract_authority": "pm_authoritative_tasks",
+            "immutable": self.immutable,
+            "reference": self.to_reference(),
+        }
 
 
 @dataclass(frozen=True)
@@ -1421,10 +1919,14 @@ __all__ = [
     "ADRRecordV1",
     "ADRStatus",
     "ArchitectureDecisionV1",
+    "BuildChiefEngineerBlueprintPortfolioCommandV1",
     "CeHandoffDecisionBindingsV1",
     "CeHandoffDecisionV1",
     "ChiefEngineerBlueprintError",
     "ChiefEngineerBlueprintErrorV1",
+    "ChiefEngineerBlueprintPortfolioV1",
+    "ChiefEngineerPortfolioTaskV1",
+    "ChiefEngineerProjectInterfaceContractV1",
     "GenerateTaskBlueprintCommandV1",
     "GetBlueprintStatusQueryV1",
     "GovernanceSummaryV1",

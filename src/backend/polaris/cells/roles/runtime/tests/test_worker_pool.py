@@ -15,6 +15,10 @@ from polaris.cells.roles.runtime.internal.worker_pool import (
     _claim_next_runtime_task,
     _claim_ready_runtime_task,
 )
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 
 
 def _runtime_task_row(task_id: int) -> dict[str, Any]:
@@ -28,10 +32,30 @@ def _runtime_task_row(task_id: int) -> dict[str, Any]:
     }
 
 
+def _execution_attempt(
+    task_id: int,
+    *,
+    worker_id: str,
+    role_id: str,
+) -> TaskRuntimeExecutionAttemptIdentityV1:
+    return TaskRuntimeExecutionAttemptIdentityV1(
+        workspace="/tmp/worker-pool-test",
+        task_id=task_id,
+        external_task_id="",
+        session_id=f"session-{task_id}",
+        attempt=1,
+        role_id=role_id,
+        worker_id=worker_id,
+        run_id="",
+        lease_expires_at="2099-01-01T00:00:00+00:00",
+    )
+
+
 class _AtomicClaimRuntime:
     def __init__(self, task_id: int = 41) -> None:
         self.task_id = task_id
         self.claim_next_calls: list[dict[str, Any]] = []
+        self.settlements: list[SettleTaskRuntimeExecutionAttemptCommandV1] = []
 
     def claim_next_execution(self, **kwargs: Any) -> dict[str, Any]:
         self.claim_next_calls.append(dict(kwargs))
@@ -39,14 +63,21 @@ class _AtomicClaimRuntime:
             "success": True,
             "task": _runtime_task_row(self.task_id),
             "session": {"session_id": f"session-{self.task_id}"},
+            "execution_attempt": _execution_attempt(
+                self.task_id,
+                worker_id=str(kwargs["worker_id"]),
+                role_id=str(kwargs["role_id"]),
+            ).to_record(),
             "attempts": [{"task_id": self.task_id, "success": True}],
             "reason": "",
         }
 
-    def complete_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"success": True}
-
-    def fail_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
+    def settle_execution_attempt(self, command: SettleTaskRuntimeExecutionAttemptCommandV1) -> dict[str, Any]:
+        assert isinstance(command, SettleTaskRuntimeExecutionAttemptCommandV1)
+        assert command.identity.task_id == self.task_id
+        assert command.identity.session_id == f"session-{self.task_id}"
+        assert command.outcome in {"completed", "failed"}
+        self.settlements.append(command)
         return {"success": True}
 
 
@@ -55,6 +86,7 @@ class _LegacyReadyRowsRuntime:
         self.task_id = task_id
         self.ready_row_reads = 0
         self.claim_calls: list[dict[str, Any]] = []
+        self.settlements: list[SettleTaskRuntimeExecutionAttemptCommandV1] = []
 
     def list_ready_task_rows(self) -> list[dict[str, Any]]:
         self.ready_row_reads += 1
@@ -66,12 +98,19 @@ class _LegacyReadyRowsRuntime:
             "success": True,
             "task": _runtime_task_row(int(task_id)),
             "session": {"session_id": f"session-{task_id}"},
+            "execution_attempt": _execution_attempt(
+                int(task_id),
+                worker_id=str(kwargs["worker_id"]),
+                role_id=str(kwargs["role_id"]),
+            ).to_record(),
         }
 
-    def complete_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"success": True}
-
-    def fail_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
+    def settle_execution_attempt(self, command: SettleTaskRuntimeExecutionAttemptCommandV1) -> dict[str, Any]:
+        assert isinstance(command, SettleTaskRuntimeExecutionAttemptCommandV1)
+        assert command.identity.task_id == self.task_id
+        assert command.identity.session_id == f"session-{self.task_id}"
+        assert command.outcome in {"completed", "failed"}
+        self.settlements.append(command)
         return {"success": True}
 
 
@@ -86,7 +125,12 @@ def test_sync_worker_claims_atomically_without_ready_row_probe(tmp_path: Path) -
 
     assert task is not None
     assert task.task_id == 41
-    assert task.session_id == "session-41"
+    assert task.execution_attempt is not None
+    assert task.execution_attempt.task_id == 41
+    assert task.execution_attempt.session_id == "session-41"
+    assert task.execution_attempt.attempt == 1
+    assert task.execution_attempt.role_id == "worker_pool"
+    assert task.execution_attempt.worker_id == "sync-worker"
     assert task.work_dir == tmp_path
     assert task.timeout == 15
     assert task.metadata["env"] == {"WORKER_POOL_TEST": "1"}
@@ -112,7 +156,12 @@ def test_async_worker_claims_atomically_without_ready_row_probe(tmp_path: Path) 
 
     assert task is not None
     assert task.task_id == 47
-    assert task.session_id == "session-47"
+    assert task.execution_attempt is not None
+    assert task.execution_attempt.task_id == 47
+    assert task.execution_attempt.session_id == "session-47"
+    assert task.execution_attempt.attempt == 1
+    assert task.execution_attempt.role_id == "async_worker_pool"
+    assert task.execution_attempt.worker_id == "async-worker"
     assert runtime.claim_next_calls == [
         {
             "worker_id": "async-worker",
@@ -135,7 +184,12 @@ def test_sync_worker_keeps_legacy_ready_row_fallback_when_claim_next_is_absent(t
 
     assert task is not None
     assert task.task_id == 53
-    assert task.session_id == "session-53"
+    assert task.execution_attempt is not None
+    assert task.execution_attempt.task_id == 53
+    assert task.execution_attempt.session_id == "session-53"
+    assert task.execution_attempt.attempt == 1
+    assert task.execution_attempt.role_id == "worker_pool"
+    assert task.execution_attempt.worker_id == "legacy-worker"
     assert runtime.ready_row_reads == 1
     assert runtime.claim_calls == [
         {
@@ -239,6 +293,7 @@ class _RecordingClaimNextRuntime:
     def __init__(self, task_id: int = 61) -> None:
         self.task_id = task_id
         self.call_log: list[str] = []
+        self.settlements: list[SettleTaskRuntimeExecutionAttemptCommandV1] = []
 
     def claim_next_execution(self, **kwargs: Any) -> dict[str, Any]:
         self.call_log.append("claim_next_execution")
@@ -246,6 +301,11 @@ class _RecordingClaimNextRuntime:
             "success": True,
             "task": _runtime_task_row(self.task_id),
             "session": {"session_id": f"session-{self.task_id}"},
+            "execution_attempt": _execution_attempt(
+                self.task_id,
+                worker_id=str(kwargs["worker_id"]),
+                role_id=str(kwargs["role_id"]),
+            ).to_record(),
             "attempts": [{"task_id": self.task_id, "success": True}],
             "reason": "",
         }
@@ -258,10 +318,12 @@ class _RecordingClaimNextRuntime:
         self.call_log.append("claim_execution")
         return {"success": False}
 
-    def complete_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"success": True}
-
-    def fail_execution(self, task_id: Any, **kwargs: Any) -> dict[str, Any]:
+    def settle_execution_attempt(self, command: SettleTaskRuntimeExecutionAttemptCommandV1) -> dict[str, Any]:
+        assert isinstance(command, SettleTaskRuntimeExecutionAttemptCommandV1)
+        assert command.identity.task_id == self.task_id
+        assert command.identity.session_id == f"session-{self.task_id}"
+        assert command.outcome in {"completed", "failed"}
+        self.settlements.append(command)
         return {"success": True}
 
 

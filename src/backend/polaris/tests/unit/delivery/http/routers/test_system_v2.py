@@ -184,7 +184,7 @@ async def test_v2_health_success(client: AsyncClient) -> None:
         assert "director" in data
         assert data["fingerprint"]
         assert data["backend_fingerprint"] == data["fingerprint"]
-        assert data["backend_fingerprint_source"] == "runtime/fingerprint"
+        assert data["backend_fingerprint_source"] == "runtime/fingerprint:process_startup"
 
 
 @pytest.mark.asyncio
@@ -229,8 +229,15 @@ async def test_v2_health_lancedb_failure(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_v2_runtime_fingerprint_reports_backend_source(client: AsyncClient) -> None:
+async def test_v2_runtime_fingerprint_reports_process_identity_without_secrets(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Runtime fingerprint endpoint should expose bench-comparable backend metadata."""
+    backend_root = tmp_path / "relocated" / "src" / "backend"
+    monkeypatch.setenv("KERNELONE_INSTANCE_ID", "  Bench_Run::01  ")
+    monkeypatch.setenv("POLARIS_API_TOKEN", "must-not-leak")
     with (
         patch(
             "polaris.delivery.http.routers.system._SERVER_STARTUP_SOURCE_FINGERPRINT",
@@ -240,6 +247,11 @@ async def test_v2_runtime_fingerprint_reports_backend_source(client: AsyncClient
             "polaris.delivery.http.routers.system._compute_backend_source_fingerprint",
             return_value="current-source-fp",
         ),
+        patch(
+            "polaris.delivery.http.routers.system._backend_source_root",
+            return_value=backend_root,
+        ),
+        patch("polaris.delivery.http.routers.system.os.getpid", return_value=43121),
     ):
         response = await client.get("/v2/runtime/fingerprint")
 
@@ -249,10 +261,27 @@ async def test_v2_runtime_fingerprint_reports_backend_source(client: AsyncClient
     assert data["fingerprint"] == "startup-source-fp"
     assert data["current_source_fingerprint"] == "current-source-fp"
     assert data["stale_since_startup"] is True
-    assert isinstance(data["pid"], int)
+    assert data["pid"] == 43121
+    assert data["instance_id"] == "bench-run-01"
     assert data["startup_time"]
     assert data["workspace"] == "."
+    assert data["backend_root"] == str(backend_root)
     assert data["source"] == "runtime/fingerprint:process_startup"
+    assert "must-not-leak" not in response.text
+    assert not {"token", "secret", "authorization"}.intersection(key.lower() for key in data)
+
+
+@pytest.mark.asyncio
+async def test_v2_runtime_fingerprint_has_explicit_empty_instance_id_without_process_binding(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KERNELONE_INSTANCE_ID", raising=False)
+
+    response = await client.get("/v2/runtime/fingerprint")
+
+    assert response.status_code == 200
+    assert response.json()["instance_id"] == ""
 
 
 # ---------------------------------------------------------------------------

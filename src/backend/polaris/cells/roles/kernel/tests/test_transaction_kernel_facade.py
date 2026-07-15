@@ -44,7 +44,10 @@ from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKe
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import (
+    BatchId,
+    FinalizeMode,
     RawLLMResponse,
+    ToolBatch,
     ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
@@ -55,6 +58,99 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 from polaris.kernelone.context.contracts import TurnEngineContextRequest
+
+_WRITE_TOOL_NAMES = frozenset({"edit_blocks", "edit_file", "write_file"})
+
+
+def _canonical_decision(
+    *,
+    turn_id: str,
+    kind: TurnDecisionKind,
+    invocations: list[Mapping[str, Any]] | None = None,
+    visible_message: str = "",
+    metadata: Mapping[str, Any] | None = None,
+) -> TurnDecision:
+    """Build a complete public turn decision for orchestration-focused tests."""
+
+    normalized_invocations: list[ToolInvocation] = []
+    for index, invocation in enumerate(invocations or []):
+        tool_name = str(invocation.get("tool_name") or "")
+        is_write = tool_name in _WRITE_TOOL_NAMES
+        normalized_invocations.append(
+            ToolInvocation(
+                call_id=ToolCallId(str(invocation.get("call_id") or f"{turn_id}_call_{index + 1}")),
+                tool_name=tool_name,
+                arguments=dict(cast(Mapping[str, Any], invocation.get("arguments") or {})),
+                effect_type=ToolEffectType.WRITE if is_write else ToolEffectType.READ,
+                execution_mode=(ToolExecutionMode.WRITE_SERIAL if is_write else ToolExecutionMode.READONLY_SERIAL),
+            )
+        )
+
+    tool_batch = None
+    if kind == TurnDecisionKind.TOOL_BATCH:
+        tool_batch = ToolBatch(
+            batch_id=BatchId(f"{turn_id}_batch"),
+            invocations=normalized_invocations,
+        )
+
+    return TurnDecision(
+        turn_id=TurnId(turn_id),
+        kind=kind,
+        visible_message=visible_message,
+        tool_batch=tool_batch,
+        finalize_mode=FinalizeMode.NONE,
+        domain="code",
+        metadata=dict(metadata or {}),
+    )
+
+
+def _successful_write_tool_result(file_path: str, *, bytes_written: int = 1) -> dict[str, Any]:
+    """Return the production write-tool result shape with effect evidence."""
+
+    return {
+        "ok": True,
+        "file": file_path,
+        "bytes_written": bytes_written,
+        "effect_receipt": {
+            "file": file_path,
+            "bytes_written": bytes_written,
+            "operation": "write_file",
+        },
+    }
+
+
+def _successful_write_batch_result(
+    file_path: str,
+    *,
+    tool_name: str = "write_file",
+    visible_content: str = "",
+) -> dict[str, Any]:
+    """Return a successful batch carrying authoritative write-effect evidence."""
+
+    effect_receipt = {
+        "file": file_path,
+        "bytes_written": 1,
+        "operation": tool_name,
+    }
+    return {
+        "kind": "tool_batch_with_receipt",
+        "visible_content": visible_content,
+        "batch_receipt": {
+            "batch_id": f"batch_{tool_name}",
+            "results": [
+                {
+                    "call_id": f"call_{tool_name}",
+                    "tool_name": tool_name,
+                    "status": "success",
+                    "result": {"file": file_path},
+                    "effect_receipt": effect_receipt,
+                }
+            ],
+            "success_count": 1,
+            "failure_count": 0,
+            "effect_receipts": [effect_receipt],
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -763,21 +859,21 @@ async def test_execute_turn_forces_retry_on_non_tool_decision_for_mutation(monke
         return RawLLMResponse(content="我先总结思路", native_tool_calls=[])
 
     def _fake_decode(_response, _turn_id):
-        return {
-            "kind": TurnDecisionKind.FINAL_ANSWER,
-            "turn_id": "turn_force_retry",
-            "visible_message": "仅总结",
-        }
+        return _canonical_decision(
+            turn_id="turn_force_retry",
+            kind=TurnDecisionKind.FINAL_ANSWER,
+            visible_message="仅总结",
+        )
 
     async def _fake_retry(*, turn_id, context, tool_definitions, **_kwargs):
         captured["turn_id"] = turn_id
         captured["context"] = context
         captured["tool_definitions"] = tool_definitions
-        return {
-            "turn_id": turn_id,
-            "kind": "tool_batch_with_receipt",
-            "visible_content": "已执行写入",
-        }
+        return _successful_write_batch_result(
+            "README.md",
+            tool_name="edit_file",
+            visible_content="已执行写入",
+        )
 
     monkeypatch.setattr(controller, "_call_llm_for_decision", _fake_call_llm_for_decision)
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
@@ -827,18 +923,16 @@ async def test_execute_turn_passes_narrowed_tool_names_to_direct_batch_executor(
         return RawLLMResponse(content="", native_tool_calls=[])
 
     def _fake_decode(_response, _turn_id):
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_allowed_tools",
-            "tool_batch": {
-                "invocations": [
-                    {
-                        "tool_name": "repo_read_slice",
-                        "arguments": {"file": "README.md", "start": 1, "end": 20},
-                    }
-                ]
-            },
-        }
+        return _canonical_decision(
+            turn_id="turn_allowed_tools",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            invocations=[
+                {
+                    "tool_name": "repo_read_slice",
+                    "arguments": {"file": "README.md", "start": 1, "end": 20},
+                }
+            ],
+        )
 
     async def _fake_execute_tool_batch(
         decision,
@@ -1111,23 +1205,21 @@ async def test_retry_enforcement_after_invalid_batch_does_not_pin_edit_blocks(mo
         nonlocal decode_calls
         decode_calls += 1
         if decode_calls == 1:
-            return {
-                "kind": TurnDecisionKind.TOOL_BATCH,
-                "turn_id": "turn_retry_no_edit_blocks_pin",
-                "tool_batch": {"invocations": [{"tool_name": "read_file", "arguments": {"file": "README.md"}}]},
-            }
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_retry_no_edit_blocks_pin",
-            "tool_batch": {
-                "invocations": [
-                    {
-                        "tool_name": "write_file",
-                        "arguments": {"file": "src/game/rules-engine.ts", "content": "export {};\n"},
-                    }
-                ]
-            },
-        }
+            return _canonical_decision(
+                turn_id="turn_retry_no_edit_blocks_pin",
+                kind=TurnDecisionKind.TOOL_BATCH,
+                invocations=[{"tool_name": "read_file", "arguments": {"file": "README.md"}}],
+            )
+        return _canonical_decision(
+            turn_id="turn_retry_no_edit_blocks_pin",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            invocations=[
+                {
+                    "tool_name": "write_file",
+                    "arguments": {"file": "src/game/rules-engine.ts", "content": "export {};\n"},
+                }
+            ],
+        )
 
     async def _fake_execute_tool_batch(
         decision,
@@ -1147,7 +1239,7 @@ async def test_retry_enforcement_after_invalid_batch_does_not_pin_edit_blocks(mo
             raise RuntimeError(
                 "single_batch_contract_violation: mutation requested but no write tool invocation in decision batch"
             )
-        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+        return _successful_write_batch_result("src/game/rules-engine.ts")
 
     monkeypatch.setattr(controller, "_call_llm_for_decision", _fake_call_llm_for_decision)
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
@@ -1207,11 +1299,16 @@ async def test_retry_tool_batch_after_contract_violation_uses_stream_materializa
         yield {"type": "_internal_materialize", "response": RawLLMResponse(content="", native_tool_calls=[])}
 
     def _fake_decode(_response, _turn_id):
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_retry_stream",
-            "tool_batch": {"invocations": []},
-        }
+        return _canonical_decision(
+            turn_id="turn_retry_stream",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            invocations=[
+                {
+                    "tool_name": "edit_file",
+                    "arguments": {"file": "README.md", "search": "old", "replace": "new"},
+                }
+            ],
+        )
 
     async def _fake_execute_tool_batch(
         decision,
@@ -1228,7 +1325,7 @@ async def test_retry_tool_batch_after_contract_violation_uses_stream_materializa
         captured["stream"] = stream
         captured["shadow_engine"] = shadow_engine
         captured["allowed_tool_names"] = allowed_tool_names
-        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+        return _successful_write_batch_result("README.md", tool_name="edit_file")
 
     monkeypatch.setattr(
         controller._stream_orchestrator,
@@ -1376,24 +1473,20 @@ async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkey
             # test_readonly_retry_batch_ignites_bootstrap_immediately). Use a
             # non-bootstrap-safe tool here so this test keeps pinning the blind-retry
             # escalation property: the next attempt must NOT lock to a single tool.
-            return {
-                "kind": TurnDecisionKind.TOOL_BATCH,
-                "turn_id": "turn_retry_escalation",
-                "tool_batch": {
-                    "invocations": [
-                        {"tool_name": "execute_command", "arguments": {"command": "cat README.md"}},
-                    ]
-                },
-            }
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_retry_escalation",
-            "tool_batch": {
-                "invocations": [
-                    {"tool_name": "edit_file", "arguments": {"file": "README.md", "old": "", "new": "x"}},
-                ]
-            },
-        }
+            return _canonical_decision(
+                turn_id="turn_retry_escalation",
+                kind=TurnDecisionKind.TOOL_BATCH,
+                invocations=[
+                    {"tool_name": "execute_command", "arguments": {"command": "cat README.md"}},
+                ],
+            )
+        return _canonical_decision(
+            turn_id="turn_retry_escalation",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            invocations=[
+                {"tool_name": "edit_file", "arguments": {"file": "README.md", "old": "", "new": "x"}},
+            ],
+        )
 
     async def _fake_execute_tool_batch(
         decision,
@@ -1414,7 +1507,7 @@ async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkey
             raise RuntimeError(
                 "single_batch_contract_violation: mutation requested but no write tool invocation in decision batch"
             )
-        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+        return _successful_write_batch_result("README.md", tool_name="edit_file")
 
     monkeypatch.setattr(
         controller._stream_orchestrator,
@@ -1475,19 +1568,17 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
         return RawLLMResponse(content="", native_tool_calls=[])
 
     def _fake_decode(_response, _turn_id):
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_retry_stale_bootstrap",
-            "metadata": {"workspace": "."},
-            "tool_batch": {
-                "invocations": [
-                    {
-                        "tool_name": "edit_file",
-                        "arguments": {"file": "README.md", "search": "old", "replace": "new"},
-                    }
-                ]
-            },
-        }
+        return _canonical_decision(
+            turn_id="turn_retry_stale_bootstrap",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            metadata={"workspace": "."},
+            invocations=[
+                {
+                    "tool_name": "edit_file",
+                    "arguments": {"file": "README.md", "search": "old", "replace": "new"},
+                }
+            ],
+        )
 
     async def _fake_execute_tool_batch(
         decision,
@@ -1507,7 +1598,7 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
             raise RuntimeError(
                 "single_batch_contract_violation: stale_edit blocked write invocation; requires_bootstrap_read"
             )
-        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+        return _successful_write_batch_result("README.md", tool_name="edit_file")
 
     async def _fake_execute_read_bootstrap_batch(
         *,
@@ -1614,43 +1705,39 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
         nonlocal decode_calls
         decode_calls += 1
         if decode_calls == 1:
-            return {
-                "kind": TurnDecisionKind.TOOL_BATCH,
-                "turn_id": "turn_retry_scaffold_bootstrap",
-                "metadata": {"workspace": "."},
-                "tool_batch": {
-                    "invocations": [
-                        {
-                            "tool_name": "edit_blocks",
-                            "arguments": {
-                                "blocks": (
-                                    "<<<< SEARCH[:src/game/rules-engine.ts]\n"
-                                    "audit-seed\n"
-                                    "====\n"
-                                    "real implementation\n"
-                                    ">>>> REPLACE"
-                                )
-                            },
-                        }
-                    ]
-                },
-            }
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_retry_scaffold_bootstrap",
-            "metadata": {"workspace": "."},
-            "tool_batch": {
-                "invocations": [
+            return _canonical_decision(
+                turn_id="turn_retry_scaffold_bootstrap",
+                kind=TurnDecisionKind.TOOL_BATCH,
+                metadata={"workspace": "."},
+                invocations=[
                     {
-                        "tool_name": "write_file",
+                        "tool_name": "edit_blocks",
                         "arguments": {
-                            "file": "src/game/rules-engine.ts",
-                            "content": "export const implemented = true;\n",
+                            "blocks": (
+                                "<<<< SEARCH[:src/game/rules-engine.ts]\n"
+                                "audit-seed\n"
+                                "====\n"
+                                "real implementation\n"
+                                ">>>> REPLACE"
+                            )
                         },
                     }
-                ]
-            },
-        }
+                ],
+            )
+        return _canonical_decision(
+            turn_id="turn_retry_scaffold_bootstrap",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            metadata={"workspace": "."},
+            invocations=[
+                {
+                    "tool_name": "write_file",
+                    "arguments": {
+                        "file": "src/game/rules-engine.ts",
+                        "content": "export const implemented = true;\n",
+                    },
+                }
+            ],
+        )
 
     async def _fake_execute_tool_batch(
         decision,
@@ -1675,7 +1762,7 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
         invocations = cast(list[Mapping[str, object]], tool_batch.get("invocations") or [])
         assert invocations
         assert invocations[0].get("tool_name") == "write_file"
-        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+        return _successful_write_batch_result("src/game/rules-engine.ts")
 
     async def _fake_execute_read_bootstrap_batch(
         *,
@@ -1777,23 +1864,21 @@ async def test_retry_bootstrap_existing_edit_blocks_followup_keeps_write_file_co
         )
         return RawLLMResponse(content="", native_tool_calls=[])
 
-    def _fake_decode(_response: Any, _turn_id: Any) -> dict[str, Any]:
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_retry_existing_edit_blocks",
-            "metadata": {"workspace": str(workspace)},
-            "tool_batch": {
-                "invocations": [
-                    {
-                        "tool_name": "write_file",
-                        "arguments": {
-                            "file": "src/existing.ts",
-                            "content": "export const oldValue = false;\n",
-                        },
-                    }
-                ]
-            },
-        }
+    def _fake_decode(_response: Any, _turn_id: Any) -> TurnDecision:
+        return _canonical_decision(
+            turn_id="turn_retry_existing_edit_blocks",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            metadata={"workspace": str(workspace)},
+            invocations=[
+                {
+                    "tool_name": "write_file",
+                    "arguments": {
+                        "file": "src/existing.ts",
+                        "content": "export const oldValue = false;\n",
+                    },
+                }
+            ],
+        )
 
     async def _fake_execute_tool_batch(
         decision: Mapping[str, object],
@@ -1812,7 +1897,7 @@ async def test_retry_bootstrap_existing_edit_blocks_followup_keeps_write_file_co
         invocations = cast(list[Mapping[str, object]], tool_batch.get("invocations") or [])
         assert invocations
         assert invocations[0].get("tool_name") == "write_file"
-        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+        return _successful_write_batch_result("src/existing.ts")
 
     async def _fake_execute_read_bootstrap_batch(
         *,
@@ -1835,19 +1920,17 @@ async def test_retry_bootstrap_existing_edit_blocks_followup_keeps_write_file_co
             ]
         }
 
-    original_decision = {
-        "kind": TurnDecisionKind.TOOL_BATCH,
-        "turn_id": "turn_retry_existing_edit_blocks",
-        "metadata": {"workspace": str(workspace)},
-        "tool_batch": {
-            "invocations": [
-                {
-                    "tool_name": "read_file",
-                    "arguments": {"file": "src/existing.ts"},
-                }
-            ]
-        },
-    }
+    original_decision = _canonical_decision(
+        turn_id="turn_retry_existing_edit_blocks",
+        kind=TurnDecisionKind.TOOL_BATCH,
+        metadata={"workspace": str(workspace)},
+        invocations=[
+            {
+                "tool_name": "read_file",
+                "arguments": {"file": "src/existing.ts"},
+            }
+        ],
+    )
     monkeypatch.setattr(controller, "_call_llm_for_decision", _fake_call_llm_for_decision)
     monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
     monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
@@ -1901,6 +1984,7 @@ async def test_retry_known_target_requires_read_switches_to_context_bootstrap(mo
         }
     ]
     captured: dict[str, object] = {"execute_calls": 0}
+    decode_calls = 0
 
     async def _fake_call_llm_for_decision(
         ctx,
@@ -1919,19 +2003,35 @@ async def test_retry_known_target_requires_read_switches_to_context_bootstrap(mo
         return RawLLMResponse(content="", native_tool_calls=[])
 
     def _fake_decode(_response, _turn_id):
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_retry_context_bootstrap",
-            "metadata": {"workspace": "."},
-            "tool_batch": {
-                "invocations": [
+        nonlocal decode_calls
+        decode_calls += 1
+        if decode_calls == 1:
+            return _canonical_decision(
+                turn_id="turn_retry_context_bootstrap",
+                kind=TurnDecisionKind.TOOL_BATCH,
+                metadata={"workspace": "."},
+                invocations=[
                     {
                         "tool_name": "glob",
                         "arguments": {"pattern": "**/*session_orchestrator*"},
                     }
-                ]
-            },
-        }
+                ],
+            )
+        return _canonical_decision(
+            turn_id="turn_retry_context_bootstrap",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            metadata={"workspace": "."},
+            invocations=[
+                {
+                    "tool_name": "edit_file",
+                    "arguments": {
+                        "file": "polaris/cells/roles/runtime/internal/session_orchestrator.py",
+                        "search": "class RoleSessionOrchestrator:",
+                        "replace": 'class RoleSessionOrchestrator:\n    """Coordinate role session lifecycle."""',
+                    },
+                }
+            ],
+        )
 
     async def _fake_execute_tool_batch(
         decision,
@@ -1950,7 +2050,10 @@ async def test_retry_known_target_requires_read_switches_to_context_bootstrap(mo
             raise RuntimeError(
                 "single_batch_contract_violation: target_files_known_without_read_evidence; requires_bootstrap_read"
             )
-        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+        return _successful_write_batch_result(
+            "polaris/cells/roles/runtime/internal/session_orchestrator.py",
+            tool_name="edit_file",
+        )
 
     async def _fake_execute_read_bootstrap_batch(
         *,
@@ -2674,32 +2777,21 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
         }
 
     def _fake_decode(_response, _turn_id):
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_stream_retry",
-            "tool_batch": {"invocations": [{"tool_name": "read_file", "arguments": {"file": "tasks.md"}}]},
-            "finalize_mode": "none",
-        }
+        return _canonical_decision(
+            turn_id="turn_stream_retry",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            invocations=[{"tool_name": "read_file", "arguments": {"file": "tasks.md"}}],
+        )
 
     async def _fake_retry(
         *, turn_id, context, tool_definitions, state_machine, ledger, stream, shadow_engine, **_kwargs
     ):
-        return {
-            "kind": "tool_batch_with_receipt",
-            "visible_content": "已写入 高优先级任务清单.md",
-            "batch_receipt": {
-                "batch_id": "batch_retry",
-                "results": [
-                    {
-                        "tool_name": "write_file",
-                        "call_id": "call_retry",
-                        "status": "success",
-                        "result": "file written",
-                    }
-                ],
-            },
-            "metrics": {"duration_ms": 100, "llm_calls": 2, "tool_calls": 1},
-        }
+        result = _successful_write_batch_result(
+            "高优先级任务清单.md",
+            visible_content="已写入 高优先级任务清单.md",
+        )
+        result["metrics"] = {"duration_ms": 100, "llm_calls": 2, "tool_calls": 1}
+        return result
 
     monkeypatch.setattr(
         controller._stream_orchestrator,
@@ -2768,18 +2860,16 @@ async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_ex
         }
 
     def _fake_decode(_response, _turn_id):
-        return {
-            "kind": TurnDecisionKind.TOOL_BATCH,
-            "turn_id": "turn_stream_allowed_tools",
-            "tool_batch": {
-                "invocations": [
-                    {
-                        "tool_name": "repo_read_slice",
-                        "arguments": {"file": "README.md", "start": 1, "end": 20},
-                    }
-                ]
-            },
-        }
+        return _canonical_decision(
+            turn_id="turn_stream_allowed_tools",
+            kind=TurnDecisionKind.TOOL_BATCH,
+            invocations=[
+                {
+                    "tool_name": "repo_read_slice",
+                    "arguments": {"file": "README.md", "start": 1, "end": 20},
+                }
+            ],
+        )
 
     async def _fake_execute_tool_batch(
         decision,
@@ -2982,7 +3072,7 @@ async def test_execute_stream_yields_completion_after_mutation_contract_retry_re
 
     kernel = TransactionKernel(
         llm_provider=AsyncMock(return_value={}),
-        tool_runtime=AsyncMock(return_value={"success": True, "result": "file written"}),
+        tool_runtime=AsyncMock(return_value=_successful_write_tool_result("tasks.md", bytes_written=2)),
         config=TransactionConfig(domain="code"),
         llm_provider_stream=AsyncMock(),  # Non-None so retry path uses stream materialization.
     )
@@ -3081,7 +3171,7 @@ async def test_execute_stream_mutation_retry_from_ask_user_yields_completion_no_
 
     kernel = TransactionKernel(
         llm_provider=AsyncMock(return_value={}),
-        tool_runtime=AsyncMock(return_value={"success": True, "result": "file written"}),
+        tool_runtime=AsyncMock(return_value=_successful_write_tool_result("output.md", bytes_written=4)),
         config=TransactionConfig(domain="code", mutation_guard_mode="strict"),
         llm_provider_stream=AsyncMock(),
     )

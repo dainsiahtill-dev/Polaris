@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from polaris.kernelone.quality.step_verify import (
@@ -33,30 +34,117 @@ _PATH_KEYS = (
     "code_files",
 )
 _LANGUAGE_KEYS = ("language", "primary_language", "project_type")
+_PROJECT_TARGET_KEYS = (
+    "project_declared_target_files",
+    "project_declared_source_targets",
+)
+_TEST_COMMAND_PREFIXES = (
+    "npm test",
+    "npm run test",
+    "pnpm test",
+    "pnpm run test",
+    "yarn test",
+    "yarn run test",
+    "pytest",
+    "python -m pytest",
+    "python -m unittest",
+    "go test",
+    "cargo test",
+)
 
 
-def resolve_contract_step_verify_command(context: dict[str, Any] | None) -> str:
+@dataclass(frozen=True, slots=True)
+class ContractStepVerifyResolution:
+    """Task-boundary decision for one contract verification command.
+
+    A project-wide test command belongs to the task that owns the declared
+    test targets. Earlier source or entrypoint tasks retain compiler and
+    artifact-quality gates, but do not fail because a downstream test asset
+    has not been materialized yet.
+    """
+
+    command: str = ""
+    disposition: str = "absent"
+    reason: str = "no_machine_verify_command"
+    downstream_validation_targets: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the stable audit projection for this resolution."""
+
+        return {
+            "schema_version": "director.contract_step_verify_resolution.v1",
+            "command": self.command,
+            "disposition": self.disposition,
+            "reason": self.reason,
+            "downstream_validation_targets": list(self.downstream_validation_targets),
+        }
+
+
+def resolve_contract_step_verify_command(
+    context: dict[str, Any] | None,
+    *,
+    task: Mapping[str, Any] | None = None,
+) -> str:
     """Return the safest machine verify command available in a Director context."""
 
+    return resolve_contract_step_verify(context, task=task).command
+
+
+def resolve_contract_step_verify(
+    context: dict[str, Any] | None,
+    *,
+    task: Mapping[str, Any] | None = None,
+) -> ContractStepVerifyResolution:
+    """Resolve a verify command and its task-boundary ownership disposition."""
+
     if not isinstance(context, dict):
-        return ""
-    explicit = _explicit_construction_verify(context)
-    if explicit:
-        return explicit
+        return ContractStepVerifyResolution()
 
     records = list(_candidate_records(context))
+    if isinstance(task, Mapping):
+        records.extend(_candidate_records(task))
+    downstream_validation_targets = _downstream_validation_targets(records, task=task)
+    defer_validation = _records_defer_validation_to_downstream(records) or bool(downstream_validation_targets)
+    explicit = _explicit_construction_verify(context)
+    if explicit:
+        if defer_validation and _is_project_test_command(explicit):
+            return ContractStepVerifyResolution(
+                disposition="deferred",
+                reason="project_test_targets_not_owned_by_current_task",
+                downstream_validation_targets=downstream_validation_targets,
+            )
+        return ContractStepVerifyResolution(
+            command=explicit,
+            disposition="run",
+            reason="explicit_construction_verify",
+        )
+
     language = _infer_language(records)
     candidates = _dedupe_preserve_order(_iter_candidate_commands(records))
     selected = _select_verify_candidate(
         candidates,
         language=language,
-        defer_validation=_records_defer_validation_to_downstream(records),
+        defer_validation=defer_validation,
     )
     if selected:
-        return selected
+        return ContractStepVerifyResolution(
+            command=selected,
+            disposition="run",
+            reason="contract_verify_candidate",
+        )
+    if defer_validation and any(_is_project_test_command(candidate) for candidate in candidates):
+        return ContractStepVerifyResolution(
+            disposition="deferred",
+            reason="project_test_targets_not_owned_by_current_task",
+            downstream_validation_targets=downstream_validation_targets,
+        )
     if language == "go" and _records_have_go_compile_signal(records):
-        return "go test ./..."
-    return ""
+        return ContractStepVerifyResolution(
+            command="go test ./...",
+            disposition="run",
+            reason="go_compile_fallback",
+        )
+    return ContractStepVerifyResolution()
 
 
 def _explicit_construction_verify(context: Mapping[str, Any]) -> str:
@@ -225,6 +313,74 @@ def _records_have_go_compile_signal(records: list[Mapping[str, Any]]) -> bool:
             if lowered == "go.mod" or lowered.endswith(".go"):
                 return True
     return False
+
+
+def _downstream_validation_targets(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    task: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    """Return declared test assets owned outside the current task.
+
+    The decision is derived from structured PM contract fields only. Prompt
+    prose and compiler output are deliberately excluded from the authority
+    calculation.
+    """
+
+    record_list = list(records)
+    project_targets = _dedupe_preserve_order(
+        path for record in record_list for key in _PROJECT_TARGET_KEYS for path in _string_list(record.get(key))
+    )
+    validation_targets = [path for path in project_targets if _is_validation_target(path)]
+    if not validation_targets:
+        return ()
+
+    current_targets: list[str] = []
+    if isinstance(task, Mapping):
+        current_targets = _dedupe_preserve_order(
+            path for key in ("target_files", "scope_paths") for path in _string_list(task.get(key))
+        )
+    if not current_targets:
+        current_targets = _dedupe_preserve_order(
+            path
+            for record in record_list
+            for key in ("target_files", "scope_paths")
+            for path in _string_list(record.get(key))
+        )
+
+    normalized_current = {_normalize_contract_path(path) for path in current_targets if _normalize_contract_path(path)}
+    current_validation_targets = [
+        path for path in validation_targets if _normalize_contract_path(path) in normalized_current
+    ]
+    if current_validation_targets:
+        return ()
+    return tuple(validation_targets)
+
+
+def _is_validation_target(path: str) -> bool:
+    normalized = _normalize_contract_path(path).lower()
+    name = normalized.rsplit("/", 1)[-1]
+    return bool(
+        normalized.startswith(("tests/", "test/"))
+        or "/tests/" in normalized
+        or "/test/" in normalized
+        or re.search(r"(?:^|[._-])(?:test|tests|spec)(?:[._-]|$)", name)
+        or name.endswith("_test.go")
+        or name.endswith("_test.py")
+        or name.endswith("_test.rs")
+    )
+
+
+def _normalize_contract_path(path: str) -> str:
+    normalized = str(path or "").strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _is_project_test_command(command: str) -> bool:
+    normalized = " ".join(str(command or "").strip().lower().split())
+    return any(normalized.startswith(prefix) for prefix in _TEST_COMMAND_PREFIXES)
 
 
 def _records_defer_validation_to_downstream(records: Iterable[Mapping[str, Any]]) -> bool:

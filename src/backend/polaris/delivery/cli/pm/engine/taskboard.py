@@ -13,14 +13,24 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+)
 from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.cells.runtime.task_runtime.public.service import (
+    TaskRuntimeService,
+    settle_task_runtime_execution_attempt,
+)
 from polaris.delivery.cli.pm.tasks import build_taskboard_sync_payload
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
+
+_TASK_RUNTIME_PM_ROLE_ID = "Director"
 
 
 def _taskboard_mainline_enabled() -> bool:
@@ -65,14 +75,66 @@ def _task_row_id(row: dict[str, Any] | None) -> int:
         return 0
 
 
-def _task_runtime_session_id(result: dict[str, Any] | None) -> str:
-    """Extract the session id from a task-runtime transition result."""
-    if not isinstance(result, dict):
-        return ""
-    session = result.get("session")
-    if isinstance(session, dict):
-        return str(session.get("session_id") or "").strip()
-    return str(getattr(session, "session_id", "") or "").strip()
+def _task_runtime_claim_identity(
+    claim_result: dict[str, Any],
+    *,
+    workspace: str,
+    board_id: int,
+    worker_id: str,
+    role_id: str,
+    run_id: str,
+) -> tuple[TaskRuntimeExecutionAttemptIdentityV1 | None, str]:
+    """Parse and bind a claim identity to the PM dispatch context."""
+
+    attempt_record = claim_result.get("execution_attempt")
+    if not isinstance(attempt_record, dict):
+        return None, "task_runtime_claim_execution_attempt_identity_missing"
+    try:
+        identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
+    except (TypeError, ValueError) as exc:
+        logger.warning("TaskRuntime claim returned an invalid execution attempt identity: %s", exc)
+        return None, "task_runtime_claim_execution_attempt_identity_invalid"
+    if identity.workspace != str(workspace or "").strip():
+        return None, "task_runtime_claim_execution_attempt_identity_workspace_mismatch"
+    if identity.task_id != int(board_id):
+        return None, "task_runtime_claim_execution_attempt_identity_task_mismatch"
+    if identity.worker_id != str(worker_id or "").strip():
+        return None, "task_runtime_claim_execution_attempt_identity_worker_mismatch"
+    if identity.role_id != str(role_id or "").strip():
+        return None, "task_runtime_claim_execution_attempt_identity_role_mismatch"
+    if identity.run_id != str(run_id or "").strip():
+        return None, "task_runtime_claim_execution_attempt_identity_run_mismatch"
+    return identity, ""
+
+
+def _task_runtime_terminal_identity(
+    runtime: dict[str, Any],
+    *,
+    board_id: int,
+    session_id: str,
+) -> tuple[TaskRuntimeExecutionAttemptIdentityV1 | None, str]:
+    """Return the claim identity retained by PM for one terminal transition."""
+
+    attempts = runtime.get("task_runtime_execution_attempts")
+    if not isinstance(attempts, dict):
+        return None, "task_runtime_execution_attempt_identity_missing"
+    identity = attempts.get(int(board_id))
+    if not isinstance(identity, TaskRuntimeExecutionAttemptIdentityV1):
+        return None, "task_runtime_execution_attempt_identity_missing"
+    if identity.workspace != str(runtime.get("task_runtime_workspace") or "").strip():
+        return None, "task_runtime_execution_attempt_identity_workspace_mismatch"
+    if identity.task_id != int(board_id):
+        return None, "task_runtime_execution_attempt_identity_task_mismatch"
+    workers = runtime.get("workers")
+    if not isinstance(workers, list) or identity.worker_id not in workers:
+        return None, "task_runtime_execution_attempt_identity_worker_mismatch"
+    if identity.role_id != _TASK_RUNTIME_PM_ROLE_ID:
+        return None, "task_runtime_execution_attempt_identity_role_mismatch"
+    if identity.run_id != str(runtime.get("run_id") or "").strip():
+        return None, "task_runtime_execution_attempt_identity_run_mismatch"
+    if identity.session_id != str(session_id or "").strip():
+        return None, "task_runtime_execution_attempt_identity_session_mismatch"
+    return identity, ""
 
 
 def _record_task_runtime_transition_failure(
@@ -189,6 +251,7 @@ def _build_taskboard_runtime(
         "workers": [f"director-worker-{index + 1}" for index in range(max(1, int(max_workers or 1)))],
         "worker_index": 0,
         "board_id_to_task": row_id_to_task,
+        "task_runtime_execution_attempts": {},
     }
 
     for entry in payload:
@@ -233,11 +296,7 @@ def _build_taskboard_runtime(
         if row_id_raw is None or row_id_raw <= 0:
             continue
         row_id = int(row_id_raw)
-        deps = [
-            pm_id_to_row_id[dep_id]
-            for dep_id in (entry.get("dependencies") or [])
-            if dep_id in pm_id_to_row_id
-        ]
+        deps = [pm_id_to_row_id[dep_id] for dep_id in (entry.get("dependencies") or []) if dep_id in pm_id_to_row_id]
         updated = task_runtime.update_task_row(
             row_id,
             blocked_by=list(dict.fromkeys(deps)),
@@ -305,7 +364,7 @@ def _select_taskboard_ready_batch(
         claim_result = task_runtime.claim_execution(
             board_id,
             worker_id=worker_id,
-            role_id="Director",
+            role_id=_TASK_RUNTIME_PM_ROLE_ID,
             run_id=str(runtime.get("run_id") or "").strip(),
             selection_source="delivery.cli.pm.taskboard_mainline",
             metadata={"pm_dispatch_worker_id": worker_id},
@@ -331,12 +390,36 @@ def _select_taskboard_ready_batch(
                 claim_result=failed_claim_result,
             )
             continue
+        identity, identity_failure_reason = _task_runtime_claim_identity(
+            claim_result,
+            workspace=str(runtime.get("task_runtime_workspace") or "").strip(),
+            board_id=board_id,
+            worker_id=worker_id,
+            role_id=_TASK_RUNTIME_PM_ROLE_ID,
+            run_id=str(runtime.get("run_id") or "").strip(),
+        )
+        if identity is None:
+            failed_claim_result = dict(claim_result)
+            failed_claim_result["success"] = False
+            failed_claim_result["reason"] = identity_failure_reason
+            _record_task_runtime_claim_failure(
+                runtime,
+                board_id=board_id,
+                worker_id=worker_id,
+                claim_result=failed_claim_result,
+            )
+            continue
+        execution_attempts = runtime.get("task_runtime_execution_attempts")
+        if not isinstance(execution_attempts, dict):
+            raise RuntimeError("task_runtime_execution_attempts must be a dictionary")
+        execution_attempts[board_id] = identity
         selected.append(
             {
                 "board_id": board_id,
                 "worker_id": worker_id,
                 "task": source_task,
-                "task_runtime_session_id": _task_runtime_session_id(claim_result),
+                "task_runtime_session_id": identity.session_id,
+                "task_runtime_execution_attempt": identity.to_record(),
             }
         )
     runtime["worker_index"] = worker_index
@@ -358,41 +441,56 @@ def _finalize_taskboard_runtime_entry(
     if not isinstance(task_runtime, TaskRuntimeService) or int(board_id or 0) <= 0:
         return {"success": False, "reason": "task_runtime_unavailable"}
     normalized_session_id = str(session_id or "").strip()
-    if not normalized_session_id:
-        update_result = task_runtime.update_task_row(
-            board_id,
-            metadata=dict(metadata or {}),
-        )
+    identity, identity_failure_reason = _task_runtime_terminal_identity(
+        runtime,
+        board_id=board_id,
+        session_id=normalized_session_id,
+    )
+    if identity is None:
         return _record_task_runtime_transition_failure(
             runtime,
             board_id=board_id,
             pm_status=pm_status,
-            reason="session_missing",
-            transition_result=update_result if isinstance(update_result, dict) else {},
+            reason=identity_failure_reason,
+            transition_result={
+                "success": False,
+                "board_id": int(board_id),
+                "session_id": normalized_session_id,
+                "reason": identity_failure_reason,
+            },
         )
 
     status_token = str(pm_status or "").strip().lower()
     transition_metadata = dict(metadata or {})
     if status_token == "done":
-        result = task_runtime.complete_execution(
-            board_id,
-            session_id=normalized_session_id,
-            result_summary=result_summary,
-            metadata=transition_metadata,
-        )
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1 = "completed"
+        summary = result_summary
     elif status_token == "needs_continue":
-        result = task_runtime.suspend_execution(
-            board_id,
-            session_id=normalized_session_id,
-            reason=result_summary or "Director requested follow-up work",
+        outcome = "suspended"
+        summary = result_summary or "Director requested follow-up work"
+    else:
+        outcome = "failed"
+        summary = failure_detail or result_summary or f"Director task ended with PM status {status_token or 'unknown'}"
+    try:
+        settlement_command = SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome=outcome,
+            summary=summary,
             metadata=transition_metadata,
         )
-    else:
-        result = task_runtime.fail_execution(
-            board_id,
-            session_id=normalized_session_id,
-            error=failure_detail or result_summary or f"Director task ended with PM status {status_token or 'unknown'}",
-            metadata=transition_metadata,
+        result = settle_task_runtime_execution_attempt(settlement_command)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.warning("TaskRuntime typed settlement failed for board_id=%s: %s", board_id, exc)
+        return _record_task_runtime_transition_failure(
+            runtime,
+            board_id=board_id,
+            pm_status=pm_status,
+            reason="task_runtime_typed_settlement_call_failed",
+            transition_result={
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+            },
         )
     if isinstance(result, dict) and result.get("success") is True:
         return result

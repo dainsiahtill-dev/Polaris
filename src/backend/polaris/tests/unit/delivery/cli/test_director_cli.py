@@ -81,6 +81,41 @@ class TestDirectorV2Cli:
         """run_director must not expose a second state fact source."""
         assert "state" not in inspect.signature(director_v2.run_director).parameters
 
+    @pytest.mark.asyncio
+    async def test_director_v2_bootstraps_before_iteration_runtime(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The formal CLI delegates bootstrap before creating a TaskRuntime user."""
+
+        calls: list[str] = []
+
+        def bootstrap(workspace: str, maintenance_reason: str) -> None:
+            assert workspace == "/tmp/director-workspace"
+            assert maintenance_reason == "director_v2_cli_startup"
+            calls.append("bootstrap")
+
+        class FakeIterationService:
+            def __init__(self, **_kwargs: object) -> None:
+                calls.append("iteration_service")
+
+            async def run_iteration(self, *, iteration: int) -> dict[str, object]:
+                assert iteration == 1
+                return {"success": True}
+
+        monkeypatch.setattr(director_v2, "_bootstrap_director_fact_stream", bootstrap)
+        monkeypatch.setattr(
+            director_v2,
+            "_bootstrap_backend_import_path",
+            lambda: (object, object, FakeIterationService, object),
+        )
+
+        await director_v2.run_director(
+            "/tmp/director-workspace",
+            iterations=1,
+            max_workers=1,
+            command=None,
+        )
+
+        assert calls == ["bootstrap", "iteration_service"]
+
 
 # ---------------------------------------------------------------------------
 # Test: cli_thin.py (director-thin)
@@ -266,6 +301,30 @@ class TestDirectorThinCli:
         )
         monkeypatch.setattr(sys, "argv", ["director-thin", "--workspace", "/tmp/ws"])
         assert director_thin_main() == 1
+
+    def test_director_thin_terminal_console_bootstraps_before_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The terminal-console entrypoint bootstraps before TaskRuntime host creation."""
+
+        from polaris.delivery.cli import terminal
+        from polaris.delivery.cli.director import cli_thin
+
+        calls: list[str] = []
+
+        def bootstrap(workspace: str, maintenance_reason: str) -> None:
+            assert workspace == "/tmp/ws"
+            assert maintenance_reason == "director_thin_cli_terminal_startup"
+            calls.append("bootstrap")
+
+        def run_console(**_kwargs: object) -> int:
+            calls.append("terminal_host")
+            return 0
+
+        monkeypatch.setattr(cli_thin, "_bootstrap_director_fact_stream", bootstrap)
+        monkeypatch.setattr(terminal, "run_director_console", run_console)
+        monkeypatch.setattr(sys, "argv", ["director-thin", "--workspace", "/tmp/ws", "console"])
+
+        assert director_thin_main() == 0
+        assert calls == ["bootstrap", "terminal_host"]
 
     def test_director_thin_main_console_exception_returns_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """FINDING 2 regression: an exception during the run must fail closed (return 1)."""

@@ -408,6 +408,45 @@ def test_task_board_terminal_event_append_retries_expected_seq_drift(
     assert [int(event["seq"]) for event in events] == [1, 2]
 
 
+def test_task_board_terminal_event_treats_idempotent_committed_drift_as_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    board = TaskBoard(str(tmp_path))
+    task = board.create(subject="idempotent-terminal-commit")
+    real_append_fact_event = task_board_module.append_fact_event
+    expected_seq_values: list[int | None] = []
+
+    def committed_then_ambiguous(command: AppendFactEventCommandV1) -> object:
+        expected_seq_values.append(command.expected_seq)
+        committed = real_append_fact_event(command)
+        raise FactStreamError(
+            "simulated response loss after durable append",
+            code="expected_seq_drift",
+            details={
+                "expected_seq": command.expected_seq,
+                "existing_seq": committed.appended_seq,
+                "event_id": committed.event_id,
+            },
+        )
+
+    monkeypatch.setattr(task_board_module, "append_fact_event", committed_then_ambiguous)
+
+    completed = board.update_status(
+        task.id,
+        TaskStatus.COMPLETED,
+        result_summary="durably committed",
+        allow_terminal_status=True,
+    )
+
+    assert completed is not None
+    assert completed.status == TaskStatus.COMPLETED
+    assert expected_seq_values == [1]
+    events = _query_terminal_events(tmp_path)
+    assert len(events) == 1
+    assert events[0]["event_type"] == "completed"
+
+
 def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
     """Re-applying the same terminal status must be a no-op.
 

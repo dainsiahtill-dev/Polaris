@@ -17,7 +17,7 @@ from polaris.kernelone.storage import (
 )
 from polaris.kernelone.utils import utc_now_str
 
-from .contracts import FileWriteReceipt, KernelFileSystemAdapter
+from .contracts import DurabilityMode, FileWriteReceipt, KernelFileSystemAdapter, validate_durability
 
 _CHANNEL_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -127,12 +127,21 @@ class KernelFileSystem:
         content: str,
         *,
         encoding: str = "utf-8",
+        durability: DurabilityMode = "buffered",
     ) -> FileWriteReceipt:
+        """Append UTF-8 text with the caller-selected durability contract."""
+
         self._require_utf8_encoding(encoding)
+        normalized_durability = validate_durability(durability)
         normalized = self.to_logical_path(logical_path)
         text = str(content)
         path = self.resolve_path(normalized)
-        size = self._adapter.append_text(str(path), text, encoding=encoding)
+        size = self._adapter.append_text(
+            str(path),
+            text,
+            encoding=encoding,
+            durability=normalized_durability,
+        )
         return FileWriteReceipt(
             logical_path=normalized,
             absolute_path=str(path),
@@ -218,11 +227,19 @@ class KernelFileSystem:
                 os.unlink(tmp_path_str)
             raise
 
-    def append_jsonl(self, logical_path: str, payload: dict[str, Any]) -> FileWriteReceipt:
+    def append_jsonl(
+        self,
+        logical_path: str,
+        payload: dict[str, Any],
+        *,
+        durability: DurabilityMode = "buffered",
+    ) -> FileWriteReceipt:
+        """Append one UTF-8 JSONL record with explicit durability selection."""
+
         if not isinstance(payload, dict):
             raise TypeError("jsonl payload must be a dict")
         line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
-        return self.append_text(logical_path, line, encoding="utf-8")
+        return self.append_text(logical_path, line, encoding="utf-8", durability=durability)
 
     def append_evidence_record(
         self,

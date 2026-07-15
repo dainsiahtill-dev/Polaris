@@ -63,7 +63,13 @@ def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
     dispatch = task_boundary_tool_dispatch_from_lifecycle_metadata(metadata)
     if dispatch is not None:
-        return "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
+        failure_class = normalize_failure_class(dispatch.get("failure_class"))
+        if dispatch.get("status") == "dropped" or is_failure_class(
+            failure_class,
+            FailureClassV1.TOOL_DISPATCH_DROPPED,
+        ):
+            return "tool_dispatch_dropped: required or native tool calls had no dispatch/effect receipt"
+        return ""
     tool_calls = _extract_tool_calls(result)
     native_envelopes = _native_tool_call_envelopes(result)
     if not tool_calls and not native_envelopes:
@@ -77,9 +83,6 @@ def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:
 
 def _tool_lifecycle_failure_error(result: RoleTurnResult) -> tuple[str, str]:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    dispatch = task_boundary_tool_dispatch_from_lifecycle_metadata(metadata)
-    if dispatch is not None:
-        return "", ""
     lifecycle_failure = _lifecycle_failure_evidence_from_metadata(metadata)
     if lifecycle_failure is None:
         return "", ""

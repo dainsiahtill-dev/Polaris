@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 from polaris.kernelone.llm.budget_policy import (
+    CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV,
+    DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS,
     DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS,
     DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS,
     FORCED_WRITE_OUTPUT_TOKEN_ENV,
@@ -17,6 +19,7 @@ from polaris.kernelone.llm.budget_policy import (
     TURN_KIND_REPAIR_SUBCALL,
     TURN_KIND_REQUIRED_TOOL_RETRY,
     ResolvedBudgetV1,
+    chief_engineer_structured_output_tokens,
     clamp_output_tokens,
     classify_turn_kind,
     forced_write_output_token_ceiling,
@@ -24,6 +27,26 @@ from polaris.kernelone.llm.budget_policy import (
     resolve_director_dispatch_timeout_seconds,
     resolve_execution_budget,
 )
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        (None, DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS),
+        ("", DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS),
+        ("invalid", DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS),
+        ("0", DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS),
+        ("20000", 20_000),
+        (str(HARD_OUTPUT_TOKEN_CLAMP + 1), HARD_OUTPUT_TOKEN_CLAMP),
+    ],
+)
+def test_chief_engineer_structured_output_budget_has_one_policy(
+    raw_value: str | None,
+    expected: int,
+) -> None:
+    environ = {} if raw_value is None else {CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV: raw_value}
+
+    assert chief_engineer_structured_output_tokens(environ) == expected
 
 
 @pytest.mark.parametrize(

@@ -15,14 +15,17 @@ for candidate in (BACKEND_ROOT, SCRIPTS_ROOT, CORE_ROOT):
         sys.path.insert(0, candidate)
 
 from polaris.cells.control_plane.run_ledger.public import (  # noqa: E402
+    FailureClassV1,
     ReadRunLedgerProjectionQueryV1,
     read_run_ledger_projection,
 )
 from polaris.cells.orchestration.pm_dispatch.internal import dispatch_pipeline  # noqa: E402
+from polaris.cells.orchestration.pm_dispatch.internal.dispatch import (  # noqa: E402
+    integration_qa as integration_qa_impl,
+)
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (  # noqa: E402
     run_post_dispatch_integration_qa,
 )
-from polaris.cells.qa.audit_verdict.public import QaFailureClassV1  # noqa: E402
 from polaris.kernelone.storage import resolve_logical_path  # noqa: E402
 
 
@@ -502,14 +505,14 @@ def test_run_post_dispatch_integration_qa_failure_requeues_director_with_critiqu
     assert metadata["chief_engineer_handoff"]["chain"] == "PM->ChiefEngineer->Director"
     assert metadata["chief_engineer_handoff"]["director_task_id"] == "TASK-A"
     assert metadata["verification_failure_report"]["failure_classification"] == (
-        QaFailureClassV1.IMPLEMENTATION_DEFECT.value
+        FailureClassV1.IMPLEMENTATION_DEFECT.value
     )
     assert (
         metadata["verification_failure_report"]["qa_failure_classification"]["schema_version"]
         == "polaris.qa_failure_classification.v1"
     )
     assert metadata["verification_failure_report"]["qa_failure_classification"]["failure_class"] == (
-        QaFailureClassV1.IMPLEMENTATION_DEFECT.value
+        FailureClassV1.IMPLEMENTATION_DEFECT.value
     )
     assert metadata["verification_failure_report"]["qa_failure_classification"]["route"] == "pending_design"
     assert row["metadata"]["reopen_count"] == 1
@@ -738,7 +741,7 @@ def test_legacy_run_integration_qa_records_context_os_and_cognitive_receipt(monk
         lambda: _SuccessfulCognitiveRuntimeService(captured),
     )
     monkeypatch.setattr(
-        dispatch_pipeline,
+        integration_qa_impl,
         "_get_shared_quality",
         lambda: (
             lambda workspace: "pytest -q",

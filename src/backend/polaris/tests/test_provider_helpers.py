@@ -217,6 +217,40 @@ def test_invoke_with_retry_fails_closed_when_reasoning_truncated(monkeypatch):
     assert result.thinking == "partial {"  # carried for any downstream salvage
 
 
+def test_invoke_with_retry_fails_closed_for_anthropic_thinking_block(monkeypatch):
+    class _Response:
+        status_code = 200
+        ok = True
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "content": [{"type": "thinking", "thinking": "partial portfolio"}],
+                "stop_reason": "max_tokens",
+            }
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers.requests.post",
+        lambda *args, **kwargs: _Response(),
+    )
+
+    result = invoke_with_retry(
+        "https://example.com/v1/messages",
+        {},
+        {"model": "kimi-for-coding"},
+        timeout=5,
+        retries=0,
+        prompt="build portfolio",
+        extract_output=_content_only_extract,
+        usage_from_response=_usage_from_response,
+        clock=MockClock(),
+    )
+
+    assert result.ok is False
+    assert "finish_reason=max_tokens" in str(result.error)
+    assert result.thinking == "partial portfolio"
+
+
 def test_invoke_with_retry_normal_content_does_not_surface_reasoning(monkeypatch):
     """When visible content is present, reasoning must never be surfaced or leaked."""
     monkeypatch.setattr(

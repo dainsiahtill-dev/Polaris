@@ -23,7 +23,7 @@ import urllib.parse
 import urllib.request
 import zlib
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -76,6 +76,12 @@ _FAILURE_CATEGORIES = {
     "runtime_environment",
     "unknown",
 }
+
+CANONICAL_BENCH_PROJECTION_SCHEMA = "factory_bench.canonical_projection.v1"
+CANONICAL_BENCH_PROJECTION_SOURCE = "canonical_projection"
+LEGACY_BENCH_ARTIFACT_SOURCE = "legacy_artifact"
+_FINAL_QA_GATE_NAMES = frozenset({"qa_verdict"})
+_TASK_RUNTIME_FACT_SOURCE = "task_runtime.execution_fact"
 
 
 def _norm_text(value: Any) -> str:
@@ -3336,35 +3342,495 @@ def _record_has_chief_engineer_blueprint_failure(record: dict[str, Any]) -> bool
     )
 
 
-def _run_ledger_projection_integrity_available(record: dict[str, Any]) -> bool:
-    projection = record.get("run_ledger_projection")
-    if not isinstance(projection, dict):
-        return False
-    if projection.get("source") != "run_ledger":
-        return False
-    if int(projection.get("gate_count") or 0) <= 0:
-        return False
-    if not bool(projection.get("integrity_ok")):
-        return False
-    evidence_policy = projection.get("evidence_policy")
-    evidence_policy_map = evidence_policy if isinstance(evidence_policy, dict) else {}
-    missing_required = evidence_policy_map.get("missing_required_modalities")
-    return not (isinstance(missing_required, list) and bool(missing_required))
+def _mapping_copy(value: object) -> dict[str, Any]:
+    """Return a shallow mapping copy without coercing text into facts."""
+
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
-def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
-    """Assign one stable root-cause category to a per-project bench record."""
-    if record.get("all_checks_passed"):
+def _first_mapping(source: Mapping[str, Any], *keys: str) -> dict[str, Any]:
+    """Return the first explicitly named mapping from ``source``."""
+
+    for key in keys:
+        value = source.get(key)
+        if isinstance(value, Mapping):
+            return dict(value)
+    return {}
+
+
+def _project_runtime_status(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Project TaskRuntime authority from its explicit typed audit surface."""
+
+    task_runtime_projection = _mapping_copy(record.get("task_runtime_projection"))
+    readiness = _mapping_copy(task_runtime_projection.get("readiness"))
+    rows_raw = task_runtime_projection.get("rows")
+    rows = [dict(row) for row in rows_raw if isinstance(row, Mapping)] if isinstance(rows_raw, list) else []
+    rows_authoritative = all(
+        row.get("source") == _TASK_RUNTIME_FACT_SOURCE
+        and row.get("status_source") == _TASK_RUNTIME_FACT_SOURCE
+        and isinstance(row.get("fact_event_seq"), int)
+        and not isinstance(row.get("fact_event_seq"), bool)
+        and int(row.get("fact_event_seq") or 0) >= 1
+        for row in rows
+    )
+    authoritative = (
+        task_runtime_projection.get("schema_version") == "task_runtime.observable_task_rows_authority.v1"
+        and task_runtime_projection.get("source") == _TASK_RUNTIME_FACT_SOURCE
+        and task_runtime_projection.get("authoritative") is True
+        and task_runtime_projection.get("degraded") is False
+        and readiness.get("ready") is True
+        and rows_authoritative
+    )
+    incomplete_task_ids = [
+        str(row.get("task_id") or "").strip()
+        for row in rows
+        if str(row.get("execution_state") or row.get("status") or "").strip().lower() != "completed"
+    ]
+    completed = authoritative and bool(rows) and not incomplete_task_ids
+    status = "completed" if completed else "incomplete"
+    return {
+        "source": _TASK_RUNTIME_FACT_SOURCE,
+        "authoritative": authoritative,
+        "degraded": not authoritative,
+        "status": status,
+        "phase": "",
+        "current_stage": "",
+        "failed_stage": "",
+        "error_code": "",
+        "terminal_observed": bool(rows),
+        "terminal_source": _TASK_RUNTIME_FACT_SOURCE if authoritative else "",
+        "task_row_read_model_source": str(task_runtime_projection.get("source") or "").strip(),
+        "task_count": len(rows),
+        "incomplete_task_ids": incomplete_task_ids,
+        "completed": completed,
+    }
+
+
+def _project_qa_verdict(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    """Read the final QA verdict from canonical Run Ledger gate events."""
+
+    gates = ledger.get("gates")
+    candidates = [dict(item) for item in gates if isinstance(item, Mapping)] if isinstance(gates, list) else []
+    for gate in reversed(candidates):
+        name = str(gate.get("name") or "").strip().lower()
+        stage = str(gate.get("stage") or "").strip().lower()
+        if stage != "qa" or name not in _FINAL_QA_GATE_NAMES:
+            continue
+        content_id = str(gate.get("content_id") or "").strip()
+        append_id = str(gate.get("append_id") or "").strip()
+        if gate.get("capability_ok") is not True or not content_id or not append_id:
+            continue
+        return {
+            "source": "run_ledger",
+            "authoritative": True,
+            "available": True,
+            "ok": bool(gate.get("ok")),
+            "name": name,
+            "summary": str(gate.get("summary") or "").strip(),
+            "content_id": content_id,
+            "append_id": append_id,
+            "job_token_id": str(gate.get("job_token_id") or "").strip(),
+        }
+    return {
+        "source": "run_ledger",
+        "authoritative": False,
+        "available": False,
+        "ok": False,
+        "name": "",
+        "summary": "canonical QA verdict missing",
+        "content_id": "",
+        "append_id": "",
+        "job_token_id": "",
+    }
+
+
+def _project_task_boundary(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    """Read TaskBoundary state from the canonical Run Ledger projection."""
+
+    raw_boundary = _mapping_copy(ledger.get("task_boundary"))
+    latest = _mapping_copy(raw_boundary.get("latest"))
+    failed_raw = raw_boundary.get("failed")
+    failed = [dict(item) for item in failed_raw if isinstance(item, Mapping)] if isinstance(failed_raw, list) else []
+    verdict_count = int(raw_boundary.get("verdict_count") or (1 if latest else 0))
+    authoritative = ledger.get("source") == "run_ledger" and verdict_count > 0
+    boundary_ok = authoritative and bool(raw_boundary.get("ok", latest.get("ok"))) and not failed
+    return {
+        **raw_boundary,
+        "source": "run_ledger",
+        "authoritative": authoritative,
+        "available": authoritative,
+        "ok": boundary_ok,
+        "verdict_count": verdict_count,
+        "latest": latest,
+        "failed": failed,
+    }
+
+
+def _project_named_runtime_metadata(record: Mapping[str, Any], *keys: str) -> dict[str, Any]:
+    """Read an explicitly named runtime metadata mapping."""
+
+    chain = _mapping_copy(record.get("chain"))
+    terminal = _mapping_copy(record.get("factory_terminal_status"))
+    if not terminal:
+        terminal = _mapping_copy(chain.get("factory_terminal_status"))
+    metadata = _mapping_copy(terminal.get("metadata"))
+    for source in (record, terminal, metadata, chain):
+        projected = _first_mapping(source, *keys)
+        if projected:
+            return projected
+    return {}
+
+
+def _canonical_execution_verdict(
+    *,
+    ledger: Mapping[str, Any],
+    runtime: Mapping[str, Any],
+    boundary: Mapping[str, Any],
+    qa: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve execution status from canonical control-plane authorities only."""
+
+    ledger_available = ledger.get("source") == "run_ledger" and int(ledger.get("gate_count") or 0) > 0
+    ledger_integrity_ok = ledger_available and bool(ledger.get("integrity_ok"))
+    evidence_policy = _mapping_copy(ledger.get("evidence_policy"))
+    missing_required = evidence_policy.get("missing_required_modalities")
+    failed_required = evidence_policy.get("failed_required_modalities")
+    evidence_integrity_ok = (
+        bool(evidence_policy)
+        and evidence_policy.get("integrity_ok") is True
+        and not (isinstance(missing_required, list) and missing_required)
+    )
+    evidence_outcome_ok = (
+        bool(evidence_policy)
+        and evidence_policy.get("outcome_ok") is True
+        and not (isinstance(failed_required, list) and failed_required)
+    )
+    if not ledger_available:
+        reason_code = "run_ledger_projection_missing"
+        failure_class = "EXECUTION_EVIDENCE_MISSING"
+        responsible_layer = "control_plane"
+    elif not ledger_integrity_ok:
+        reason_code = "run_ledger_integrity_failed"
+        failure_class = "RUN_LEDGER_INTEGRITY_FAILED"
+        responsible_layer = "control_plane"
+    elif not bool(boundary.get("authoritative")):
+        reason_code = "task_boundary_verdict_missing"
+        failure_class = "EXECUTION_EVIDENCE_MISSING"
+        responsible_layer = "execution_control_plane"
+    elif not bool(boundary.get("ok")):
+        latest = _mapping_copy(boundary.get("latest"))
+        failed = boundary.get("failed")
+        if not latest and isinstance(failed, list) and failed and isinstance(failed[-1], Mapping):
+            latest = dict(failed[-1])
+        reason_code = str(latest.get("status") or "task_boundary_failed").strip().lower()
+        failure_class = str(latest.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
+        responsible_layer = str(latest.get("responsible_layer") or "task_boundary").strip()
+    elif not bool(runtime.get("authoritative")):
+        reason_code = "task_runtime_projection_not_authoritative"
+        failure_class = "TASK_RUNTIME_PROJECTION_NOT_AUTHORITATIVE"
+        responsible_layer = "execution_control_plane"
+    elif not bool(runtime.get("completed")):
+        reason_code = "task_runtime_not_completed"
+        failure_class = "TASK_RUNTIME_NOT_COMPLETED"
+        responsible_layer = "execution_control_plane"
+    elif not evidence_integrity_ok:
+        reason_code = "required_evidence_missing"
+        failure_class = "EXECUTION_EVIDENCE_MISSING"
+        responsible_layer = "control_plane"
+    elif not evidence_outcome_ok:
+        reason_code = "required_evidence_failed"
+        failure_class = "EXECUTION_EVIDENCE_FAILED"
+        responsible_layer = "control_plane"
+    elif not bool(qa.get("authoritative")):
+        reason_code = "qa_verdict_missing"
+        failure_class = "EXECUTION_EVIDENCE_MISSING"
+        responsible_layer = "qa"
+    elif not bool(qa.get("ok")):
+        reason_code = "qa_verdict_failed"
+        failure_class = "QA_VERDICT_FAILED"
+        responsible_layer = "qa"
+    else:
         return {
             "ok": True,
-            "category": "",
-            "root_cause_signature": "pass",
-            "reasons": [],
-            "evidence": [],
+            "status": "completed_verified",
+            "reason_code": "completed_verified",
+            "failure_class": "",
+            "responsible_layer": "",
         }
+    return {
+        "ok": False,
+        "status": "failed",
+        "reason_code": reason_code,
+        "failure_class": failure_class,
+        "responsible_layer": responsible_layer,
+    }
+
+
+def build_canonical_bench_projection(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the only execution-status projection consumed by Factory Bench.
+
+    Artifact discovery, deterministic checks, and the real-run gate remain
+    separate measurements. They are deliberately excluded from the execution
+    verdict so stale prose or JSON artifacts cannot rewrite canonical state.
+    """
+
+    ledger = _mapping_copy(record.get("run_ledger_projection"))
+    boundary = _project_task_boundary(ledger)
+    qa = _project_qa_verdict(ledger)
+    lifecycle = _mapping_copy(ledger.get("tool_lifecycle"))
+    effect = {
+        "tool_receipts": _mapping_copy(ledger.get("tool_receipts")),
+        "physical_evidence": _mapping_copy(ledger.get("physical_evidence")),
+    }
+    runtime = _project_runtime_status(record)
+    execution = _canonical_execution_verdict(
+        ledger=ledger,
+        runtime=runtime,
+        boundary=boundary,
+        qa=qa,
+    )
+    instance_id = str(record.get("instance_id") or "")
+    workspace = str(record.get("workspace") or record.get("project_workspace") or "")
+    run_id = str(record.get("run_id") or "")
+    factory_run_id = str(record.get("factory_run_id") or "")
+    backend_port = record.get("backend_port")
+    frontend_port = record.get("frontend_port")
+    refs_raw = record.get("final_request_refs")
+    final_request_refs = (
+        [dict(item) for item in refs_raw if isinstance(item, Mapping)] if isinstance(refs_raw, list) else []
+    )
+    legacy_artifacts = {
+        "source": LEGACY_BENCH_ARTIFACT_SOURCE,
+        "authoritative": False,
+        "degraded": True,
+        "has_plan_doc": bool(record.get("has_plan_doc")),
+        "has_blueprint_doc": bool(record.get("has_blueprint_doc")),
+        "has_qa_verdict": bool(record.get("has_qa_verdict")),
+        "chain_results": _mapping_copy(record.get("chain_results")),
+    }
+    return {
+        "schema_version": CANONICAL_BENCH_PROJECTION_SCHEMA,
+        "source": CANONICAL_BENCH_PROJECTION_SOURCE,
+        "authoritative": True,
+        "degraded": False,
+        "requested_project_id": str(record.get("requested_project_id") or record.get("project_id") or ""),
+        "canonical_project_id": str(record.get("canonical_project_id") or record.get("project_id") or ""),
+        "instance_id": instance_id,
+        "instance": {"id": instance_id, "workspace": workspace},
+        "workspace": workspace,
+        "backend_port": backend_port,
+        "frontend_port": frontend_port,
+        "ports": {"backend": backend_port, "frontend": frontend_port},
+        "run_id": run_id,
+        "factory_run_id": factory_run_id,
+        "run_ids": {"bench": run_id, "factory": factory_run_id},
+        "final_request_refs": final_request_refs,
+        "lifecycle": lifecycle,
+        "effect": effect,
+        "boundary": boundary,
+        "runtime": runtime,
+        "ledger": ledger,
+        "qa": qa,
+        "barrier": _project_named_runtime_metadata(
+            record,
+            "run_ledger_barrier",
+            "execution_barrier",
+            "completion_barrier",
+            "barrier",
+        ),
+        "fallback": _project_named_runtime_metadata(
+            record,
+            "fallback",
+            "fallback_status",
+            "degraded_fallback",
+        ),
+        "execution": execution,
+        "legacy_artifacts": legacy_artifacts,
+    }
+
+
+def _run_ledger_projection_integrity_available(record: dict[str, Any]) -> bool:
+    projection = _mapping_copy(record.get("canonical_projection"))
+    ledger = _mapping_copy(projection.get("ledger"))
+    if not ledger:
+        ledger = _mapping_copy(record.get("run_ledger_projection"))
+    return bool(
+        ledger.get("source") == "run_ledger" and int(ledger.get("gate_count") or 0) > 0 and ledger.get("integrity_ok")
+    )
+
+
+def _stable_reason(value: object) -> str:
+    """Normalize a machine field without regex or prose interpretation."""
+
+    raw = str(value or "").strip().lower()
+    normalized = "".join(character if character.isalnum() or character in "_.:-" else "_" for character in raw)
+    return "_".join(part for part in normalized.split("_") if part) or "unknown"
+
+
+def _canonical_failure_attribution(projection: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Map structured canonical fields to one stable taxonomy attribution."""
+
+    runtime = _mapping_copy(projection.get("runtime"))
+    runtime_error = str(runtime.get("error_code") or "").strip().lower()
+    runtime_categories = {
+        "event_wait_timeout": "event_wait_timeout",
+        "runtime_v2_connection_failed": "event_wait_runtime_v2_connection_failed",
+        "workspace_switch_failed": "workspace_switch_failed",
+        "runtime_project_contamination": "runtime_project_contamination",
+        "isolated_instance_start_failed": "isolated_instance_start_failed",
+        "start_failed": "factory_start_failed",
+    }
+    if runtime_error in runtime_categories:
+        return "runtime_environment", runtime_categories[runtime_error], runtime_error
+
+    ledger = _mapping_copy(projection.get("ledger"))
+    if ledger.get("source") != "run_ledger" or int(ledger.get("gate_count") or 0) <= 0:
+        return "control_plane", "run_ledger_projection_missing", "canonical Run Ledger projection missing"
+
+    lifecycle = _mapping_copy(projection.get("lifecycle"))
+    if lifecycle and not bool(lifecycle.get("ok", True)):
+        failure = _mapping_copy(lifecycle.get("latest_failure"))
+        if not failure:
+            unresolved = lifecycle.get("unresolved_by_task")
+            if isinstance(unresolved, Mapping):
+                failure = next(
+                    (dict(item) for item in unresolved.values() if isinstance(item, Mapping)),
+                    {},
+                )
+        reason = str(failure.get("failure_class") or lifecycle.get("failure_class") or "tool_lifecycle_failed")
+        detail = str(failure.get("reason") or lifecycle.get("reason") or reason)
+        return "control_plane", reason, detail
+    if not bool(ledger.get("integrity_ok")):
+        status = summarize_run_ledger_projection(ledger)
+        return "control_plane", "run_ledger_integrity_failed", str(status.get("detail") or "")
+
+    boundary = _mapping_copy(projection.get("boundary"))
+    if not bool(boundary.get("authoritative")):
+        return "control_plane", "task_boundary_verdict_missing", "canonical TaskBoundary verdict missing"
+    if not bool(boundary.get("ok")):
+        latest = _mapping_copy(boundary.get("latest"))
+        failed = boundary.get("failed")
+        if not latest and isinstance(failed, list) and failed and isinstance(failed[-1], Mapping):
+            latest = dict(failed[-1])
+        reason = str(latest.get("status") or latest.get("failure_class") or "task_boundary_failed")
+        responsible_layer = str(latest.get("responsible_layer") or "task_boundary").strip().lower()
+        category = (
+            "control_plane" if responsible_layer in {"control_plane", "execution_control_plane"} else "task_boundary"
+        )
+        detail = ";".join(
+            item
+            for item in (
+                f"failure_class={latest.get('failure_class')}" if latest.get("failure_class") else "",
+                f"responsible_layer={latest.get('responsible_layer')}" if latest.get("responsible_layer") else "",
+                str(latest.get("reason") or "").strip(),
+            )
+            if item
+        )
+        return category, reason, detail
+
+    runtime = _mapping_copy(projection.get("runtime"))
+    if not bool(runtime.get("authoritative")):
+        return (
+            "control_plane",
+            "task_runtime_projection_not_authoritative",
+            str(runtime.get("terminal_source") or "canonical TaskRuntime projection missing"),
+        )
+    if not bool(runtime.get("completed")):
+        return (
+            "control_plane",
+            "task_runtime_not_completed",
+            str(runtime.get("status") or "TaskRuntime terminal state missing"),
+        )
+
+    evidence_policy = _mapping_copy(ledger.get("evidence_policy"))
+    missing_required = evidence_policy.get("missing_required_modalities")
+    if (
+        not evidence_policy
+        or evidence_policy.get("integrity_ok") is not True
+        or (isinstance(missing_required, list) and bool(missing_required))
+    ):
+        detail = ",".join(str(item) for item in missing_required or [])
+        return "control_plane", "required_evidence_missing", detail
+    failed_required = evidence_policy.get("failed_required_modalities")
+    if evidence_policy.get("outcome_ok") is not True or (isinstance(failed_required, list) and bool(failed_required)):
+        detail = ",".join(str(item) for item in failed_required or [])
+        return "control_plane", "required_evidence_failed", detail
+
+    qa = _mapping_copy(projection.get("qa"))
+    if not bool(qa.get("authoritative")):
+        return "control_plane", "qa_verdict_missing", "canonical QA verdict missing"
+    if not bool(qa.get("ok")):
+        return "llm_output", "qa_verdict_failed", str(qa.get("summary") or "canonical QA verdict failed")
+
+    execution = _mapping_copy(projection.get("execution"))
+    return (
+        "control_plane",
+        str(execution.get("reason_code") or "canonical_execution_failed"),
+        str(execution.get("failure_class") or "canonical execution failed"),
+    )
+
+
+def _independent_gate_attribution(record: Mapping[str, Any]) -> tuple[str, str, str] | None:
+    """Classify independent measurements by explicit gate/check identifiers."""
+
+    real_run_gate = _mapping_copy(record.get("real_run_gate"))
+    if real_run_gate and not bool(real_run_gate.get("ok")):
+        failed_requirement = _first_real_run_failure(real_run_gate) or "unknown"
+        category_by_requirement = {
+            "chain_terminal": "runtime_environment",
+            "environment_prepared": "runtime_environment",
+            "artifact_landed": "director_tool_execution",
+        }
+        return (
+            category_by_requirement.get(failed_requirement, "target_project_baseline"),
+            f"real_run_gate.{failed_requirement}",
+            str(real_run_gate.get("summary") or ""),
+        )
+
+    llm_route_audit = _mapping_copy(record.get("llm_route_audit"))
+    if llm_route_audit and not bool(llm_route_audit.get("ok")):
+        return "llm_output", "llm_route_audit", str(llm_route_audit.get("summary") or "")
+
+    if not bool(record.get("has_plan_doc")) or bool(record.get("wrong_product_suspect")):
+        return "pm_contract", "missing_or_wrong_contract", ""
+    if not bool(record.get("has_blueprint_doc")):
+        return "chief_engineer_blueprint", "blueprint_artifact_missing", ""
+
+    failed_checks = _check_failures(dict(record))
+    if failed_checks:
+        first_check = failed_checks[0]
+        category = (
+            "runtime_environment"
+            if str(first_check.get("failure_category") or first_check.get("error_category") or "").strip()
+            == "runtime_environment"
+            else "target_project_baseline"
+        )
+        return category, str(first_check.get("check") or "check_failed"), str(first_check.get("detail") or "")
+
+    for gate in _gate_failures(dict(record)):
+        gate_name = str(gate.get("gate") or "")
+        if gate_name in {
+            "plan_artifact_present",
+            "blueprint_artifact_present",
+            "qa_verdict_artifact_present",
+            "chain_clean",
+            "integration_qa_passed",
+        }:
+            continue
+        if gate_name != "canonical_execution":
+            return "unknown", gate_name or "unclassified_failure", str(gate.get("detail") or "")
+    return None
+
+
+def _legacy_display_attribution(record: dict[str, Any]) -> tuple[str, str, list[str]]:
+    """Classify historical audit records for degraded display only.
+
+    This compatibility path never handles records with a canonical projection
+    and its result is explicitly non-authoritative. It can be removed after
+    stored pre-projection bench reports age out.
+    """
 
     evidence: list[str] = []
-    reasons: list[str] = []
     combined = json.dumps(record, ensure_ascii=False, default=str)
     run_ledger_gate_failed = any(
         gate.get("gate") in {"run_ledger_projection", "run_ledger_event"} and not gate.get("ok")
@@ -3373,24 +3839,12 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     if _record_has_model_provider_failure(record):
         category, reason = "runtime_environment", _model_provider_failure_reason(record)
         evidence.append(_model_provider_failure_evidence(record))
-    elif (control_plane_attribution := _record_execution_control_plane_attribution(record)) is not None:
-        category, reason, detail = control_plane_attribution
-        evidence.append(detail)
-    elif (task_boundary_attribution := _record_task_boundary_attribution(record)) is not None:
-        category, reason, detail = task_boundary_attribution
-        evidence.append(detail)
     elif _record_has_runtime_environment_failure(record):
         category, reason = "runtime_environment", _runtime_environment_failure_reason(record)
         evidence.append(_runtime_environment_failure_evidence(record))
-        if run_ledger_gate_failed:
-            ledger_status = summarize_run_ledger_projection(record.get("run_ledger_projection"))
-            ledger_detail = str(ledger_status.get("detail") or "run ledger projection missing").strip()
-            if ledger_detail:
-                evidence.append(f"secondary_run_ledger:{ledger_detail}")
-    elif run_ledger_gate_failed and not _run_ledger_projection_integrity_available(record):
-        ledger_status = summarize_run_ledger_projection(record.get("run_ledger_projection"))
+    elif run_ledger_gate_failed:
         category, reason = "control_plane", "run_ledger_projection_missing"
-        evidence.append(str(ledger_status.get("detail") or "run ledger projection missing"))
+        evidence.append("run ledger projection missing")
     elif _contains_context_budget_signal(combined):
         category, reason = "context_budget", "context_or_token_budget"
     elif _record_has_chief_engineer_blueprint_failure(record):
@@ -3403,20 +3857,16 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         category, reason, detail = repair_attribution
         evidence.append(detail)
     elif _record_has_qa_artifact_quality_failure(record):
-        real_run_gate = record["real_run_gate"]
+        real_run_gate = _mapping_copy(record.get("real_run_gate"))
         failed_requirement = _first_real_run_failure(real_run_gate)
         category, reason = "llm_output", f"real_run_gate.{failed_requirement or 'generated_artifact_quality'}"
         evidence.append(str(real_run_gate.get("summary") or ""))
     elif _record_has_explicit_director_execution_failure(record) or _record_has_director_execution_failure(record):
         category, reason = "director_tool_execution", _director_failure_reason(record)
         evidence.append(_director_failure_evidence(record))
-        real_run_gate = record.get("real_run_gate")
-        if isinstance(real_run_gate, dict) and not real_run_gate.get("ok"):
-            summary = str(real_run_gate.get("summary") or "").strip()
-            if summary:
-                evidence.append(f"secondary_real_run_gate:{summary}")
     elif isinstance(record.get("real_run_gate"), dict) and not record["real_run_gate"].get("ok"):
-        failed_requirement = _first_real_run_failure(record["real_run_gate"])
+        real_run_gate = record["real_run_gate"]
+        failed_requirement = _first_real_run_failure(real_run_gate)
         reason = f"real_run_gate.{failed_requirement or 'unknown'}"
         if failed_requirement == "chain_terminal":
             category = "runtime_environment"
@@ -3430,23 +3880,13 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
             category = "llm_output"
         else:
             category = "target_project_baseline"
-        evidence.append(str(record["real_run_gate"].get("summary") or ""))
+        evidence.append(str(real_run_gate.get("summary") or ""))
     elif any(gate.get("gate") == "integration_qa_passed" and not gate.get("ok") for gate in _gate_failures(record)):
         category, reason = "llm_output", "integration_qa_failed"
-        chain_results = record.get("chain_results") if isinstance(record.get("chain_results"), dict) else {}
-        if isinstance(chain_results, dict):
-            evidence.append(str(chain_results.get("qa_reason") or ""))
+        chain_results = _mapping_copy(record.get("chain_results"))
+        evidence.append(str(chain_results.get("qa_reason") or ""))
     elif not record.get("has_plan_doc") or record.get("wrong_product_suspect"):
-        category = "pm_contract"
-        reason = "missing_or_wrong_contract"
-    elif str(record.get("chain_state") or "") != "clean":
-        director = _nested_chain_results(record).get("director", {})
-        if isinstance(director, dict) and (
-            int(director.get("failures") or 0) > 0 or int(director.get("blocked") or 0) > 0
-        ):
-            category, reason = "director_tool_execution", "director_failures_or_blocked"
-        else:
-            category, reason = "runtime_environment", f"chain_state.{record.get('chain_state') or 'unknown'}"
+        category, reason = "pm_contract", "missing_or_wrong_contract"
     elif _check_failures(record):
         first_check = _check_failures(record)[0]
         reason = str(first_check.get("check") or "check_failed")
@@ -3457,6 +3897,54 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         failed_gates = _gate_failures(record)
         category = "unknown"
         reason = str(failed_gates[0].get("gate") if failed_gates else "unclassified_failure")
+    return category, reason, [item for item in evidence if item]
+
+
+def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
+    """Assign one stable root-cause category to a per-project bench record."""
+    if record.get("all_checks_passed"):
+        canonical = _mapping_copy(record.get("canonical_projection"))
+        execution = _mapping_copy(canonical.get("execution"))
+        authoritative_pass = (
+            canonical.get("source") == CANONICAL_BENCH_PROJECTION_SOURCE
+            and canonical.get("authoritative") is True
+            and execution.get("ok") is True
+        )
+        if authoritative_pass:
+            return {
+                "ok": True,
+                "source": CANONICAL_BENCH_PROJECTION_SOURCE,
+                "authoritative": True,
+                "degraded": False,
+                "category": "",
+                "root_cause_signature": "pass",
+                "reasons": [],
+                "evidence": [],
+            }
+
+    evidence: list[str] = []
+    reasons: list[str] = []
+    canonical = _mapping_copy(record.get("canonical_projection"))
+    has_canonical_input = canonical.get("source") == CANONICAL_BENCH_PROJECTION_SOURCE
+    if not has_canonical_input:
+        raw_ledger = _mapping_copy(record.get("run_ledger_projection"))
+        has_canonical_input = raw_ledger.get("source") == "run_ledger"
+        canonical = build_canonical_bench_projection(record)
+    execution = _mapping_copy(canonical.get("execution"))
+    independent = _independent_gate_attribution(record)
+    taxonomy_source = CANONICAL_BENCH_PROJECTION_SOURCE if has_canonical_input else LEGACY_BENCH_ARTIFACT_SOURCE
+    if not has_canonical_input:
+        category, reason, evidence = _legacy_display_attribution(record)
+    elif not bool(execution.get("ok")):
+        category, reason, detail = _canonical_failure_attribution(canonical)
+        if detail:
+            evidence.append(detail)
+    elif independent is not None:
+        category, reason, detail = independent
+        if detail:
+            evidence.append(detail)
+    else:
+        category, reason = "unknown", "unclassified_failure"
 
     for gate in _gate_failures(record):
         reasons.append(f"gate:{gate.get('gate')}={gate.get('detail')}")
@@ -3464,8 +3952,11 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         reasons.append(f"check:{check.get('check')}={check.get('detail')}")
     return {
         "ok": False,
+        "source": taxonomy_source,
+        "authoritative": has_canonical_input,
+        "degraded": not has_canonical_input,
         "category": category,
-        "root_cause_signature": _category_signature(category, reason),
+        "root_cause_signature": f"{category if category in _FAILURE_CATEGORIES else 'unknown'}:{_stable_reason(reason)}",
         "reasons": reasons,
         "evidence": [item for item in evidence if item],
     }
@@ -3473,6 +3964,9 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
 
 def apply_factory_bench_failure_taxonomy(record: dict[str, Any]) -> dict[str, Any]:
     """Classify a bench record and expose stable top-level attribution fields."""
+    raw_ledger = _mapping_copy(record.get("run_ledger_projection"))
+    if not isinstance(record.get("canonical_projection"), Mapping) and raw_ledger.get("source") == "run_ledger":
+        record["canonical_projection"] = build_canonical_bench_projection(record)
     taxonomy = classify_factory_bench_failure(record)
     record["failure_taxonomy"] = taxonomy
     record["failure_category"] = str(taxonomy.get("category") or "")

@@ -1,19 +1,29 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
+import queue
 import socket
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 from polaris.cells.instances.internal import service as instance_service
 from polaris.cells.instances.internal.service import (
     InstanceRecord,
     InstanceRegistry,
     InstanceSupervisor,
+    RegistryCorruptionError,
+    RegistryReadError,
     publish_instances_update,
 )
+
+_WAIT_FOR_BACKEND_IDENTITY = InstanceSupervisor._wait_for_backend_identity
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +37,52 @@ def _make_polaris_root(tmp_path: Path) -> Path:
     (root / "src" / "backend" / "polaris").mkdir(parents=True)
     (root / "package.json").write_text('{"scripts":{"dev:renderer":"vite"}}\n', encoding="utf-8")
     return root
+
+
+class _MultiprocessReservationSupervisor(InstanceSupervisor):
+    def _start_backend(self, record: InstanceRecord, log_path: Path) -> int:
+        del record, log_path
+        return os.getpid()
+
+    def _wait_for_backend_identity(self, record: InstanceRecord, *, timeout_seconds: float = 0.0) -> None:
+        del record, timeout_seconds
+
+    def _wait_for_frontend_identity(self, record: InstanceRecord, *, timeout_seconds: float = 0.0) -> None:
+        del record, timeout_seconds
+
+    def _with_health(self, record: InstanceRecord, *, probe_http: bool) -> InstanceRecord:
+        del probe_http
+        return record
+
+
+def _start_reservation_in_process(
+    instance_home: str,
+    polaris_root: str,
+    workspace: str,
+    instance_id: str,
+    start_event: Any,
+    result_queue: Any,
+) -> None:
+    start_event.wait(timeout=10)
+    try:
+        result = _MultiprocessReservationSupervisor(
+            InstanceRegistry(Path(instance_home), publish_events=False)
+        ).start_instance(
+            {
+                "instance_id": instance_id,
+                "kind": "bench_project",
+                "polaris_root": polaris_root,
+                "workspace": workspace,
+                "backend_port": None,
+                "frontend_port": None,
+                "start_frontend": False,
+                "require_fresh_instance": True,
+            }
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        result_queue.put(("error", instance_id, type(exc).__name__, str(exc)))
+        return
+    result_queue.put(("ok", instance_id, int(result["backend_port"])))
 
 
 def test_instance_registry_round_trip(tmp_path: Path) -> None:
@@ -57,6 +113,425 @@ def test_instance_registry_round_trip(tmp_path: Path) -> None:
     assert data["instances"][0]["instance_id"] == "project-a"
 
 
+@pytest.mark.parametrize(
+    ("registry_text", "reason"),
+    [
+        ("{broken", "invalid_json"),
+        ("[]", "root_not_object"),
+        ('{"schema_version": 99, "instances": []}', "unsupported_schema_version"),
+        ('{"schema_version": 1, "instances": {}}', "instances_not_array"),
+        ('{"schema_version": 1, "instances": [42]}', "record_not_object"),
+        ('{"schema_version": 1, "instances": [{"instance_id": "partial"}]}', "invalid_record_shape"),
+    ],
+)
+def test_registry_invalid_documents_raise_typed_corruption_without_changing_bytes(
+    tmp_path: Path,
+    registry_text: str,
+    reason: str,
+) -> None:
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.registry_path.write_text(registry_text, encoding="utf-8")
+    original_bytes = registry.registry_path.read_bytes()
+
+    with pytest.raises(RegistryCorruptionError) as raised:
+        registry.list_records()
+
+    assert raised.value.reason == reason
+    assert raised.value.registry_path == registry.registry_path
+    assert raised.value.to_dict()["degraded"] is True
+    assert registry.registry_path.read_bytes() == original_bytes
+
+
+def test_registry_read_error_is_typed_and_preserves_existing_bytes(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.registry_path.write_text('{"schema_version": 1, "instances": []}\n', encoding="utf-8")
+    original_bytes = registry.registry_path.read_bytes()
+    original_read_text = Path.read_text
+
+    def _deny_registry_read(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path == registry.registry_path:
+            raise PermissionError("registry read denied")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _deny_registry_read)
+
+    with pytest.raises(RegistryReadError) as raised:
+        registry.list_records()
+
+    assert raised.value.reason == "read_failed"
+    assert raised.value.to_dict()["code"] == "instance_registry_read_error"
+    assert registry.registry_path.read_bytes() == original_bytes
+
+
+def test_corrupt_registry_blocks_writes_allocation_spawn_and_process_stop(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    original_bytes = b'{"schema_version": 1, "instances": ['
+    registry.registry_path.write_bytes(original_bytes)
+    calls = {"allocate": 0, "spawn": 0, "terminate": 0}
+
+    def _unexpected_allocate(*_args: Any, **_kwargs: Any) -> int:
+        calls["allocate"] += 1
+        raise AssertionError("port allocation must not run for a corrupt registry")
+
+    def _unexpected_spawn(*_args: Any, **_kwargs: Any) -> int:
+        calls["spawn"] += 1
+        raise AssertionError("backend spawn must not run for a corrupt registry")
+
+    def _unexpected_terminate(_pid: int | None) -> None:
+        calls["terminate"] += 1
+        raise AssertionError("existing processes must not be stopped for a corrupt registry")
+
+    monkeypatch.setattr(instance_service, "allocate_port", _unexpected_allocate)
+    monkeypatch.setattr(InstanceSupervisor, "_start_backend", _unexpected_spawn)
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(_unexpected_terminate))
+    supervisor = InstanceSupervisor(registry)
+    workspace = tmp_path / "must-not-be-created"
+    record = InstanceRecord(
+        instance_id="replacement",
+        name="Replacement",
+        kind="bench_project",
+        polaris_root=str(root),
+        workspace=str(workspace),
+        runtime_root=str(workspace / "runtime"),
+        backend_port=60220,
+        frontend_port=60320,
+        backend_url="http://127.0.0.1:60220",
+        frontend_url="http://127.0.0.1:60320",
+        token="token",
+    )
+
+    blocked_operations = (
+        lambda: registry.save(record),
+        lambda: registry.replace_records([], action="blocked_replace"),
+        lambda: registry.delete("old-instance"),
+        lambda: supervisor.stop_instance("old-instance"),
+        lambda: supervisor.start_instance(
+            {
+                "instance_id": "fresh-run-instance",
+                "kind": "bench_project",
+                "polaris_root": str(root),
+                "workspace": str(workspace),
+                "backend_port": None,
+                "frontend_port": None,
+                "start_frontend": False,
+                "require_fresh_instance": True,
+            }
+        ),
+    )
+    for operation in blocked_operations:
+        with pytest.raises(RegistryCorruptionError, match="invalid_json"):
+            operation()
+
+    assert calls == {"allocate": 0, "spawn": 0, "terminate": 0}
+    assert not workspace.exists()
+    assert registry.registry_path.read_bytes() == original_bytes
+
+
+@pytest.mark.asyncio
+async def test_instances_http_list_reports_explicit_degraded_projection_on_registry_corruption(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    from polaris.delivery.http.dependencies import require_auth
+    from polaris.delivery.http.v2.instances import router as instances_router
+
+    instance_home = tmp_path / "instances"
+    instance_home.mkdir(parents=True)
+    (instance_home / "registry.json").write_text("{broken", encoding="utf-8")
+    monkeypatch.setenv(instance_service.INSTANCE_HOME_ENV, str(instance_home))
+    app = FastAPI()
+    app.include_router(instances_router)
+    app.dependency_overrides[require_auth] = lambda: None
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/instances")
+
+    assert response.status_code == 200
+    projection = response.json()["instances"]
+    assert projection["degraded"] is True
+    assert projection["items"] == []
+    assert projection["error"]["code"] == "instance_registry_corrupt"
+    assert projection["error"]["reason"] == "invalid_json"
+    assert projection["error"]["registry_path"] == str(instance_home / "registry.json")
+
+
+def test_fresh_instance_rejects_existing_record_without_stopping_it(tmp_path: Path, monkeypatch: Any) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    existing = registry.save(
+        InstanceRecord(
+            instance_id="bench-run-collision",
+            name="Previous Bench",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "previous").resolve()),
+            runtime_root=str((tmp_path / "previous" / "runtime").resolve()),
+            backend_port=60101,
+            frontend_port=60102,
+            backend_url="http://127.0.0.1:60101",
+            frontend_url="http://127.0.0.1:60102",
+            token="previous-token",
+            backend_pid=71111,
+            frontend_pid=71112,
+            status="running",
+        )
+    )
+    terminated: list[int] = []
+    monkeypatch.setattr(
+        InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: terminated.append(int(pid or 0)))
+    )
+
+    with pytest.raises(RuntimeError, match="fresh instance identity collision"):
+        InstanceSupervisor(registry).start_instance(
+            {
+                "instance_id": existing.instance_id,
+                "kind": "bench_project",
+                "polaris_root": str(root),
+                "workspace": str(tmp_path / "current"),
+                "require_fresh_instance": True,
+            }
+        )
+
+    preserved = registry.get(existing.instance_id)
+    assert preserved is not None
+    assert preserved.workspace == existing.workspace
+    assert preserved.backend_pid == 71111
+    assert terminated == []
+
+
+def test_concurrent_fresh_instances_reserve_distinct_ports(tmp_path: Path, monkeypatch: Any) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    barrier = threading.Barrier(2)
+    pid_lock = threading.Lock()
+    next_pid = 72000
+
+    def fake_allocate_port(start: int, *, excluded_ports: set[int] | None = None) -> int:
+        excluded = excluded_ports or set()
+        candidate = 60110 if start == instance_service.DEFAULT_BACKEND_PORT + 1 else 60120
+        while candidate in excluded:
+            candidate += 1
+        return candidate
+
+    def fake_start_backend(_self: InstanceSupervisor, _record: InstanceRecord, _log_path: Path) -> int:
+        nonlocal next_pid
+        barrier.wait(timeout=5)
+        with pid_lock:
+            next_pid += 1
+            return next_pid
+
+    def fake_start_frontend(_self: InstanceSupervisor, _record: InstanceRecord, _log_path: Path) -> int:
+        nonlocal next_pid
+        with pid_lock:
+            next_pid += 1
+            return next_pid
+
+    monkeypatch.setattr(instance_service, "allocate_port", fake_allocate_port)
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
+    monkeypatch.setattr(InstanceSupervisor, "_start_backend", fake_start_backend)
+    monkeypatch.setattr(InstanceSupervisor, "_start_frontend", fake_start_frontend)
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+
+    results: list[dict[str, Any]] = []
+    errors: list[BaseException] = []
+
+    def start(index: int) -> None:
+        try:
+            results.append(
+                InstanceSupervisor(registry).start_instance(
+                    {
+                        "instance_id": f"bench-concurrent-{index}",
+                        "kind": "bench_project",
+                        "polaris_root": str(root),
+                        "workspace": str(tmp_path / f"workspace-{index}"),
+                        "backend_port": None,
+                        "frontend_port": None,
+                        "require_fresh_instance": True,
+                    }
+                )
+            )
+        except (OSError, RuntimeError, ValueError) as exc:  # pragma: no cover - retained for assertion below.
+            errors.append(exc)
+
+    threads = [threading.Thread(target=start, args=(index,)) for index in (1, 2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not errors
+    assert len(results) == 2
+    assert len({result["instance_id"] for result in results}) == 2
+    assert len({result["backend_port"] for result in results}) == 2
+    assert len({result["frontend_port"] for result in results}) == 2
+
+
+def test_independent_processes_reserve_distinct_ports(tmp_path: Path) -> None:
+    root = _make_polaris_root(tmp_path)
+    instance_home = tmp_path / "instances"
+    context = multiprocessing.get_context("spawn")
+    start_event = context.Event()
+    result_queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_start_reservation_in_process,
+            args=(
+                str(instance_home),
+                str(root),
+                str(tmp_path / f"workspace-{index}"),
+                f"bench-process-{index}",
+                start_event,
+                result_queue,
+            ),
+        )
+        for index in (1, 2)
+    ]
+
+    for process in processes:
+        process.start()
+    start_event.set()
+    results: list[tuple[Any, ...]] = []
+    try:
+        for _ in processes:
+            results.append(result_queue.get(timeout=15))
+    except queue.Empty as exc:  # pragma: no cover - diagnostic guard for a wedged child.
+        raise AssertionError("reservation child process did not report a result") from exc
+    finally:
+        for process in processes:
+            process.join(timeout=15)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+
+    assert all(process.exitcode == 0 for process in processes)
+    assert {result[0] for result in results} == {"ok"}
+    assert len({int(result[2]) for result in results}) == 2
+    records = InstanceRegistry(instance_home, publish_events=False).list_records()
+    assert len(records) == 2
+    assert {record.status for record in records} == {"running"}
+    assert {str(instance_service._reservation_lease(record).get("state") or "") for record in records} == {"committed"}
+
+
+def test_start_failure_releases_reservation_but_retains_audit_record(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_start_backend",
+        lambda _self, _record, _log_path: (_ for _ in ()).throw(OSError("spawn denied")),
+    )
+
+    with pytest.raises(OSError, match="spawn denied"):
+        supervisor.start_instance(
+            {
+                "instance_id": "bench-failed-start",
+                "kind": "bench_project",
+                "polaris_root": str(root),
+                "workspace": str(tmp_path / "failed-workspace"),
+                "backend_port": None,
+                "frontend_port": None,
+                "start_frontend": False,
+                "require_fresh_instance": True,
+            }
+        )
+
+    failed = registry.get("bench-failed-start")
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.backend_pid is None
+    assert failed.frontend_pid is None
+    lease = failed.metadata[instance_service.RESERVATION_LEASE_METADATA_KEY]
+    assert lease["state"] == "released"
+    assert lease["release_reason"] == "start_failed"
+    assert failed.metadata["last_start_failure"]["error_type"] == "OSError"
+    assert failed.metadata["last_start_failure"]["error_detail"] == "spawn denied"
+    assert failed.backend_port not in supervisor._registered_ports("another-instance", port_kind="backend")
+    assert failed.frontend_port not in supervisor._registered_ports("another-instance", port_kind="frontend")
+
+
+def test_allocator_only_blocks_running_or_active_reservation_ports(tmp_path: Path) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    now = instance_service.time.time()
+
+    def _record(
+        instance_id: str,
+        *,
+        status: str,
+        backend_port: int,
+        lease_state: str = "",
+        expires_at_epoch: float = 0.0,
+    ) -> InstanceRecord:
+        metadata: dict[str, Any] = {}
+        if lease_state:
+            metadata[instance_service.RESERVATION_LEASE_METADATA_KEY] = {
+                "schema_version": "instance.reservation_lease.v1",
+                "lease_id": f"lease-{instance_id}",
+                "state": lease_state,
+                "expires_at_epoch": expires_at_epoch,
+            }
+        return InstanceRecord(
+            instance_id=instance_id,
+            name=instance_id,
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / instance_id).resolve()),
+            runtime_root=str((tmp_path / instance_id / "runtime").resolve()),
+            backend_port=backend_port,
+            frontend_port=backend_port + 100,
+            backend_url=f"http://127.0.0.1:{backend_port}",
+            frontend_url=f"http://127.0.0.1:{backend_port + 100}",
+            token="token",
+            start_frontend=False,
+            status=status,
+            metadata=metadata,
+        )
+
+    records = [
+        _record("running", status="running", backend_port=60201),
+        _record(
+            "active",
+            status="starting",
+            backend_port=60202,
+            lease_state="active",
+            expires_at_epoch=now + 60.0,
+        ),
+        _record(
+            "expired",
+            status="starting",
+            backend_port=60203,
+            lease_state="active",
+            expires_at_epoch=now - 1.0,
+        ),
+        _record(
+            "released",
+            status="failed",
+            backend_port=60204,
+            lease_state="released",
+            expires_at_epoch=now + 60.0,
+        ),
+    ]
+    registry.replace_records(records, action="test_setup")
+
+    supervisor = InstanceSupervisor(registry)
+    assert supervisor._registered_ports("new-instance", port_kind="backend") == {60201, 60202}
+    assert supervisor._registered_ports("new-instance", port_kind="frontend") == {60301, 60302}
+
+
 def test_is_port_free_detects_bound_non_listening_socket() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
         held.bind((instance_service.DEFAULT_HOST, 0))
@@ -65,93 +540,113 @@ def test_is_port_free_detects_bound_non_listening_socket() -> None:
         assert instance_service.is_port_free(port) is False
 
 
-def test_backend_workspace_identity_probe_uses_v2_settings(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    workspace = str((tmp_path / "workspace").resolve())
-    seen_urls: list[str] = []
-
-    class FakeResponse:
-        def __enter__(self) -> FakeResponse:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        @staticmethod
-        def read() -> bytes:
-            return json.dumps({"workspace": workspace}).encode("utf-8")
-
-    def fake_urlopen(request: Any, timeout: float) -> FakeResponse:
-        _ = timeout
-        seen_urls.append(str(request.full_url))
-        return FakeResponse()
-
-    monkeypatch.setattr(instance_service.urllib.request, "urlopen", fake_urlopen)
-    record = InstanceRecord(
+def _backend_identity_record(tmp_path: Path) -> InstanceRecord:
+    root = _make_polaris_root(tmp_path)
+    return InstanceRecord(
         instance_id="bench-l2-08",
         name="Bench L2-08",
         kind="bench_project",
-        polaris_root=str(tmp_path),
-        workspace=workspace,
+        polaris_root=str(root),
+        workspace=str((tmp_path / "workspace").resolve()),
         runtime_root=str((tmp_path / "runtime").resolve()),
         backend_port=50066,
         frontend_port=5414,
         backend_url="http://127.0.0.1:50066",
         frontend_url="http://127.0.0.1:5414",
-        token="token",
+        token="identity-probe-token",
+        backend_pid=73101,
     )
 
-    assert InstanceSupervisor._read_backend_workspace(record) == workspace
-    assert seen_urls == ["http://127.0.0.1:50066/v2/settings"]
+
+def _backend_identity_payload(record: InstanceRecord) -> dict[str, Any]:
+    return {
+        "pid": record.backend_pid,
+        "instance_id": record.instance_id,
+        "workspace": record.workspace,
+        "backend_root": str((Path(record.polaris_root) / "src" / "backend").resolve()),
+        "fingerprint": "startup-source-fingerprint",
+        "current_source_fingerprint": "startup-source-fingerprint",
+        "source": instance_service.BACKEND_PROCESS_IDENTITY_SOURCE,
+    }
 
 
-def test_backend_workspace_identity_probe_falls_back_to_legacy_settings(
+def _start_backend_identity_endpoint(
+    payload: dict[str, Any],
+) -> tuple[HTTPServer, threading.Thread, list[tuple[str, str]]]:
+    requests: list[tuple[str, str]] = []
+
+    class IdentityHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append((self.path, str(self.headers.get("Authorization") or "")))
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            del format, args
+
+    server = HTTPServer((instance_service.DEFAULT_HOST, 0), IdentityHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
+def test_backend_process_identity_probe_matches_and_persists_attestation(
     tmp_path: Path,
-    monkeypatch: Any,
 ) -> None:
-    workspace = str((tmp_path / "workspace").resolve())
-    seen_urls: list[str] = []
+    record = _backend_identity_record(tmp_path)
+    payload = _backend_identity_payload(record)
+    server, thread, requests = _start_backend_identity_endpoint(payload)
+    record.backend_port = int(server.server_port)
+    record.backend_url = f"http://{instance_service.DEFAULT_HOST}:{record.backend_port}"
+    try:
+        _WAIT_FOR_BACKEND_IDENTITY(InstanceSupervisor(), record, timeout_seconds=1.0)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
 
-    class FakeResponse:
-        def __enter__(self) -> FakeResponse:
-            return self
+    assert requests == [("/v2/runtime/fingerprint", "Bearer identity-probe-token")]
+    attestation = record.metadata[instance_service.BACKEND_PROCESS_IDENTITY_METADATA_KEY]
+    assert attestation["pid"] == record.backend_pid
+    assert attestation["instance_id"] == record.instance_id
+    assert attestation["workspace"] == record.workspace
+    assert attestation["backend_root"] == payload["backend_root"]
+    assert attestation["source"] == instance_service.BACKEND_PROCESS_IDENTITY_SOURCE
+    assert "token" not in attestation
 
-        def __exit__(self, *_args: object) -> None:
-            return None
 
-        @staticmethod
-        def read() -> bytes:
-            return json.dumps({"workspace": workspace}).encode("utf-8")
+@pytest.mark.parametrize("mismatched_field", ["pid", "instance_id", "workspace", "backend_root"])
+def test_backend_process_identity_probe_rejects_impersonating_endpoint(
+    tmp_path: Path,
+    mismatched_field: str,
+) -> None:
+    record = _backend_identity_record(tmp_path)
+    payload = _backend_identity_payload(record)
+    mismatches: dict[str, Any] = {
+        "pid": 99999,
+        "instance_id": "impostor-instance",
+        "workspace": str((tmp_path / "impostor-workspace").resolve()),
+        "backend_root": str((tmp_path / "impostor-backend").resolve()),
+    }
+    payload[mismatched_field] = mismatches[mismatched_field]
 
-    def fake_urlopen(request: Any, timeout: float) -> FakeResponse:
-        _ = timeout
-        seen_urls.append(str(request.full_url))
-        if str(request.full_url).endswith("/v2/settings"):
-            raise OSError("not found")
-        return FakeResponse()
+    server, thread, requests = _start_backend_identity_endpoint(payload)
+    record.backend_port = int(server.server_port)
+    record.backend_url = f"http://{instance_service.DEFAULT_HOST}:{record.backend_port}"
+    try:
+        with pytest.raises(RuntimeError, match=rf"backend identity mismatch: {mismatched_field}"):
+            _WAIT_FOR_BACKEND_IDENTITY(InstanceSupervisor(), record, timeout_seconds=1.0)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
 
-    monkeypatch.setattr(instance_service.urllib.request, "urlopen", fake_urlopen)
-    record = InstanceRecord(
-        instance_id="bench-l2-08",
-        name="Bench L2-08",
-        kind="bench_project",
-        polaris_root=str(tmp_path),
-        workspace=workspace,
-        runtime_root=str((tmp_path / "runtime").resolve()),
-        backend_port=50066,
-        frontend_port=5414,
-        backend_url="http://127.0.0.1:50066",
-        frontend_url="http://127.0.0.1:5414",
-        token="token",
-    )
-
-    assert InstanceSupervisor._read_backend_workspace(record) == workspace
-    assert seen_urls == [
-        "http://127.0.0.1:50066/v2/settings",
-        "http://127.0.0.1:50066/settings",
-    ]
+    assert requests == [("/v2/runtime/fingerprint", "Bearer identity-probe-token")]
+    assert instance_service.BACKEND_PROCESS_IDENTITY_METADATA_KEY not in record.metadata
 
 
 def test_current_backend_instance_cannot_stop_restart_or_delete_itself(
@@ -972,6 +1467,12 @@ def test_start_instance_retries_auto_backend_port_identity_mismatch(
     assert backend_ports == ["60021", "60023"]
     assert record["backend_port"] == 60023
     assert record["status"] == "running"
+    assert record["metadata"][instance_service.RESERVATION_LEASE_METADATA_KEY]["state"] == "committed"
+    failures = record["metadata"][instance_service.START_FAILURES_METADATA_KEY]
+    assert len(failures) == 1
+    assert failures[0]["attempt"] == 1
+    assert failures[0]["final"] is False
+    assert failures[0]["backend_port"] == 60021
 
 
 def test_start_instance_rejects_explicit_registered_backend_port(

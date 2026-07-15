@@ -17,7 +17,6 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     ParseTracebackFramesResultV1,
     QaAuditError,
     QaAuditResultV1,
-    QaFailureClassV1,
     QaVerdictEnvelopeV1,
     QaVerdictIssuedEventV1,
     RunQaAuditCommandV1,
@@ -26,6 +25,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     VisualAuditFindingV1,
     VisualQaAuditResultV1,
     build_qa_failure_classification_v1,
+    build_qa_pass_classification_v1,
     normalize_qa_failure_class,
     project_qa_failure_execution_state,
 )
@@ -99,13 +99,13 @@ class TestGetQaVerdictQueryV1:
 class TestQaFailureClassificationBuilder:
     """Shared QA failure classification builder."""
 
-    def test_public_failure_class_enum_values_are_canonical(self) -> None:
-        assert QaFailureClassV1.PASSED.value == "PASSED"
-        assert QaFailureClassV1.IMPLEMENTATION_DEFECT.value == "IMPLEMENTATION_DEFECT"
-        assert QaFailureClassV1.IMPLEMENTATION_DEFECT_BOUNCE_LIMIT.value == "IMPLEMENTATION_DEFECT_BOUNCE_LIMIT"
-        assert QaFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value == "DEFERRED_FOLLOWUP_REQUIRED"
-        assert QaFailureClassV1.BLUEPRINT_VERIFY_INVALID.value == "BLUEPRINT_VERIFY_INVALID"
-        assert QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value == "TEST_ENVIRONMENT_FAILURE"
+    def test_failure_class_values_are_owned_by_run_ledger(self) -> None:
+        assert FailureClassV1.IMPLEMENTATION_DEFECT.value == "IMPLEMENTATION_DEFECT"
+        assert FailureClassV1.IMPLEMENTATION_DEFECT_BOUNCE_LIMIT.value == "IMPLEMENTATION_DEFECT_BOUNCE_LIMIT"
+        assert FailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value == "DEFERRED_FOLLOWUP_REQUIRED"
+        assert FailureClassV1.BLUEPRINT_VERIFY_INVALID.value == "BLUEPRINT_VERIFY_INVALID"
+        assert FailureClassV1.TEST_ENVIRONMENT_FAILURE.value == "TEST_ENVIRONMENT_FAILURE"
+        assert "PASSED" not in FailureClassV1.__members__
 
     def test_builds_canonical_classification(self) -> None:
         classification = build_qa_failure_classification_v1(
@@ -133,6 +133,22 @@ class TestQaFailureClassificationBuilder:
 
         assert classification.failure_class == "TOOL_DISPATCH_DROPPED"
         assert classification.severity == "critical"
+
+    def test_pass_classification_has_no_failure_class(self) -> None:
+        classification = build_qa_pass_classification_v1(reason="QA evidence accepted")
+
+        assert classification.failure_class is None
+        assert classification.route == "resolved"
+        assert classification.to_dict()["failure_class"] is None
+
+    def test_failure_builder_rejects_passed_verdict_state(self) -> None:
+        with pytest.raises(ValueError, match="verdict state"):
+            build_qa_failure_classification_v1(
+                failure_class="PASSED",
+                route="resolved",
+                reason="QA evidence accepted",
+                repairable_by_director=False,
+            )
 
     def test_overlapping_platform_failures_use_run_ledger_normalization(self) -> None:
         assert normalize_qa_failure_class("tool dispatch dropped") == FailureClassV1.TOOL_DISPATCH_DROPPED.value
@@ -374,23 +390,33 @@ def test_run_qa_audit_public_service_executes_typed_command(tmp_path: Path) -> N
     )
 
     assert isinstance(result, QaAuditResultV1)
-    assert result.ok is True
+    assert result.ok is False
     assert result.task_id == "qa-task-1"
     assert result.workspace == str(workspace)
-    assert result.verdict == "PASS"
-    assert result.score == 1.0
+    assert result.verdict == "BLOCKED"
+    assert result.score == 0.0
     assert result.findings == ()
     envelope_payload = result.metadata["qa_verdict_envelope"]
     assert envelope_payload["schema_version"] == "qa.verdict_envelope.v1"
-    assert envelope_payload["classification"]["failure_class"] == "PASSED"
-    assert result.metadata["responsible_layer"] == "qa"
+    assert envelope_payload["next_stage"] == "pending_qa"
+    assert "task_boundary_missing" in envelope_payload["evidence"]["conflict_matrix"]["conflicts"]
+    assert envelope_payload["ledger"]["available"] is True
+    assert result.metadata["responsible_layer"] == "execution_control_plane"
+    assert result.metadata["audit_evidence"]["authoritative"] is False
+    assert result.metadata["qa_verdict_committed"] is True
+    final_receipt = result.metadata["qa_verdict_commit_receipt"]
+    assert final_receipt["verdict"] == "BLOCKED"
+    assert final_receipt["envelope_hash"] == envelope_payload["content_hash"]
+    assert final_receipt["append_id"]
+    assert final_receipt["event_hash"]
 
     envelope = get_qa_verdict_envelope(
         GetQaVerdictQueryV1(task_id="qa-task-1", workspace=str(workspace), run_id="run-1")
     )
     assert isinstance(envelope, QaVerdictEnvelopeV1)
     assert envelope.task_id == "qa-task-1"
-    assert envelope.classification.failure_class == "PASSED"
+    assert envelope.verdict == "BLOCKED"
+    assert envelope.next_stage == "pending_qa"
 
 
 def test_run_qa_audit_public_service_reports_missing_director_evidence(tmp_path: Path) -> None:
@@ -409,11 +435,13 @@ def test_run_qa_audit_public_service_reports_missing_director_evidence(tmp_path:
     )
 
     assert result.ok is False
-    assert result.verdict == "FAIL"
+    assert result.verdict == "BLOCKED"
     assert result.score == 0.0
     assert any("Director changed_files evidence is required" in finding for finding in result.findings)
-    assert result.metadata["failure_class"] == "IMPLEMENTATION_DEFECT"
-    assert result.metadata["responsible_layer"] == "director"
+    assert result.metadata["failure_class"] == "LEDGER_PROJECTION_INCOMPLETE"
+    assert result.metadata["responsible_layer"] == "execution_control_plane"
+    assert result.metadata["qa_verdict_committed"] is False
+    assert result.metadata["qa_verdict_commit_receipt"] == {}
 
 
 def test_run_visual_qa_audit_public_service_records_image_evidence_refs(tmp_path: Path) -> None:

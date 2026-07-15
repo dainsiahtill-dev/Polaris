@@ -1,0 +1,14 @@
+schema_version: polaris.migration.retirement_evidence.v1
+migration_id: mig-application-batch2a
+records:
+  - path: polaris/cells/director/planning/internal/director_logic.py
+    status: removed
+    removed_at: "2026-07-03"
+    removal_commit: bfb2f9fc
+    reason: >
+      The file was a compatibility alias module. Its owned implementations now
+      live at stable domain and KernelOne boundaries, so recreating the alias
+      would restore a retired shim.
+    replacement_paths:
+      - polaris/domain/services/director_logic_service.py
+      - polaris/kernelone/utils/json_utils.py

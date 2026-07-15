@@ -13,10 +13,16 @@ import contextlib
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import shutil
+import threading
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -27,41 +33,73 @@ if TYPE_CHECKING:
     from polaris.cells.orchestration.orchestration_engine.public.service import OrchestrationCommandService
 
 from polaris.cells.chief_engineer.blueprint.public import (
+    BuildChiefEngineerBlueprintPortfolioCommandV1,
+    ChiefEngineerBlueprintPortfolioV1,
+    ChiefEngineerPortfolioTaskV1,
     GenerateTaskBlueprintCommandV1,
+    build_chief_engineer_blueprint_portfolio,
     generate_task_blueprint,
+    project_chief_engineer_task_blueprint,
     validate_director_handoff_from_payload,
 )
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
-from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 from polaris.cells.roles.kernel.public.service import QualityChecker
-from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
+from polaris.cells.roles.runtime.public.contracts import (
+    ExecuteRoleTaskCommandV1,
+    RoleExecutionResultV1,
+)
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
+from polaris.cells.runtime.task_runtime.public import (
+    BindRuntimeTaskToFactoryRunCommandV1,
+    HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+)
+from polaris.cells.runtime.task_runtime.public.service import (
+    TaskRuntimeService,
+    bind_runtime_task_to_factory_run,
+    heartbeat_task_runtime_execution_attempt,
+)
+from polaris.kernelone.constants import (
+    DEFAULT_DIRECTOR_MAX_PARALLELISM,
+    MAX_LLM_PROVIDER_TIMEOUT_SECONDS,
+)
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.text_ops import write_json_atomic
-from polaris.kernelone.llm.budget_policy import FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
+from polaris.kernelone.llm.budget_policy import (
+    FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS,
+    chief_engineer_structured_output_tokens,
+)
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 from . import factory_stage_helpers as helpers
 from .factory_artifact_store import ArtifactStore
-from .factory_run_completion import RunCompletionWaiter
+from .factory_deadline_policy import (
+    FactoryDeadlineAdmissionV1,
+    FactoryDeadlineBudgetPolicyV1,
+    FactoryDeadlineDispositionV1,
+    TaskDependencyScheduleV1,
+    build_task_dependency_schedule,
+    resolve_chief_engineer_portfolio_admission,
+    resolve_director_dispatch_admission,
+)
+from .factory_run_completion import RunCompletionAuthority, RunCompletionWaiter
 from .factory_run_models import (
     _PM_ARCHITECT_DOC_MAX_CHARS,
     _PM_DIRECTIVE_MAX_CHARS,
     _PM_ORIGINAL_DIRECTIVE_MAX_CHARS,
-    _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING,
     _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS,
     _WORKSPACE_VALIDATION_TIMEOUT_SECONDS,
     FactoryRun,
     StageResult,
 )
 from .factory_workspace_quality import WorkspaceQualityRunner
+from .run_ledger import load_run_ledger_projection
 
 logger = logging.getLogger(__name__)
-
-_DIRECTOR_EXECUTION_BARRIER_MAX_PROGRESS_WINDOWS = 4
 
 # Language-to-extension mapping for PM plan language consistency validation.
 # Used to detect when the PM model plans files in the wrong language
@@ -81,66 +119,7 @@ _LANGUAGE_SOURCE_EXTENSIONS: dict[str, frozenset[str]] = {
     "scala": frozenset({".scala"}),
 }
 _WORKSPACE_QUALITY_MUTATION_TOKENS = WRITE_TOOLS | frozenset({"create_file", "text_replace"})
-_WORKSPACE_QUALITY_SOURCE_ROOTS: frozenset[str] = frozenset({"src", "test", "tests", "lib", "app", "apps", "packages"})
-_WORKSPACE_QUALITY_ROOT_SOURCE_FILES: frozenset[str] = frozenset(
-    {
-        "index.js",
-        "index.jsx",
-        "index.ts",
-        "index.tsx",
-        "main.js",
-        "main.jsx",
-        "main.ts",
-        "main.tsx",
-        "app.js",
-        "app.jsx",
-        "app.ts",
-        "app.tsx",
-        "main.py",
-        "app.py",
-        "main.go",
-        "main.rs",
-    }
-)
-_WORKSPACE_QUALITY_ENTRYPOINT_FILENAMES: frozenset[str] = frozenset(
-    {
-        "index.html",
-        "index.css",
-        "style.css",
-        "styles.css",
-    }
-)
-_WORKSPACE_QUALITY_SOURCE_SUFFIXES: frozenset[str] = frozenset(
-    {
-        ".js",
-        ".jsx",
-        ".mjs",
-        ".cjs",
-        ".ts",
-        ".tsx",
-        ".mts",
-        ".cts",
-        ".py",
-        ".go",
-        ".rs",
-        ".java",
-        ".cpp",
-        ".cc",
-        ".cxx",
-        ".c",
-        ".hpp",
-        ".hxx",
-        ".cs",
-        ".rb",
-        ".swift",
-        ".kt",
-        ".kts",
-        ".scala",
-    }
-)
-_WORKSPACE_QUALITY_IGNORED_SOURCE_PARTS: frozenset[str] = frozenset(
-    {"node_modules", "dist", "build", "coverage", "runtime", ".polaris", ".git", "__pycache__"}
-)
+_FACTORY_WORKSPACE_RUN_LEASE_METADATA_KEY = "factory_workspace_run_lease"
 
 
 def _call_accepts_keyword(callable_obj: Any, keyword: str) -> bool:
@@ -168,6 +147,25 @@ def _call_accepts_keyword(callable_obj: Any, keyword: str) -> bool:
         }:
             return True
     return False
+
+
+def _new_monotonic_deadline(timeout_seconds: float) -> float:
+    """Return one absolute deadline for a bounded Factory operation."""
+
+    return asyncio.get_running_loop().time() + max(0.0, float(timeout_seconds))
+
+
+def _remaining_monotonic_seconds(deadline: float) -> float:
+    """Return non-negative wall time left in an absolute operation lease."""
+
+    return max(0.0, float(deadline) - asyncio.get_running_loop().time())
+
+
+def _whole_wait_seconds(deadline: float) -> int:
+    """Return whole seconds safe to pass to an integer-timeout dependency."""
+
+    remaining_seconds = _remaining_monotonic_seconds(deadline)
+    return 0 if remaining_seconds <= 0 else math.ceil(remaining_seconds)
 
 
 # Extensions that are language-agnostic and should not trigger a mismatch.
@@ -259,11 +257,11 @@ _DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_T
 _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
 _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS = 60
 _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS = 5
+_DIRECTOR_SETTLEMENT_BARRIER_BUDGET_SECONDS = 5
 _DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_ENV = "KERNELONE_FACTORY_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS"
-_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS = 150.0
+_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS = 90.0
 _QUALITY_GATE_RESERVED_BUDGET_ENV = "KERNELONE_FACTORY_QUALITY_GATE_RESERVED_BUDGET_SECONDS"
 _QUALITY_GATE_RESERVED_BUDGET_SECONDS = 120.0
-_QUALITY_GATE_MIN_PASS_SCORE = 70
 _QUALITY_GATE_MIN_START_BUDGET_SECONDS = 15.0
 _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
 _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
@@ -285,6 +283,7 @@ _DIRECTOR_TIMEOUT_ENV_KEYS = (
     "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS",
 )
 _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS = 240
+_CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS = 30
 _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS = (
     "KERNELONE_FACTORY_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS",
     "KERNELONE_FACTORY_CE_LLM_TIMEOUT_SECONDS",
@@ -295,11 +294,342 @@ _CE_BLUEPRINT_OUTPUT_CONTRACT = """
 Chief Engineer output contract:
 - Return exactly one JSON object, with no Markdown fence and no surrounding prose.
 - Required top-level keys: construction_plan, scope_for_apply, risk_flags.
-- construction_plan must be an object that describes concrete implementation phases.
-- scope_for_apply must be an array of repository-relative paths or modules.
+- construction_plan must describe one coherent project architecture, not isolated task answers.
+- construction_plan.task_plans must be an object keyed by every PM task id. Each task plan must name
+  concrete files, public interfaces, dependencies, implementation phases, and verification evidence.
+- construction_plan.project_interface_contract must contain provider_declarations and
+  consumer_declarations arrays. Declarations must identify repository-relative owner/consumer files,
+  symbol names, symbol kinds, callable/type signatures where applicable, and semantic roles.
+- scope_for_apply must be an array of repository-relative paths or modules. It is advisory only and
+  cannot expand the PM-authoritative target_files/scope_paths.
 - risk_flags must be an array, even when empty.
 - Do not emit tool calls, code patches, <SESSION_PATCH>, or file edit instructions.
 """
+
+
+@dataclass(frozen=True, slots=True)
+class _ChiefEngineerExecutionAttemptLeaseBudget:
+    """One bounded lease policy derived from the admitted CE timeout."""
+
+    lease_ttl_seconds: int
+    heartbeat_interval_seconds: float
+
+    def __post_init__(self) -> None:
+        if self.lease_ttl_seconds <= 0:
+            raise ValueError("chief_engineer_execution_attempt_lease_ttl_must_be_positive")
+        if not 0 < self.heartbeat_interval_seconds < self.lease_ttl_seconds:
+            raise ValueError("chief_engineer_execution_attempt_heartbeat_interval_out_of_bounds")
+
+
+@dataclass(frozen=True, slots=True)
+class _ChiefEngineerExecutionAttemptHeartbeatFailure:
+    """One observable CE lease-keeper incident or unresolved failure."""
+
+    reason: str
+    error_type: str
+    error_message: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ChiefEngineerExecutionAttemptKeeperStopResult:
+    """Stop result that gates terminal settlement on confirmed thread exit."""
+
+    thread_exited: bool
+    failure: _ChiefEngineerExecutionAttemptHeartbeatFailure | None
+
+
+class _ChiefEngineerExecutionAttemptLeaseKeeper:
+    """Threaded TaskRuntime heartbeat covering async and synchronous CE work."""
+
+    def __init__(
+        self,
+        *,
+        workspace: str,
+        task_id: int,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        budget: _ChiefEngineerExecutionAttemptLeaseBudget,
+    ) -> None:
+        if (
+            execution_attempt.workspace != workspace
+            or execution_attempt.task_id != task_id
+            or not execution_attempt.session_id
+        ):
+            raise ValueError("chief_engineer_execution_attempt_lease_identity_mismatch")
+        self._workspace = workspace
+        self._task_id = task_id
+        self._execution_attempt = execution_attempt
+        self._budget = budget
+        self._stop_event = threading.Event()
+        self._state_lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._state = "new"
+        self._current_failure: _ChiefEngineerExecutionAttemptHeartbeatFailure | None = None
+        self._incidents: list[_ChiefEngineerExecutionAttemptHeartbeatFailure] = []
+        self._heartbeat_count = 0
+
+    @property
+    def failure(self) -> _ChiefEngineerExecutionAttemptHeartbeatFailure | None:
+        with self._state_lock:
+            return self._current_failure
+
+    @property
+    def incidents(self) -> tuple[_ChiefEngineerExecutionAttemptHeartbeatFailure, ...]:
+        """Return every keeper incident without retaining stale failure authority."""
+
+        with self._state_lock:
+            return tuple(self._incidents)
+
+    @property
+    def heartbeat_count(self) -> int:
+        with self._state_lock:
+            return self._heartbeat_count
+
+    @property
+    def task_id(self) -> int:
+        return self._task_id
+
+    @property
+    def execution_attempt(self) -> TaskRuntimeExecutionAttemptIdentityV1:
+        with self._state_lock:
+            return self._execution_attempt
+
+    @property
+    def is_alive(self) -> bool:
+        with self._state_lock:
+            thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    def start(self) -> None:
+        """Start exactly one bounded heartbeat thread for this claim."""
+
+        with self._state_lock:
+            if self._state == "running":
+                return
+            if self._state == "stopping":
+                raise RuntimeError("chief_engineer_execution_attempt_keeper_stopping")
+            if self._state == "stopped":
+                raise RuntimeError("chief_engineer_execution_attempt_keeper_cannot_restart")
+            self._stop_event.clear()
+            thread = threading.Thread(
+                target=self._thread_entry,
+                name=(f"polaris-ce-attempt-lease-{self._execution_attempt.task_id}-{self._execution_attempt.attempt}"),
+                daemon=True,
+            )
+            self._thread = thread
+            self._state = "running"
+        try:
+            thread.start()
+        except BaseException as exc:
+            self._record_failure(
+                reason="heartbeat_thread_start_failed",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            with self._state_lock:
+                self._state = "stopped"
+            raise
+
+    def stop(self) -> _ChiefEngineerExecutionAttemptKeeperStopResult:
+        """Request exit and return only after bounded confirmation or failure."""
+
+        with self._state_lock:
+            thread = self._thread
+            if self._state in {"new", "stopped"} or thread is None:
+                return _ChiefEngineerExecutionAttemptKeeperStopResult(
+                    thread_exited=True,
+                    failure=self._current_failure,
+                )
+            self._state = "stopping"
+            self._stop_event.set()
+        if thread is threading.current_thread():
+            self._record_failure(
+                reason="heartbeat_thread_stop_from_self",
+                error_type="RuntimeError",
+                error_message="lease keeper cannot join its own thread",
+            )
+            return _ChiefEngineerExecutionAttemptKeeperStopResult(
+                thread_exited=False,
+                failure=self.failure,
+            )
+        try:
+            thread.join(timeout=self._budget.heartbeat_interval_seconds)
+        except BaseException as exc:  # noqa: BLE001 - keeper shutdown containment boundary
+            self._record_failure(
+                reason="heartbeat_thread_stop_exception",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            return _ChiefEngineerExecutionAttemptKeeperStopResult(
+                thread_exited=False,
+                failure=self.failure,
+            )
+        if thread.is_alive():
+            self._record_failure(
+                reason="heartbeat_thread_stop_timeout",
+                error_type="TimeoutError",
+                error_message="lease keeper did not exit before bounded stop deadline",
+            )
+            return _ChiefEngineerExecutionAttemptKeeperStopResult(
+                thread_exited=False,
+                failure=self.failure,
+            )
+        with self._state_lock:
+            self._state = "stopped"
+            self._thread = None
+            failure = self._current_failure
+        return _ChiefEngineerExecutionAttemptKeeperStopResult(thread_exited=True, failure=failure)
+
+    def _thread_entry(self) -> None:
+        """Contain every thread-boundary failure as an auditable keeper incident."""
+
+        try:
+            self._run_loop()
+        except BaseException as exc:  # noqa: BLE001 - thread entry containment boundary
+            self._record_failure(
+                reason="heartbeat_thread_boundary_exception",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+        finally:
+            with self._state_lock:
+                self._state = "stopped"
+
+    def _run_loop(self) -> None:
+        while not self._stop_event.wait(self._budget.heartbeat_interval_seconds):
+            try:
+                result = heartbeat_task_runtime_execution_attempt(
+                    HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+                        workspace=self._workspace,
+                        identity=self.execution_attempt,
+                        lease_ttl_seconds=self._budget.lease_ttl_seconds,
+                        lock_timeout_seconds=self._budget.heartbeat_interval_seconds,
+                        context_summary="chief_engineer_portfolio_review_in_progress",
+                    )
+                )
+            except BaseException as exc:  # noqa: BLE001 - worker-call containment boundary
+                self._record_failure(
+                    reason="heartbeat_exception",
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                break
+            if not result.success:
+                self._record_failure(
+                    reason=result.reason,
+                    error_type="TaskRuntimeHeartbeatRejected",
+                    error_message=result.reason,
+                )
+                if result.reason in {
+                    "workspace_mismatch",
+                    "session_not_found",
+                    "session_task_mismatch",
+                    "session_mismatch",
+                    "attempt_mismatch",
+                    "role_mismatch",
+                    "worker_mismatch",
+                    "run_mismatch",
+                    "external_task_id_mismatch",
+                    "lease_version_mismatch",
+                    "session_not_active",
+                    "session_lease_expired",
+                    "session_terminal_preserved",
+                }:
+                    break
+                continue
+            renewed_identity = result.renewed_identity
+            if renewed_identity is None:
+                self._record_failure(
+                    reason="invalid_heartbeat_result",
+                    error_type="TaskRuntimeHeartbeatRejected",
+                    error_message="successful heartbeat omitted renewed_identity",
+                )
+                break
+            with self._state_lock:
+                self._heartbeat_count += 1
+                self._execution_attempt = renewed_identity
+                self._current_failure = None
+
+    def _record_failure(self, *, reason: str, error_type: str, error_message: str) -> None:
+        failure = _ChiefEngineerExecutionAttemptHeartbeatFailure(
+            reason=reason,
+            error_type=error_type,
+            error_message=error_message,
+        )
+        with self._state_lock:
+            self._incidents.append(failure)
+            self._current_failure = failure
+        logger.error(
+            "Chief Engineer execution attempt heartbeat failed: "
+            "code=chief_engineer.execution_attempt_heartbeat_failed "
+            "workspace=%s run_id=%s task_id=%s session_id=%s attempt=%s "
+            "reason=%s error_type=%s error=%s",
+            self._workspace,
+            self._execution_attempt.run_id,
+            self._task_id,
+            self._execution_attempt.session_id,
+            self._execution_attempt.attempt,
+            failure.reason,
+            failure.error_type,
+            failure.error_message,
+        )
+
+
+class _ChiefEngineerExecutionAttemptLeaseScope:
+    """Claim-bound keeper state enforcing stop-before-settle and settle-once."""
+
+    def __init__(self) -> None:
+        self._state_lock = threading.Lock()
+        self.task_id: int | None = None
+        self.execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
+        self.keeper: _ChiefEngineerExecutionAttemptLeaseKeeper | None = None
+        self.settlement_started = False
+
+    def bind_claim(
+        self,
+        *,
+        task_id: int,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+    ) -> None:
+        with self._state_lock:
+            if self.task_id is not None or self.execution_attempt is not None:
+                raise RuntimeError("chief_engineer_execution_attempt_claim_already_bound")
+            self.task_id = task_id
+            self.execution_attempt = execution_attempt
+
+    def start_keeper(self, keeper: _ChiefEngineerExecutionAttemptLeaseKeeper) -> None:
+        with self._state_lock:
+            if self.task_id is None or self.execution_attempt is None:
+                raise RuntimeError("chief_engineer_execution_attempt_claim_not_bound")
+            if self.keeper is not None:
+                raise RuntimeError("chief_engineer_execution_attempt_keeper_already_started")
+            self.keeper = keeper
+        keeper.start()
+
+    def stop_keeper(self) -> _ChiefEngineerExecutionAttemptKeeperStopResult:
+        with self._state_lock:
+            keeper = self.keeper
+        if keeper is None:
+            return _ChiefEngineerExecutionAttemptKeeperStopResult(thread_exited=True, failure=None)
+        return keeper.stop()
+
+    def begin_settlement(
+        self,
+    ) -> tuple[bool, _ChiefEngineerExecutionAttemptHeartbeatFailure | None]:
+        with self._state_lock:
+            if self.settlement_started:
+                failure = self.keeper.failure if self.keeper is not None else None
+                return False, failure
+            self.settlement_started = True
+        stop_result = self.stop_keeper()
+        if not stop_result.thread_exited:
+            return False, stop_result.failure
+        with self._state_lock:
+            if self.keeper is not None:
+                # Full settlement identity includes the lease version.  The
+                # keeper owns renewals, so settlement must consume its final
+                # persisted identity after the bounded stop barrier.
+                self.execution_attempt = self.keeper.execution_attempt
+        return True, stop_result.failure
 
 
 _TASKBOARD_STATS_BASELINE_KEYS: tuple[str, ...] = (
@@ -1339,6 +1669,7 @@ class OrchestrationStageExecutor:
         *,
         run_id: str,
         source_stage: str,
+        run_metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not tasks:
             return {"ensured_count": 0, "created_count": 0, "task_ids": []}
@@ -1346,6 +1677,8 @@ class OrchestrationStageExecutor:
         service = TaskRuntimeService(str(self.workspace))
         task_ids: list[str] = []
         created_count = 0
+        bound_count = 0
+        binding_failures: list[dict[str, str]] = []
         for index, task in enumerate(tasks, start=1):
             task_id = self._task_id(task, index)
             if not task_id:
@@ -1353,6 +1686,7 @@ class OrchestrationStageExecutor:
             existing = service.get_task(task_id)
             metadata_raw = task.get("metadata")
             metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+            metadata.pop(_FACTORY_WORKSPACE_RUN_LEASE_METADATA_KEY, None)
             metadata.update(
                 {
                     "external_task_id": task_id,
@@ -1365,6 +1699,8 @@ class OrchestrationStageExecutor:
                     "task_contract": dict(task),
                 }
             )
+            lease_task_metadata = self._factory_workspace_run_lease_task_metadata(run_metadata)
+            metadata.update(lease_task_metadata)
             for key in ("scope", "target_files", "acceptance", "acceptance_criteria", "steps", "depends_on"):
                 if key in task:
                     metadata.setdefault(key, task.get(key))
@@ -1374,13 +1710,49 @@ class OrchestrationStageExecutor:
                 "\n".join(self._task_string_list(task, "acceptance", "acceptance_criteria")),
             ]
             description = "\n\n".join(part for part in description_parts if part.strip())
-            service.ensure_task_row(
+            ensured_row = service.ensure_task_row(
                 external_task_id=task_id,
                 subject=self._task_objective(task),
                 description=description,
                 metadata=metadata,
                 priority=task.get("priority", index),
             )
+            binding_result = bind_runtime_task_to_factory_run(
+                BindRuntimeTaskToFactoryRunCommandV1(
+                    workspace=str(self.workspace),
+                    task_id=task_id,
+                    factory_run_id=str(run_id or "").strip(),
+                )
+            )
+            if binding_result.ok:
+                bound_count += 1
+                if existing is not None and lease_task_metadata:
+                    existing_metadata_raw = existing.get("metadata")
+                    existing_metadata = existing_metadata_raw if isinstance(existing_metadata_raw, Mapping) else {}
+                    projected_lease = lease_task_metadata[_FACTORY_WORKSPACE_RUN_LEASE_METADATA_KEY]
+                    if existing_metadata.get(_FACTORY_WORKSPACE_RUN_LEASE_METADATA_KEY) != projected_lease:
+                        refreshed_row = service.update_task_row(
+                            ensured_row.get("id"),
+                            metadata=lease_task_metadata,
+                        )
+                        if refreshed_row is None:
+                            binding_failures.append(
+                                {
+                                    "task_id": task_id,
+                                    "code": "factory_workspace_run_lease_projection_failed",
+                                    "reason": "TaskRuntime could not refresh Factory lease provenance",
+                                    "existing_factory_run_id": str(run_id or "").strip(),
+                                }
+                            )
+            else:
+                binding_failures.append(
+                    {
+                        "task_id": task_id,
+                        "code": binding_result.code,
+                        "reason": binding_result.reason,
+                        "existing_factory_run_id": binding_result.existing_factory_run_id,
+                    }
+                )
             if existing is None:
                 created_count += 1
             task_ids.append(task_id)
@@ -1388,8 +1760,36 @@ class OrchestrationStageExecutor:
         return {
             "ensured_count": len(task_ids),
             "created_count": created_count,
+            "bound_count": bound_count,
+            "binding_failures": binding_failures,
             "task_ids": task_ids,
         }
+
+    @staticmethod
+    def _factory_workspace_run_lease_task_metadata(
+        run_metadata: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Detach Factory-owned workspace authority for TaskRuntime facts.
+
+        The lease remains owned by the Factory run/admission ledger. Task
+        metadata carries an immutable-at-materialization projection so a later
+        TaskRuntime terminal fact can identify the fencing authority used by
+        its Factory run. PM task metadata with the same key is deliberately
+        discarded by the caller and can never mint this projection.
+
+        Complexity:
+            O(n) time and memory over the lease metadata payload.
+        """
+
+        if not isinstance(run_metadata, Mapping):
+            return {}
+        lease_raw = run_metadata.get(_FACTORY_WORKSPACE_RUN_LEASE_METADATA_KEY)
+        if not isinstance(lease_raw, Mapping):
+            return {}
+        lease_projection: dict[str, Any] = {str(key): deepcopy(value) for key, value in lease_raw.items()}
+        if not lease_projection:
+            return {}
+        return {_FACTORY_WORKSPACE_RUN_LEASE_METADATA_KEY: lease_projection}
 
     @staticmethod
     def _compact_text_for_prompt(text: str, *, max_chars: int) -> str:
@@ -1982,28 +2382,39 @@ class OrchestrationStageExecutor:
             stats[str(key)] = _safe_taskboard_stat(value)
         return stats
 
-    def _read_observable_task_rows(self) -> list[dict[str, Any]]:
-        """Return the task-runtime-owned read projection for factory decisions.
+    def _read_observable_task_rows(self, *, factory_run_id: str = "") -> list[dict[str, Any]]:
+        """Return only authoritative TaskRuntime fact-projected rows.
 
-        Factory may inspect task rows to decide whether to continue into quality
-        gates, but it must not glob ``runtime/tasks/task_*.json`` directly. The
-        TaskRuntimeService projection is the WS2 boundary: it overlays row files
-        with ``task_runtime.execution`` facts and keeps file layout knowledge
-        inside the task-runtime owner.
+        Degraded transitional rows remain available to UI/diagnostic consumers
+        through TaskRuntime, but Factory stage decisions fail closed instead of
+        allowing file fallback to authorize execution or verification.
         """
 
         try:
-            rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
+            projection = TaskRuntimeService(str(self.workspace)).query_observable_task_rows_projection()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             logger.debug("Failed to read observable task rows for factory taskboard projection", exc_info=True)
             return []
-        return [dict(row) for row in rows if isinstance(row, dict)]
+        if (
+            projection.authoritative is not True
+            or projection.degraded
+            or projection.source != "task_runtime.execution_fact"
+            or projection.readiness.get("ready") is not True
+        ):
+            logger.warning(
+                "Factory rejected degraded TaskRuntime projection: source=%s readiness=%s",
+                projection.source,
+                dict(projection.readiness),
+            )
+            return []
+        rows = projection.rows_for_factory_run(factory_run_id) if str(factory_run_id or "").strip() else projection.rows
+        return [dict(row) for row in rows if isinstance(row, Mapping)]
 
-    def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+    def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
         """Return TaskBoard PM/external ids that can be claimed in this round."""
         if limit <= 0:
             return []
-        rows = self._read_observable_task_rows()
+        rows = self._read_observable_task_rows(factory_run_id=factory_run_id)
 
         ids: list[str] = []
         seen: set[str] = set()
@@ -2014,16 +2425,7 @@ class OrchestrationStageExecutor:
             blocked_by = row.get("blocked_by") if isinstance(row.get("blocked_by"), list) else row.get("blockedBy")
             if blocked_by:
                 continue
-            metadata_raw = row.get("metadata")
-            metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-            task_id = str(
-                metadata.get("external_task_id")
-                or metadata.get("pm_task_id")
-                or metadata.get("source_task_id")
-                or metadata.get("task_id")
-                or row.get("id")
-                or ""
-            ).strip()
+            task_id = self._task_projection_external_id(row)
             if not task_id or task_id in seen:
                 continue
             seen.add(task_id)
@@ -2033,52 +2435,83 @@ class OrchestrationStageExecutor:
         return ids
 
     @staticmethod
+    def _task_projection_external_id(row: Mapping[str, Any]) -> str:
+        """Return the PM identity represented by one TaskRuntime projection.
+
+        TaskRuntime owns a numeric storage identity while PM dependency graphs
+        use stable external task ids.  Every Factory consumer must resolve the
+        same identity precedence or its projections can disagree about which
+        task is claimable, unresolved, or admitted by the deadline policy.
+        """
+
+        metadata_raw = row.get("metadata")
+        metadata: Mapping[str, Any] = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+        return str(
+            metadata.get("external_task_id")
+            or metadata.get("pm_task_id")
+            or metadata.get("source_task_id")
+            or metadata.get("task_id")
+            or row.get("task_id")
+            or row.get("id")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _director_dependency_settle_grace_seconds(
+        context: dict[str, Any],
+    ) -> float:
+        """Return the bounded grace for dependency-unblock fact propagation."""
+
+        raw_value = context.get("director_dependency_settle_grace_seconds")
+        try:
+            parsed = float(raw_value) if raw_value is not None else 2.0
+        except (TypeError, ValueError):
+            parsed = 2.0
+        return max(0.0, min(parsed, 10.0))
+
+    async def _wait_for_claimable_director_tasks(
+        self,
+        *,
+        limit: int,
+        grace_seconds: float,
+        factory_run_id: str = "",
+    ) -> tuple[list[str], dict[str, int]]:
+        """Wait briefly for completion-triggered dependency facts to settle.
+
+        The wait is read-only and bounded. A newly claimable task causes the
+        caller to start a fresh dispatch round so deadline admission is
+        recalculated. No task state is inferred or mutated here.
+
+        Complexity:
+            O(p * r) time and O(r) memory for ``p`` projection polls over ``r``
+            observable task rows.
+        """
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, grace_seconds)
+        latest_stats = self._read_taskboard_stats()
+        while True:
+            task_ids = self._read_claimable_director_task_ids(
+                limit=limit,
+                factory_run_id=factory_run_id,
+            )
+            latest_stats = self._read_taskboard_stats()
+            if task_ids or self._is_taskboard_converged(latest_stats):
+                return task_ids, latest_stats
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return [], latest_stats
+            await asyncio.sleep(min(0.1, remaining))
+
+    @staticmethod
     def _remaining_director_task_count(stats: dict[str, int], *, fallback: int) -> int:
         """Return unresolved PM task owners from the observable projection."""
 
         total = max(0, _safe_taskboard_stat(stats.get("total")))
-        terminal = sum(
-            _safe_taskboard_stat(stats.get(key))
-            for key in ("completed", "failed", "cancelled")
-        )
+        terminal = sum(_safe_taskboard_stat(stats.get(key)) for key in ("completed", "failed", "cancelled"))
         if total > 0:
             return max(1, total - terminal)
         return max(1, int(fallback))
-
-    @staticmethod
-    def _terminal_status_from_task_counts(counts: Any) -> str:
-        if not isinstance(counts, dict):
-            return ""
-
-        def _count(key: str) -> int:
-            try:
-                return int(counts.get(key) or 0)
-            except (TypeError, ValueError):
-                return 0
-
-        unresolved = _count("pending") + _count("ready")
-        running = (
-            _count("in_progress")
-            + _count("in_design")
-            + _count("in_execution")
-            + _count("in_qa")
-            + _count("running")
-            + _count("processing")
-            + _count("executing")
-            + _count("waiting_human")
-        )
-        if running > 0:
-            return ""
-        failed = _count("failed") + _count("blocked") + _count("cancelled") + _count("timeout")
-        if failed > 0:
-            return "failed"
-        if unresolved > 0:
-            return ""
-        completed = _count("completed") + _count("success")
-        total = _count("total") or sum(_count(key) for key in counts)
-        if total > 0 and completed >= total:
-            return "completed"
-        return ""
 
     @staticmethod
     def _is_taskboard_converged(stats: dict[str, int]) -> bool:
@@ -2087,25 +2520,6 @@ class OrchestrationStageExecutor:
     @staticmethod
     def _has_director_progress(before: dict[str, int], after: dict[str, int]) -> bool:
         return helpers.has_director_progress(before, after)
-
-    @staticmethod
-    def _has_director_execution_evidence(
-        *,
-        attempts: list[dict[str, Any]],
-        initial_stats: dict[str, int],
-        final_stats: dict[str, int],
-        converged: bool,
-    ) -> bool:
-        return helpers.has_director_execution_evidence(
-            attempts=attempts,
-            initial_stats=initial_stats,
-            final_stats=final_stats,
-            converged=converged,
-        )
-
-    @staticmethod
-    def _metadata_indicates_execution(metadata: dict[str, Any]) -> bool:
-        return helpers.metadata_indicates_execution(metadata)
 
     @staticmethod
     def _pm_deterministic_contract_metadata_for_context(
@@ -2212,68 +2626,72 @@ class OrchestrationStageExecutor:
         return resolved_timeout
 
     @staticmethod
+    def _factory_deadline_budget_policy(
+        context: dict[str, Any],
+    ) -> FactoryDeadlineBudgetPolicyV1:
+        """Resolve infrastructure configuration into the pure deadline policy."""
+
+        return FactoryDeadlineBudgetPolicyV1(
+            chief_engineer_min_start_seconds=math.ceil(_CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS),
+            director_first_task_min_seconds=math.ceil(
+                OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context),
+            ),
+            director_followup_task_min_seconds=math.ceil(FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS),
+            quality_gate_reserved_seconds=math.ceil(
+                OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context),
+            ),
+            safety_seconds=int(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS),
+            director_settlement_barrier_seconds=min(
+                _DIRECTOR_SETTLEMENT_BARRIER_BUDGET_SECONDS,
+                OrchestrationStageExecutor._director_dispatch_timeout_settle_grace_seconds(context),
+            ),
+        )
+
+    @staticmethod
+    def _unresolved_task_ids_from_rows(rows: list[dict[str, Any]]) -> tuple[str, ...]:
+        """Return non-terminal task identifiers from authoritative projections."""
+
+        terminal_statuses = {"completed", "completed_verified", "failed", "cancelled"}
+        unresolved: list[str] = []
+        for row in rows:
+            task_id = OrchestrationStageExecutor._task_projection_external_id(row)
+            status = str(row.get("status") or row.get("state") or "").strip().lower()
+            if task_id and status not in terminal_statuses and task_id not in unresolved:
+                unresolved.append(task_id)
+        return tuple(unresolved)
+
+    def _director_dependency_schedule(
+        self,
+        pm_tasks: list[dict[str, Any]],
+        *,
+        factory_run_id: str = "",
+    ) -> TaskDependencyScheduleV1:
+        """Project the remaining Director critical path from TaskRuntime facts."""
+
+        observable_rows = self._read_observable_task_rows(factory_run_id=factory_run_id)
+        active_task_ids = self._unresolved_task_ids_from_rows(observable_rows)
+        return build_task_dependency_schedule(
+            pm_tasks,
+            active_task_ids=active_task_ids if observable_rows else None,
+        )
+
+    @staticmethod
     def _director_dispatch_deadline_admission_decision(
         context: dict[str, Any],
         *,
         requested_timeout_seconds: int,
-        materialization_pending: bool,
         first_materialization_pending: bool,
-        remaining_task_count: int = 1,
-    ) -> dict[str, Any]:
-        """Return whether there is enough factory deadline to start a Director turn."""
+        dependency_schedule: TaskDependencyScheduleV1,
+    ) -> FactoryDeadlineAdmissionV1:
+        """Return the canonical typed admission for one Director dispatch."""
 
-        normalized_timeout = max(1, int(requested_timeout_seconds))
-        remaining_seconds = OrchestrationStageExecutor._factory_deadline_remaining_seconds(context)
-        if remaining_seconds is None:
-            return {
-                "allow_dispatch": True,
-                "reason": "",
-                "remaining_seconds": None,
-                "available_for_director_seconds": None,
-                "minimum_start_budget_seconds": None,
-                "llm_timeout_seconds": normalized_timeout,
-            }
-
-        normalized_remaining_task_count = max(1, int(remaining_task_count))
-        reserved_downstream_seconds = (
-            OrchestrationStageExecutor._director_downstream_reserved_budget_seconds(
-                context,
-                materialization_pending=materialization_pending,
-                remaining_task_count=normalized_remaining_task_count,
-            )
-            + _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
+        return resolve_director_dispatch_admission(
+            remaining_seconds=OrchestrationStageExecutor._factory_deadline_remaining_seconds(context),
+            requested_timeout_seconds=requested_timeout_seconds,
+            dependency_schedule=dependency_schedule,
+            first_materialization_pending=first_materialization_pending,
+            policy=OrchestrationStageExecutor._factory_deadline_budget_policy(context),
         )
-        available_for_director = remaining_seconds - reserved_downstream_seconds
-        minimum_start_budget = (
-            OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context)
-            if first_materialization_pending
-            else FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
-        )
-        if available_for_director < minimum_start_budget:
-            return {
-                "allow_dispatch": False,
-                "reason": "insufficient_factory_deadline_for_director_dispatch",
-                "remaining_seconds": remaining_seconds,
-                "reserved_downstream_seconds": reserved_downstream_seconds,
-                "available_for_director_seconds": available_for_director,
-                "minimum_start_budget_seconds": minimum_start_budget,
-                "llm_timeout_seconds": 0,
-                "materialization_pending": materialization_pending,
-                "first_materialization_pending": first_materialization_pending,
-                "remaining_task_count": normalized_remaining_task_count,
-            }
-        return {
-            "allow_dispatch": True,
-            "reason": "",
-            "remaining_seconds": remaining_seconds,
-            "reserved_downstream_seconds": reserved_downstream_seconds,
-            "available_for_director_seconds": available_for_director,
-            "minimum_start_budget_seconds": minimum_start_budget,
-            "llm_timeout_seconds": max(1, min(normalized_timeout, int(available_for_director))),
-            "materialization_pending": materialization_pending,
-            "first_materialization_pending": first_materialization_pending,
-            "remaining_task_count": normalized_remaining_task_count,
-        }
 
     @staticmethod
     def _director_first_materialization_min_budget_seconds(context: dict[str, Any]) -> float:
@@ -2348,12 +2766,15 @@ class OrchestrationStageExecutor:
             if raw is None:
                 return None
             try:
-                value = int(float(str(raw).strip()))
-            except (TypeError, ValueError):
+                parsed = Decimal(str(raw).strip())
+            except (InvalidOperation, TypeError, ValueError):
                 return None
-            if value <= 0:
+            if not parsed.is_finite() or parsed <= 0:
                 return None
-            return value
+            if parsed >= MAX_LLM_PROVIDER_TIMEOUT_SECONDS:
+                return MAX_LLM_PROVIDER_TIMEOUT_SECONDS
+            value = int(parsed)
+            return value if value > 0 else None
 
         for key in (
             "chief_engineer_llm_timeout_seconds",
@@ -2374,50 +2795,43 @@ class OrchestrationStageExecutor:
         return _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS
 
     @staticmethod
+    def _chief_engineer_execution_attempt_lease_budget(
+        execution_timeout_seconds: int,
+    ) -> _ChiefEngineerExecutionAttemptLeaseBudget:
+        """Derive one bounded TaskRuntime TTL and heartbeat cadence."""
+
+        if (
+            isinstance(execution_timeout_seconds, bool)
+            or not isinstance(execution_timeout_seconds, int)
+            or execution_timeout_seconds <= 0
+            or execution_timeout_seconds > MAX_LLM_PROVIDER_TIMEOUT_SECONDS
+        ):
+            raise ValueError("chief_engineer_execution_timeout_seconds_out_of_bounds")
+        lease_ttl_seconds = execution_timeout_seconds + _CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS
+        heartbeat_interval_seconds = min(
+            float(_CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS),
+            lease_ttl_seconds / 3.0,
+        )
+        return _ChiefEngineerExecutionAttemptLeaseBudget(
+            lease_ttl_seconds=lease_ttl_seconds,
+            heartbeat_interval_seconds=heartbeat_interval_seconds,
+        )
+
+    @staticmethod
     def _chief_engineer_deadline_projection_decision(
         context: dict[str, Any],
         *,
         requested_timeout_seconds: int,
-        remaining_task_count: int = 1,
-    ) -> dict[str, Any]:
-        remaining_tasks = max(1, int(remaining_task_count))
-        remaining_seconds = OrchestrationStageExecutor._factory_deadline_remaining_seconds(context)
-        if remaining_seconds is None:
-            return {
-                "use_deadline_projection": False,
-                "remaining_seconds": None,
-                "reserved_downstream_seconds": None,
-                "remaining_task_count": remaining_tasks,
-                "llm_timeout_seconds": max(1, int(requested_timeout_seconds)),
-            }
+        dependency_schedule: TaskDependencyScheduleV1,
+    ) -> FactoryDeadlineAdmissionV1:
+        """Return admission for one project-level Chief Engineer LLM call."""
 
-        reserved_downstream = (
-            OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context)
-            + OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context)
-            + _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
+        return resolve_chief_engineer_portfolio_admission(
+            remaining_seconds=OrchestrationStageExecutor._factory_deadline_remaining_seconds(context),
+            requested_timeout_seconds=requested_timeout_seconds,
+            dependency_schedule=dependency_schedule,
+            policy=OrchestrationStageExecutor._factory_deadline_budget_policy(context),
         )
-        available_for_ce = remaining_seconds - reserved_downstream
-        available_for_this_task = available_for_ce / float(remaining_tasks)
-        if available_for_this_task < _CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS:
-            return {
-                "use_deadline_projection": True,
-                "reason": "insufficient_factory_deadline_for_remaining_ce_tasks",
-                "remaining_seconds": remaining_seconds,
-                "reserved_downstream_seconds": reserved_downstream,
-                "available_for_ce_seconds": available_for_ce,
-                "available_for_this_task_seconds": available_for_this_task,
-                "remaining_task_count": remaining_tasks,
-                "llm_timeout_seconds": 0,
-            }
-        return {
-            "use_deadline_projection": False,
-            "remaining_seconds": remaining_seconds,
-            "reserved_downstream_seconds": reserved_downstream,
-            "available_for_ce_seconds": available_for_ce,
-            "available_for_this_task_seconds": available_for_this_task,
-            "remaining_task_count": remaining_tasks,
-            "llm_timeout_seconds": max(1, min(int(requested_timeout_seconds), int(available_for_this_task))),
-        }
 
     @staticmethod
     def _chief_engineer_projection_semantic_terms(task_context: dict[str, Any]) -> list[str]:
@@ -2672,11 +3086,14 @@ class OrchestrationStageExecutor:
         base_options: dict[str, Any],
         bindings: list[dict[str, str]],
         timeout_seconds: int = 600,
+        deadline_monotonic: float | None = None,
         cancel_event: asyncio.Event | None = None,
         abort_checker: Any = None,
         skipped_bindings: list[dict[str, Any]] | None = None,
     ) -> CommandResult:
-        terminal_statuses = {"completed", "success", "failed", "cancelled", "timeout", "partial"}
+        execution_deadline = (
+            float(deadline_monotonic) if deadline_monotonic is not None else _new_monotonic_deadline(timeout_seconds)
+        )
         submitted: list[tuple[dict[str, str], CommandResult]] = []
         readiness_skipped = [dict(item) for item in list(skipped_bindings or []) if isinstance(item, dict)]
         external_readiness_skipped_count = len(readiness_skipped)
@@ -2761,8 +3178,34 @@ class OrchestrationStageExecutor:
             }
             return await service.execute_director_run(workspace=workspace, tasks=binding_tasks, options=binding_opts)
 
-        gathered = await asyncio.gather(*[_run_binding(b) for b in active_bindings], return_exceptions=True)
-        for idx, item in enumerate(gathered):
+        submission_tasks = [asyncio.create_task(_run_binding(binding)) for binding in active_bindings]
+        done_submissions: set[asyncio.Task[CommandResult]] = set()
+        pending_submissions: set[asyncio.Task[CommandResult]] = set(submission_tasks)
+        if submission_tasks:
+            done_submissions, pending_submissions = await asyncio.wait(
+                submission_tasks,
+                timeout=_remaining_monotonic_seconds(execution_deadline),
+            )
+        for task in pending_submissions:
+            task.cancel()
+
+        for idx, task in enumerate(submission_tasks):
+            if task not in done_submissions:
+                item: CommandResult | BaseException = CommandResult(
+                    run_id="",
+                    status="timeout",
+                    message="Director binding submission exceeded the execution lease",
+                    reason_code="DIRECTOR_SUBMISSION_TIMEOUT",
+                    metadata={
+                        "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                        "responsible_layer": "execution_control_plane",
+                        "submission_outcome_unknown": True,
+                    },
+                )
+            elif task.cancelled():
+                item = RuntimeError("Director binding submission was cancelled")
+            else:
+                item = task.exception() or task.result()
             if isinstance(item, Exception):
                 logger.warning("Director binding fanout[%d] raised: %s", idx, item)
                 submitted.append(
@@ -2780,126 +3223,60 @@ class OrchestrationStageExecutor:
             binding: dict[str, str],
             sub_result: CommandResult,
         ) -> tuple[dict[str, str], CommandResult]:
-            if sub_result.status in terminal_statuses or not str(sub_result.run_id or "").strip():
+            normalized_status = str(sub_result.status or "").strip().lower()
+            if (
+                normalized_status in {"failed", "cancelled", "timeout", "blocked"}
+                or not str(sub_result.run_id or "").strip()
+            ):
                 return binding, sub_result
-            run_id = str(sub_result.run_id or "").strip()
-
-            def _workspace_taskboard_terminal_result(*, queried_status: str = "") -> CommandResult | None:
-                """Fail-closed when the shared taskboard is already terminal.
-
-                A slow Director binding can keep its own run row as ``running``
-                after another binding has already completed or failed the
-                claimed task set.  When the taskboard contains no active tasks
-                and at least one failure, continuing to wait only hides the
-                real failure behind a long fanout timeout.
-                """
-                with contextlib.suppress(RuntimeError, OSError, TypeError, ValueError):
-                    taskboard_stats = self._read_taskboard_stats()
-                    count_status = self._terminal_status_from_task_counts(taskboard_stats)
-                    if count_status and count_status != "completed":
-                        return CommandResult(
-                            run_id=run_id,
-                            status=count_status,
-                            message=(
-                                "Director binding stopped because workspace taskboard reached "
-                                f"terminal counts before binding run status converged: {taskboard_stats}"
-                            ),
-                            metadata={
-                                "terminal_source": "workspace_taskboard_counts",
-                                "queried_status": queried_status,
-                                "task_status_counts": dict(taskboard_stats),
-                            },
-                        )
-                return None
-
             wait_kwargs: dict[str, Any] = {
-                "timeout_seconds": timeout_seconds,
+                "timeout_seconds": _whole_wait_seconds(execution_deadline),
                 "cancel_event": cancel_event,
                 "abort_checker": abort_checker,
             }
+            remaining_seconds = _remaining_monotonic_seconds(execution_deadline)
+            if wait_kwargs["timeout_seconds"] <= 0 or remaining_seconds <= 0:
+                return binding, CommandResult(
+                    run_id=sub_result.run_id,
+                    status="timeout",
+                    message="Director binding execution lease expired before completion wait",
+                    reason_code="DIRECTOR_EXECUTION_LEASE_EXHAUSTED",
+                    metadata={
+                        "cancel_signal_sent": False,
+                        "inflight_run_continues": True,
+                        "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                        "responsible_layer": "execution_control_plane",
+                    },
+                )
             if _call_accepts_keyword(self._wait_run_completion, "cancel_on_timeout"):
                 wait_kwargs["cancel_on_timeout"] = False
-            wait_task = asyncio.create_task(self._wait_run_completion(service, sub_result, **wait_kwargs))
+            if _call_accepts_keyword(self._wait_run_completion, "authority"):
+                wait_kwargs["authority"] = RunCompletionAuthority.TASK_RUNTIME_EXECUTION_FACT
             try:
-                while True:
-                    probe_seconds = max(0.01, float(getattr(self, "_binding_status_probe_seconds", 2.0)))
-                    done, _ = await asyncio.wait(
-                        {wait_task},
-                        timeout=probe_seconds,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if wait_task in done:
-                        return binding, wait_task.result()
-
-                    if cancel_event is not None and cancel_event.is_set():
-                        status_probe: CommandResult | None = None
-                        with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                            status_probe = await service.query_run_status(run_id)
-                        if status_probe is not None:
-                            probed_status = str(status_probe.status or "").strip().lower()
-                            if probed_status in terminal_statuses:
-                                wait_task.cancel()
-                                return binding, status_probe
-                        barrier_result = self._active_director_task_barrier_result(
-                            run_id=run_id,
-                            reason="factory_cancelled",
-                            grace_seconds=0,
-                        )
-                        if barrier_result is not None:
-                            wait_task.cancel()
-                            return binding, barrier_result
-                        wait_task.cancel()
-                        return binding, CommandResult(
-                            run_id=run_id,
-                            status="cancelled",
-                            message="Run cancelled: factory_cancelled",
-                        )
-
-                    loop_status_probe: CommandResult | None = None
-                    with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                        loop_status_probe = await service.query_run_status(run_id)
-                    if loop_status_probe is None:
-                        taskboard_terminal = _workspace_taskboard_terminal_result(queried_status="unavailable")
-                        if taskboard_terminal is not None:
-                            wait_task.cancel()
-                            return binding, taskboard_terminal
-                        continue
-
-                    probed_status = str(loop_status_probe.status or "").strip().lower()
-                    if probed_status in terminal_statuses:
-                        wait_task.cancel()
-                        return binding, loop_status_probe
-
-                    metadata = loop_status_probe.metadata if isinstance(loop_status_probe.metadata, dict) else {}
-                    count_status = self._terminal_status_from_task_counts(metadata.get("task_status_counts"))
-                    if count_status:
-                        wait_task.cancel()
-                        return binding, CommandResult(
-                            run_id=run_id,
-                            status=count_status,
-                            message=(
-                                "Director binding reached terminal task counts "
-                                f"before run status converged: {metadata.get('task_status_counts')}"
-                            ),
-                            metadata={
-                                **metadata,
-                                "terminal_source": "task_status_counts",
-                                "queried_status": probed_status,
-                            },
-                        )
-
-                    taskboard_terminal = _workspace_taskboard_terminal_result(queried_status=probed_status)
-                    if taskboard_terminal is not None:
-                        wait_task.cancel()
-                        return binding, taskboard_terminal
+                return binding, await asyncio.wait_for(
+                    self._wait_run_completion(
+                        service,
+                        sub_result,
+                        **wait_kwargs,
+                    ),
+                    timeout=remaining_seconds,
+                )
+            except TimeoutError:
+                return binding, CommandResult(
+                    run_id=sub_result.run_id,
+                    status="timeout",
+                    message="Director binding completion wait exceeded the execution lease",
+                    reason_code="DIRECTOR_EXECUTION_LEASE_EXHAUSTED",
+                    metadata={
+                        "cancel_signal_sent": False,
+                        "inflight_run_continues": True,
+                        "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                        "responsible_layer": "execution_control_plane",
+                    },
+                )
             except (RuntimeError, OSError, ValueError, TypeError) as exc:
                 logger.warning("Director binding fanout wait failed for run %s: %s", sub_result.run_id, exc)
                 return binding, CommandResult(run_id=sub_result.run_id, status="failed", message=f"Wait failed: {exc}")
-            finally:
-                if not wait_task.done():
-                    wait_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await wait_task
 
         final_results: list[tuple[dict[str, str], CommandResult]] = list(
             await asyncio.gather(*[_wait_submitted_binding(binding, sub_result) for binding, sub_result in submitted])
@@ -2964,7 +3341,6 @@ class OrchestrationStageExecutor:
                 "terminal_source",
                 "queried_status",
                 "timeout_settle_grace_seconds",
-                "task_status_counts",
                 "active_task_count",
                 "active_task_ids",
             ):
@@ -3351,7 +3727,7 @@ class OrchestrationStageExecutor:
                     "model": model,
                     "source_path": source_path,
                     "error_excerpt": error_text[:600],
-                    "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                    "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
                     "responsible_layer": "model_provider",
                     "repairable_by_director": False,
                     "requires_ce_replan": False,
@@ -3366,7 +3742,7 @@ class OrchestrationStageExecutor:
                     "model": model,
                     "source_path": source_path,
                     "error_excerpt": error_text[:600],
-                    "failure_class": QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
+                    "failure_class": FailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
                     "responsible_layer": "model_provider",
                     "repairable_by_director": False,
                     "requires_ce_replan": False,
@@ -3482,7 +3858,21 @@ class OrchestrationStageExecutor:
         planning_directive = self._build_pm_planning_directive(
             context.get("directive", "Plan implementation tasks"),
         )
-        reset_summary = TaskRuntimeService(str(self.workspace)).reset_records(keep_plan=True)
+        reset_summary = TaskRuntimeService(str(self.workspace)).reset_records(
+            keep_plan=True,
+            factory_run_id=run.id,
+        )
+        if reset_summary.get("ok") is not True:
+            return StageResult(
+                stage="pm_planning",
+                status="failed",
+                output=(
+                    "PM planning blocked by TaskRuntime reset authority: "
+                    f"code={reset_summary.get('code') or 'task_runtime_reset_failed'}; "
+                    f"conflicts={reset_summary.get('conflict_count') or 0}"
+                ),
+                artifacts=[],
+            )
 
         service = self._build_orchestration_service(context)
         pm_run_metadata = self._pm_deterministic_contract_metadata_for_context(run, context)
@@ -3610,12 +4000,24 @@ class OrchestrationStageExecutor:
                 pm_tasks,
                 run_id=run.id,
                 source_stage="pm_planning",
+                run_metadata=run.metadata,
             )
+            binding_failures = list(materialize_summary.get("binding_failures") or [])
+            if binding_failures:
+                contract_issue = "TaskRuntime rejected one or more Factory run bindings"
             stage_signals.append(
                 {
-                    "code": "pm.taskboard_materialized_from_plan",
-                    "severity": "info",
-                    "detail": "Materialized PM plan tasks into canonical TaskBoard for Director claim enforcement.",
+                    "code": (
+                        "pm.task_runtime_factory_binding_failed"
+                        if binding_failures
+                        else "pm.taskboard_materialized_from_plan"
+                    ),
+                    "severity": "error" if binding_failures else "info",
+                    "detail": (
+                        contract_issue
+                        if binding_failures
+                        else "Materialized PM plan tasks into canonical TaskBoard for Director claim enforcement."
+                    ),
                     **materialize_summary,
                 }
             )
@@ -3841,6 +4243,8 @@ class OrchestrationStageExecutor:
             "context_os_audit",
             "context_snapshot_ref",
             "kernel_repair_reasons",
+            "provider_model_unknown",
+            "provider_model_unknown_reason",
         ):
             if key in evidence:
                 signal[key] = evidence[key]
@@ -3925,13 +4329,374 @@ class OrchestrationStageExecutor:
         self._write_json_artifact(blueprint_path, payload)
         return True
 
-    async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
-        logger.info("Executing Chief Engineer review for run %s", run.id)
+    def _chief_engineer_portfolio_tasks(
+        self,
+        pm_tasks: list[dict[str, Any]],
+    ) -> tuple[ChiefEngineerPortfolioTaskV1, ...]:
+        """Project validated PM facts into the CE portfolio contract."""
 
+        portfolio_tasks: list[ChiefEngineerPortfolioTaskV1] = []
+        for index, task in enumerate(pm_tasks, start=1):
+            target_files = tuple(self._task_string_list(task, "target_files"))
+            scope_paths = tuple(self._task_string_list(task, "scope_paths")) or target_files
+            portfolio_tasks.append(
+                ChiefEngineerPortfolioTaskV1(
+                    task_id=self._task_id(task, index),
+                    objective=self._task_objective(task),
+                    target_files=target_files,
+                    scope_paths=scope_paths,
+                    dependencies=tuple(self._task_string_list(task, "depends_on", "dependencies")),
+                )
+            )
+        return tuple(portfolio_tasks)
+
+    def _chief_engineer_portfolio_context(
+        self,
+        pm_tasks: list[dict[str, Any]],
+        *,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Build one structured final-request evidence payload for all PM tasks.
+
+        The PM contracts remain authoritative.  This projection only gives one
+        CE call enough product intent, task topology, and file ownership context
+        to design interfaces consistently across task boundaries.
+
+        Complexity:
+            O(T + F) time and space for ``T`` tasks and ``F`` declared paths.
+        """
+
+        task_rows: list[dict[str, Any]] = []
+        target_files: list[str] = []
+        scope_paths: list[str] = []
+        seen_targets: set[str] = set()
+        seen_scope: set[str] = set()
+        for index, task in enumerate(pm_tasks, start=1):
+            task_context = self._task_blueprint_context(task, run_id=run_id, index=index)
+            task_targets = self._task_string_list(task, "target_files")
+            task_scope = self._task_string_list(task, "scope_paths") or task_targets
+            for path in task_targets:
+                if path not in seen_targets:
+                    seen_targets.add(path)
+                    target_files.append(path)
+            for path in task_scope:
+                if path not in seen_scope:
+                    seen_scope.add(path)
+                    scope_paths.append(path)
+            task_rows.append(
+                {
+                    "task_id": self._task_id(task, index),
+                    "title": self._task_string(task, "title", "subject", "goal"),
+                    "objective": self._task_objective(task),
+                    "target_files": task_targets,
+                    "scope_paths": task_scope,
+                    "depends_on": self._task_string_list(task, "depends_on", "dependencies"),
+                    "acceptance_criteria": self._task_string_list(
+                        task,
+                        "acceptance",
+                        "acceptance_criteria",
+                    ),
+                    "execution_checklist": self._task_string_list(task, "steps", "execution_checklist"),
+                    "delivery_plan_document": task_context.get("delivery_plan_document", {}),
+                    "delivery_depth_contract": task_context.get("delivery_depth_contract", {}),
+                    "behavior_contract": task_context.get("behavior_contract", {}),
+                    "existing_target_files": task_context.get("existing_target_files", []),
+                }
+            )
+
+        pm_contract_set = {
+            "schema_version": "polaris.validated_pm_contract_set.v1",
+            "source_artifact": "tasks/plan.json",
+            "tasks": [dict(task) for task in pm_tasks],
+        }
+        return {
+            "factory_run_id": run_id,
+            "source_artifact": "tasks/plan.json",
+            "pm_task_contract": pm_contract_set,
+            "pm_task_contracts": [dict(task) for task in pm_tasks],
+            "portfolio_tasks": task_rows,
+            "project_task_graph": [
+                {
+                    "task_id": row["task_id"],
+                    "depends_on": list(row["depends_on"]),
+                    "target_files": list(row["target_files"]),
+                }
+                for row in task_rows
+            ],
+            "target_files": target_files,
+            "scope_paths": scope_paths,
+            "task_count": len(task_rows),
+        }
+
+    def _chief_engineer_portfolio_objective(self, pm_tasks: list[dict[str, Any]]) -> str:
+        """Return a natural-language project design objective for one CE call."""
+
+        task_lines = [
+            f"- {self._task_id(task, index)}: {self._task_objective(task)}"
+            for index, task in enumerate(pm_tasks, start=1)
+        ]
+        return (
+            "Produce one coherent Chief Engineer project blueprint portfolio for the validated PM task graph. "
+            "Define shared module boundaries and cross-file interfaces before projecting concrete plans for every "
+            "task. Preserve PM target/scope authority and make each task independently executable by Director.\n\n"
+            "Validated PM tasks:\n" + "\n".join(task_lines) + _CE_BLUEPRINT_OUTPUT_CONTRACT
+        )
+
+    def _claim_chief_engineer_execution_attempt(
+        self,
+        *,
+        run_id: str,
+        portfolio_task_id: str,
+        objective: str,
+        lease_budget: _ChiefEngineerExecutionAttemptLeaseBudget,
+    ) -> tuple[int, TaskRuntimeExecutionAttemptIdentityV1]:
+        """Claim TaskRuntime's durable owner for one CE portfolio execution.
+
+        TaskRuntime is the sole source of execution-attempt identity. Replaying
+        an active claim renews its persisted session, while a requeued claim
+        receives a new session from TaskRuntime. Factory neither derives an
+        identity from run/task identifiers nor generates UUIDs. The lease is
+        derived only from the already-admitted CE execution timeout.
+        """
+
+        task_runtime = TaskRuntimeService(str(self.workspace))
+        row = task_runtime.ensure_task_row(
+            external_task_id=portfolio_task_id,
+            subject="Chief Engineer portfolio review",
+            description=objective,
+            metadata={
+                "factory_run_id": run_id,
+                "factory_stage": "chief_engineer_review",
+                "role": "chief_engineer",
+                "execution_identity_required": True,
+            },
+        )
+        task_row_id = task_runtime.normalize_task_id(row.get("id"))
+        if task_row_id is None:
+            raise RuntimeError("chief_engineer_execution_attempt_task_id_invalid")
+
+        binding = bind_runtime_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(
+                workspace=str(self.workspace),
+                task_id=portfolio_task_id,
+                factory_run_id=run_id,
+            )
+        )
+        if not binding.ok:
+            raise RuntimeError(f"chief_engineer_execution_attempt_binding_failed:{binding.code}")
+
+        claim = task_runtime.claim_execution(
+            task_row_id,
+            worker_id="chief_engineer",
+            role_id="chief_engineer",
+            run_id=run_id,
+            lease_ttl_seconds=lease_budget.lease_ttl_seconds,
+            selection_source="factory_stage_executor.chief_engineer_portfolio_review",
+            external_task_id=portfolio_task_id,
+            context_summary=objective,
+            metadata={
+                "factory_run_id": run_id,
+                "factory_stage": "chief_engineer_review",
+                "execution_identity_required": True,
+            },
+        )
+        session = claim.get("session") if isinstance(claim, dict) else None
+        attempt_record = claim.get("execution_attempt") if isinstance(claim, dict) else None
+        if (
+            not isinstance(session, Mapping)
+            or not isinstance(attempt_record, Mapping)
+            or not bool(claim.get("success"))
+        ):
+            reason = str(claim.get("reason") or "unknown") if isinstance(claim, dict) else "invalid_claim_result"
+            raise RuntimeError(f"chief_engineer_execution_attempt_claim_failed:{reason}")
+        try:
+            execution_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"chief_engineer_execution_attempt_record_invalid:{type(exc).__name__}:{exc}") from exc
+        if (
+            execution_attempt.workspace != str(self.workspace)
+            or execution_attempt.task_id != task_row_id
+            or execution_attempt.external_task_id != portfolio_task_id
+            or execution_attempt.role_id != "chief_engineer"
+            or execution_attempt.run_id != run_id
+            or execution_attempt.session_id != str(session.get("session_id") or "").strip()
+            or execution_attempt.attempt != session.get("attempt")
+        ):
+            raise RuntimeError("chief_engineer_execution_attempt_session_mismatch")
+        return task_row_id, execution_attempt
+
+    def _settle_chief_engineer_execution_attempt(
+        self,
+        *,
+        task_id: int,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        stage_status: str,
+        summary: str,
+    ) -> None:
+        """Complete successful CE work or suspend it for a new TaskRuntime claim."""
+
+        task_runtime = TaskRuntimeService(str(self.workspace))
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1 = (
+            "completed" if stage_status == "success" else "suspended"
+        )
+        if task_id != execution_attempt.task_id:
+            raise RuntimeError("chief_engineer_execution_attempt_task_id_mismatch")
+        result = task_runtime.settle_execution_attempt(
+            SettleTaskRuntimeExecutionAttemptCommandV1(
+                workspace=execution_attempt.workspace,
+                identity=execution_attempt,
+                outcome=outcome,
+                summary=summary,
+                lock_timeout_seconds=5.0,
+                metadata={"factory_stage": "chief_engineer_review"},
+            )
+        )
+        if not bool(result.get("success")):
+            reason = str(result.get("reason") or "unknown")
+            raise RuntimeError(f"chief_engineer_execution_attempt_settlement_failed:{reason}")
+
+    @staticmethod
+    def _chief_engineer_portfolio_output_errors(
+        payload: Mapping[str, Any],
+        *,
+        task_ids: tuple[str, ...],
+    ) -> list[str]:
+        """Validate the nested project-level CE output contract."""
+
+        errors: list[str] = []
+        required_keys = {"construction_plan", "scope_for_apply", "risk_flags"}
+        missing_keys = sorted(required_keys - set(payload))
+        if missing_keys:
+            errors.append("missing top-level keys: " + ", ".join(missing_keys))
+        construction_plan = payload.get("construction_plan")
+        if not isinstance(construction_plan, Mapping):
+            errors.append("construction_plan must be an object")
+            return errors
+        task_plans = construction_plan.get("task_plans")
+        if not isinstance(task_plans, Mapping):
+            errors.append("construction_plan.task_plans must be an object")
+        else:
+            declared_task_ids = {str(task_id).strip() for task_id in task_plans}
+            missing_task_ids = sorted(set(task_ids) - declared_task_ids)
+            unknown_task_ids = sorted(declared_task_ids - set(task_ids))
+            if missing_task_ids:
+                errors.append("task_plans missing PM task ids: " + ", ".join(missing_task_ids))
+            if unknown_task_ids:
+                errors.append("task_plans contains unknown task ids: " + ", ".join(unknown_task_ids))
+        interface_contract = construction_plan.get("project_interface_contract")
+        if not isinstance(interface_contract, Mapping):
+            errors.append("construction_plan.project_interface_contract must be an object")
+        else:
+            providers = interface_contract.get(
+                "provider_declarations",
+                interface_contract.get("providers"),
+            )
+            consumers = interface_contract.get(
+                "consumer_declarations",
+                interface_contract.get("consumers"),
+            )
+            if not isinstance(providers, list):
+                errors.append("project_interface_contract.provider_declarations must be an array")
+            if not isinstance(consumers, list):
+                errors.append("project_interface_contract.consumer_declarations must be an array")
+        if not isinstance(payload.get("scope_for_apply"), list):
+            errors.append("scope_for_apply must be an array")
+        if not isinstance(payload.get("risk_flags"), list):
+            errors.append("risk_flags must be an array")
+        return errors
+
+    def _settle_chief_engineer_execution_attempt_after_exception(
+        self,
+        *,
+        lease_scope: _ChiefEngineerExecutionAttemptLeaseScope,
+        stage_status: str,
+        summary: str,
+        preserved_error: BaseException,
+    ) -> None:
+        should_settle, heartbeat_failure = lease_scope.begin_settlement()
+        if not should_settle or lease_scope.task_id is None or lease_scope.execution_attempt is None:
+            if heartbeat_failure is not None:
+                logger.error(
+                    "Chief Engineer exceptional-path settlement blocked by lease keeper: "
+                    "run_id=%s task_id=%s reason=%s error_type=%s preserved_error_type=%s",
+                    lease_scope.execution_attempt.run_id if lease_scope.execution_attempt is not None else "",
+                    lease_scope.task_id,
+                    heartbeat_failure.reason,
+                    heartbeat_failure.error_type,
+                    type(preserved_error).__name__,
+                )
+            return
+        try:
+            self._settle_chief_engineer_execution_attempt(
+                task_id=lease_scope.task_id,
+                execution_attempt=lease_scope.execution_attempt,
+                stage_status=stage_status,
+                summary=summary,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            failure_kind = (
+                "Chief Engineer cancellation settlement failed"
+                if stage_status == "cancelled"
+                else "Chief Engineer exceptional-path settlement failed"
+            )
+            logger.exception(
+                "%s: run_id=%s task_id=%s session_id=%s preserved_error_type=%s",
+                failure_kind,
+                lease_scope.execution_attempt.run_id,
+                lease_scope.task_id,
+                lease_scope.execution_attempt.session_id,
+                type(preserved_error).__name__,
+            )
+
+    async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
+        """Run CE review under one claim-bound heartbeat and settlement scope."""
+
+        lease_scope = _ChiefEngineerExecutionAttemptLeaseScope()
+        try:
+            return await self._execute_chief_engineer_review_with_attempt_lease(
+                run,
+                context,
+                lease_scope,
+            )
+        except asyncio.CancelledError as exc:
+            self._settle_chief_engineer_execution_attempt_after_exception(
+                lease_scope=lease_scope,
+                stage_status="cancelled",
+                summary="chief_engineer_portfolio_review_cancelled",
+                preserved_error=exc,
+            )
+            raise
+        except BaseException as exc:
+            self._settle_chief_engineer_execution_attempt_after_exception(
+                lease_scope=lease_scope,
+                stage_status="failed",
+                summary=f"chief_engineer_portfolio_review_exception:{type(exc).__name__}",
+                preserved_error=exc,
+            )
+            raise
+        finally:
+            lease_scope.stop_keeper()
+
+    async def _execute_chief_engineer_review_with_attempt_lease(
+        self,
+        run: FactoryRun,
+        context: dict[str, Any],
+        lease_scope: _ChiefEngineerExecutionAttemptLeaseScope,
+    ) -> StageResult:
+        """Create one CE project portfolio and project task-level handoffs."""
+
+        logger.info("Executing Chief Engineer project review for run %s", run.id)
         synced_plan_source = self._ensure_pm_plan_contract_available()
         self._enrich_pm_plan_contract_artifact("tasks/plan.json")
         stage_signals: list[dict[str, Any]] = []
         blueprint_rows: list[dict[str, Any]] = []
+        portfolio: ChiefEngineerBlueprintPortfolioV1 | None = None
+        ce_evidence: dict[str, Any] = {}
+        llm_call_count = 0
+        cancelled_by_factory = False
+        ce_runtime_task_id: int | None = None
+        ce_execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
+
         if synced_plan_source:
             stage_signals.append(
                 {
@@ -3941,8 +4706,8 @@ class OrchestrationStageExecutor:
                     "source_path": synced_plan_source,
                 }
             )
-        pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
 
+        pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
         if not pm_tasks:
             stage_signals.append(
                 {
@@ -3952,65 +4717,75 @@ class OrchestrationStageExecutor:
                 }
             )
 
-        # Use RoleRuntimeService for real LLM invocation while preserving enough
-        # deadline for Director materialization and the final quality gate.
-        ce_service = RoleRuntimeService()
-        base_ce_timeout_seconds = self._chief_engineer_llm_timeout_seconds(context)
         cancel_event = self._resolve_cancel_event(context)
         abort_checker = self._resolve_abort_checker(context)
-        cancelled_by_factory = False
-        deadline_projection_locked = False
-
-        for index, task in enumerate(pm_tasks, start=1):
-            task_id = self._task_id(task, index)
-            objective = self._task_objective(task)
-            task_constraints = self._task_blueprint_constraints(task)
-            try:
-                if cancel_event is not None and cancel_event.is_set():
-                    cancelled_by_factory = True
-                    stage_signals.append(
-                        {
-                            "code": "chief_engineer.cancelled_before_task",
-                            "severity": "warning",
-                            "detail": "Factory cancel event was set before starting CE review for the next task.",
-                            "task_id": task_id,
-                        }
-                    )
-                    break
-                abort_reason = ""
-                if abort_checker is not None:
-                    with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                        abort_reason = str(await abort_checker() or "").strip()
-                if abort_reason:
-                    cancelled_by_factory = True
-                    stage_signals.append(
-                        {
-                            "code": "chief_engineer.cancelled_before_task",
-                            "severity": "warning",
-                            "detail": f"Factory abort was requested before CE review: {abort_reason}",
-                            "task_id": task_id,
-                            "abort_reason": abort_reason,
-                        }
-                    )
-                    break
-
-                deadline_decision = self._chief_engineer_deadline_projection_decision(
-                    context,
-                    requested_timeout_seconds=base_ce_timeout_seconds,
-                    remaining_task_count=len(pm_tasks) - index + 1,
-                )
-                if deadline_projection_locked:
-                    deadline_decision = {
-                        **deadline_decision,
-                        "use_deadline_projection": True,
-                        "reason": "prior_ce_deadline_projection_locked_for_stage",
-                        "projection_lock": True,
-                        "llm_timeout_seconds": 0,
+        if pm_tasks and cancel_event is not None and cancel_event.is_set():
+            cancelled_by_factory = True
+            stage_signals.append(
+                {
+                    "code": "chief_engineer.cancelled_before_portfolio",
+                    "severity": "warning",
+                    "detail": "Factory cancel event was set before the CE portfolio request.",
+                }
+            )
+        if pm_tasks and not cancelled_by_factory and abort_checker is not None:
+            abort_reason = ""
+            with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                abort_reason = str(await abort_checker() or "").strip()
+            if abort_reason:
+                cancelled_by_factory = True
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.cancelled_before_portfolio",
+                        "severity": "warning",
+                        "detail": f"Factory abort was requested before CE portfolio review: {abort_reason}",
+                        "abort_reason": abort_reason,
                     }
-                deadline_projection_used = bool(deadline_decision.get("use_deadline_projection"))
-                ce_timeout_seconds = int(deadline_decision.get("llm_timeout_seconds") or base_ce_timeout_seconds)
-                task_context = self._task_blueprint_context(task, run_id=run.id, index=index)
-                task_context.update(
+                )
+
+        portfolio_tasks: tuple[ChiefEngineerPortfolioTaskV1, ...] = ()
+        portfolio_context: dict[str, Any] = {}
+        deadline_decision: FactoryDeadlineAdmissionV1 | None = None
+        if pm_tasks and not cancelled_by_factory:
+            try:
+                portfolio_tasks = self._chief_engineer_portfolio_tasks(pm_tasks)
+                portfolio_context = self._chief_engineer_portfolio_context(pm_tasks, run_id=run.id)
+            except (TypeError, ValueError) as exc:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.portfolio_contract_invalid",
+                        "severity": "error",
+                        "detail": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+
+        ce_result: RoleExecutionResultV1 | None = None
+        if portfolio_tasks:
+            dependency_schedule = build_task_dependency_schedule(pm_tasks)
+            requested_timeout_seconds = self._chief_engineer_llm_timeout_seconds(context)
+            deadline_decision = self._chief_engineer_deadline_projection_decision(
+                context,
+                requested_timeout_seconds=requested_timeout_seconds,
+                dependency_schedule=dependency_schedule,
+            )
+            deadline_payload = deadline_decision.to_dict()
+            if deadline_decision.disposition is FactoryDeadlineDispositionV1.BLOCK:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.deadline_admission_blocked",
+                        "severity": "error",
+                        "detail": (
+                            "The CE portfolio request was not admitted because the remaining Factory lease "
+                            "cannot preserve all mandatory Director, QA, finalization, and safety budgets."
+                        ),
+                        "deadline_decision": deadline_payload,
+                        "reason": deadline_decision.reason,
+                    }
+                )
+            else:
+                ce_timeout_seconds = int(deadline_decision.timeout_seconds)
+                ce_lease_budget = self._chief_engineer_execution_attempt_lease_budget(ce_timeout_seconds)
+                portfolio_context.update(
                     {
                         "cognitive_runtime_mode": "off",
                         "cognitive_runtime_enabled": False,
@@ -4023,60 +4798,50 @@ class OrchestrationStageExecutor:
                         "temperature": 0.2,
                         "response_format_mode": "json",
                         "chief_engineer_json_contract_required": True,
+                        "chief_engineer_portfolio_required": True,
+                        "llm_max_tokens": chief_engineer_structured_output_tokens(),
                         "chief_engineer_llm_timeout_seconds": ce_timeout_seconds,
                         "llm_call_timeout_seconds": ce_timeout_seconds,
                         "request_timeout_seconds": ce_timeout_seconds,
-                        "chief_engineer_deadline_decision": dict(deadline_decision),
+                        "chief_engineer_deadline_decision": deadline_payload,
                     }
                 )
-                ce_objective = f"{objective.strip()}{_CE_BLUEPRINT_OUTPUT_CONTRACT}"
-
-                if deadline_projection_used:
-                    deadline_projection_locked = True
-                    self._enrich_chief_engineer_projection_context(task_context)
-                    stage_signals.append(
-                        {
-                            "code": "chief_engineer.deadline_projection_used",
-                            "severity": "warning",
-                            "detail": (
-                                "Skipped a CE LLM call and generated a deterministic blueprint projection because "
-                                "the remaining factory deadline was insufficient to safely start another CE call "
-                                "while preserving Director and QA budget."
-                            ),
-                            "task_id": task_id,
-                            "deadline_decision": dict(deadline_decision),
-                        }
+                portfolio_task_id = f"CE-PORTFOLIO-{run.id}"
+                try:
+                    objective = self._chief_engineer_portfolio_objective(pm_tasks)
+                    ce_runtime_task_id, ce_execution_attempt = self._claim_chief_engineer_execution_attempt(
+                        run_id=run.id,
+                        portfolio_task_id=portfolio_task_id,
+                        objective=objective,
+                        lease_budget=ce_lease_budget,
                     )
-                    ce_result = SimpleNamespace(
-                        ok=True,
-                        output="",
-                        error_message="",
-                        error_code="",
-                        metadata={
-                            "provider": "deterministic_projection",
-                            "model": "chief_engineer_blueprint_projection",
-                            "structured_output": {},
-                            "llm_call_skipped": True,
-                            "deadline_projection": dict(deadline_decision),
-                        },
-                        usage={},
+                    lease_scope.bind_claim(
+                        task_id=ce_runtime_task_id,
+                        execution_attempt=ce_execution_attempt,
                     )
-                else:
-                    # Build command for RoleRuntimeService
+                    lease_scope.start_keeper(
+                        _ChiefEngineerExecutionAttemptLeaseKeeper(
+                            workspace=str(self.workspace),
+                            task_id=ce_runtime_task_id,
+                            execution_attempt=ce_execution_attempt,
+                            budget=ce_lease_budget,
+                        )
+                    )
                     command = ExecuteRoleTaskCommandV1(
                         role="chief_engineer",
-                        task_id=task_id,
+                        task_id=portfolio_task_id,
                         workspace=str(self.workspace),
-                        objective=ce_objective,
+                        objective=objective,
                         run_id=run.id,
-                        context=task_context,
+                        context=portfolio_context,
                         timeout_seconds=ce_timeout_seconds,
+                        execution_attempt=ce_execution_attempt,
                         metadata={
-                            "constraints": task_constraints,
-                            "pm_task_contract": dict(task),
-                            "target_files": list(task_context.get("target_files") or []),
-                            "scope_paths": list(task_context.get("scope_paths") or []),
-                            "source": "factory_stage_executor.chief_engineer_review",
+                            "pm_task_contract": dict(portfolio_context["pm_task_contract"]),
+                            "pm_task_contracts": list(portfolio_context["pm_task_contracts"]),
+                            "target_files": list(portfolio_context["target_files"]),
+                            "scope_paths": list(portfolio_context["scope_paths"]),
+                            "source": "factory_stage_executor.chief_engineer_portfolio_review",
                             "cognitive_runtime_mode": "off",
                             "cognitive_runtime_enabled": False,
                             "cognitive_runtime_required": False,
@@ -4086,291 +4851,360 @@ class OrchestrationStageExecutor:
                             "temperature": 0.2,
                             "response_format_mode": "json",
                             "chief_engineer_json_contract_required": True,
+                            "chief_engineer_portfolio_required": True,
                         },
                     )
-
-                    # Execute via RoleRuntimeService (real LLM call)
-                    ce_result = await ce_service.execute_role_task(command)
-                ce_evidence = self._ce_extract_llm_evidence(ce_result, task_id=task_id, run_id=run.id)
-                ce_provider = str(ce_evidence.get("provider") or "unknown")
-                ce_model = str(ce_evidence.get("model") or "unknown")
-                raw_output = str(getattr(ce_result, "output", "") or "")
-                ce_result_metadata = dict(getattr(ce_result, "metadata", {}) or {})
-                structured_output = ce_result_metadata.get("structured_output")
-                ce_llm_blueprint: dict[str, Any] = {}
-
-                # Check if CE LLM call succeeded (fail-closed)
-                llm_call_skipped = bool(ce_result_metadata.get("llm_call_skipped"))
-                recovered_review_schema_failure = llm_call_skipped
-                recovered_failure_with_projection = False
-                if not ce_result.ok:
-                    recovered_review_schema_failure = self._ce_review_schema_failure_is_recoverable(
-                        ce_result,
-                        raw_output=raw_output,
-                    )
-                    if not recovered_review_schema_failure:
-                        recovered_failure_with_projection = self._ce_llm_failure_allows_blueprint_projection(ce_result)
-                        if recovered_failure_with_projection:
-                            recovered_review_schema_failure = True
-                            deadline_projection_locked = True
-                            self._enrich_chief_engineer_projection_context(task_context)
-                            ce_evidence["llm_call_failed_projection"] = True
-                            ce_evidence["recovery_strategy"] = "deterministic_blueprint_projection_after_llm_timeout"
-                    error_signal: dict[str, Any] = {
-                        "code": "chief_engineer.llm_review_failed",
-                        "severity": "warning" if recovered_review_schema_failure else "error",
-                        "detail": ce_result.error_message or ce_result.error_code or "CE LLM call failed",
-                        "task_id": task_id,
-                        "provider": ce_provider,
-                        "model": ce_model,
-                        "recoverable": recovered_review_schema_failure,
-                    }
-                    if recovered_failure_with_projection:
-                        error_signal["recovery_strategy"] = "deterministic_blueprint_projection_after_llm_timeout"
-                        error_signal["deadline_projection_locked"] = True
-                    if ce_evidence.get("provider_model_unknown"):
-                        error_signal["provider_model_unknown"] = True
-                        error_signal["provider_model_unknown_reason"] = str(
-                            ce_evidence.get("provider_model_unknown_reason") or ""
-                        )
-                    self._attach_ce_llm_evidence(error_signal, ce_evidence)
-                    stage_signals.append(error_signal)
-                    if not recovered_review_schema_failure:
-                        continue
-
-                task_error_count_before = sum(
-                    1 for item in stage_signals if str(item.get("severity") or "").strip().lower() == "error"
-                )
-                if llm_call_skipped:
-                    ce_evidence["llm_call_skipped"] = True
-                    ce_evidence["deadline_projection"] = dict(deadline_decision)
-                elif ce_evidence.get("provider_model_unknown"):
+                    llm_call_count = 1
+                    ce_result = await RoleRuntimeService().execute_role_task(command)
+                except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
                     stage_signals.append(
                         {
-                            "code": "chief_engineer.llm_evidence_missing",
+                            "code": "chief_engineer.llm_review_failed",
                             "severity": "error",
-                            "detail": str(ce_evidence.get("provider_model_unknown_reason") or ""),
-                            "task_id": task_id,
-                            "provider": ce_provider,
-                            "model": ce_model,
-                            "provider_model_unknown": True,
+                            "detail": f"{type(exc).__name__}: {exc}",
+                            "task_id": portfolio_task_id,
                         }
                     )
-                else:
-                    # Emit audit event for LLM call once real provider/model evidence exists.
-                    audit_payload: dict[str, Any] = {
+
+        ce_llm_blueprint: dict[str, Any] = {}
+        if ce_result is not None:
+            portfolio_task_id = f"CE-PORTFOLIO-{run.id}"
+            ce_evidence = self._ce_extract_llm_evidence(
+                ce_result,
+                task_id=portfolio_task_id,
+                run_id=run.id,
+            )
+            ce_provider = str(ce_evidence.get("provider") or "unknown")
+            ce_model = str(ce_evidence.get("model") or "unknown")
+            raw_output = str(ce_result.output or "")
+            ce_result_metadata = dict(ce_result.metadata or {})
+
+            if not ce_result.ok:
+                error_signal: dict[str, Any] = {
+                    "code": "chief_engineer.llm_review_failed",
+                    "severity": "error",
+                    "detail": ce_result.error_message or ce_result.error_code or "CE portfolio LLM call failed",
+                    "task_id": portfolio_task_id,
+                    "provider": ce_provider,
+                    "model": ce_model,
+                    "recoverable": False,
+                }
+                self._attach_ce_llm_evidence(error_signal, ce_evidence)
+                stage_signals.append(error_signal)
+            elif ce_evidence.get("provider_model_unknown"):
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.llm_evidence_missing",
+                        "severity": "error",
+                        "detail": str(ce_evidence.get("provider_model_unknown_reason") or ""),
+                        "task_id": portfolio_task_id,
                         "provider": ce_provider,
                         "model": ce_model,
-                        "cache_hit": bool(ce_evidence.get("cache_hit")),
-                        "task_id": task_id,
-                        "run_id": run.id,
+                        "provider_model_unknown": True,
                     }
-                    self._attach_ce_llm_evidence(audit_payload, ce_evidence)
-                    self._emit_audit_event(
-                        "chief_engineer.llm_call",
-                        **audit_payload,
-                    )
-                    missing_final_request_evidence = self._ce_missing_final_request_evidence(ce_evidence)
-                    if missing_final_request_evidence:
-                        recovered_projection = bool(ce_evidence.get("llm_call_failed_projection"))
-                        missing_signal: dict[str, Any] = {
-                            "code": "chief_engineer.final_request_audit_missing",
-                            "severity": "warning" if recovered_projection else "error",
-                            "detail": (
-                                "CE LLM result did not expose required final provider-request evidence: "
-                                + ", ".join(missing_final_request_evidence)
-                            ),
-                            "task_id": task_id,
-                            "provider": ce_provider,
-                            "model": ce_model,
-                            "missing": missing_final_request_evidence,
-                        }
-                        if recovered_projection:
-                            missing_signal["recovery_strategy"] = str(ce_evidence.get("recovery_strategy") or "")
-                            missing_signal["recoverable"] = True
-                        self._attach_ce_llm_evidence(missing_signal, ce_evidence)
-                        stage_signals.append(missing_signal)
+                )
+            else:
+                audit_payload: dict[str, Any] = {
+                    "provider": ce_provider,
+                    "model": ce_model,
+                    "cache_hit": bool(ce_evidence.get("cache_hit")),
+                    "task_id": portfolio_task_id,
+                    "run_id": run.id,
+                    "portfolio_task_ids": [task.task_id for task in portfolio_tasks],
+                }
+                self._attach_ce_llm_evidence(audit_payload, ce_evidence)
+                self._emit_audit_event("chief_engineer.llm_call", **audit_payload)
+                missing_final_request_evidence = self._ce_missing_final_request_evidence(ce_evidence)
+                if missing_final_request_evidence:
+                    missing_signal: dict[str, Any] = {
+                        "code": "chief_engineer.final_request_audit_missing",
+                        "severity": "error",
+                        "detail": (
+                            "CE LLM result did not expose required final provider-request evidence: "
+                            + ", ".join(missing_final_request_evidence)
+                        ),
+                        "task_id": portfolio_task_id,
+                        "provider": ce_provider,
+                        "model": ce_model,
+                        "missing": missing_final_request_evidence,
+                    }
+                    self._attach_ce_llm_evidence(missing_signal, ce_evidence)
+                    stage_signals.append(missing_signal)
 
-                required_ce_blueprint_keys = {"construction_plan", "scope_for_apply", "risk_flags"}
-                if isinstance(structured_output, dict) and required_ce_blueprint_keys.issubset(structured_output):
-                    ce_llm_blueprint = dict(structured_output)
-
-                if (
-                    not ce_llm_blueprint
-                    and not recovered_review_schema_failure
-                    and ("<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output)
-                ):
+            call_error_count = sum(
+                1 for signal in stage_signals if str(signal.get("severity") or "").strip().lower() == "error"
+            )
+            structured_output = ce_result_metadata.get("structured_output")
+            if isinstance(structured_output, Mapping):
+                ce_llm_blueprint = dict(structured_output)
+            elif "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.session_patch_output_rejected",
+                        "severity": "error",
+                        "detail": "CE returned SESSION_PATCH content instead of the required portfolio JSON object",
+                        "task_id": portfolio_task_id,
+                        "provider": ce_provider,
+                        "model": ce_model,
+                    }
+                )
+            elif call_error_count == 0:
+                quality_result = QualityChecker(str(self.workspace)).validate_output(
+                    raw_output,
+                    cast(Any, SimpleNamespace(role_id="chief_engineer")),
+                )
+                if not quality_result.success:
                     stage_signals.append(
                         {
-                            "code": "chief_engineer.session_patch_output_rejected",
+                            "code": "chief_engineer.output_schema_invalid",
                             "severity": "error",
-                            "detail": "CE returned SESSION_PATCH content instead of the required blueprint JSON object",
-                            "task_id": task_id,
+                            "detail": "; ".join(str(item) for item in quality_result.errors)
+                            or "CE portfolio output failed schema validation",
+                            "task_id": portfolio_task_id,
                             "provider": ce_provider,
                             "model": ce_model,
+                            "quality_score": float(quality_result.quality_score),
+                            "suggestions": list(quality_result.suggestions),
                         }
                     )
-                if not ce_llm_blueprint and not recovered_review_schema_failure:
-                    quality_result = QualityChecker(str(self.workspace)).validate_output(
-                        raw_output,
-                        cast(Any, SimpleNamespace(role_id="chief_engineer")),
-                    )
-                    if not quality_result.success:
-                        stage_signals.append(
-                            {
-                                "code": "chief_engineer.output_schema_invalid",
-                                "severity": "error",
-                                "detail": "; ".join(str(item) for item in quality_result.errors)
-                                or "CE output failed schema validation",
-                                "task_id": task_id,
-                                "provider": ce_provider,
-                                "model": ce_model,
-                                "quality_score": float(quality_result.quality_score),
-                                "suggestions": list(quality_result.suggestions),
-                            }
-                        )
-                    elif isinstance(quality_result.data, dict):
-                        ce_llm_blueprint = dict(quality_result.data)
+                elif isinstance(quality_result.data, Mapping):
+                    ce_llm_blueprint = dict(quality_result.data)
 
-                task_error_count_after = sum(
-                    1 for item in stage_signals if str(item.get("severity") or "").strip().lower() == "error"
+            if ce_llm_blueprint and call_error_count == 0:
+                output_errors = self._chief_engineer_portfolio_output_errors(
+                    ce_llm_blueprint,
+                    task_ids=tuple(task.task_id for task in portfolio_tasks),
                 )
-                if task_error_count_after > task_error_count_before:
-                    continue
+                if output_errors:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.portfolio_output_invalid",
+                            "severity": "error",
+                            "detail": "; ".join(output_errors),
+                            "task_id": portfolio_task_id,
+                            "provider": ce_provider,
+                            "model": ce_model,
+                            "errors": output_errors,
+                        }
+                    )
+            elif not ce_llm_blueprint and call_error_count == 0:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.output_schema_invalid",
+                        "severity": "error",
+                        "detail": "CE portfolio output did not contain a JSON object",
+                        "task_id": portfolio_task_id,
+                        "provider": ce_provider,
+                        "model": ce_model,
+                    }
+                )
 
-                # Convert to blueprint result format (deterministic structure generator)
-                result = generate_task_blueprint(
-                    GenerateTaskBlueprintCommandV1(
-                        task_id=task_id,
+        has_pre_projection_errors = any(
+            str(signal.get("severity") or "").strip().lower() == "error" for signal in stage_signals
+        )
+        if portfolio_tasks and ce_llm_blueprint and not has_pre_projection_errors:
+            try:
+                portfolio = build_chief_engineer_blueprint_portfolio(
+                    BuildChiefEngineerBlueprintPortfolioCommandV1(
                         workspace=str(self.workspace),
-                        objective=objective,
                         run_id=run.id,
-                        constraints=task_constraints,
-                        context=task_context,
+                        tasks=portfolio_tasks,
                         llm_blueprint=ce_llm_blueprint,
                     )
                 )
-
-            except (RuntimeError, TypeError, ValueError) as exc:
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 stage_signals.append(
                     {
-                        "code": "chief_engineer.blueprint_generation_failed",
+                        "code": "chief_engineer.portfolio_generation_failed",
                         "severity": "error",
                         "detail": f"{type(exc).__name__}: {exc}",
-                        "task_id": task_id,
                     }
                 )
-                continue
 
-            if not result.ok or not result.blueprint_id or not result.blueprint_path:
-                stage_signals.append(
-                    {
-                        "code": "chief_engineer.blueprint_result_invalid",
-                        "severity": "error",
-                        "detail": result.summary or result.status,
-                        "task_id": task_id,
-                    }
+        if portfolio is not None:
+            portfolio_reference = portfolio.to_reference()
+            portfolio_context_evidence = portfolio.to_task_blueprint_context()
+            for index, task in enumerate(pm_tasks, start=1):
+                task_id = self._task_id(task, index)
+                objective = self._task_objective(task)
+                task_constraints = self._task_blueprint_constraints(task)
+                task_context = self._task_blueprint_context(task, run_id=run.id, index=index)
+                task_context.update(portfolio_context_evidence)
+                task_context["chief_engineer_blueprint_portfolio"] = dict(portfolio_reference)
+                if deadline_decision is not None:
+                    task_context["chief_engineer_deadline_decision"] = deadline_decision.to_dict()
+                try:
+                    task_llm_blueprint = project_chief_engineer_task_blueprint(portfolio, task_id)
+                    result = generate_task_blueprint(
+                        GenerateTaskBlueprintCommandV1(
+                            task_id=task_id,
+                            workspace=str(self.workspace),
+                            objective=objective,
+                            run_id=run.id,
+                            constraints=task_constraints,
+                            context=task_context,
+                            llm_blueprint=task_llm_blueprint,
+                        )
+                    )
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.blueprint_generation_failed",
+                            "severity": "error",
+                            "detail": f"{type(exc).__name__}: {exc}",
+                            "task_id": task_id,
+                        }
+                    )
+                    continue
+
+                if not result.ok or not result.blueprint_id or not result.blueprint_path:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.blueprint_result_invalid",
+                            "severity": "error",
+                            "detail": result.summary or result.status,
+                            "task_id": task_id,
+                        }
+                    )
+                    continue
+
+                repaired_missing_artifact = self._ensure_chief_engineer_blueprint_artifact_present(
+                    result=result,
+                    task=task,
+                    task_context=task_context,
+                    constraints=task_constraints,
+                    run_id=run.id,
                 )
-                continue
+                if repaired_missing_artifact:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.blueprint_artifact_rewritten_from_result",
+                            "severity": "warning",
+                            "detail": (
+                                "CE returned a valid blueprint result but the physical blueprint artifact was "
+                                "missing; rewrote the handoff artifact from structured result fields."
+                            ),
+                            "task_id": task_id,
+                            "blueprint_id": result.blueprint_id,
+                            "blueprint_path": result.blueprint_path,
+                        }
+                    )
 
-            repaired_missing_artifact = self._ensure_chief_engineer_blueprint_artifact_present(
-                result=result,
-                task=task,
-                task_context=task_context,
-                constraints=task_constraints,
-                run_id=run.id,
-            )
-            if repaired_missing_artifact:
-                stage_signals.append(
+                handoff_validation = validate_director_handoff_from_payload(
+                    str(self.workspace),
+                    {"task_id": task_id, "blueprint_id": result.blueprint_id},
+                    require_strict=True,
+                )
+                handoff_payload_raw = handoff_validation.get("decision_payload")
+                handoff_payload: dict[str, Any] = handoff_payload_raw if isinstance(handoff_payload_raw, dict) else {}
+                if not handoff_validation.get("allowed") and not handoff_payload:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.handoff_decision_unreadable",
+                            "severity": "error",
+                            "detail": str(
+                                handoff_validation.get("reason")
+                                or "Generated CE blueprint could not be loaded for handoff validation."
+                            ),
+                            "task_id": task_id,
+                            "blueprint_id": result.blueprint_id,
+                            "handoff_validation": handoff_validation,
+                        }
+                    )
+                elif not handoff_validation.get("allowed"):
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.handoff_blocked",
+                            "severity": "error",
+                            "detail": str(handoff_validation.get("reason") or "Chief Engineer handoff blocked."),
+                            "task_id": task_id,
+                            "blueprint_id": result.blueprint_id,
+                            "blockers": list(handoff_payload.get("blockers") or []),
+                            "handoff_decision": handoff_payload,
+                            "handoff_validation": handoff_validation,
+                        }
+                    )
+
+                row_evidence = {
+                    **ce_evidence,
+                    "portfolio_id": portfolio.portfolio_id,
+                    "portfolio_path": portfolio.portfolio_path,
+                    "portfolio_hash": portfolio.portfolio_hash,
+                    "project_interface_contract_ref": portfolio.project_interface_contract_ref,
+                    "project_interface_contract_hash": portfolio.project_interface_contract_hash,
+                }
+                blueprint_rows.append(
                     {
-                        "code": "chief_engineer.blueprint_artifact_rewritten_from_result",
-                        "severity": "warning",
-                        "detail": (
-                            "CE returned a valid blueprint result but the physical blueprint artifact was missing; "
-                            "rewrote the handoff artifact from structured result fields."
-                        ),
-                        "task_id": task_id,
+                        "task_id": result.task_id,
+                        "status": result.status,
                         "blueprint_id": result.blueprint_id,
                         "blueprint_path": result.blueprint_path,
-                    }
-                )
-
-            handoff_validation = validate_director_handoff_from_payload(
-                str(self.workspace),
-                {"task_id": task_id, "blueprint_id": result.blueprint_id},
-                require_strict=True,
-            )
-            handoff_payload_raw = handoff_validation.get("decision_payload")
-            handoff_payload: dict[str, Any] = handoff_payload_raw if isinstance(handoff_payload_raw, dict) else {}
-            if not handoff_validation.get("allowed") and not handoff_payload:
-                stage_signals.append(
-                    {
-                        "code": "chief_engineer.handoff_decision_unreadable",
-                        "severity": "error",
-                        "detail": str(
-                            handoff_validation.get("reason")
-                            or "Generated CE blueprint could not be loaded for handoff validation."
-                        ),
-                        "task_id": task_id,
-                        "blueprint_id": result.blueprint_id,
-                        "handoff_validation": handoff_validation,
-                    }
-                )
-            elif not handoff_validation.get("allowed"):
-                stage_signals.append(
-                    {
-                        "code": "chief_engineer.handoff_blocked",
-                        "severity": "error",
-                        "detail": str(handoff_validation.get("reason") or "Chief Engineer handoff blocked."),
-                        "task_id": task_id,
-                        "blueprint_id": result.blueprint_id,
-                        "blockers": list(handoff_payload.get("blockers") or []),
+                        "summary": result.summary,
+                        "recommendations": list(result.recommendations),
+                        "risks": list(result.risks),
+                        "handoff_ready": bool(handoff_validation.get("allowed")),
                         "handoff_decision": handoff_payload,
-                        "handoff_validation": handoff_validation,
+                        "llm_evidence": row_evidence,
+                        "llm_blueprint_consumed": True,
+                        "llm_blueprint_keys": sorted(task_llm_blueprint),
+                        "portfolio_reference": dict(portfolio_reference),
                     }
                 )
-
-            blueprint_rows.append(
-                {
-                    "task_id": result.task_id,
-                    "status": result.status,
-                    "blueprint_id": result.blueprint_id,
-                    "blueprint_path": result.blueprint_path,
-                    "summary": result.summary,
-                    "recommendations": list(result.recommendations),
-                    "risks": list(result.risks),
-                    "handoff_ready": bool(handoff_validation.get("allowed")),
-                    "handoff_decision": handoff_payload,
-                    "llm_evidence": ce_evidence,
-                    "llm_blueprint_consumed": bool(ce_llm_blueprint),
-                    "llm_blueprint_keys": sorted(str(key) for key in ce_llm_blueprint),
-                }
-            )
 
         review_artifact = ""
-        if blueprint_rows or stage_signals:
+        if blueprint_rows or stage_signals or portfolio is not None:
             review_artifact = f"runtime/state/blueprints/{run.id}.review.json"
             self._write_json_artifact(
                 review_artifact,
                 {
-                    "schema_version": "factory.chief_engineer_review.v1",
+                    "schema_version": "factory.chief_engineer_review.v2",
                     "generated_at": datetime.now(timezone.utc).isoformat(),
-                    "source": "factory_stage_executor",
+                    "source": "factory_stage_executor.chief_engineer_portfolio_review",
                     "factory_run_id": run.id,
                     "task_plan": "tasks/plan.json",
                     "total_tasks": len(pm_tasks),
                     "generated_blueprints": len(blueprint_rows),
+                    "llm_call_count": llm_call_count,
+                    "portfolio": portfolio.to_reference() if portfolio is not None else {},
+                    "project_interface_contract": (
+                        portfolio.project_interface_contract.to_reference() if portfolio is not None else {}
+                    ),
                     "blueprints": blueprint_rows,
                     "signals": stage_signals,
                 },
             )
 
-        stage_signal_path = ""
-        if stage_signals:
-            stage_signal_path = self._write_stage_signal_artifact(
-                stage="chief_engineer_review",
-                run_id=run.id,
-                signals=stage_signals,
+        keeper_stop = lease_scope.stop_keeper()
+        heartbeat_failure = keeper_stop.failure
+        if not keeper_stop.thread_exited:
+            stage_signals.append(
+                {
+                    "code": "chief_engineer.execution_attempt_keeper_stop_failed",
+                    "severity": "error",
+                    "detail": (
+                        f"{heartbeat_failure.error_type}: {heartbeat_failure.error_message}"
+                        if heartbeat_failure is not None
+                        else "lease keeper did not confirm thread exit"
+                    ),
+                    "reason": heartbeat_failure.reason if heartbeat_failure is not None else "unknown",
+                }
+            )
+        elif heartbeat_failure is not None:
+            stage_signals.append(
+                {
+                    "code": "chief_engineer.execution_attempt_heartbeat_failed",
+                    "severity": "error",
+                    "detail": (f"{heartbeat_failure.error_type}: {heartbeat_failure.error_message}"),
+                    "reason": heartbeat_failure.reason,
+                    "task_id": (
+                        lease_scope.execution_attempt.external_task_id
+                        if lease_scope.execution_attempt is not None
+                        else ""
+                    ),
+                    "session_id": (
+                        lease_scope.execution_attempt.session_id if lease_scope.execution_attempt is not None else ""
+                    ),
+                }
             )
 
         has_errors = any(
@@ -4379,13 +5213,6 @@ class OrchestrationStageExecutor:
             if isinstance(item, dict)
         )
         stage_status = "cancelled" if cancelled_by_factory else "failed" if has_errors else "success"
-        artifacts = [row["blueprint_path"] for row in blueprint_rows if row.get("blueprint_path")]
-        if review_artifact:
-            artifacts.append(review_artifact)
-        self._mirror_chief_engineer_artifacts(run.id, blueprint_rows, review_artifact, artifacts)
-        if stage_signal_path:
-            artifacts.append(stage_signal_path)
-
         error_code = ""
         root_cause_hint = ""
         if has_errors:
@@ -4397,12 +5224,70 @@ class OrchestrationStageExecutor:
                 if error_code:
                     break
 
+        if ce_runtime_task_id is not None and ce_execution_attempt is not None:
+            should_settle, heartbeat_failure = lease_scope.begin_settlement()
+            if should_settle:
+                settlement_attempt = lease_scope.execution_attempt
+                if settlement_attempt is None:
+                    raise RuntimeError("chief_engineer_execution_attempt_settlement_identity_missing")
+                try:
+                    self._settle_chief_engineer_execution_attempt(
+                        task_id=ce_runtime_task_id,
+                        execution_attempt=settlement_attempt,
+                        stage_status=stage_status,
+                        summary=error_code or "chief_engineer_portfolio_review_completed",
+                    )
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.execution_attempt_settlement_failed",
+                            "severity": "error",
+                            "detail": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+                    stage_status = "failed"
+                    error_code = "chief_engineer.execution_attempt_settlement_failed"
+                    root_cause_hint = str(exc)
+            elif heartbeat_failure is not None and not any(
+                str(signal.get("code") or "") == "chief_engineer.execution_attempt_keeper_stop_failed"
+                for signal in stage_signals
+                if isinstance(signal, dict)
+            ):
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.execution_attempt_settlement_blocked",
+                        "severity": "error",
+                        "detail": f"{heartbeat_failure.error_type}: {heartbeat_failure.error_message}",
+                        "reason": heartbeat_failure.reason,
+                    }
+                )
+                stage_status = "failed"
+                error_code = "chief_engineer.execution_attempt_settlement_blocked"
+                root_cause_hint = heartbeat_failure.error_message
+
+        stage_signal_path = ""
+        if stage_signals:
+            stage_signal_path = self._write_stage_signal_artifact(
+                stage="chief_engineer_review",
+                run_id=run.id,
+                signals=stage_signals,
+            )
+
+        artifacts = [row["blueprint_path"] for row in blueprint_rows if row.get("blueprint_path")]
+        if portfolio is not None:
+            artifacts.append(portfolio.portfolio_path)
+        if review_artifact:
+            artifacts.append(review_artifact)
+        self._mirror_chief_engineer_artifacts(run.id, blueprint_rows, review_artifact, artifacts)
+        if stage_signal_path:
+            artifacts.append(stage_signal_path)
+
         return StageResult(
             stage="chief_engineer_review",
             status=stage_status,
             output=(
-                f"Chief Engineer review generated {len(blueprint_rows)}/{len(pm_tasks)} blueprints; "
-                f"signals={len(stage_signals)}; "
+                f"Chief Engineer portfolio review generated {len(blueprint_rows)}/{len(pm_tasks)} blueprints; "
+                f"llm_calls={llm_call_count}; signals={len(stage_signals)}; "
                 f"error_code={error_code or 'none'}; root_cause_hint={root_cause_hint or 'none'}"
             ),
             artifacts=artifacts,
@@ -4436,7 +5321,29 @@ class OrchestrationStageExecutor:
                 pm_tasks,
                 run_id=run.id,
                 source_stage="director_dispatch",
+                run_metadata=run.metadata,
             )
+            binding_failures = list(materialize_summary.get("binding_failures") or [])
+            if binding_failures:
+                stage_signals.append(
+                    {
+                        "code": "director.task_runtime_factory_binding_failed",
+                        "severity": "error",
+                        "detail": "TaskRuntime rejected one or more Factory run bindings before Director dispatch.",
+                        **materialize_summary,
+                    }
+                )
+                signal_artifact = self._write_stage_signal_artifact(
+                    stage="director_dispatch",
+                    run_id=run.id,
+                    signals=stage_signals,
+                )
+                return StageResult(
+                    stage="director_dispatch",
+                    status="failed",
+                    output=("Director dispatch blocked before LLM execution: TaskRuntime Factory run binding failed"),
+                    artifacts=[signal_artifact],
+                )
             if int(materialize_summary.get("created_count") or 0) > 0:
                 stage_signals.append(
                     {
@@ -4577,7 +5484,6 @@ class OrchestrationStageExecutor:
                         run_id="",
                         status="completed",
                         message="TaskBoard already converged",
-                        metadata={"task_status_counts": dict(before_stats)},
                     )
                     break
 
@@ -4600,27 +5506,30 @@ class OrchestrationStageExecutor:
                 missing_declared_targets = self._missing_declared_delivery_targets(pm_tasks)
                 materialization_pending = bool(missing_declared_targets)
                 first_materialization_pending = (
-                    materialization_pending
-                    and not attempts
-                    and int(before_stats.get("completed") or 0) == 0
+                    materialization_pending and not attempts and int(before_stats.get("completed") or 0) == 0
                 )
                 remaining_task_count = self._remaining_director_task_count(
                     before_stats,
                     fallback=len(pm_tasks),
                 )
-                director_timeout_seconds = self._director_dispatch_timeout_seconds(
+                dependency_schedule = self._director_dependency_schedule(
+                    pm_tasks,
+                    factory_run_id=run.id,
+                )
+                critical_path_task_count = max(1, dependency_schedule.critical_path_task_count)
+                requested_director_dispatch_timeout_seconds = self._director_dispatch_timeout_seconds(
                     context,
-                    task_count=remaining_task_count,
+                    task_count=critical_path_task_count,
                     materialization_pending=materialization_pending,
                 )
                 admission_decision = self._director_dispatch_deadline_admission_decision(
                     context,
-                    requested_timeout_seconds=director_timeout_seconds,
-                    materialization_pending=materialization_pending,
+                    requested_timeout_seconds=requested_director_dispatch_timeout_seconds,
                     first_materialization_pending=first_materialization_pending,
-                    remaining_task_count=remaining_task_count,
+                    dependency_schedule=dependency_schedule,
                 )
-                if not bool(admission_decision.get("allow_dispatch")):
+                admission_payload = admission_decision.to_dict()
+                if not admission_decision.executable:
                     stage_signals.append(
                         {
                             "code": "director.dispatch_deadline_blocker",
@@ -4630,12 +5539,12 @@ class OrchestrationStageExecutor:
                                 "LLM turn while preserving downstream quality-gate time"
                             ),
                             "round": round_index,
-                            "failure_class": QaFailureClassV1.TASKBOARD_DEADLOCK.value,
+                            "failure_class": FailureClassV1.TASKBOARD_DEADLOCK.value,
                             "responsible_layer": "execution_control_plane",
                             "repairable_by_director": False,
                             "requires_ce_replan": False,
                             "requires_pm_revision": False,
-                            **admission_decision,
+                            **admission_payload,
                         }
                     )
                     final_result = CommandResult(
@@ -4643,29 +5552,41 @@ class OrchestrationStageExecutor:
                         status="timeout",
                         message="Director dispatch skipped because factory deadline budget is exhausted",
                         metadata={
-                            "deadline_admission": admission_decision,
-                            "task_status_counts": dict(before_stats),
+                            "deadline_admission": admission_payload,
                         },
                     )
                     break
                 base_options["metadata"].update(
                     {
-                        "director_dispatch_timeout_seconds": director_timeout_seconds,
-                        "director_deadline_admission": admission_decision,
+                        "director_dispatch_timeout_seconds": admission_decision.timeout_seconds,
+                        "director_dispatch_execution_timeout_seconds": (admission_decision.execution_timeout_seconds),
+                        "director_dispatch_settlement_timeout_seconds": (admission_decision.settlement_timeout_seconds),
+                        "director_dispatch_requested_timeout_seconds": (requested_director_dispatch_timeout_seconds),
+                        "director_deadline_admission": admission_payload,
                         "director_first_materialization_pending": first_materialization_pending,
                         "director_remaining_task_count": remaining_task_count,
+                        "director_critical_path_task_count": critical_path_task_count,
                         "director_missing_declared_target_count": len(missing_declared_targets),
                         "director_missing_declared_target_sample": missing_declared_targets[:12],
                     }
                 )
-                requested_llm_timeout = int(context.get("llm_call_timeout_seconds") or director_timeout_seconds)
+                director_lease_timeout_seconds = admission_decision.timeout_seconds
+                director_execution_timeout_seconds = admission_decision.execution_timeout_seconds
+                director_settlement_timeout_seconds = admission_decision.settlement_timeout_seconds
+                requested_llm_timeout = int(
+                    context.get("llm_call_timeout_seconds") or director_execution_timeout_seconds
+                )
                 requested_director_timeout = int(
                     context.get("director_llm_timeout_seconds")
                     or context.get("llm_call_timeout_seconds")
-                    or director_timeout_seconds
+                    or director_execution_timeout_seconds
                 )
-                base_options["llm_call_timeout_seconds"] = min(requested_llm_timeout, director_timeout_seconds)
-                base_options["director_llm_timeout_seconds"] = min(requested_director_timeout, director_timeout_seconds)
+                admitted_timeout_seconds = director_execution_timeout_seconds
+                base_options["llm_call_timeout_seconds"] = min(requested_llm_timeout, admitted_timeout_seconds)
+                base_options["director_llm_timeout_seconds"] = min(
+                    requested_director_timeout,
+                    admitted_timeout_seconds,
+                )
                 base_options["metadata"].update(
                     {
                         "llm_call_timeout_seconds": base_options["llm_call_timeout_seconds"],
@@ -4674,12 +5595,15 @@ class OrchestrationStageExecutor:
                         "timeout_seconds": base_options["llm_call_timeout_seconds"],
                     }
                 )
-                round_requested_task_ids = self._read_claimable_director_task_ids(limit=max_workers)
+                round_requested_task_ids = self._read_claimable_director_task_ids(
+                    limit=max_workers,
+                    factory_run_id=run.id,
+                )
                 if not round_requested_task_ids and attempts:
                     settle_result = await self._settle_inflight_director_run_after_timeout(
                         service,
                         run_id=str((last_command_result.run_id if last_command_result else "") or "").strip(),
-                        grace_seconds=self._director_dispatch_timeout_settle_grace_seconds(context),
+                        grace_seconds=director_settlement_timeout_seconds,
                         cancel_event=self._resolve_cancel_event(context),
                         abort_checker=abort_checker,
                     )
@@ -4704,10 +5628,7 @@ class OrchestrationStageExecutor:
                                 "metadata": settled_metadata,
                                 "taskboard_before": before_stats,
                                 "taskboard_after": settled_stats,
-                                "progress_made": self._has_director_progress(before_stats, settled_stats)
-                                or settled_status in {"completed", "success"}
-                                or workspace_delta_progress,
-                                "metadata_progress": self._metadata_indicates_execution(settled_metadata),
+                                "progress_made": self._has_director_progress(before_stats, settled_stats),
                                 "workspace_delta_progress": workspace_delta_progress,
                                 "workspace_delta": workspace_delta,
                                 "settled_after_timeout": True,
@@ -4729,7 +5650,9 @@ class OrchestrationStageExecutor:
                         stage_signals.append(
                             {
                                 "code": "director.inflight_timeout_settled",
-                                "severity": "info" if settled_status in {"completed", "success"} else "error",
+                                "severity": "info" if settled_status in {"completed", "success"} else "warning",
+                                "authoritative": False,
+                                "authority_source": "orchestration_lifecycle_diagnostic",
                                 "detail": (
                                     "Director run reached terminal status during timeout settle grace: "
                                     f"{settled_status or 'unknown'}"
@@ -4739,23 +5662,64 @@ class OrchestrationStageExecutor:
                                 "taskboard_after": settled_stats,
                             }
                         )
-                        if not self._is_taskboard_converged(settled_stats):
+                        if self._is_taskboard_converged(settled_stats):
+                            break
+                        claimable_after_settle, settled_stats = await self._wait_for_claimable_director_tasks(
+                            limit=max_workers,
+                            grace_seconds=self._director_dependency_settle_grace_seconds(context),
+                            factory_run_id=run.id,
+                        )
+                        if claimable_after_settle:
                             stage_signals.append(
                                 {
-                                    "code": "director.no_claimable_tasks_after_progress",
-                                    "severity": "warning",
+                                    "code": "director.dependencies_settled_for_next_round",
+                                    "severity": "info",
                                     "detail": (
-                                        "TaskBoard has no claimable Director tasks after previous dispatch attempt "
-                                        "settled; stopping dispatch instead of replaying terminal or blocked PM tasks"
+                                        "TaskRuntime dependency facts exposed new claimable tasks; "
+                                        "starting a fresh deadline-admitted dispatch round"
                                     ),
                                     "round": round_index,
-                                    "taskboard_before": before_stats,
                                     "taskboard_after": settled_stats,
-                                    "failure_class": QaFailureClassV1.TASKBOARD_DEADLOCK.value,
-                                    "responsible_layer": "execution_control_plane",
+                                    "claimable_task_ids": claimable_after_settle,
                                 }
                             )
+                            continue
+                        stage_signals.append(
+                            {
+                                "code": "director.no_claimable_tasks_after_progress",
+                                "severity": "warning",
+                                "detail": (
+                                    "TaskBoard has no claimable Director tasks after previous dispatch attempt "
+                                    "settled; stopping dispatch instead of replaying terminal or blocked PM tasks"
+                                ),
+                                "round": round_index,
+                                "taskboard_before": before_stats,
+                                "taskboard_after": settled_stats,
+                                "failure_class": FailureClassV1.TASKBOARD_DEADLOCK.value,
+                                "responsible_layer": "execution_control_plane",
+                            }
+                        )
                         break
+                    claimable_after_grace, grace_stats = await self._wait_for_claimable_director_tasks(
+                        limit=max_workers,
+                        grace_seconds=self._director_dependency_settle_grace_seconds(context),
+                        factory_run_id=run.id,
+                    )
+                    if claimable_after_grace:
+                        stage_signals.append(
+                            {
+                                "code": "director.dependencies_settled_for_next_round",
+                                "severity": "info",
+                                "detail": (
+                                    "TaskRuntime dependency facts exposed new claimable tasks; "
+                                    "starting a fresh deadline-admitted dispatch round"
+                                ),
+                                "round": round_index,
+                                "taskboard_after": grace_stats,
+                                "claimable_task_ids": claimable_after_grace,
+                            }
+                        )
+                        continue
                     stage_signals.append(
                         {
                             "code": "director.no_claimable_tasks_after_progress",
@@ -4772,6 +5736,7 @@ class OrchestrationStageExecutor:
                 if not round_requested_task_ids:
                     round_requested_task_ids = list(requested_task_ids or [])
                 base_options["metadata"]["director_claimable_task_ids"] = list(round_requested_task_ids)
+                execution_deadline_monotonic = _new_monotonic_deadline(director_execution_timeout_seconds)
                 if director_binding_fanout:
                     command_result = await self._execute_director_binding_fanout(
                         service=service,
@@ -4779,10 +5744,11 @@ class OrchestrationStageExecutor:
                         tasks=round_requested_task_ids,
                         base_options=base_options,
                         bindings=director_binding_fanout,
-                        timeout_seconds=director_timeout_seconds,
+                        timeout_seconds=director_execution_timeout_seconds,
                         cancel_event=self._resolve_cancel_event(context),
                         abort_checker=abort_checker,
                         skipped_bindings=director_binding_skips,
+                        deadline_monotonic=execution_deadline_monotonic,
                     )
                     last_command_result = command_result
                     director_result = command_result
@@ -4819,24 +5785,85 @@ class OrchestrationStageExecutor:
                     last_command_result = command_result
                     director_result = command_result
                 else:
-                    command_result = await service.execute_director_run(
-                        workspace=str(self.workspace),
-                        tasks=round_requested_task_ids,
-                        options=base_options,
-                    )
+                    submission_remaining_seconds = _remaining_monotonic_seconds(execution_deadline_monotonic)
+                    try:
+                        command_result = await asyncio.wait_for(
+                            service.execute_director_run(
+                                workspace=str(self.workspace),
+                                tasks=round_requested_task_ids,
+                                options=base_options,
+                            ),
+                            timeout=submission_remaining_seconds,
+                        )
+                    except TimeoutError:
+                        command_result = CommandResult(
+                            run_id="",
+                            status="timeout",
+                            message="Director submission exceeded the execution lease",
+                            reason_code="DIRECTOR_SUBMISSION_TIMEOUT",
+                            metadata={
+                                "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                                "responsible_layer": "execution_control_plane",
+                                "submission_outcome_unknown": True,
+                            },
+                        )
                     last_command_result = command_result
-                    director_result = await self._wait_run_completion(
-                        service,
-                        command_result,
-                        timeout_seconds=director_timeout_seconds,
-                        cancel_event=self._resolve_cancel_event(context),
-                        abort_checker=abort_checker,
-                        cancel_on_timeout=False,
-                    )
+                    command_status = str(command_result.status or "").strip().lower()
+                    wait_timeout_seconds = _whole_wait_seconds(execution_deadline_monotonic)
+                    wait_remaining_seconds = _remaining_monotonic_seconds(execution_deadline_monotonic)
+                    if (
+                        command_status in {"blocked", "cancelled", "failed", "timeout"}
+                        or not str(command_result.run_id or "").strip()
+                    ):
+                        director_result = command_result
+                    elif wait_timeout_seconds <= 0 or wait_remaining_seconds <= 0:
+                        director_result = CommandResult(
+                            run_id=command_result.run_id,
+                            status="timeout",
+                            message="Director execution lease expired before completion wait",
+                            reason_code="DIRECTOR_EXECUTION_LEASE_EXHAUSTED",
+                            metadata={
+                                "cancel_signal_sent": False,
+                                "inflight_run_continues": True,
+                                "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                                "responsible_layer": "execution_control_plane",
+                            },
+                        )
+                    else:
+                        director_wait_kwargs: dict[str, Any] = {
+                            "timeout_seconds": wait_timeout_seconds,
+                            "cancel_event": self._resolve_cancel_event(context),
+                            "abort_checker": abort_checker,
+                            "cancel_on_timeout": False,
+                        }
+                        if _call_accepts_keyword(self._wait_run_completion, "authority"):
+                            director_wait_kwargs["authority"] = RunCompletionAuthority.TASK_RUNTIME_EXECUTION_FACT
+                        try:
+                            director_result = await asyncio.wait_for(
+                                self._wait_run_completion(
+                                    service,
+                                    command_result,
+                                    **director_wait_kwargs,
+                                ),
+                                timeout=wait_remaining_seconds,
+                            )
+                        except TimeoutError:
+                            director_result = CommandResult(
+                                run_id=command_result.run_id,
+                                status="timeout",
+                                message="Director completion wait exceeded the execution lease",
+                                reason_code="DIRECTOR_EXECUTION_LEASE_EXHAUSTED",
+                                metadata={
+                                    "cancel_signal_sent": False,
+                                    "inflight_run_continues": True,
+                                    "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                                    "responsible_layer": "execution_control_plane",
+                                },
+                            )
                 director_result, barrier_observed = await self._settle_inflight_director_result(
                     service,
                     result=director_result,
-                    grace_seconds=self._director_dispatch_timeout_settle_grace_seconds(context),
+                    grace_seconds=director_settlement_timeout_seconds,
                     cancel_event=self._resolve_cancel_event(context),
                     abort_checker=abort_checker,
                 )
@@ -4849,20 +5876,7 @@ class OrchestrationStageExecutor:
                 )
                 workspace_delta_progress = self._workspace_delta_indicates_materialization_progress(workspace_delta)
                 metadata_payload = director_result.metadata if isinstance(director_result.metadata, dict) else {}
-                metadata_progress = self._metadata_indicates_execution(metadata_payload)
-                # When upstream is non-success, only count metadata progress if there
-                # are completed tasks (forward movement), not just failed-only evidence.
-                # Failed-only metadata should not suppress specific error handling.
-                director_status_early = str(director_result.status or "").strip().lower()
-                if director_status_early not in {"completed", "success"} and metadata_progress:
-                    counts = metadata_payload.get("task_status_counts")
-                    has_completed = isinstance(counts, dict) and int(counts.get("completed") or 0) > 0
-                    metadata_progress = has_completed
-                progress_made = (
-                    self._has_director_progress(before_stats, after_stats)
-                    or metadata_progress
-                    or workspace_delta_progress
-                )
+                progress_made = self._has_director_progress(before_stats, after_stats)
                 attempt_entry = {
                     "round": round_index,
                     "run_id": str(command_result.run_id or "").strip(),
@@ -4871,11 +5885,12 @@ class OrchestrationStageExecutor:
                     "metadata": metadata_payload,
                     "taskboard_before": before_stats,
                     "taskboard_after": after_stats,
-                    "timeout_seconds": director_timeout_seconds,
+                    "timeout_seconds": director_lease_timeout_seconds,
+                    "execution_timeout_seconds": director_execution_timeout_seconds,
+                    "settlement_timeout_seconds": director_settlement_timeout_seconds,
                     "materialization_pending": materialization_pending,
                     "missing_declared_target_count": len(missing_declared_targets),
                     "progress_made": progress_made,
-                    "metadata_progress": metadata_progress,
                     "workspace_delta_progress": workspace_delta_progress,
                     "workspace_delta": workspace_delta,
                     "settlement_attempted": barrier_observed,
@@ -4901,7 +5916,7 @@ class OrchestrationStageExecutor:
                             "round": round_index,
                             "run_id": str(director_result.run_id or command_result.run_id or "").strip(),
                             "failure_class": (
-                                QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value if barrier_still_active else ""
+                                FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value if barrier_still_active else ""
                             ),
                             "responsible_layer": "execution_control_plane",
                             "inflight_run_continues": barrier_still_active,
@@ -4922,7 +5937,30 @@ class OrchestrationStageExecutor:
                         }
                     )
 
+                round_authority = helpers.evaluate_canonical_factory_authority(
+                    self._canonical_factory_projection(run, context)
+                )
                 director_status = str(director_result.status or "").strip().lower()
+                if round_authority.director_stage_authorized:
+                    director_status = "completed"
+                    progress_made = True
+                    attempt_entry["progress_made"] = True
+                    attempt_entry["canonical_task_boundary_authorized"] = True
+                elif director_status in {"completed", "success"}:
+                    director_status = "failed"
+                    stage_signals.append(
+                        {
+                            "code": "director.canonical_task_boundary_missing",
+                            "severity": "error",
+                            "detail": round_authority.detail,
+                            "round": round_index,
+                            "reason_code": round_authority.reason_code,
+                            "failure_class": round_authority.failure_class
+                            or FailureClassV1.LEDGER_PROJECTION_INCOMPLETE.value,
+                            "responsible_layer": round_authority.responsible_layer or "execution_control_plane",
+                            "incomplete_task_ids": list(round_authority.incomplete_task_ids),
+                        }
+                    )
                 if director_status not in {"completed", "success"}:
                     if progress_made:
                         idle_rounds = 0
@@ -4934,25 +5972,6 @@ class OrchestrationStageExecutor:
                                     "detail": f"Director dispatch converged after partial failure in round {round_index}",
                                     "round": round_index,
                                     "upstream_status": director_status,
-                                }
-                            )
-                            break
-                        if self._fanout_quality_failure_can_enter_quality_gate(
-                            metadata=metadata_payload,
-                            final_stats=after_stats,
-                            pm_tasks=pm_tasks,
-                        ):
-                            stage_signals.append(
-                                {
-                                    "code": "director.materialization_quality_handoff_ready",
-                                    "severity": "warning",
-                                    "detail": (
-                                        "Director wrote materialized workspace artifacts but failed materialization "
-                                        "quality; stopping dispatch before a no-claim retry so quality_gate can "
-                                        "run on the physical workspace state"
-                                    ),
-                                    "upstream_status": director_status,
-                                    "round": round_index,
                                 }
                             )
                             break
@@ -4969,94 +5988,8 @@ class OrchestrationStageExecutor:
                             }
                         )
                         continue
-                    prior_successful_progress = any(
-                        str(item.get("status") or "").strip().lower() in {"completed", "success"}
-                        and bool(item.get("progress_made"))
-                        for item in attempts[:-1]
-                        if isinstance(item, dict)
-                    )
-                    if self._is_director_no_materialized_changes(director_result) and (prior_successful_progress):
-                        missing_delivery_targets = self._missing_declared_delivery_targets(pm_tasks)
-                        if missing_delivery_targets:
-                            stage_signals.append(
-                                {
-                                    "code": "director.no_materialized_changes_missing_targets",
-                                    "severity": "error",
-                                    "detail": (
-                                        "Director reported no materialized changes while declared delivery targets "
-                                        f"are still missing: {', '.join(missing_delivery_targets[:8])}"
-                                    ),
-                                    "missing_targets": missing_delivery_targets,
-                                    "declared_target_count": len(self._collect_declared_delivery_targets(pm_tasks)),
-                                    "upstream_status": str(director_result.status or "").strip(),
-                                    "round": round_index,
-                                    "failure_class": QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
-                                    "responsible_layer": "director_orchestration",
-                                    "repairable_by_director": True,
-                                    "requires_ce_replan": False,
-                                    "requires_pm_revision": False,
-                                }
-                            )
-                            break
-                        requires_taskboard_convergence = False
-                        stage_signals.append(
-                            {
-                                "code": "director.idempotent_no_materialized_changes",
-                                "severity": "info",
-                                "detail": (
-                                    "Director reported no materialized changes after prior execution evidence; "
-                                    "treating dispatch as idempotent and allowing QA to decide final quality"
-                                ),
-                                "requires_taskboard_convergence": False,
-                                "upstream_status": str(director_result.status or "").strip(),
-                                "round": round_index,
-                            }
-                        )
-                        final_result = CommandResult(
-                            run_id=str(director_result.run_id or command_result.run_id or ""),
-                            status="completed",
-                            message=(
-                                "Director made no further materialized changes after prior evidence; "
-                                "dispatch treated as idempotent"
-                            ),
-                            metadata=metadata_payload,
-                        )
-                        break
-                    if (
-                        director_status == "timeout"
-                        and prior_successful_progress
-                        and not missing_declared_targets
-                        and self._workspace_has_materialized_delivery_evidence(pm_tasks)
-                    ):
-                        requires_taskboard_convergence = False
-                        stage_signals.append(
-                            {
-                                "code": "director.materialized_workspace_timeout_handoff_ready",
-                                "severity": "warning",
-                                "detail": (
-                                    "Director timed out after prior materialization evidence, but all declared "
-                                    "delivery targets are present; stopping dispatch so workspace quality gates can "
-                                    "validate the physical artifacts instead of replaying a short-budget round"
-                                ),
-                                "requires_taskboard_convergence": False,
-                                "upstream_status": str(director_result.status or "").strip(),
-                                "round": round_index,
-                                "timeout_seconds": director_timeout_seconds,
-                                "taskboard_after": after_stats,
-                            }
-                        )
-                        final_result = CommandResult(
-                            run_id=str(director_result.run_id or command_result.run_id or ""),
-                            status="completed",
-                            message=(
-                                "Director dispatch handed off to workspace quality after complete target "
-                                "materialization and timeout"
-                            ),
-                            metadata=metadata_payload,
-                        )
-                        break
                     if director_status == "timeout":
-                        attempt_timeout_seconds = director_timeout_seconds
+                        attempt_timeout_seconds = director_execution_timeout_seconds
                         stage_signals.append(
                             {
                                 "code": "director.dispatch_timeout",
@@ -5070,6 +6003,8 @@ class OrchestrationStageExecutor:
                                 "upstream_status": director_status,
                                 "round": round_index,
                                 "timeout_seconds": attempt_timeout_seconds,
+                                "stage_lease_seconds": director_lease_timeout_seconds,
+                                "settlement_timeout_seconds": director_settlement_timeout_seconds,
                                 "materialization_pending": materialization_pending,
                                 "missing_declared_target_count": len(missing_declared_targets),
                             }
@@ -5112,16 +6047,6 @@ class OrchestrationStageExecutor:
                     )
                     break
 
-                if metadata_progress:
-                    stage_signals.append(
-                        {
-                            "code": "director.dispatch_evidence_confirmed",
-                            "severity": "info",
-                            "detail": f"Director execution evidence confirmed in round {round_index}",
-                            "round": round_index,
-                        }
-                    )
-
                 if idle_rounds > idle_budget:
                     stage_signals.append(
                         {
@@ -5138,70 +6063,24 @@ class OrchestrationStageExecutor:
 
         final_stats = self._read_taskboard_stats()
         converged = self._is_taskboard_converged(final_stats)
-        execution_evidence_ok = self._has_director_execution_evidence(
-            attempts=attempts,
-            initial_stats=initial_stats,
-            final_stats=final_stats,
-            converged=converged,
-        )
-        final_metadata = final_result.metadata if (final_result and isinstance(final_result.metadata, dict)) else {}
-        fanout_all_failed = self._fanout_all_active_bindings_failed(final_metadata)
-        fanout_quality_handoff = self._fanout_quality_failure_can_enter_quality_gate(
-            metadata=final_metadata,
-            final_stats=final_stats,
-            pm_tasks=pm_tasks,
-        )
-        if fanout_all_failed and not any(
-            str(item.get("code") or "") == "director.binding_fanout_all_failed"
-            for item in stage_signals
-            if isinstance(item, dict)
-        ):
-            active_count = int(final_metadata.get("active_binding_count") or 0)
-            if fanout_quality_handoff:
-                stage_signals.append(
-                    {
-                        "code": "director.materialization_quality_handoff",
-                        "severity": "warning",
-                        "detail": (
-                            "All active Director bindings ended with materialization quality failure after "
-                            "writing workspace artifacts; continuing to quality_gate repair/QA harness"
-                        ),
-                        "active_binding_count": active_count,
-                        "upstream_status": str((final_result.status if final_result else "") or "").strip(),
-                    }
-                )
-            else:
-                stage_signals.append(
-                    {
-                        "code": "director.binding_fanout_all_failed",
-                        "severity": "error",
-                        "detail": (
-                            "All active Director bindings ended with non-success status; "
-                            "quality gate cannot promote a failed Director materialization"
-                        ),
-                        "active_binding_count": active_count,
-                        "upstream_status": str((final_result.status if final_result else "") or "").strip(),
-                    }
-                )
-        elif fanout_quality_handoff and not any(
-            str(item.get("code") or "") == "director.materialization_quality_handoff"
+        final_authority = helpers.evaluate_canonical_factory_authority(self._canonical_factory_projection(run, context))
+        if not final_authority.director_stage_authorized and not any(
+            str(item.get("code") or "") == "director.canonical_task_boundary_missing"
             for item in stage_signals
             if isinstance(item, dict)
         ):
             stage_signals.append(
                 {
-                    "code": "director.materialization_quality_handoff",
-                    "severity": "warning",
-                    "detail": (
-                        "Director materialization quality failed after writing workspace artifacts; "
-                        "continuing to quality_gate repair/QA harness"
-                    ),
-                    "upstream_status": str((final_result.status if final_result else "") or "").strip(),
+                    "code": "director.canonical_task_boundary_missing",
+                    "severity": "error",
+                    "detail": final_authority.detail,
+                    "reason_code": final_authority.reason_code,
+                    "failure_class": final_authority.failure_class or FailureClassV1.LEDGER_PROJECTION_INCOMPLETE.value,
+                    "responsible_layer": final_authority.responsible_layer or "execution_control_plane",
+                    "incomplete_task_ids": list(final_authority.incomplete_task_ids),
                 }
             )
 
-        if fanout_quality_handoff:
-            self._downgrade_quality_handoff_blocking_signals(stage_signals)
         provider_health_signal = self._director_provider_health_failure_signal()
         if provider_health_signal and not any(
             str(item.get("code") or "") == str(provider_health_signal.get("code") or "")
@@ -5213,7 +6092,6 @@ class OrchestrationStageExecutor:
         if (
             requires_taskboard_convergence
             and not converged
-            and not fanout_quality_handoff
             and not execution_barrier_timeout_observed
             and not any(
                 str(item.get("code") or "") == "director.taskboard_not_converged"
@@ -5224,62 +6102,19 @@ class OrchestrationStageExecutor:
             stage_signals.append(
                 {
                     "code": "director.taskboard_not_converged",
-                    "severity": "error",
+                    "severity": "warning",
                     "detail": f"TaskBoard not converged after dispatch rounds; final_stats={final_stats}",
+                    "authoritative": False,
+                    "authority_source": "task_runtime_diagnostic_projection",
                 }
             )
 
-        stage_status = "success"
-        if (
+        stage_status = "success" if final_authority.director_stage_authorized else "failed"
+        if not final_authority.director_stage_authorized and (
             str((final_result or CommandResult(run_id="", status="", message="")).status or "").strip().lower()
             == "cancelled"
         ):
             stage_status = "cancelled"
-        elif any(
-            str(item.get("severity") or "").strip().lower() == "error"
-            for item in stage_signals
-            if isinstance(item, dict)
-        ):
-            stage_status = "failed"
-        elif not attempts and not converged:
-            stage_status = "failed"
-            stage_signals.append(
-                {
-                    "code": "director.no_dispatch_attempt",
-                    "severity": "error",
-                    "detail": "No director dispatch attempt executed before stage termination",
-                }
-            )
-        elif not execution_evidence_ok:
-            stage_status = "failed"
-            stage_signals.append(
-                {
-                    "code": "director.execution_evidence_missing",
-                    "severity": "error",
-                    "detail": "No valid director execution evidence found from taskboard or run metadata",
-                }
-            )
-        elif requires_taskboard_convergence and not converged:
-            if fanout_quality_handoff:
-                stage_signals.append(
-                    {
-                        "code": "director.taskboard_unresolved_quality_handoff",
-                        "severity": "warning",
-                        "detail": (
-                            "TaskBoard retained unresolved work after Director materialization failure, "
-                            f"but workspace artifacts exist and will enter quality gate; final_stats={final_stats}"
-                        ),
-                    }
-                )
-            else:
-                stage_status = "failed"
-                stage_signals.append(
-                    {
-                        "code": "director.taskboard_not_converged",
-                        "severity": "error",
-                        "detail": f"TaskBoard not converged after dispatch rounds; final_stats={final_stats}",
-                    }
-                )
 
         # Generate per-binding terminal route events from fanout results
         per_binding_route_events: list[dict[str, Any]] = []
@@ -5295,12 +6130,15 @@ class OrchestrationStageExecutor:
                 )
 
         if stage_status != "cancelled":
-            binding_ok, binding_signals = self._validate_director_binding_coverage(
+            _binding_ok, binding_signals = self._validate_director_binding_coverage(
                 additional_events=per_binding_route_events,
             )
+            for signal in binding_signals:
+                if str(signal.get("severity") or "").strip().lower() == "error":
+                    signal["severity"] = "warning"
+                    signal["authoritative"] = False
+                    signal["authority_source"] = "binding_coverage_diagnostic"
             stage_signals.extend(binding_signals)
-            if not binding_ok:
-                stage_status = "failed"
 
         error_code = ""
         root_cause_hint = ""
@@ -5329,6 +6167,10 @@ class OrchestrationStageExecutor:
             root_cause_hint = str(signal.get("detail") or "").strip()
             if error_code:
                 break
+
+        if final_authority.director_stage_authorized:
+            error_code = ""
+            root_cause_hint = ""
 
         fail_closed_events = self._build_fail_closed_director_route_events(
             attempts=attempts,
@@ -5371,7 +6213,15 @@ class OrchestrationStageExecutor:
             "signals": stage_signals,
             "fail_closed_route_events": fail_closed_events,
             "per_binding_route_events": per_binding_route_events,
-            "quality_gate_handoff": fanout_quality_handoff,
+            "quality_gate_handoff": False,
+            "canonical_authority": {
+                "source": "run_ledger_projection",
+                "authorized": final_authority.director_stage_authorized,
+                "reason_code": final_authority.reason_code,
+                "detail": final_authority.detail,
+                "task_count": final_authority.task_count,
+                "incomplete_task_ids": list(final_authority.incomplete_task_ids),
+            },
             "failure_stage": "director_dispatch" if stage_status == "failed" else "",
             "error_code": error_code or None,
             "root_cause_hint": root_cause_hint or None,
@@ -5386,12 +6236,25 @@ class OrchestrationStageExecutor:
         self._mirror_director_artifacts(run.id, artifacts)
         if stage_signal_path:
             artifacts.append(stage_signal_path)
+        inflight_run_continues = execution_barrier_timeout_observed or any(
+            bool(metadata.get("inflight_run_continues"))
+            for attempt in attempts
+            if isinstance(attempt, dict)
+            for metadata in [attempt.get("metadata")]
+            if isinstance(metadata, dict)
+        )
+        settlement_metadata = {
+            "child_sessions_settled": not inflight_run_continues,
+            "inflight_run_continues": inflight_run_continues,
+            "settlement_source": "director_dispatch_settlement_barrier",
+        }
         if stage_status == "cancelled":
             return StageResult(
                 stage="director_dispatch",
                 status="cancelled",
                 output=f"Director dispatch cancelled: {(final_result.message if final_result else 'N/A')}",
                 artifacts=artifacts,
+                metadata=settlement_metadata,
             )
         return StageResult(
             stage="director_dispatch",
@@ -5403,285 +6266,8 @@ class OrchestrationStageExecutor:
                 f"error_code={error_code or 'none'}; root_cause_hint={root_cause_hint or 'none'}"
             ),
             artifacts=artifacts,
+            metadata=settlement_metadata,
         )
-
-    @staticmethod
-    def _is_director_no_materialized_changes(result: CommandResult) -> bool:
-        return helpers.is_director_no_materialized_changes(result)
-
-    @staticmethod
-    def _fanout_all_active_bindings_failed(metadata: dict[str, Any]) -> bool:
-        if not bool(metadata.get("binding_fanout")):
-            return False
-        per_binding = metadata.get("per_binding")
-        if not isinstance(per_binding, list):
-            return False
-
-        active_entries = [
-            item
-            for item in per_binding
-            if isinstance(item, dict)
-            and not bool(item.get("quarantined"))
-            and not bool(item.get("skipped"))
-            and str(item.get("status") or "").strip().lower() not in {"quarantined", "skipped"}
-        ]
-        if not active_entries:
-            return False
-
-        success_statuses = {"completed", "success"}
-        if any(str(item.get("status") or "").strip().lower() in success_statuses for item in active_entries):
-            return False
-
-        active_count = int(metadata.get("active_binding_count") or len(active_entries))
-        return active_count > 0 and len(active_entries) >= active_count
-
-    @staticmethod
-    def _fanout_failure_mentions_materialization_quality(metadata: dict[str, Any]) -> bool:
-        per_binding = metadata.get("per_binding")
-        if not isinstance(per_binding, list):
-            return False
-        markers = (
-            "director_materialization_quality_failed",
-            "director_materialization_semantic_quality_failed",
-        )
-        for item in per_binding:
-            if not isinstance(item, dict):
-                continue
-            if bool(item.get("skipped")) or bool(item.get("quarantined")):
-                continue
-            status = str(item.get("status") or "").strip().lower()
-            if status in {"completed", "success", "skipped", "quarantined"}:
-                continue
-            text = json.dumps(item, ensure_ascii=False, default=str).lower()
-            if any(marker in text for marker in markers):
-                return True
-        return False
-
-    @staticmethod
-    def _failure_metadata_mentions_materialization_quality(metadata: dict[str, Any]) -> bool:
-        markers = (
-            "director_materialization_quality_failed",
-            "director_materialization_semantic_quality_failed",
-        )
-        text = json.dumps(metadata, ensure_ascii=False, default=str).lower()
-        return any(marker in text for marker in markers)
-
-    def _failed_task_records_indicate_materialization_quality_handoff(self) -> bool:
-        markers = (
-            "director_materialization_quality_failed",
-            "director_materialization_semantic_quality_failed",
-        )
-        for payload in self._read_observable_task_rows():
-            status = str(payload.get("status") or "").strip().lower()
-            if status not in {"failed", "blocked"}:
-                continue
-            text = json.dumps(payload, ensure_ascii=False, default=str).lower()
-            if any(marker in text for marker in markers):
-                return True
-        return False
-
-    def _failed_task_records_indicate_quality_handoff(self) -> bool:
-        """Return true when failed task records show artifacts that should enter QA.
-
-        Director weak-model fanout can write files but fail the strict write-tool
-        receipt contract. That is still a real, inspectable workspace state, so
-        Factory should let workspace quality and QA decide whether it is runnable
-        instead of stopping before gates run.
-        """
-        markers = (
-            "director_missing_write_receipt",
-            "director_no_materialized_changes",
-            "single_batch_contract_violation",
-            "director_materialization_quality_failed",
-            "director_materialization_semantic_quality_failed",
-        )
-        modes = {
-            "workspace_diff_without_write_tool",
-            "no_materialized_changes",
-        }
-        for payload in self._read_observable_task_rows():
-            status = str(payload.get("status") or "").strip().lower()
-            if status not in {"failed", "blocked"}:
-                continue
-            metadata = payload.get("metadata")
-            if not isinstance(metadata, dict):
-                metadata = {}
-            adapter_result = metadata.get("adapter_result")
-            if not isinstance(adapter_result, dict):
-                adapter_result = {}
-            runtime_execution = metadata.get("runtime_execution")
-            if not isinstance(runtime_execution, dict):
-                runtime_execution = {}
-            texts = [
-                payload.get("last_execution_error"),
-                metadata.get("last_execution_error"),
-                metadata.get("error"),
-                metadata.get("error_code"),
-                runtime_execution.get("last_error"),
-                runtime_execution.get("error"),
-                adapter_result.get("materialization_error"),
-                adapter_result.get("last_execution_error"),
-                adapter_result.get("error"),
-                adapter_result.get("error_code"),
-                adapter_result.get("direct_fallback", {}).get("skipped_reason")
-                if isinstance(adapter_result.get("direct_fallback"), dict)
-                else "",
-            ]
-            haystack = "\n".join(str(item or "") for item in texts).lower()
-            mode = str(adapter_result.get("materialization_mode") or "").strip().lower()
-            if mode in modes or any(marker in haystack for marker in markers):
-                return True
-        return False
-
-    @staticmethod
-    def _taskboard_idle_with_unresolved_work(stats: dict[str, int]) -> bool:
-        """Return true when no work is active and only blocked residue remains."""
-        active_keys = (
-            "in_progress",
-            "in_design",
-            "in_execution",
-            "in_qa",
-            "running",
-            "processing",
-            "executing",
-            "waiting_human",
-        )
-        if any(int(stats.get(key) or 0) > 0 for key in active_keys):
-            return False
-        claimable = int(stats.get("pending") or 0) + int(stats.get("ready") or 0)
-        blocked = int(stats.get("blocked") or 0)
-        terminal = int(stats.get("completed") or 0) + int(stats.get("failed") or 0)
-        return claimable == 0 and blocked > 0 and terminal > 0
-
-    def _workspace_has_materialized_delivery_evidence(self, tasks: list[dict[str, Any]]) -> bool:
-        workspace_root = self.workspace.resolve()
-        declared_targets = self._collect_declared_delivery_targets(tasks)
-        for target in declared_targets:
-            path = (workspace_root / target).resolve()
-            try:
-                path.relative_to(workspace_root)
-            except ValueError:
-                continue
-            if path.is_file():
-                try:
-                    if path.stat().st_size > 0:
-                        return True
-                except OSError:
-                    continue
-            if path.is_dir():
-                try:
-                    if any(child.is_file() and child.stat().st_size > 0 for child in path.rglob("*")):
-                        return True
-                except OSError:
-                    continue
-
-        for pattern in (
-            "src/**/*.ts",
-            "src/**/*.tsx",
-            "src/**/*.js",
-            "src/**/*.jsx",
-            "src/**/*.py",
-            "src/**/*.html",
-            "src/**/*.rs",
-            "src/**/*.go",
-            "src/**/*.java",
-            "src/**/*.c",
-            "src/**/*.cc",
-            "src/**/*.cpp",
-            "src/**/*.h",
-            "app/**/*.py",
-            "app/**/*.js",
-            "app/**/*.ts",
-            "app/**/*.go",
-            "cmd/**/*.go",
-            "pkg/**/*.go",
-            "internal/**/*.go",
-            "crates/**/*.rs",
-            "bin/**/*.rs",
-            "tests/**/*.rs",
-            "tests/**/*.go",
-            "tests/**/*.py",
-            "tests/**/*.js",
-            "tests/**/*.ts",
-            "include/**/*.h",
-            "tests/**/*.*",
-            "package.json",
-            "Cargo.toml",
-            "Cargo.lock",
-            "go.mod",
-            "go.sum",
-            "pyproject.toml",
-            "pom.xml",
-            "build.gradle",
-            "CMakeLists.txt",
-            "Makefile",
-            "lib.rs",
-            "main.rs",
-            "index.html",
-            "public/**/*.html",
-        ):
-            for candidate in workspace_root.glob(pattern):
-                if not candidate.is_file():
-                    continue
-                parts = set(candidate.relative_to(workspace_root).parts)
-                if parts.intersection({".git", ".polaris", "node_modules"}):
-                    continue
-                try:
-                    if candidate.stat().st_size > 0:
-                        return True
-                except OSError:
-                    continue
-        return False
-
-    def _fanout_quality_failure_can_enter_quality_gate(
-        self,
-        *,
-        metadata: dict[str, Any],
-        final_stats: dict[str, int],
-        pm_tasks: list[dict[str, Any]],
-    ) -> bool:
-        idle_with_unresolved = self._taskboard_idle_with_unresolved_work(final_stats)
-        metadata_quality_handoff = self._failure_metadata_mentions_materialization_quality(metadata)
-        task_record_materialization_quality_handoff = (
-            self._failed_task_records_indicate_materialization_quality_handoff()
-        )
-        if (
-            idle_with_unresolved
-            and self._missing_declared_delivery_targets(pm_tasks)
-            and not (metadata_quality_handoff or task_record_materialization_quality_handoff)
-        ):
-            return False
-        taskboard_terminal_enough = self._is_taskboard_converged(final_stats) or idle_with_unresolved
-        if not taskboard_terminal_enough:
-            return False
-        if not self._workspace_has_materialized_delivery_evidence(pm_tasks):
-            return False
-        task_record_quality_handoff = self._failed_task_records_indicate_quality_handoff()
-        if not self._fanout_all_active_bindings_failed(metadata):
-            return metadata_quality_handoff or task_record_quality_handoff
-        return (
-            self._fanout_failure_mentions_materialization_quality(metadata)
-            or metadata_quality_handoff
-            or task_record_quality_handoff
-        )
-
-    @staticmethod
-    def _downgrade_quality_handoff_blocking_signals(stage_signals: list[dict[str, Any]]) -> None:
-        handoff_codes = {
-            "director.dispatch_timeout",
-            "director.run_status_non_success",
-            "director.taskboard_not_converged",
-            "director.binding_fanout_all_failed",
-        }
-        for signal in stage_signals:
-            if not isinstance(signal, dict):
-                continue
-            code = str(signal.get("code") or "").strip()
-            severity = str(signal.get("severity") or "").strip().lower()
-            if code in handoff_codes and severity == "error":
-                signal["severity"] = "warning"
-                signal["handoff_suppressed_error"] = True
-                signal["handoff_reason"] = "materialized_artifacts_enter_quality_gate"
 
     @staticmethod
     def _bool_from_context_or_env(
@@ -5698,214 +6284,73 @@ class OrchestrationStageExecutor:
     def _workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
         return self._workspace_quality.workspace_quality_commands(context)
 
-    def _workspace_quality_project_source_files(self, *, limit: int = 20) -> list[str]:
-        workspace_root = self.workspace.resolve()
-        source_files: list[str] = []
-
-        def add_source(path: Path) -> None:
-            try:
-                relative = path.resolve().relative_to(workspace_root).as_posix()
-            except ValueError:
-                return
-            if relative in source_files:
-                return
-            source_files.append(relative)
-
-        for root_name in sorted(_WORKSPACE_QUALITY_SOURCE_ROOTS):
-            root = workspace_root / root_name
-            if not root.exists():
-                continue
-            candidates = [root] if root.is_file() else [path for path in root.rglob("*") if path.is_file()]
-            for path in candidates:
-                try:
-                    relative_parts = path.resolve().relative_to(workspace_root).parts
-                except ValueError:
-                    continue
-                if any(part in _WORKSPACE_QUALITY_IGNORED_SOURCE_PARTS for part in relative_parts):
-                    continue
-                if path.name.endswith(".d.ts"):
-                    continue
-                if path.suffix.lower() not in _WORKSPACE_QUALITY_SOURCE_SUFFIXES:
-                    continue
-                add_source(path)
-                if len(source_files) >= limit:
-                    return source_files
-
-        for filename in sorted(_WORKSPACE_QUALITY_ROOT_SOURCE_FILES):
-            path = workspace_root / filename
-            if path.is_file():
-                add_source(path)
-                if len(source_files) >= limit:
-                    break
-        return source_files
-
     @staticmethod
-    def _workspace_quality_task_row_status(row: dict[str, Any]) -> str:
-        for key in ("status", "execution_state"):
-            value = str(row.get(key) or "").strip().lower()
-            if value:
-                return value
-        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
-        runtime_execution = metadata.get("runtime_execution") if isinstance(metadata, dict) else {}
-        if isinstance(runtime_execution, dict):
-            for key in ("effective_status", "raw_status"):
-                value = str(runtime_execution.get(key) or "").strip().lower()
-                if value:
-                    return value
-        return ""
+    def _canonical_project_id(context: dict[str, Any]) -> str:
+        return str(
+            context.get("project_id")
+            or context.get("requested_project_id")
+            or context.get("factory_bench_project_id")
+            or ""
+        ).strip()
 
-    @staticmethod
-    def _workspace_quality_task_row_target_files(row: dict[str, Any]) -> list[str]:
-        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
-        raw_targets = metadata.get("target_files") if isinstance(metadata, dict) else None
-        if raw_targets is None:
-            raw_targets = metadata.get("boundary_target_files") if isinstance(metadata, dict) else None
-        if raw_targets is None:
-            raw_targets = row.get("target_files")
-        if not isinstance(raw_targets, list):
-            return []
-        targets: list[str] = []
-        for item in raw_targets:
-            normalized = os.path.normpath(str(item or "").strip().replace("\\", "/")).replace("\\", "/")
-            if normalized and not normalized.startswith("../") and not normalized.startswith("/"):
-                targets.append(normalized)
-        return targets
+    def _canonical_factory_projection(
+        self,
+        run: FactoryRun,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Load the canonical Factory run-tree projection.
 
-    @staticmethod
-    def _workspace_quality_target_file_is_source(path: str) -> bool:
-        normalized = os.path.normpath(str(path or "").strip().replace("\\", "/")).replace("\\", "/")
-        if not normalized:
-            return False
-        parts = tuple(part for part in normalized.split("/") if part)
-        if any(part in _WORKSPACE_QUALITY_IGNORED_SOURCE_PARTS for part in parts):
-            return False
-        suffix = Path(normalized).suffix.lower()
-        if suffix not in _WORKSPACE_QUALITY_SOURCE_SUFFIXES:
-            return False
-        if normalized.endswith(".d.ts"):
-            return False
-        return bool(
-            parts
-            and (parts[0] in _WORKSPACE_QUALITY_SOURCE_ROOTS or normalized in _WORKSPACE_QUALITY_ROOT_SOURCE_FILES)
-        )
+        The same-cell adapter owns workspace/factory/project scoping. Missing
+        or malformed facts return an empty projection so all callers fail
+        closed through the pure authority evaluator.
+        """
 
-    @staticmethod
-    def _workspace_quality_target_file_is_quality_artifact(path: str) -> bool:
-        normalized = os.path.normpath(str(path or "").strip().replace("\\", "/")).replace("\\", "/")
-        if not normalized:
-            return False
-        if OrchestrationStageExecutor._workspace_quality_target_file_is_source(normalized):
-            return True
-        filename = Path(normalized).name.lower()
-        if filename in _WORKSPACE_QUALITY_ENTRYPOINT_FILENAMES:
-            return True
-        parts = tuple(part for part in normalized.split("/") if part)
-        return bool(
-            parts
-            and parts[0] in {"src", "app", "apps", "public"}
-            and Path(normalized).suffix.lower() in {".html", ".css"}
-        )
-
-    def _workspace_quality_missing_quality_targets(self, targets: list[str]) -> list[str]:
-        missing: list[str] = []
-        for path in targets:
-            if not self._workspace_quality_target_file_is_quality_artifact(path):
-                continue
-            if not (self.workspace / path).is_file():
-                missing.append(path)
-        return missing
-
-    def _workspace_quality_task_boundary_blocker(self, context: dict[str, Any]) -> dict[str, Any] | None:
-        del context
-        source_files = self._workspace_quality_project_source_files(limit=8)
         try:
-            rows = TaskRuntimeService(str(self.workspace)).list_observable_task_rows()
-        except (OSError, RuntimeError, TypeError, ValueError):
-            return None
-        source_rows: list[dict[str, Any]] = []
-        unfinished_source_rows: list[dict[str, Any]] = []
-        blocked_rows: list[dict[str, Any]] = []
-        failed_rows: list[dict[str, Any]] = []
-        missing_target_files: list[str] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            targets = self._workspace_quality_task_row_target_files(row)
-            missing_targets = self._workspace_quality_missing_quality_targets(targets)
-            if not missing_targets and source_files:
-                continue
-            if not any(self._workspace_quality_target_file_is_quality_artifact(path) for path in targets):
-                continue
-            status = self._workspace_quality_task_row_status(row)
-            source_rows.append(
-                {
-                    "id": row.get("id"),
-                    "status": status,
-                    "target_files": targets[:12],
-                    "missing_target_files": missing_targets[:12],
-                    "last_error": row.get("last_error") or row.get("error_message"),
-                }
+            projection = load_run_ledger_projection(
+                self.workspace,
+                run_id=run.id,
+                factory_run_id=run.id,
+                project_id=self._canonical_project_id(context),
             )
-            if (
-                status in {"completed", "complete", "success", "succeeded", "completed_verified"}
-                and not missing_targets
-            ):
-                continue
-            unfinished_source_rows.append(source_rows[-1])
-            for missing in missing_targets:
-                if missing not in missing_target_files:
-                    missing_target_files.append(missing)
-            if status in {"blocked", "waiting", "waiting_human"}:
-                blocked_rows.append(source_rows[-1])
-            if status in {"failed", "failure", "timeout", "cancelled"}:
-                failed_rows.append(source_rows[-1])
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Canonical Factory projection unavailable for run %s: %s", run.id, exc)
+            return {}
+        try:
+            task_runtime_projection = TaskRuntimeService(str(self.workspace)).query_observable_task_rows_projection()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Canonical TaskRuntime projection unavailable for run %s: %s",
+                run.id,
+                exc,
+            )
+            return projection
+        projection["task_runtime_projection"] = task_runtime_projection.to_authority_dict(factory_run_id=run.id)
+        return projection
 
-        if not unfinished_source_rows:
+    def _workspace_quality_task_boundary_blocker(
+        self,
+        run: FactoryRun,
+        context: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Block workspace validation until canonical task boundaries settle."""
+
+        authority = helpers.evaluate_canonical_factory_authority(self._canonical_factory_projection(run, context))
+        if authority.director_stage_authorized:
             return None
-        source_files_present = bool(source_files)
-        reason_code = (
-            "factory_quality_gate_task_boundary_dependency_not_unlocked"
-            if blocked_rows
-            else "factory_quality_gate_task_boundary_incomplete_materialization"
+        failure_class = authority.failure_class or (
+            FailureClassV1.DEPENDENCY_NOT_UNLOCKED.value
+            if not authority.task_boundary_present
+            else FailureClassV1.INCOMPLETE_MATERIALIZATION.value
         )
-        if source_files_present and missing_target_files:
-            reason_code = (
-                "factory_quality_gate_task_boundary_missing_target_dependency_not_unlocked"
-                if blocked_rows
-                else "factory_quality_gate_task_boundary_missing_target_incomplete_materialization"
-            )
-        failure_class = (
-            QaFailureClassV1.DEPENDENCY_NOT_UNLOCKED.value
-            if blocked_rows
-            else QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
-        )
-        if source_files_present and missing_target_files:
-            detail = (
-                "Workspace quality checks skipped because TaskRuntime observable rows still have unfinished "
-                "source/test/entrypoint targets missing from the workspace. Running package scripts or delivery "
-                "depth now would misclassify upstream TaskBoundary dependency or materialization failure as an "
-                "implementation-depth defect."
-            )
-        else:
-            detail = (
-                "Workspace quality checks skipped because TaskRuntime observable rows still have "
-                "unfinished source-producing tasks and no project source files are materialized. "
-                "Running full build/test commands now would misclassify upstream dependency or "
-                "materialization failure as a TypeScript implementation defect."
-            )
         return {
-            "schema_version": "factory.workspace_quality.task_boundary_blocker.v1",
-            "reason_code": reason_code,
+            "schema_version": "factory.workspace_quality.task_boundary_blocker.v2",
+            "reason_code": authority.reason_code,
             "failure_class": failure_class,
-            "responsible_layer": "execution_control_plane",
-            "source_files_present": source_files_present,
-            "project_source_file_count": len(source_files),
-            "missing_target_files": missing_target_files[:24],
-            "source_rows": source_rows[:12],
-            "unfinished_source_rows": unfinished_source_rows[:12],
-            "blocked_source_task_count": len(blocked_rows),
-            "failed_source_task_count": len(failed_rows),
-            "detail": detail,
+            "responsible_layer": authority.responsible_layer or "task_boundary",
+            "task_count": authority.task_count,
+            "incomplete_task_ids": list(authority.incomplete_task_ids),
+            "detail": authority.detail,
+            "authority_source": "run_ledger_projection",
         }
 
     @staticmethod
@@ -6719,7 +7164,7 @@ class OrchestrationStageExecutor:
 
     async def _run_workspace_quality_checks(self, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
         commands = self._workspace_quality_commands(context)
-        task_boundary_blocker = self._workspace_quality_task_boundary_blocker(context)
+        task_boundary_blocker = self._workspace_quality_task_boundary_blocker(run, context)
         depth_result = (
             None if task_boundary_blocker else self._workspace_quality.delivery_depth_contract_result(context)
         )
@@ -6818,8 +7263,6 @@ class OrchestrationStageExecutor:
         async def run_workspace_quality_command_with_deadline(
             command: list[str],
             phase: str,
-            *,
-            repair_retry: bool = False,
         ) -> tuple[dict[str, Any], str]:
             deadline_detail = workspace_checks_deadline_blocker(f"before_{phase}")
             if deadline_detail:
@@ -6827,8 +7270,6 @@ class OrchestrationStageExecutor:
             command_timeout = workspace_quality_command_timeout_seconds()
             result = await asyncio.to_thread(self._run_workspace_quality_command, command, command_timeout)
             result["phase"] = phase
-            if repair_retry:
-                result["repair_retry"] = True
             if command_timeout < configured_timeout_seconds:
                 result["deadline_capped_timeout_seconds"] = command_timeout
                 result["configured_timeout_seconds"] = configured_timeout_seconds
@@ -6863,38 +7304,7 @@ class OrchestrationStageExecutor:
                 )
             results.append(result)
             if not bool(result.get("passed")):
-                # If npm install failed due to hallucinated dependencies, repair and retry.
-                is_npm_install = (
-                    isinstance(command, list)
-                    and command
-                    and str(command[0]).strip().lower() == "npm"
-                    and any(str(part).strip().lower() == "install" for part in command)
-                )
-                if is_npm_install:
-                    stderr_text = str(result.get("stderr_tail") or "")
-                    removed = self._workspace_quality.repair_hallucinated_npm_dependencies(stderr_text)
-                    if removed:
-                        result["repair"] = {"action": "remove_hallucinated_deps", "removed": removed}
-                        result["repair_receipts"] = self._workspace_quality.consume_repair_receipts()
-                        retry_result, deadline_detail = await run_workspace_quality_command_with_deadline(
-                            command,
-                            "prepare",
-                            repair_retry=True,
-                        )
-                        if deadline_detail:
-                            return write_workspace_validation_failure(
-                                "factory_quality_gate_workspace_checks_deadline_insufficient",
-                                deadline_detail,
-                            )
-                        results.append(retry_result)
-                        if bool(retry_result.get("passed")):
-                            result["passed"] = True  # Mark original as repaired
-                        else:
-                            prepare_failed = True
-                    else:
-                        prepare_failed = True
-                else:
-                    prepare_failed = True
+                prepare_failed = True
 
         run_commands = [] if prepare_failed else commands
         for command in run_commands:
@@ -6927,62 +7337,6 @@ class OrchestrationStageExecutor:
 
         rerun_results: list[dict[str, Any]] = []
         if run_commands and not prepare_failed and not all(bool(item.get("passed")) for item in results):
-            # Deterministic repairs before LLM repair loop.
-            # 1) CJS export/import mismatch: module.exports = X vs const { X } = require("./x")
-            # 2) Test trim mismatch: assertEqual fails due to whitespace-only difference
-            cjs_repairs = self._workspace_quality.repair_cjs_export_import_mismatch()
-            # Collect test stderr for trim repair
-            test_stderr_parts: list[str] = []
-            for item in results:
-                if str(item.get("phase") or "") == "check" and not bool(item.get("passed")):
-                    test_stderr_parts.append(str(item.get("stderr_tail") or ""))
-                    test_stderr_parts.append(str(item.get("stdout_tail") or ""))
-            trim_repairs = self._workspace_quality.repair_test_trim_mismatch("\n".join(test_stderr_parts))
-            deterministic_repairs = {
-                "cjs_export_import": cjs_repairs,
-                "test_trim": trim_repairs,
-            }
-            has_deterministic_repairs = bool(cjs_repairs or trim_repairs)
-            if has_deterministic_repairs:
-                repair_summary["deterministic_repairs"] = deterministic_repairs
-                repair_summary["deterministic_repair_receipts"] = self._workspace_quality.consume_repair_receipts()
-                # Re-run check commands after deterministic repairs
-                det_rerun: list[dict[str, Any]] = []
-                for command in run_commands:
-                    rerun_result, deadline_detail = await run_workspace_quality_command_with_deadline(
-                        command,
-                        "check_after_deterministic_repair",
-                    )
-                    if deadline_detail:
-                        return write_workspace_validation_failure(
-                            "factory_quality_gate_workspace_checks_deadline_insufficient",
-                            deadline_detail,
-                            repair_override=repair_summary,
-                        )
-                    det_rerun.append(rerun_result)
-                det_depth_result = self._workspace_quality.delivery_depth_contract_result(context)
-                if det_depth_result is not None:
-                    det_depth_result["phase"] = "check_after_deterministic_repair"
-                    det_rerun.append(det_depth_result)
-                results.extend(det_rerun)
-                # If all checks pass after deterministic repairs — skip LLM repair loop
-                if all(bool(item.get("passed")) for item in det_rerun):
-                    effective_results = [
-                        item for item in results if str(item.get("phase") or "") == "prepare"
-                    ] + det_rerun
-                    payload = {
-                        "schema_version": "factory.workspace_quality_checks.v1",
-                        "generated_at": datetime.now(timezone.utc).isoformat(),
-                        "source": "factory_stage_executor",
-                        "factory_run_id": run.id,
-                        "workspace": str(self.workspace),
-                        "passed": True,
-                        "commands": results,
-                        "repair": repair_summary,
-                    }
-                    artifact = self._write_workspace_validation_artifact(run, context, payload)
-                    return True, artifact
-
             max_rounds = int(context.get("workspace_quality_repair_max_rounds") or _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS)
             max_rounds = max(1, min(max_rounds, _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS))
             latest_check_results = [item for item in results if str(item.get("phase") or "") == "check"]
@@ -7551,6 +7905,45 @@ class OrchestrationStageExecutor:
             )
         return "\n\n".join(sections)
 
+    async def _wait_for_canonical_quality_authority(
+        self,
+        run: FactoryRun,
+        context: dict[str, Any],
+    ) -> helpers.CanonicalFactoryAuthority:
+        """Wait until the QA fact is visible behind the sequence barrier.
+
+        TaskBoundary ``completed_verified`` proves Director settlement. The
+        final ``qa_verdict`` gate's append/content coordinates prove the QA
+        consumer barrier. Both facts must be visible in the same Run Ledger
+        projection; a report file or orchestration status cannot substitute.
+        """
+
+        raw_timeout = context.get("canonical_projection_settlement_timeout_seconds", 2.0)
+        try:
+            timeout_seconds = float(raw_timeout)
+        except (TypeError, ValueError):
+            timeout_seconds = 2.0
+        timeout_seconds = max(0.1, min(timeout_seconds, 10.0))
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        latest = helpers.evaluate_canonical_factory_authority({})
+        while True:
+            latest = helpers.evaluate_canonical_factory_authority(
+                self._canonical_factory_projection(run, context),
+            )
+            if latest.quality_stage_authorized:
+                return latest
+            if latest.qa_verdict_present or latest.reason_code in {
+                "canonical_sequence_barrier_unsatisfied",
+                "qa_verdict_failed",
+                "evidence_policy_failed",
+                "run_ledger_projection_failed",
+                "task_boundary_not_completed_verified",
+            }:
+                return latest
+            if asyncio.get_running_loop().time() >= deadline:
+                return latest
+            await asyncio.sleep(0.05)
+
     async def _execute_quality_gate(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing quality gate for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
@@ -7647,71 +8040,40 @@ class OrchestrationStageExecutor:
             )
 
         qa_report_path = self._artifact_path("runtime/qa/report.json")
-        if not self._artifact_file_ready(qa_report_path):
-            return self._build_quality_gate_failure_stage(
-                run,
-                reason_code="factory_quality_gate_report_missing",
-                detail=f"Quality gate report missing after QA run: {qa_report_path}",
-                context=context,
-                workspace_checks_artifact=workspace_checks_artifact,
-                workspace_checks_passed=workspace_checks_passed,
-            )
         loaded: dict[str, Any] | Any = {}
         parse_error: Exception | None = None
-        for _attempt in range(5):
-            try:
-                report_text = await asyncio.to_thread(qa_report_path.read_text, encoding="utf-8")
-                loaded = json.loads(report_text)
-                parse_error = None
-                break
-            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
-                parse_error = exc
-                await asyncio.sleep(0.2)
-        if parse_error is not None:
-            raise RuntimeError(f"Quality gate report parse failed: {qa_report_path}") from parse_error
-        if not isinstance(loaded, dict):
-            raise RuntimeError(f"Quality gate report payload must be JSON object: {qa_report_path}")
-        qa_payload: dict[str, Any] = loaded
+        report_ready = self._artifact_file_ready(qa_report_path)
+        if report_ready:
+            for _attempt in range(5):
+                try:
+                    report_text = await asyncio.to_thread(qa_report_path.read_text, encoding="utf-8")
+                    loaded = json.loads(report_text)
+                    parse_error = None
+                    break
+                except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                    parse_error = exc
+                    await asyncio.sleep(0.2)
+        qa_payload: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
 
-        qa_passed = bool(qa_payload.get("passed"))
-        try:
-            qa_score = int(qa_payload.get("score") or 0)
-        except (TypeError, ValueError):
-            qa_score = 0
-        try:
-            qa_critical = int(qa_payload.get("critical_issue_count") or 0)
-        except (TypeError, ValueError):
-            qa_critical = 0
-        qa_llm_required = self._bool_from_context_or_env(
+        canonical_authority = await self._wait_for_canonical_quality_authority(
+            run,
             context,
-            "qa_require_llm_judgement",
-            "require_qa_llm_judgement",
-            "factory_require_qa_llm_judgement",
-            env_var="KERNELONE_FACTORY_QA_REQUIRE_LLM_JUDGEMENT",
-            default=True,
         )
-        qa_llm_judgement_ready = not self._qa_report_has_warning(qa_payload, _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING)
-        is_success = (
-            final_result.status in {"completed", "success"}
-            and qa_passed
-            and qa_score >= _QUALITY_GATE_MIN_PASS_SCORE
-            and qa_critical == 0
-            and workspace_checks_passed
-            and (qa_llm_judgement_ready or not qa_llm_required)
-        )
+        is_success = canonical_authority.quality_stage_authorized
+        qa_report_passed = bool(qa_payload.get("passed")) if qa_payload else None
+        report_consistent = qa_report_passed is None or qa_report_passed == canonical_authority.qa_verdict_passed
         output_suffix = (
-            f"qa_passed={qa_passed}; qa_score={qa_score}; qa_critical={qa_critical}; "
-            f"qa_score_threshold={_QUALITY_GATE_MIN_PASS_SCORE}; "
-            f"workspace_checks_passed={workspace_checks_passed}; "
-            f"qa_llm_required={qa_llm_required}; qa_llm_judgement_ready={qa_llm_judgement_ready}"
+            f"task_boundary_completed_verified={canonical_authority.task_boundary_completed_verified}; "
+            f"qa_verdict_passed={canonical_authority.qa_verdict_passed}; "
+            f"sequence_barrier_satisfied={canonical_authority.sequence_barrier_satisfied}; "
+            f"evidence_policy_passed={canonical_authority.evidence_policy_passed}; "
+            f"workspace_checks_diagnostic={workspace_checks_passed}; "
+            f"report_ready={report_ready}; report_parse_error={parse_error or 'none'}; "
+            f"report_consistent={report_consistent}; "
+            f"canonical_authorized={is_success}; "
+            f"canonical_reason={canonical_authority.reason_code}"
         )
-        if qa_score < _QUALITY_GATE_MIN_PASS_SCORE:
-            output_suffix = f"{output_suffix}; qa_gate_blocker=qa_score_below_threshold"
-        if qa_critical > 0:
-            output_suffix = f"{output_suffix}; qa_gate_blocker=qa_critical_issues_present"
-        if qa_llm_required and not qa_llm_judgement_ready:
-            output_suffix = f"{output_suffix}; qa_gate_blocker={_QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING}"
-        artifacts = ["runtime/qa/report.json"]
+        artifacts = ["runtime/qa/report.json"] if report_ready else []
         if workspace_checks_artifact:
             artifacts.append(workspace_checks_artifact)
         self._mirror_quality_gate_artifacts(run.id, artifacts)
@@ -7734,6 +8096,7 @@ class OrchestrationStageExecutor:
         cancel_event: asyncio.Event | None = None,
         abort_checker: Callable[[], Awaitable[str | None]] | None = None,
         cancel_on_timeout: bool = True,
+        authority: RunCompletionAuthority = RunCompletionAuthority.ROLE_LIFECYCLE,
     ) -> CommandResult:
         return await self._run_completion_waiter.wait(
             service,
@@ -7742,6 +8105,7 @@ class OrchestrationStageExecutor:
             cancel_event=cancel_event,
             abort_checker=abort_checker,
             cancel_on_timeout=cancel_on_timeout,
+            authority=authority,
         )
 
     @staticmethod
@@ -7814,7 +8178,7 @@ class OrchestrationStageExecutor:
                         "barrier_timeout": True,
                         "inflight_run_continues": True,
                         "cancel_signal_sent": False,
-                        "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                        "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
                         "responsible_layer": "execution_control_plane",
                     },
                 )
@@ -7844,8 +8208,7 @@ class OrchestrationStageExecutor:
 
             active = any(bool(item.get("inflight_run_continues")) for item in updated_bindings)
             failed = any(
-                str(item.get("status") or "").strip().lower()
-                in {"failed", "blocked", "cancelled", "timeout"}
+                str(item.get("status") or "").strip().lower() in {"failed", "blocked", "cancelled", "timeout"}
                 for item in updated_bindings
                 if str(item.get("run_id") or "").strip()
             )
@@ -7863,7 +8226,7 @@ class OrchestrationStageExecutor:
                 merged_metadata.update(
                     {
                         "cancel_signal_sent": False,
-                        "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                        "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
                         "responsible_layer": "execution_control_plane",
                     }
                 )
@@ -7936,40 +8299,61 @@ class OrchestrationStageExecutor:
                     barrier_result,
                     grace_seconds=0,
                 )
-            barrier_result = await self._run_completion_waiter.cancel_active_run(
-                normalized_run_id,
-                reason="factory_stage_timeout",
-            )
-            if barrier_result is not None:
-                return barrier_result
             return CommandResult(
                 run_id=normalized_run_id,
                 status="timeout",
                 message="Director run timed out before timeout settle grace",
                 metadata={
-                    "cancel_signal_sent": True,
+                    "cancel_signal_sent": False,
                     "cancel_reason": "factory_stage_timeout",
                     "timeout_settle_grace_seconds": 0,
+                    "inflight_run_continues": True,
+                    "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                    "responsible_layer": "execution_control_plane",
                 },
             )
         loop = asyncio.get_running_loop()
         started_at = loop.time()
-        idle_window_seconds = max(0.0, float(grace_seconds))
-        idle_deadline = started_at + idle_window_seconds
-        hard_limit_seconds = idle_window_seconds * _DIRECTOR_EXECUTION_BARRIER_MAX_PROGRESS_WINDOWS
-        hard_deadline = started_at + max(idle_window_seconds, hard_limit_seconds)
+        hard_limit_seconds = max(0.0, float(grace_seconds))
+        hard_deadline = started_at + hard_limit_seconds
+        cancellation_reserve_seconds = min(0.25, hard_limit_seconds * 0.25)
+        observation_deadline = hard_deadline - cancellation_reserve_seconds
         progress_marker = self._active_director_execution_progress_marker(run_id=normalized_run_id)
         progress_extensions = 0
         deferred_cancel_reason = ""
-        terminal_statuses = {"completed", "success", "failed", "cancelled", "blocked"}
-        while True:
-            if cancel_event is not None and cancel_event.is_set() and not deferred_cancel_reason:
-                status_probe: CommandResult | None = None
-                with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                    status_probe = await service.query_run_status(normalized_run_id)
-                if status_probe is not None and str(status_probe.status or "").strip().lower() in terminal_statuses:
-                    return status_probe
 
+        async def _cancel_within_hard_deadline(reason: str) -> tuple[CommandResult | None, bool]:
+            remaining_seconds = _remaining_monotonic_seconds(hard_deadline)
+            if remaining_seconds <= 0:
+                return None, False
+            try:
+                return (
+                    await asyncio.wait_for(
+                        self._run_completion_waiter.cancel_active_run(
+                            normalized_run_id,
+                            reason=reason,
+                        ),
+                        timeout=remaining_seconds,
+                    ),
+                    True,
+                )
+            except TimeoutError:
+                return None, False
+
+        while True:
+            canonical_probe = self._run_completion_waiter.canonical_terminal_result(
+                run_id=normalized_run_id,
+                process_terminal=False,
+            )
+            if canonical_probe is not None:
+                return self._with_execution_barrier_progress(
+                    canonical_probe,
+                    progress_extensions=progress_extensions,
+                    elapsed_seconds=loop.time() - started_at,
+                    max_total_seconds=hard_limit_seconds,
+                    deferred_cancel_reason=deferred_cancel_reason,
+                )
+            if cancel_event is not None and cancel_event.is_set() and not deferred_cancel_reason:
                 barrier_result = self._active_director_task_barrier_result(
                     run_id=normalized_run_id,
                     reason="factory_cancelled",
@@ -7978,20 +8362,29 @@ class OrchestrationStageExecutor:
                 if barrier_result is not None:
                     deferred_cancel_reason = "factory_cancelled"
                 else:
-                    barrier_result = await self._run_completion_waiter.cancel_active_run(
-                        normalized_run_id,
-                        reason="factory_cancelled",
-                    )
+                    barrier_result, cancel_completed = await _cancel_within_hard_deadline("factory_cancelled")
                     if barrier_result is not None:
                         return barrier_result
                     return CommandResult(
                         run_id=normalized_run_id,
                         status="cancelled",
                         message="Run cancelled: factory_cancelled",
+                        metadata={
+                            "cancel_signal_sent": cancel_completed,
+                            "inflight_run_continues": not cancel_completed,
+                        },
                     )
             if abort_checker is not None and not deferred_cancel_reason:
                 with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                    abort_reason = await abort_checker()
+                    abort_remaining_seconds = _remaining_monotonic_seconds(observation_deadline)
+                    abort_reason = (
+                        await asyncio.wait_for(
+                            abort_checker(),
+                            timeout=abort_remaining_seconds,
+                        )
+                        if abort_remaining_seconds > 0
+                        else None
+                    )
                     if abort_reason:
                         barrier_result = self._active_director_task_barrier_result(
                             run_id=normalized_run_id,
@@ -8001,62 +8394,61 @@ class OrchestrationStageExecutor:
                         if barrier_result is not None:
                             deferred_cancel_reason = abort_reason
                         else:
-                            barrier_result = await self._run_completion_waiter.cancel_active_run(
-                                normalized_run_id,
-                                reason=abort_reason,
-                            )
+                            barrier_result, cancel_completed = await _cancel_within_hard_deadline(abort_reason)
                             if barrier_result is not None:
                                 return barrier_result
                             return CommandResult(
                                 run_id=normalized_run_id,
                                 status="cancelled",
                                 message=f"Run cancelled: {abort_reason}",
+                                metadata={
+                                    "cancel_signal_sent": cancel_completed,
+                                    "inflight_run_continues": not cancel_completed,
+                                },
                             )
 
-            settle_status_probe: CommandResult | None = None
-            with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                settle_status_probe = await service.query_run_status(normalized_run_id)
-            if settle_status_probe is not None:
-                probed_status = str(settle_status_probe.status or "").strip().lower()
-                if probed_status in terminal_statuses:
-                    return self._with_execution_barrier_progress(
-                        settle_status_probe,
-                        progress_extensions=progress_extensions,
-                        elapsed_seconds=loop.time() - started_at,
-                        max_total_seconds=max(idle_window_seconds, hard_limit_seconds),
-                        deferred_cancel_reason=deferred_cancel_reason,
+            process_terminal = False
+            query_remaining_seconds = _remaining_monotonic_seconds(observation_deadline)
+            if query_remaining_seconds > 0:
+                with contextlib.suppress(
+                    AttributeError,
+                    OSError,
+                    RuntimeError,
+                    TimeoutError,
+                    TypeError,
+                    ValueError,
+                ):
+                    lifecycle_probe = await asyncio.wait_for(
+                        service.query_run_status(normalized_run_id),
+                        timeout=query_remaining_seconds,
                     )
-                metadata = settle_status_probe.metadata if isinstance(settle_status_probe.metadata, dict) else {}
-                count_status = self._terminal_status_from_task_counts(metadata.get("task_status_counts"))
-                if count_status:
-                    terminal_result = CommandResult(
-                        run_id=normalized_run_id,
-                        status=count_status,
-                        message=(
-                            "Director run reached terminal task counts during timeout settle grace: "
-                            f"{metadata.get('task_status_counts')}"
-                        ),
-                        metadata={
-                            **metadata,
-                            "terminal_source": "timeout_settle_task_status_counts",
-                            "queried_status": probed_status,
-                        },
-                    )
-                    return self._with_execution_barrier_progress(
-                        terminal_result,
-                        progress_extensions=progress_extensions,
-                        elapsed_seconds=loop.time() - started_at,
-                        max_total_seconds=max(idle_window_seconds, hard_limit_seconds),
-                        deferred_cancel_reason=deferred_cancel_reason,
-                    )
+                    process_terminal = str(lifecycle_probe.status or "").strip().lower() in {
+                        "blocked",
+                        "cancelled",
+                        "completed",
+                        "failed",
+                        "success",
+                        "timeout",
+                    }
+            canonical_probe = self._run_completion_waiter.canonical_terminal_result(
+                run_id=normalized_run_id,
+                process_terminal=process_terminal,
+            )
+            if canonical_probe is not None:
+                return self._with_execution_barrier_progress(
+                    canonical_probe,
+                    progress_extensions=progress_extensions,
+                    elapsed_seconds=loop.time() - started_at,
+                    max_total_seconds=hard_limit_seconds,
+                    deferred_cancel_reason=deferred_cancel_reason,
+                )
 
             next_progress_marker = self._active_director_execution_progress_marker(run_id=normalized_run_id)
             if next_progress_marker and next_progress_marker != progress_marker:
                 progress_marker = next_progress_marker
                 progress_extensions += 1
-                idle_deadline = min(loop.time() + idle_window_seconds, hard_deadline)
 
-            remaining = min(idle_deadline, hard_deadline) - loop.time()
+            remaining = observation_deadline - loop.time()
             if remaining <= 0:
                 barrier_result = self._active_director_task_barrier_result(
                     run_id=normalized_run_id,
@@ -8072,13 +8464,10 @@ class OrchestrationStageExecutor:
                         timeout_result,
                         progress_extensions=progress_extensions,
                         elapsed_seconds=loop.time() - started_at,
-                        max_total_seconds=max(idle_window_seconds, hard_limit_seconds),
+                        max_total_seconds=hard_limit_seconds,
                         deferred_cancel_reason=deferred_cancel_reason,
                     )
-                barrier_result = await self._run_completion_waiter.cancel_active_run(
-                    normalized_run_id,
-                    reason="factory_stage_timeout",
-                )
+                barrier_result, cancel_completed = await _cancel_within_hard_deadline("factory_stage_timeout")
                 if barrier_result is not None:
                     return barrier_result
                 return CommandResult(
@@ -8086,9 +8475,10 @@ class OrchestrationStageExecutor:
                     status="timeout",
                     message="Director run timed out after timeout settle grace",
                     metadata={
-                        "cancel_signal_sent": True,
+                        "cancel_signal_sent": cancel_completed,
                         "cancel_reason": "factory_stage_timeout",
                         "timeout_settle_grace_seconds": grace_seconds,
+                        "inflight_run_continues": not cancel_completed,
                     },
                 )
             await asyncio.sleep(min(2.0, remaining))
@@ -8118,20 +8508,21 @@ class OrchestrationStageExecutor:
         max_total_seconds: float,
         deferred_cancel_reason: str = "",
     ) -> CommandResult:
-        """Attach progress-aware settlement evidence when a window was renewed."""
+        """Attach hard-deadline and progress evidence to a barrier result."""
 
         normalized_cancel_reason = str(deferred_cancel_reason or "").strip()
-        if progress_extensions <= 0 and not normalized_cancel_reason:
-            return result
         metadata = result.metadata if isinstance(result.metadata, dict) else {}
-        progress_metadata: dict[str, Any] = {}
+        progress_metadata: dict[str, Any] = {
+            "barrier_elapsed_seconds": round(max(0.0, elapsed_seconds), 3),
+            "barrier_max_total_seconds": round(max(0.0, max_total_seconds), 3),
+        }
         if progress_extensions > 0:
-            progress_metadata = {
-                "barrier_progress_extensions": progress_extensions,
-                "barrier_elapsed_seconds": round(max(0.0, elapsed_seconds), 3),
-                "barrier_max_total_seconds": round(max(0.0, max_total_seconds), 3),
-                "barrier_progress_source": "task_runtime_execution_fact",
-            }
+            progress_metadata.update(
+                {
+                    "barrier_progress_extensions": progress_extensions,
+                    "barrier_progress_source": "task_runtime_execution_fact",
+                }
+            )
         if normalized_cancel_reason:
             progress_metadata.update(
                 {
@@ -8180,7 +8571,7 @@ class OrchestrationStageExecutor:
                 "timeout_settle_grace_seconds": grace_seconds,
                 "barrier_state": "timeout",
                 "barrier_timeout": True,
-                "failure_class": QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                "failure_class": FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
                 "responsible_layer": "execution_control_plane",
             },
         )

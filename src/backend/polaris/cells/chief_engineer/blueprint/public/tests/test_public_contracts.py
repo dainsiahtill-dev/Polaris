@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import polaris.cells.chief_engineer.blueprint.public.service as blueprint_service_module
 import pytest
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
+    BuildChiefEngineerBlueprintPortfolioCommandV1,
     ChiefEngineerBlueprintErrorV1,
+    ChiefEngineerPortfolioTaskV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
     HandoffDecisionV1,
@@ -20,8 +24,10 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
 from polaris.cells.chief_engineer.blueprint.public.service import (
     BlueprintPersistence,
     build_ce_handoff_decision,
+    build_chief_engineer_blueprint_portfolio,
     generate_task_blueprint,
     get_blueprint_status,
+    project_chief_engineer_task_blueprint,
 )
 from polaris.kernelone.quality.file_ownership_ledger import (
     FileOwnershipLedgerError,
@@ -191,6 +197,335 @@ class TestHandoffDecisionContract:
         assert decision.allowed is False
         assert "missing required handoff binding: pm_contract_hash" in decision.blockers
         assert "missing required handoff binding: execution_profile_hash" in decision.blockers
+
+
+class TestChiefEngineerBlueprintPortfolio:
+    """Project-level CE advice must remain task-scoped and non-authoritative."""
+
+    @staticmethod
+    def _tasks() -> tuple[ChiefEngineerPortfolioTaskV1, ...]:
+        return (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the shared provider and task A adapter",
+                target_files=("src/shared.py", "src/a.py"),
+                scope_paths=("src/a",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the task B consumer",
+                target_files=("src/shared.py", "src/b.py"),
+                scope_paths=("src/b",),
+                dependencies=("TASK-A",),
+            ),
+        )
+
+    def test_builds_shared_task_overlays_and_interface_bindings(self, tmp_path: Path) -> None:
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-portfolio-1",
+            tasks=self._tasks(),
+            llm_blueprint={
+                "construction_plan": {
+                    "preparation": ["Inspect the shared interface"],
+                    "nested": {"shared": True, "owner": "shared"},
+                    "files": [
+                        "src/shared.py",
+                        "src/a.py",
+                        "src/b.py",
+                        "../plan_escape.py",
+                    ],
+                    "project_interface_contract": {
+                        "provider_declarations": [{"task_id": "TASK-A", "interface": "SharedProvider"}],
+                        "consumer_declarations": [{"task_id": "TASK-B", "interface": "SharedProvider"}],
+                    },
+                    "task_plans": {
+                        "TASK-A": {
+                            "implementation": ["Implement provider adapter"],
+                            "nested": {"owner": "task-a"},
+                            "scope_for_apply": [
+                                "src/a.py",
+                                "../scope_escape.py",
+                                "/tmp/absolute.py",
+                            ],
+                            "risk_flags": [
+                                {
+                                    "severity": "medium",
+                                    "title": "Task A ordering",
+                                    "mitigation": "Serialize updates",
+                                }
+                            ],
+                        },
+                        "TASK-B": {
+                            "implementation": ["Implement consumer adapter"],
+                            "scope_for_apply": ["src/b.py"],
+                        },
+                    },
+                },
+                "scope_for_apply": [
+                    "src/shared.py",
+                    "src/a.py",
+                    "src/b.py",
+                    "src/outside.py",
+                ],
+                "risk_flags": [
+                    {
+                        "severity": "HIGH",
+                        "title": "Shared API drift",
+                        "mitigation": "Pin interface",
+                    }
+                ],
+            },
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(command)
+
+        assert portfolio.llm_blueprint_consumed is True
+        assert portfolio.usage_mode == "advisory_overlay"
+        assert portfolio.authority == "advisory_only"
+        assert portfolio.handoff_ready is False
+        assert portfolio.execution_authorized is False
+        assert portfolio.task_ids == ("TASK-A", "TASK-B")
+        interface = portfolio.project_interface_contract
+        assert interface.task_file_ownership == {
+            "TASK-A": ("src/shared.py", "src/a.py"),
+            "TASK-B": ("src/shared.py", "src/b.py"),
+        }
+        assert interface.file_task_ownership["src/shared.py"] == ("TASK-A", "TASK-B")
+        assert interface.provider_declarations == ({"task_id": "TASK-A", "interface": "SharedProvider"},)
+        assert interface.consumer_declarations == ({"task_id": "TASK-B", "interface": "SharedProvider"},)
+        assert portfolio.project_interface_contract_hash == interface.contract_hash
+        assert portfolio.project_interface_contract_ref == interface.contract_ref
+
+        for task_id in portfolio.task_ids:
+            overlay = portfolio.task_overlays[task_id]
+            assert overlay["portfolio_hash"] == portfolio.portfolio_hash
+            assert overlay["project_interface_contract_hash"] == interface.contract_hash
+            assert overlay["project_interface_contract_ref"] == interface.contract_ref
+            assert overlay["reference"]["portfolio_hash"] == portfolio.portfolio_hash
+            assert overlay["reference"]["project_interface_contract_hash"] == interface.contract_hash
+            assert overlay["handoff_ready"] is False
+            assert overlay["execution_authorized"] is False
+
+        task_a = project_chief_engineer_task_blueprint(portfolio, "TASK-A")
+        assert set(task_a) == {"construction_plan", "scope_for_apply", "risk_flags"}
+        assert "task_plans" not in task_a["construction_plan"]
+        assert task_a["construction_plan"]["preparation"] == ["Inspect the shared interface"]
+        assert task_a["construction_plan"]["implementation"] == ["Implement provider adapter"]
+        assert task_a["construction_plan"]["nested"] == {"shared": True, "owner": "task-a"}
+        assert task_a["scope_for_apply"] == ["src/shared.py", "src/a.py"]
+        assert task_a["risk_flags"] == [
+            "[high] Shared API drift (mitigation: Pin interface)",
+            "[medium] Task A ordering (mitigation: Serialize updates)",
+        ]
+
+        task_a_advisory = portfolio.scope_advisory["TASK-A"]
+        rejected_paths = {item["path"] for item in task_a_advisory["rejected_suggestions"]}
+        assert rejected_paths >= {
+            "src/b.py",
+            "src/outside.py",
+            "../scope_escape.py",
+            "/tmp/absolute.py",
+        }
+        assert task_a_advisory["construction_plan_paths_outside_pm_authority"] == ["src/b.py"]
+        assert task_a_advisory["construction_plan_rejected_paths"] == [
+            {
+                "path": "../plan_escape.py",
+                "reason": "parent_traversal_not_allowed",
+                "source": "construction_plan",
+            }
+        ]
+
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(portfolio.portfolio_id)
+        assert persisted == portfolio.to_dict()
+        assert persisted["project_interface_contract_hash"] == interface.contract_hash
+
+    def test_generate_task_blueprint_projects_portfolio_evidence_to_top_level(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        task = ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-PROJECTION",
+            objective="Build project interface audit projection",
+            target_files=("src/interface_projection.py",),
+            scope_paths=("src/interface_projection.py",),
+        )
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-projection",
+                tasks=(task,),
+                llm_blueprint={
+                    "construction_plan": {
+                        "implementation": ["Project shared interface evidence"],
+                        "project_interface_contract": {
+                            "provider_declarations": [],
+                            "consumer_declarations": [],
+                        },
+                    },
+                    "scope_for_apply": ["src/interface_projection.py"],
+                    "risk_flags": [],
+                },
+            )
+        )
+        interface_payload = portfolio.project_interface_contract.to_dict()
+        context = {
+            "task_title": "Project interface audit projection",
+            "target_files": ["src/interface_projection.py"],
+            "scope_paths": ["src/interface_projection.py"],
+            "acceptance_criteria": ["Portfolio evidence is directly auditable"],
+            "execution_checklist": ["Persist top-level portfolio evidence"],
+            "delivery_plan_document": {
+                "schema_version": "polaris.delivery_plan_document.v1",
+                "title": "Project interface audit projection",
+                "user_journey": ["Generate portfolio", "Inspect task blueprint evidence"],
+            },
+            "delivery_depth_contract": {
+                "schema_version": "polaris.delivery_depth_contract.v1",
+                "behavior_contract": {"rule_matrix": ["Portfolio interface evidence remains directly auditable"]},
+            },
+            "task": task.to_dict(),
+            **portfolio.to_task_blueprint_context(),
+        }
+
+        result = generate_task_blueprint(
+            GenerateTaskBlueprintCommandV1(
+                task_id=task.task_id,
+                workspace=str(tmp_path),
+                objective=task.objective,
+                run_id="run-projection",
+                context=context,
+                llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id),
+            )
+        )
+
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id or "")
+        assert isinstance(persisted, dict)
+        assert persisted["blueprint_portfolio_ref"] == portfolio.portfolio_path
+        assert persisted["blueprint_portfolio_hash"] == portfolio.portfolio_hash
+        assert persisted["project_interface_contract_ref"] == portfolio.project_interface_contract_ref
+        assert persisted["project_interface_contract_hash"] == portfolio.project_interface_contract_hash
+        assert persisted["project_interface_contract"] == interface_payload
+        assert persisted["context"]["project_interface_contract"] == interface_payload
+        assert persisted["target_files"] == ["src/interface_projection.py"]
+        assert persisted["scope_paths"] == ["src/interface_projection.py"]
+        assert "portfolio_path" not in persisted
+
+    def test_task_contract_normalizes_duplicates_and_rejects_unsafe_paths(self) -> None:
+        task = ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-1",
+            objective="Build one module",
+            target_files=("./src/module.py", "src/module.py"),
+            scope_paths=("src", "src"),
+            dependencies=("TASK-0", "TASK-0"),
+        )
+
+        assert task.target_files == ("src/module.py",)
+        assert task.scope_paths == ("src",)
+        assert task.dependencies == ("TASK-0",)
+
+        with pytest.raises(ValueError, match="workspace-relative"):
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-ABS",
+                objective="Reject absolute path",
+                target_files=("/tmp/outside.py",),
+            )
+        with pytest.raises(ValueError, match="parent traversal"):
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-DOTDOT",
+                objective="Reject traversal",
+                target_files=("src/module.py",),
+                scope_paths=("../outside",),
+            )
+
+    def test_command_rejects_duplicate_task_ids(self) -> None:
+        task = ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-DUP",
+            objective="Build duplicate detector",
+            target_files=("src/duplicate.py",),
+        )
+
+        with pytest.raises(ValueError, match="duplicate task_id"):
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace="/repo",
+                run_id="run-duplicate",
+                tasks=(task, task),
+            )
+
+    def test_unknown_llm_task_plan_fails_closed(self, tmp_path: Path) -> None:
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-unknown-plan",
+            tasks=self._tasks(),
+            llm_blueprint={
+                "construction_plan": {"task_plans": {"TASK-UNKNOWN": {"implementation": ["Do not run"]}}},
+                "scope_for_apply": [],
+                "risk_flags": [],
+            },
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            build_chief_engineer_blueprint_portfolio(command)
+
+        assert exc_info.value.code == "unknown_blueprint_portfolio_task_plan"
+        assert exc_info.value.details["unknown_task_ids"] == ["TASK-UNKNOWN"]
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+    def test_no_llm_portfolio_is_stable_offline_diagnostic_only(self, tmp_path: Path) -> None:
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-offline",
+            tasks=(
+                ChiefEngineerPortfolioTaskV1(
+                    task_id="TASK-OFFLINE",
+                    objective="Inspect a PM task without a CE LLM response",
+                    target_files=("src/offline.py",),
+                    scope_paths=("tests",),
+                ),
+            ),
+        )
+
+        first = build_chief_engineer_blueprint_portfolio(command)
+        second = build_chief_engineer_blueprint_portfolio(command)
+
+        assert second.portfolio_id == first.portfolio_id
+        assert second.portfolio_hash == first.portfolio_hash
+        assert second.reference == first.reference
+        assert first.llm_blueprint_consumed is False
+        assert first.usage_mode == "offline_diagnostic_only"
+        assert first.handoff_ready is False
+        assert first.execution_authorized is False
+        assert first.project_interface_contract.provider_declarations == ()
+        assert first.project_interface_contract.consumer_declarations == ()
+        overlay = first.task_overlays["TASK-OFFLINE"]
+        assert overlay["portfolio_hash"] == first.portfolio_hash
+        assert overlay["project_interface_contract_hash"] == first.project_interface_contract_hash
+        assert overlay["llm_blueprint_consumed"] is False
+        assert overlay["usage_mode"] == "offline_diagnostic_only"
+        assert overlay["handoff_ready"] is False
+        assert overlay["execution_authorized"] is False
+
+        pending_payload = first.to_dict()
+        pending_payload["portfolio_hash"] = "pending"
+        pending_payload["reference"]["portfolio_hash"] = "pending"
+        for task_overlay in pending_payload["task_overlays"].values():
+            task_overlay["portfolio_hash"] = "pending"
+            task_overlay["reference"]["portfolio_hash"] = "pending"
+        assert blueprint_service_module._portfolio_hash(pending_payload) == first.portfolio_hash
+        assert blueprint_service_module._portfolio_hash(first.to_dict()) == first.portfolio_hash
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            project_chief_engineer_task_blueprint(first, "TASK-OFFLINE")
+        assert exc_info.value.code == "blueprint_portfolio_offline_diagnostic_only"
+
+        diagnostic = project_chief_engineer_task_blueprint(
+            first,
+            "TASK-OFFLINE",
+            allow_offline_diagnostic=True,
+        )
+        assert diagnostic["construction_plan"]["diagnostic_only"] is True
+        assert diagnostic["scope_for_apply"] == ["src/offline.py", "tests"]
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == [first.portfolio_id]
 
 
 class TestGenerateTaskBlueprintCommandV1HappyPath:

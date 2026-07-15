@@ -34,6 +34,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from polaris.cells.control_plane.run_ledger.public import (
+    FailureClassV1,
     ReadRunLedgerProjectionQueryV1,
     read_run_ledger_projection,
 )
@@ -156,7 +157,15 @@ def _default_success_payload(tool_name: str, arguments: dict[str, Any]) -> dict[
         result_block["truncated"] = False
         if "content" in arguments and isinstance(arguments["content"], str):
             result_block["content"] = arguments["content"]
-    return {"success": True, "ok": True, "result": result_block}
+    payload: dict[str, Any] = {"success": True, "ok": True, "result": result_block}
+    if _infer_effect_type(tool_name, _infer_execution_mode(tool_name)) == ToolEffectType.WRITE:
+        payload["effect_receipt"] = {
+            "schema_version": "effect_receipt.v1",
+            "operation": tool_name,
+            "file": file_path,
+            "changed_files": [file_path] if file_path else [],
+        }
+    return payload
 
 
 def _deterministic_tool_runtime(
@@ -502,13 +511,17 @@ async def test_token_scoped_failed_tool_batch_appends_failed_run_ledger_event(tm
     decision["metadata"]["task_id"] = "task-tool-failure"
     decision["metadata"]["job_token"] = job_token
 
-    await executor.execute_tool_batch(
-        decision,
-        _build_decoded_state_machine(turn_id),
-        TurnLedger(turn_id=turn_id),
-        [{"role": "user", "content": "write src/app.py"}],
-        stream=False,
-    )
+    with pytest.raises(
+        RuntimeError,
+        match=r"tool_dispatch_failed: decoded tool batch produced only failed tool results",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            [{"role": "user", "content": "write src/app.py"}],
+            stream=False,
+        )
 
     projection = read_run_ledger_projection(
         ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-tool-failure")
@@ -518,7 +531,7 @@ async def test_token_scoped_failed_tool_batch_appends_failed_run_ledger_event(tm
     assert projection["failed"] == 1
     assert projection["projects"][0]["latest_token_id"] == "jt-tool-failure"
     assert projection["projects"][0]["gate_count"] == 1
-    assert "TOOL_RESULT_FAILED" in projection["projects"][0]["failed_control_plane_events"]
+    assert FailureClassV1.TOOL_RESULT_FAILED.value in projection["projects"][0]["failed_control_plane_events"]
     assert "tool lifecycle failed" in projection["projects"][0]["detail"]
     events = RunLedger(tmp_path, run_id="run-tool-failure").read_events()
     gate_event = next(event for event in events if event.get("event_type") == "gate_evaluated")
@@ -1101,7 +1114,10 @@ async def test_argument_shape_void_batch_decrements_tool_batch_count() -> None:
     before = ledger.tool_batch_count
     with pytest.raises(
         RuntimeError,
-        match="single_batch_contract_violation: mutation write batch failed on argument shape",
+        match=(
+            r"single_batch_contract_violation: write tool batch produced no effects .*"
+            r"error_types=correctable_write_rejection"
+        ),
     ):
         await executor.execute_tool_batch(
             decision,
@@ -1150,7 +1166,10 @@ async def test_argument_shape_escalates_before_failure_circuit_breaker() -> None
 
     with pytest.raises(
         RuntimeError,
-        match="single_batch_contract_violation: mutation write batch failed on argument shape",
+        match=(
+            r"single_batch_contract_violation: write tool batch produced no effects .*"
+            r"error_types=correctable_write_rejection"
+        ),
     ):
         await executor.execute_tool_batch(
             decision,

@@ -13,10 +13,11 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.qa.audit_verdict.public.contracts import (
     QaFailureClassificationV1,
-    QaFailureClassV1,
     build_qa_failure_classification_v1,
+    build_qa_pass_classification_v1,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,18 +112,15 @@ class RepairService:
 
         refs = tuple(str(ref) for ref in (evidence_refs or ()) if str(ref).strip())
         if audit_accepted:
-            return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.PASSED.value,
-                route="no_action",
+            return build_qa_pass_classification_v1(
                 reason="Audit passed, no repair needed",
-                repairable_by_director=False,
-                severity="info",
+                route="no_action",
                 evidence_refs=refs,
             )
 
         if context is not None and context.build_round >= context.max_build_rounds:
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
+                failure_class=FailureClassV1.RESOURCE_BUDGET_EXHAUSTED.value,
                 route="ce_replan_required",
                 reason=f"Build budget exhausted ({context.build_round}/{context.max_build_rounds})",
                 repairable_by_director=False,
@@ -139,7 +137,7 @@ class RepairService:
             and context.stall_rounds >= context.stall_threshold
         ):
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.PROGRESS_STALLED.value,
+                failure_class=FailureClassV1.PROGRESS_STALLED.value,
                 route="ce_replan_required",
                 reason=f"Progress stalled for {context.stall_rounds} rounds",
                 repairable_by_director=False,
@@ -151,7 +149,7 @@ class RepairService:
         missing_targets = list(getattr(soft_check, "missing_targets", []) or [])
         if missing_targets:
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value,
+                failure_class=FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
                 route="execution_boundary_retry",
                 reason=(
                     "Required target files were not materialized; route through "
@@ -164,7 +162,7 @@ class RepairService:
         unresolved_imports = list(getattr(soft_check, "unresolved_imports", []) or [])
         if unresolved_imports:
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
+                failure_class=FailureClassV1.IMPLEMENTATION_DEFECT.value,
                 route="director_repair",
                 reason=f"Unresolved imports to fix: {unresolved_imports}",
                 repairable_by_director=True,
@@ -174,7 +172,7 @@ class RepairService:
         feedback = qa_feedback.lower()
         if any(term in feedback for term in ("security policy", "policy violation", "path traversal", "unauthorized")):
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.SECURITY_POLICY_VIOLATION.value,
+                failure_class=FailureClassV1.SECURITY_POLICY_VIOLATION.value,
                 route="hard_stop",
                 reason="QA failure indicates a security or authorization policy violation",
                 repairable_by_director=False,
@@ -186,7 +184,7 @@ class RepairService:
             for term in ("scope mismatch", "outside scope", "target file not declared", "scope expansion")
         ):
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
+                failure_class=FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value,
                 route="ce_replan_required",
                 reason="QA failure requires CE scope or blueprint replanning",
                 repairable_by_director=False,
@@ -199,7 +197,7 @@ class RepairService:
             for term in ("contract ambiguous", "ambiguous requirement", "missing acceptance", "clarification")
         ):
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.CONTRACT_AMBIGUOUS.value,
+                failure_class=FailureClassV1.CONTRACT_AMBIGUOUS.value,
                 route="pm_revision_required",
                 reason="QA failure requires PM contract clarification",
                 repairable_by_director=False,
@@ -209,7 +207,7 @@ class RepairService:
             )
         if any(term in feedback for term in ("acceptance invalid", "invalid acceptance", "undeclared acceptance")):
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.ACCEPTANCE_INVALID.value,
+                failure_class=FailureClassV1.ACCEPTANCE_INVALID.value,
                 route="pm_revision_required",
                 reason="QA failure indicates invalid or undeclared acceptance criteria",
                 repairable_by_director=False,
@@ -219,7 +217,7 @@ class RepairService:
             )
         if any(term in feedback for term in ("tool_dispatch_dropped", "tool dispatch dropped")):
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.TOOL_DISPATCH_DROPPED.value,
+                failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
                 route="hard_stop",
                 reason="Execution control plane dropped provider tool calls before dispatch",
                 repairable_by_director=False,
@@ -231,7 +229,7 @@ class RepairService:
             for term in ("missing_entrypoint_target", "missing entrypoint", "manifest references local entrypoint")
         ):
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
+                failure_class=FailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
                 route="ce_replan_required",
                 reason="Manifest entrypoint contract requires CE replanning or downstream artifact declaration",
                 repairable_by_director=False,
@@ -244,7 +242,7 @@ class RepairService:
             for term in ("test environment", "environment failure", "network timeout", "dependency outage")
         ):
             return _build_repair_qa_failure_classification(
-                failure_class=QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
+                failure_class=FailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
                 route="infra_retry",
                 reason="QA failure appears to be caused by test infrastructure or environment",
                 repairable_by_director=False,
@@ -253,7 +251,7 @@ class RepairService:
             )
 
         return _build_repair_qa_failure_classification(
-            failure_class=QaFailureClassV1.IMPLEMENTATION_DEFECT.value,
+            failure_class=FailureClassV1.IMPLEMENTATION_DEFECT.value,
             route="director_repair",
             reason="QA failed with an implementation defect, attempting Director repair",
             repairable_by_director=True,

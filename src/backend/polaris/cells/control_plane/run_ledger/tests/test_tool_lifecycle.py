@@ -6,6 +6,7 @@ from polaris.cells.control_plane.run_ledger.public import tool_lifecycle
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
 from polaris.cells.control_plane.run_ledger.public.projection import build_run_ledger_projection
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    ToolLifecycleRequirementV1,
     batch_receipt_has_dispatch_evidence,
     build_missing_dispatch_lifecycle_receipt,
     build_native_tool_call_envelope_payloads,
@@ -19,6 +20,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_dispatch_dropped_anomaly_projection,
     build_tool_dispatch_dropped_lifecycle_from_anomaly_flags,
     build_tool_dispatch_dropped_lifecycle_from_observed_calls,
+    build_tool_lifecycle_requirement_run_ledger_event,
     effect_receipts_from_batch_receipts,
     empty_tool_lifecycle_summary,
     failure_evidence_from_lifecycle_receipt,
@@ -923,9 +925,48 @@ def test_merge_tool_lifecycle_summaries_centralizes_multi_project_projection() -
     assert [event["content_id"] for event in merged["events"]] == ["event-1", "event-2"]
 
 
+def test_merge_tool_lifecycle_does_not_mask_project_missing_required_events() -> None:
+    successful = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "results": [{"tool_name": "read_file", "status": "success"}],
+            }
+        ],
+    ).to_dict()
+    successful_summary = summarize_tool_lifecycle_events([project_tool_lifecycle_event(successful)])
+
+    merged = merge_tool_lifecycle_summaries(
+        [
+            {"tool_lifecycle": successful_summary},
+            {"tool_lifecycle": empty_tool_lifecycle_summary(requirement=True)},
+        ]
+    )
+
+    assert merged["ok"] is False
+    assert merged["requirement_status"] == "missing_required"
+
+
+def test_merge_tool_lifecycle_accepts_explicit_not_required_project() -> None:
+    merged = merge_tool_lifecycle_summaries([{"tool_lifecycle": empty_tool_lifecycle_summary(requirement=False)}])
+
+    assert merged["ok"] is True
+    assert merged["requirement"] is False
+    assert merged["requirement_status"] == "not_required"
+
+
 def test_empty_tool_lifecycle_summary_matches_public_projection_shape() -> None:
     assert empty_tool_lifecycle_summary() == {
         "ok": True,
+        "requirement": False,
+        "requirement_status": "not_required",
         "event_count": 0,
         "native_tool_calls_count": 0,
         "decoded_tool_calls_count": 0,
@@ -937,6 +978,16 @@ def test_empty_tool_lifecycle_summary_matches_public_projection_shape() -> None:
         "failed_count": 0,
         "failure_evidence": [],
         "events": [],
+        "requirement_projection": {
+            "schema_version": "polaris.tool_lifecycle_requirement.v1",
+            "required": False,
+            "state": "not_required",
+            "required_task_keys": [],
+            "missing_required_task_keys": [],
+            "obligations": [],
+        },
+        "required_task_keys": [],
+        "missing_required_task_keys": [],
         "latest_by_task": {},
         "unresolved_by_task": {},
         "unresolved_count": 0,
@@ -947,8 +998,112 @@ def test_empty_tool_lifecycle_summary_matches_public_projection_shape() -> None:
             "source": "event_rows",
             "degraded": False,
             "fallback": "",
+            "requirement": False,
+            "requirement_status": "not_required",
         },
     }
+
+
+def test_empty_tool_lifecycle_requires_explicit_not_required_declaration() -> None:
+    summary = summarize_tool_lifecycle_events([], requirement=False)
+
+    assert summary["ok"] is True
+    assert summary["requirement"] is False
+    assert summary["requirement_status"] == "not_required"
+    assert summary["event_count"] == 0
+    assert project_tool_lifecycle_failure_status(summary)["failed"] is False
+
+
+def test_empty_tool_lifecycle_fails_closed_when_requirement_is_explicit() -> None:
+    summary = summarize_tool_lifecycle_events([], requirement=True)
+
+    assert summary["ok"] is False
+    assert summary["requirement"] is True
+    assert summary["requirement_status"] == "missing_required"
+    assert project_tool_lifecycle_failure_status(summary) == {
+        "failed": True,
+        "status": "missing_required",
+        "failure_class": FailureClassV1.TOOL_LIFECYCLE_MISSING.value,
+        "reason": "required tool lifecycle evidence is missing",
+        "degraded": False,
+        "fallback": "",
+    }
+
+
+def test_run_ledger_projection_does_not_require_lifecycle_without_execution_fact() -> None:
+    projection = build_run_ledger_projection([])
+
+    assert projection["tool_lifecycle"]["ok"] is True
+    assert projection["tool_lifecycle"]["requirement"] is False
+    assert projection["tool_lifecycle"]["requirement_status"] == "not_required"
+
+
+def test_job_token_capability_does_not_activate_lifecycle_requirement() -> None:
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "gate_evaluated",
+                "gate": {"name": "chief_engineer_review", "ok": False},
+                "job_token": {
+                    "token_id": "token-1",
+                    "target_files": ["src/main.py"],
+                    "allowed_write_paths": ["src/main.py"],
+                    "capability_audit": {"ok": True, "issues": []},
+                },
+                "physical_evidence": {},
+            }
+        ]
+    )
+
+    lifecycle = projection["tool_lifecycle"]
+    assert lifecycle["requirement"] is False
+    assert lifecycle["requirement_status"] == "not_required"
+
+
+def test_run_ledger_projection_fails_closed_after_structured_requirement() -> None:
+    requirement_event = build_tool_lifecycle_requirement_run_ledger_event(
+        ToolLifecycleRequirementV1(task_id="TASK-1", run_id="run-1")
+    )
+
+    projection = build_run_ledger_projection([requirement_event])
+
+    lifecycle = projection["tool_lifecycle"]
+    assert lifecycle["ok"] is False
+    assert lifecycle["requirement"] is True
+    assert lifecycle["requirement_status"] == "missing_required"
+    assert lifecycle["required_task_keys"] == ["TASK-1"]
+    assert lifecycle["missing_required_task_keys"] == ["TASK-1"]
+
+
+def test_run_ledger_projection_requires_receipt_for_each_required_task() -> None:
+    requirement_events = [
+        build_tool_lifecycle_requirement_run_ledger_event(ToolLifecycleRequirementV1(task_id=task_id, run_id="run-1"))
+        for task_id in ("TASK-1", "TASK-2")
+    ]
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[{"batch_id": "batch-1", "results": [{"status": "success"}]}],
+    ).to_dict()
+    lifecycle_event = build_tool_call_lifecycle_run_ledger_event(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        lifecycle_receipt=receipt,
+    )
+
+    projection = build_run_ledger_projection([*requirement_events, lifecycle_event])
+
+    lifecycle = projection["tool_lifecycle"]
+    assert lifecycle["ok"] is False
+    assert lifecycle["required_task_keys"] == ["TASK-1", "TASK-2"]
+    assert lifecycle["missing_required_task_keys"] == ["TASK-2"]
 
 
 def test_tool_lifecycle_same_task_result_failures_are_resolved_by_later_success() -> None:

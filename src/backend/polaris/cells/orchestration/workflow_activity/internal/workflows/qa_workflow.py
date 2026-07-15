@@ -14,14 +14,15 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.orchestration.workflow_activity.internal.activities.base import register_activity
 from polaris.cells.orchestration.workflow_activity.internal.embedded_api import get_workflow_api
 from polaris.cells.orchestration.workflow_activity.internal.models import QAWorkflowInput, QAWorkflowResult
 from polaris.cells.orchestration.workflow_activity.internal.runtime_queries import WorkflowQueryState
 from polaris.cells.orchestration.workflow_activity.internal.workflow_client import get_activity_api
 from polaris.cells.qa.audit_verdict.public import (
-    QaFailureClassV1,
     build_qa_failure_classification_v1,
+    build_qa_pass_classification_v1,
     normalize_qa_failure_class,
 )
 from polaris.kernelone.traceability.internal.safety import safe_register_node
@@ -48,9 +49,12 @@ def _payload_classification(payload: dict[str, Any]) -> dict[str, Any]:
         return {}
     normalized = dict(classification)
     failure_class = str(normalized.get("failure_class") or "").strip()
-    if not failure_class:
+    if failure_class:
+        normalized["failure_class"] = normalize_qa_failure_class(failure_class)
+    elif str(normalized.get("route") or "").strip() == "resolved":
+        normalized["failure_class"] = None
+    else:
         return {}
-    normalized["failure_class"] = normalize_qa_failure_class(failure_class)
     return normalized
 
 
@@ -61,19 +65,13 @@ def _workflow_classification(
     director_status: str = "",
 ) -> dict[str, Any]:
     if passed:
-        return build_qa_failure_classification_v1(
-            failure_class=QaFailureClassV1.PASSED.value,
-            route="resolved",
+        return build_qa_pass_classification_v1(
             reason=reason or "QA workflow passed",
-            repairable_by_director=False,
-            severity="info",
-            owner="qa",
-            responsible_layer="qa",
         ).to_dict()
     failure_class = (
-        QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
+        FailureClassV1.INCOMPLETE_MATERIALIZATION.value
         if director_status and director_status != "completed"
-        else QaFailureClassV1.IMPLEMENTATION_DEFECT.value
+        else FailureClassV1.IMPLEMENTATION_DEFECT.value
     )
     return build_qa_failure_classification_v1(
         failure_class=failure_class,

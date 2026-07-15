@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel import stream_event_projection as projection
@@ -161,7 +161,7 @@ def test_lift_completion_audit_evidence_preserves_canonical_lifecycle_receipt() 
         "schema_version": "tool_call_lifecycle_receipt.v1",
         "native_tool_call_envelope_refs": [envelope],
     }
-    canonical_lifecycle = metadata["tool_call_lifecycle_receipt"]
+    canonical_lifecycle = cast(dict[str, Any], metadata["tool_call_lifecycle_receipt"])
     assert canonical_lifecycle["schema_version"] == "tool_call_lifecycle_receipt.v1"
     assert canonical_lifecycle["native_tool_calls_count"] == 1
     assert canonical_lifecycle["decoded_tool_calls_count"] == 1
@@ -248,9 +248,10 @@ def test_lift_completion_audit_evidence_derives_failure_evidence_from_lifecycle(
         },
     )
 
-    assert metadata["failure_evidence"][0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
-    assert metadata["failure_evidence"][0]["responsible_layer"] == "execution_control_plane"
-    assert "provider_response:provider-hash-1" in metadata["failure_evidence"][0]["evidence_refs"]
+    failure_evidence = cast(list[dict[str, Any]], metadata["failure_evidence"])
+    assert failure_evidence[0]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+    assert failure_evidence[0]["responsible_layer"] == "execution_control_plane"
+    assert "provider_response:provider-hash-1" in failure_evidence[0]["evidence_refs"]
     assert metadata["failure_evidence_summary"] == {
         "count": 1,
         "latest_failure_class": "TOOL_DISPATCH_DROPPED",
@@ -292,14 +293,16 @@ def test_stream_completion_fails_closed_on_required_write_without_dispatch(
     monkeypatch.setattr(
         projection,
         "append_role_turn_task_boundary_verdict",
-        lambda **kwargs: captured.setdefault("task_boundary", kwargs)
-        or {
-            "schema_version": "polaris.task_boundary_verdict.v1",
-            "ok": False,
-            "status": "incomplete_materialization",
-            "failure_class": "INCOMPLETE_MATERIALIZATION",
-            "reason": "Required target files were not materialized",
-        },
+        lambda **kwargs: (
+            captured.setdefault("task_boundary", kwargs)
+            or {
+                "schema_version": "polaris.task_boundary_verdict.v1",
+                "ok": False,
+                "status": "incomplete_materialization",
+                "failure_class": "INCOMPLETE_MATERIALIZATION",
+                "reason": "Required target files were not materialized",
+            }
+        ),
     )
 
     publisher = _Publisher()
@@ -351,7 +354,7 @@ def test_stream_completion_fails_closed_on_required_write_without_dispatch(
     assert result.event["error_type"] == "tool_dispatch_dropped"
     assert result.event["metadata"]["tool_call_lifecycle_receipt"]["dispatch_status"] == "dropped"
     assert result.event["metadata"]["tool_call_lifecycle_receipt"]["failure_class"] == "TOOL_DISPATCH_DROPPED"
-    assert captured["task_boundary"]["tool_dispatch"] == {
+    expected_dispatch = {
         "status": "dropped",
         "dropped": True,
         "native_tool_calls_count": 1,
@@ -361,7 +364,60 @@ def test_stream_completion_fails_closed_on_required_write_without_dispatch(
         "provider_response_hash": "",
         "reason": "required_write_tool_without_dispatch_evidence",
     }
+    actual_dispatch = captured["task_boundary"]["tool_dispatch"]
+    assert {key: actual_dispatch.get(key) for key in expected_dispatch} == expected_dispatch
     assert publisher.events[-1]["event_type"] == "error"
+
+
+def test_stream_completion_fails_closed_when_task_boundary_ledger_append_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def raise_ledger_write_error(**_: Any) -> dict[str, Any]:
+        raise OSError("ledger volume is read-only")
+
+    monkeypatch.setattr(
+        projection,
+        "append_role_turn_task_boundary_verdict",
+        raise_ledger_write_error,
+    )
+
+    publisher = _Publisher()
+    projector = _make_stream_completion_projector(tmp_path, publisher)
+    result = asyncio.run(
+        projector.project(
+            CompletionEvent(
+                turn_id="turn-ledger-failure",
+                status="success",
+                duration_ms=7,
+                llm_calls=1,
+                tool_calls=0,
+                batch_receipt={},
+            )
+        )
+    )
+
+    assert result is not None
+    assert result.should_stop is True
+    assert result.event["type"] == "error"
+    assert result.event["error_type"] == "control_plane_failure"
+    assert result.event["error"] == (
+        "control_plane_failure:run_ledger_append_failed: TaskBoundary verdict could not be committed to the Run Ledger"
+    )
+    assert "result" not in result.event
+    metadata = result.event["metadata"]
+    verdict = metadata["task_boundary_verdict"]
+    assert verdict["failure_class"] == "RUN_LEDGER_APPEND_FAILED"
+    assert verdict["responsible_layer"] == "execution_control_plane"
+    assert verdict["exception_evidence"] == {
+        "operation": "append_task_boundary_verdict",
+        "exception_type": "OSError",
+        "message": "ledger volume is read-only",
+    }
+    assert metadata["failure_evidence"][0]["failure_class"] == "RUN_LEDGER_APPEND_FAILED"
+    assert metadata["failure_evidence"][0]["responsible_layer"] == "execution_control_plane"
+    assert publisher.events[-1]["event_type"] == "error"
+    assert all(event["event_type"] != "complete" for event in publisher.events)
 
 
 @pytest.mark.parametrize(

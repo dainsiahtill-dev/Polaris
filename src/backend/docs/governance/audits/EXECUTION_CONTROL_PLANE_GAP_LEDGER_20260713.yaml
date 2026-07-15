@@ -1,0 +1,992 @@
+schema_version: polaris.execution_control_plane_gap_ledger.v1
+ledger_id: execution-control-plane-v1-20260713
+status: open
+objective: >-
+  A fresh isolated project reaches COMPLETED_VERIFIED through one authoritative
+  provider-request, tool-lifecycle, effect-receipt, TaskRuntime, Factory,
+  Run-Ledger, QA fact chain.
+completion_rule: >-
+  Close only after a fresh isolated bench reaches COMPLETED_VERIFIED and the
+  evidence bundle proves every fact-chain edge.
+items:
+  - id: ECP-001
+    title: Factory admission fencing and explicit stale-owner recovery
+    status: closed
+    authority: factory_workspace_run_admission
+    evidence:
+      - 54 targeted admission and recovery tests passed
+      - stale or missing fencing tokens fail closed for active owners
+      - recovery command binds workspace, run id, fencing token, and reason
+
+  - id: ECP-002
+    title: Idempotent TaskRuntime terminal transition facts
+    status: closed
+    authority: task_runtime.execution_fact_stream
+    exit_criteria:
+      - one persisted transition id per terminal transition
+      - one stable idempotency key and event id across retries
+      - runtime.v2 event id equals committed FactStream event id
+    evidence:
+      - 273 TaskRuntime Cell tests passed after final lock-scoped identity change
+      - Ruff and mypy passed for changed TaskRuntime modules
+
+  - id: ECP-003
+    title: Typed Run Ledger settlement barrier
+    status: closed
+    authority: control_plane.run_ledger
+    exit_criteria:
+      - no-wait typed query
+      - open lifecycle and effect counts
+      - missing and failed required modalities remain distinct
+      - stable barrier hash and evidence refs
+    evidence:
+      - 8 typed settlement-barrier projection and public-query tests passed
+      - closed and passed remain independent; failed terminal evidence releases authority without claiming QA success
+      - Factory terminal drain revalidates the barrier under its lifecycle claim before TaskRuntime reset and lease release
+
+  - id: ECP-004
+    title: Durable Factory terminal settlement consumer and journal
+    status: implementing
+    authority: factory.pipeline
+    exit_criteria:
+      - TaskRuntime FactStream replay on startup and every wake
+      - NATS used only as wake signal
+      - pending, applied, deadletter, and checkpoint journal states
+      - idempotent duplicate delivery and fencing protection
+
+  - id: ECP-005
+    title: Application lifecycle cutover
+    status: pending
+    authority: factory.pipeline.public
+    exit_criteria:
+      - workspace singleton starts after NATS and stops before NATS
+      - startup replay repairs crash-window missed wakes
+      - temporary in-process terminal settlement monitor removed
+      - bootstrap and delivery import only Factory public API
+
+  - id: ECP-006
+    title: Execution Control Plane regression gates
+    status: pending
+    authority: test_suite
+    exit_criteria:
+      - targeted Factory, TaskRuntime, Run Ledger, QA tests pass
+      - architecture boundary tests pass
+      - Ruff and strict mypy pass for changed modules
+
+  - id: ECP-007
+    title: Fresh isolated project proof
+    status: pending
+    authority: isolated_factory_bench
+    exit_criteria:
+      - empty work directory and independent backend/frontend ports
+      - project reaches COMPLETED_VERIFIED
+      - provider request through QA fact-chain evidence bundle is complete
+      - no legacy fallback or target-project direct repair
+
+  - id: ECP-008
+    title: Evidence-driven residual closure
+    status: blocked_by_ecp_007
+    authority: execution_control_plane_gap_ledger
+    exit_criteria:
+      - any bench failure names one exact broken fact-chain edge
+      - Polaris-only correction is verified by another fresh isolated run
+      - no unresolved platform breakpoint remains
+
+  - id: ECP-009
+    title: WS2 settlement closure audit 2026-07-14
+    status: open
+    authority: execution_control_plane_ws2
+    audit_baseline:
+      verified_green:
+        task_runtime: 348
+        roles_runtime: 682
+        factory_ce: 20
+        architecture_fence: 141
+        director_closure: 59
+        quality_gates:
+          - ruff
+          - format
+          - mypy
+          - git_diff_check
+      limitation: >-
+        Green tests do not replace production caller or entry-point audit, do not
+        prove all non-stream and stream paths share one execution-attempt
+        authority, and do not prove that a durable Phase A terminal winner has a
+        Phase B recovery producer.
+    findings:
+      - severity: high
+        id: WS2-H1
+        finding: >-
+          PM delivery CLI TaskBoard still calls deleted complete_execution,
+          fail_execution, and suspend_execution transitions.
+      - severity: high
+        id: WS2-H2
+        finding: >-
+          Director execute_method and roles kernel transaction_factory heartbeats
+          remain session_id-only and do not atomically propagate renewed_identity.
+      - severity: high
+        id: WS2-H3
+        finding: >-
+          A durable Phase A terminal winner has no production pending-settlement
+          recovery producer that automatically replays Phase B after a crash.
+      - severity: medium
+        id: WS2-M1
+        finding: >-
+          Fences lack mechanical proofs for typed callers, public signatures,
+          and heartbeat renewed_identity propagation.
+      - severity: high
+        id: WS2-H4
+        finding: >-
+          The mutable CanonicalTaskRuntimeExecutionAttemptHolder is owned by
+          roles.kernel.internal and separately consumed by Director and the
+          transaction factory; it is not a TaskRuntime-public derived authority
+          capability and therefore leaves ownership split across Cells.
+      - severity: high
+        id: WS2-H5
+        finding: >-
+          The existing holder serializes heartbeat renewal only, while terminal
+          settle accepts a separately supplied identity. No caller-level bounded
+          lock serializes heartbeat identity replacement with terminal settle,
+          so a stale identity snapshot can reach terminalization even though
+          TaskRuntime internally validates its session locks.
+      - severity: high
+        id: WS2-H6
+        finding: >-
+          roles.runtime ExecuteRoleTask and CLI task execution claim and settle
+          raw TaskRuntimeExecutionAttemptIdentityV1 values rather than a shared
+          public handle. The stream flag is admitted without a contract that it
+          owns the same handle for its full lifetime or fails closed.
+      - severity: medium
+        id: WS2-M2
+        finding: >-
+          The green TaskRuntime, roles.runtime, Director, and transaction-factory
+          suites prove local behavior only; they do not prove entry-point
+          coverage or that every heartbeat and settlement path uses one handle.
+      - severity: medium
+        id: WS2-M3
+        finding: >-
+          roles.adapters currently instantiates the roles.kernel.internal holder,
+          and the architecture fences do not AST-check the forbidden
+          roles.adapters -> roles.kernel.internal import or legacy heartbeat
+          call shapes across the repository.
+      - severity: low
+        id: WS2-L1
+        finding: FactStream idempotency append is O(N); track as later performance work.
+    ordered_buckets:
+      - id: WS2-A
+        status: open
+        title: PM caller migration and integration fence
+        write_scope:
+          - src/backend/polaris/delivery/cli/pm/engine/taskboard.py
+          - src/backend/polaris/tests/architecture/test_task_runtime_taskboard_boundary_fence.py
+        exit_criteria:
+          - PM uses only the current TaskRuntime public transition contract
+          - retired TaskBoard transition callers are absent
+          - integration and architecture fence pass
+      - id: WS2-B
+        status: blocked_by_ws2_a
+        title: canonical TaskRuntime public execution-attempt authority handle
+        long_term_authority: >-
+          TaskRuntime public owns the canonical mutable execution-attempt lease
+          handle as a derived capability/projection, never as durable SSoT.
+          Each heartbeat and settlement revalidates through TaskRuntime public.
+          One bounded handle lock serializes heartbeat and terminal settlement;
+          successful heartbeat atomically replaces identity, and terminal close
+          rejects later heartbeat/replay by typed verdict.
+        strict_sequence:
+          - id: WS2-B1
+            title: TaskRuntime public authority handle
+            status: closed
+            write_scope:
+              - src/backend/polaris/cells/runtime/task_runtime/public/contracts.py
+              - src/backend/polaris/cells/runtime/task_runtime/public/service.py
+              - src/backend/polaris/cells/runtime/task_runtime/internal/service.py
+              - src/backend/polaris/cells/runtime/task_runtime/public/tests
+              - src/backend/polaris/cells/runtime/task_runtime/tests
+            contract: >-
+              Create a non-durable TaskRuntime-public lease handle from a
+              validated identity; its one bounded lock owns typed heartbeat and
+              terminal settle, and success atomically replaces renewed_identity.
+            failure_semantics: >-
+              Invalid identity, missing renewed_identity, lock timeout, expiry,
+              or TaskRuntime rejection returns a typed non-success verdict and
+              preserves identity. A terminal winner closes the handle; later
+              heartbeat/replay receives a typed closed or terminal-replay verdict.
+            acceptance: >-
+              Concurrency, failure, and state-machine tests prove one ordered
+              heartbeat/settle winner, atomic identity replacement, no durable
+              handle SSoT, and no post-close renewal or replay.
+            evidence:
+              - TaskRuntime authority suite: 373 passed
+              - independent review: zero findings
+              - legacy create seam remains explicitly deferred to WS2-B4 deletion
+            rollback: >-
+              Revert only the new TaskRuntime public handle and paired tests;
+              never restore session_id-only public heartbeat or external durable
+              attempt state.
+          - id: WS2-B2
+            title: Director and Kernel consumer migration
+            status: p0_open
+            write_scope:
+              - src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py
+              - src/backend/polaris/cells/roles/kernel/internal/kernel/transaction_factory.py
+              - src/backend/polaris/cells/roles/adapters/tests
+              - src/backend/polaris/cells/roles/kernel/internal/kernel/tests
+            contract: >-
+              Director and transaction factory consume the same TaskRuntime-public
+              handle for background heartbeat, tool guard, and terminal settle;
+              neither owns a holder, lock, raw heartbeat, or terminal snapshot.
+            failure_semantics: >-
+              Missing/stale/closed handle or any typed non-success verdict blocks
+              guarded execution without identity reconstruction or fallback.
+            acceptance: >-
+              Terminal-race tests prove one serialized outcome, atomically renewed
+              guard identity, and no post-close guarded tool execution.
+            rollback: >-
+              Revert only B2 consumers and tests while retaining B1; do not
+              reintroduce a roles.kernel-owned holder or adapter-to-kernel internal
+              authority dependency.
+          - id: WS2-B3
+            title: roles.runtime ExecuteRoleTask and CLI migration
+            status: blocked_by_ws2_b2
+            write_scope:
+              - src/backend/polaris/cells/roles/runtime/public/service.py
+              - src/backend/polaris/cells/roles/runtime/public/cli_runner.py
+              - src/backend/polaris/cells/roles/runtime/public/contracts
+              - src/backend/polaris/cells/roles/runtime/public/tests
+              - src/backend/polaris/cells/roles/runtime/tests
+            contract: >-
+              ExecuteRoleTask and CLI non-stream claim, renew, and settle through
+              one public handle. Stream must retain that same handle for its task
+              lifetime or fail closed before provider/tool work.
+            failure_semantics: >-
+              Absent handle, unsupported stream ownership, heartbeat failure, or
+              settlement failure returns an exact typed non-success result; CLI
+              never settles using an original stale identity.
+            acceptance: >-
+              Tests cover non-stream claim -> run -> heartbeat -> settle, exception
+              settlement, and both permitted stream outcomes: same-handle success
+              or explicit execution_attempt_handle_required rejection.
+            rollback: >-
+              Revert only B3 callers and tests while retaining B1/B2; do not leave
+              a stream path with unmodelled execution authority.
+          - id: WS2-B4
+            title: legacy removal and cross-repository AST/import fence
+            status: blocked_by_ws2_b3
+            write_scope:
+              - src/backend/polaris/cells/runtime/task_runtime
+              - src/backend/polaris/tests/architecture
+              - directly paired caller tests
+            contract: >-
+              Remove legacy external heartbeat_execution compatibility and enforce
+              public-handle-only callers. AST/import fences reject roles.adapters
+              imports of roles.kernel.internal, raw heartbeat/session-only calls,
+              private holders, and bypassed terminal settle.
+            failure_semantics: >-
+              Any forbidden import or call shape fails closed with the exact
+              file/symbol; no compatibility fallback is permitted.
+            acceptance: >-
+              Repository-wide AST/import tests enumerate Director, transaction
+              factory, roles.runtime service, CLI non-stream, and stream callers
+              and prove no legacy or cross-Cell internal authority remains.
+            rollback: >-
+              Revert only legacy removal/fences after B1-B3 are proven; do not
+              restore forbidden imports or legacy APIs to preserve uncovered paths.
+      - id: WS2-C
+        status: superseded_closed
+        title: bounded startup and maintenance pending-settlement recovery
+        write_scope:
+          - src/backend/polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py
+          - src/backend/polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py
+          - src/backend/polaris/cells/factory/pipeline/tests/test_factory_settlement_consumer.py
+          - src/backend/polaris/cells/factory/pipeline/tests/test_factory_settlement_runtime.py
+        exit_criteria:
+          - startup or explicit maintenance performs finite pending-settlement replay
+          - four Phase A and Phase B crash-point tests pass
+          - replay remains idempotent and fencing-safe
+        closure_evidence:
+          - production app_factory lifecycle wiring owns Factory settlement startup/shutdown
+          - Factory settlement consumer crash/recovery tests exist for the bounded replay path
+        superseded_by: >-
+          Directed Effect Operation v1 is a distinct pre-terminal effect-receipt
+          recovery protocol; it must not duplicate Factory Phase-B settlement replay.
+    next_action: >-
+      DEO-1B is closed while preserving WS2-B1's TaskRuntime authority contract.
+      DEO-1C is the next pending read-only readiness/fence bucket. The audited
+      38 DirectorToolExecutor construction/injection surfaces still make DEO-2
+      p0_open. Do not run a bench until DEO-1 through DEO-4 exit gates are
+      evidenced.
+
+directed_effect_operation_v1:
+  status: p0_open
+  blueprint: src/backend/docs/blueprints/DIRECTED_EFFECT_OPERATION_V1_BLUEPRINT_20260714.md
+  decision: >-
+    Use the durable two-phase Directed Effect Operation protocol, not a long-held
+    begin_mutation lock. Local RLock is not cross-process authority and file locks
+    must not span arbitrary commands up to 300 seconds.
+  state_machine:
+    - ABSENT -> INTENT_COMMITTED -> EFFECT_STARTED -> RECEIPT_COMMITTED -> CLOSED_BY_PARENT
+    - INTENT_COMMITTED -> ABORTED
+    - EFFECT_STARTED -> RECOVERY_PENDING -> RECEIPT_COMMITTED|DEAD_LETTER
+  authority:
+    task_runtime: operation facts, CAS, parent barrier, terminal admission
+    roles_kernel: only batch and turn owner
+    director_runtime: tool semantics and policy adapter
+    kernelone: receipt primitives
+    run_ledger: read_only_projection
+  findings:
+    - id: DEO-P0-001
+      severity: p0
+      finding: >-
+        38 DirectorToolExecutor construction/injection surfaces bypass canonical
+        mutation authority and effect-receipt closure.
+    - id: DEO-P0-002
+      severity: p0
+      finding: >-
+        The original B2 closed claim is rejected; no bench acceptance is valid
+        while unbound mutation-capable surfaces remain.
+    - id: DEO-P0-003
+      severity: p0
+      status: resolved
+      finding: >-
+        Per-runtime auto-created lock realms can assign different physical lock
+        authority to one storage identity. Pre/post identity checks do not prevent
+        this split-lock condition. V1 requires a platform-owned persistent anchor.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for stateless bootstrap and persistent
+        anchor/realm coordination, including the 64-process lock proof.
+    - id: DEO-H-004
+      severity: high
+      status: resolved
+      finding: >-
+        Path-based reopen, unsafe special/link objects, ancestor replacement, and
+        eager absent-target creation can violate guarded snapshot continuity.
+        Descriptor-relative traversal and delayed create are required.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for descriptor-relative traversal,
+        delayed create, durability, and drift rejection.
+    - id: DEO-H-005
+      severity: high
+      status: resolved
+      finding: >-
+        Guarded and legacy JsonlEventStore FactStream writer APIs are unsafe
+        during a permanent dual-lock split; one-cutover platform-authority
+        migration and scoped mixed-writer race evidence are required.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for the single persistent authority,
+        scoped writer cutover, and mixed-writer race coverage.
+    - id: DEO-H-007
+      severity: high
+      status: resolved
+      finding: >-
+        LockedRegularFileSetV1 close can race lease descriptor I/O. One owner
+        lifecycle mutex, ACTIVE/CLOSING/CLOSED state, and atomic fd detach are
+        required before close can be treated as idempotent and fd-reuse safe.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for lifecycle-safe close, atomic
+        descriptor detach, and fd-reuse race coverage.
+    - id: DEO-H-008
+      severity: high
+      status: resolved
+      finding: >-
+        KernelOne locked-file and sourcing failures do not yet match one stable
+        FactStream public taxonomy; generic fallback and renamed ambiguity codes
+        leave blueprint/public behavior drift open.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for exact public failure taxonomy
+        projection and causal-chain preservation.
+    - id: DEO-H-010
+      severity: high
+      status: resolved
+      finding: >-
+        Authority provision currently has insufficient audited production-entrypoint
+        delegation and dynamic-stream enrollment evidence. One platform bootstrap
+        service must be called before first FactStream I/O; ordinary acquire must
+        never provision, enroll, repair, or rebind authority.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for formal entrypoint delegation,
+        explicit maintenance, and no ordinary-I/O bootstrap or enrollment.
+    - id: DEO-H-011
+      severity: high
+      status: resolved
+      finding: >-
+        Provision and post-fsync authority validation must prove anchor
+        regular/nlink/identity and realm binding before and after durable work,
+        map ELOOP by object class, and return only
+        post_fsync_authority_reconciliation_required after final physical drift.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for final authority validation,
+        object-class ELOOP mapping, and post-fsync reconciliation.
+    - id: DEO-B-012
+      severity: blocker
+      status: superseded
+      finding: >-
+        Historical review finding. The in-process FactStream workspace registry
+        singleton proposal is superseded by the stateless-bootstrap amendment.
+      resolution: >-
+        Closed without restoring a process singleton or cache. Every explicit
+        bootstrap revalidates persistent anchor/realm state under physical
+        locking; the 64-thread and 64-independent-process proofs establish the
+        required created/already_present serialization and per-lock-key evidence.
+    - id: DEO-H-013
+      severity: high
+      status: resolved
+      finding: >-
+        Existing authority binding must include runtime-root device/inode, not
+        only a logical path. Same-path root replacement must fail closed, and an
+        enrollment receipt after fsync must prove created/already-present,
+        format revision, root/anchor/realm identities, canonical lock keys, and
+        final validation.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for runtime-root identity binding
+        and final enrollment receipt validation.
+    - id: DEO-H-014
+      severity: high
+      status: resolved
+      finding: >-
+        Formal Director and role CLI startup lack complete audited delegation to
+        the one bootstrap service. Ordinary TaskRuntime and adapter I/O must not
+        add lazy bootstrap, while dynamic enrollment remains explicit owner
+        maintenance before first business I/O.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for Director/role CLI delegation and
+        explicit owner-managed dynamic enrollment.
+    - id: DEO-H-015
+      severity: high
+      status: resolved
+      finding: >-
+        Lifespan settlement shutdown must handle OSError without skipping later
+        cleanup or replacing an active application-body exception.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for cleanup completion and
+        application-body exception precedence.
+    - id: DEO-H-016
+      severity: high
+      status: resolved
+      finding: >-
+        Recognized guarded failures require exact public code projection;
+        unknown programming failures must retain their exception chain and no
+        success receipt, rather than becoming a generic public failure code.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for exact recognized codes and
+        chained unknown-failure propagation without success receipts.
+    - id: DEO-H-017
+      severity: high
+      status: resolved
+      finding: >-
+        FactStream root exports, cell manifest, README, generated context pack,
+        and global graph catalog need one governance drift gate for the public
+        contract surface.
+      resolution: >-
+        Resolved by DEO-1A closure evidence for the 37-export surface gate and
+        manifest, README, context-pack, and catalog reconciliation.
+    - id: DEO-H-018
+      severity: high
+      status: resolved
+      finding: >-
+        Historical review finding: directed_effect_operation had 35 mypy errors.
+      resolution: >-
+        Targeted mypy over 21 production files, including app_factory.py and
+        directed_effect_operation.py, reports 0 issues. The former 35-error
+        count is historical evidence and is not the current type-contract state.
+    - id: DEO-M-006
+      severity: medium
+      status: resolved
+      finding: >-
+        DEO-1B owns removal of TaskRuntime's write-only `_persist_snapshot` /
+        `_snapshot_path` Path/os.replace disk side effect. It is not a KFS
+        migration: no authorization path reads the snapshot, so adding KFS or
+        AtomicCache would preserve an unnecessary non-authoritative write.
+      owner_bucket: DEO-1B
+      resolution_contract: >-
+        Delete disk snapshot persistence; retain only in-memory `_project_snapshot`
+        generated by every full strict rebuild, never used as authorization truth.
+      resolution: >-
+        Resolved by DEO-1B closure evidence: disk snapshot persistence was
+        removed and strict rebuild-derived projection remains in memory only.
+    - id: DEO-M-009
+      severity: medium
+      status: superseded
+      finding: >-
+        Historical 611-passed/3-external-baseline evidence is superseded by the
+        current 1533-passed broad gate. FS-BASELINE-001..003 remain external/open
+        baselines; the KFS-bypass residual remains open outside DEO-1A closure.
+  migration_buckets:
+    - id: DEO-1
+      status: pending
+      title: durable fact foundation
+      entry_evidence:
+        - WS2-B1 TaskRuntime public authority suite: 373 passed
+        - independent review: zero findings
+      strict_sequence:
+        - id: DEO-1A
+          status: closed
+          title: strict FactStream substrate and guarded single-target append
+          reopened_by: DEO-1A-GUARDED-APPEND-BLUEPRINT
+          guarded_append_status: closed
+          guarded_append_blueprint: src/backend/docs/blueprints/GUARDED_FACT_APPEND_V1_BLUEPRINT_20260714.md
+          eta: closed_2026-07-15
+          bootstrap_authority:
+            status: completed
+            authoritative_service: provision_fact_stream_lock_authority
+            invariant: >-
+              This is the one platform bootstrap authority service, not an
+              HTTP-only caller. Every formal production entrypoint delegates to
+              it before first FactStream I/O; HTTP lifespan, Director/role CLI,
+              and Factory direct-runtime startup are adapters and do not assemble
+              provision or enrollment independently.
+            receipt_evidence: >-
+              Typed maintenance receipts identify storage identity, authority
+              binding, runtime-root/anchor/realm identities, format revision,
+              canonical sorted stream keys, operation kind,
+              created-versus-already-present verdict, and final validation.
+          stream_enrollment:
+            status: completed
+            static_platform_streams: startup_explicit_enrollment
+            dynamic_deo_streams: >-
+              TaskRuntime/DEO aggregate owner explicitly maintenance-enrolls
+              before first business I/O through the DEO-1A port.
+            ordinary_acquire: >-
+              Never creates, registers, enrolls, repairs, rebinds, rotates, or
+              substitutes authority or stream keys.
+            idempotency_and_concurrency: >-
+              Exact repeated provision/enrollment returns the same typed receipt;
+              concurrent maintenance serializes under anchor LOCK_EX; missing
+              authority is lock_authority_missing, incompatible state preserves
+              its exact anchor/realm code, and unsafe keys are stream_lock_invalid.
+            consumer_boundary: >-
+              DEO-1A provides the reusable dynamic enrollment port. DEO-1B is
+              the guarded-append consumer, which is not a DEO-1A exit item;
+              TaskRuntime must not recreate locking or enrollment mechanics.
+          review_finding:
+            severity: high
+            status: resolved
+            finding: >-
+              Historical review finding: parent close could commit after child
+              OPEN validation and before the child operation append.
+            resolution: >-
+              Resolved by DEO-1A guarded FactStream closure evidence; the
+              remaining guarded-append consumer work is tracked in DEO-1B.
+          second_review:
+            date: 2026-07-15
+            status: closed
+            historical_blockers_superseded:
+              - thread-safe registry initialization with no partial singleton publication
+              - platform-owned persistent anchor authority and storage-identity binding
+              - runtime-root device/inode binding and post-fsync enrollment receipt proof
+              - explicit provision/acquire separation with no implicit authority mutation
+              - descriptor-relative traversal and unsafe-object rejection
+              - no target creation before both snapshots/proofs pass
+              - one-cutover migration of every JsonlEventStore FactStream writer
+              - lifecycle-safe lease close and fd-reuse race evidence
+              - one blueprint/public failure taxonomy including post-fsync reconciliation
+              - parent identity and cross-process close-vs-child evidence
+              - formal production-entrypoint delegation and dynamic-stream enrollment
+              - formal Director/role CLI bootstrap delegation and no ordinary-I/O lazy bootstrap
+              - exact ELOOP mapping and post-fsync authority reconciliation evidence
+              - settlement OSError cleanup completion without application-error masking
+              - unknown guarded exceptions retain causal chains, never generic public codes
+              - FactStream exports/manifest/README/context-pack/global-graph drift gate
+              - directed_effect_operation 35-error mypy type-contract closure
+            closure_evidence: >-
+              Three final reviews report no Blocker or High finding; the former
+              missing-64-process-bootstrap report was withdrawn. The Cell-external
+              integration test holds the parent LOCK_EX, releases it once to 64
+              independent bootstrap_fact_stream_workspace children, and proves
+              provision and enrollment each return one created plus 63
+              already_present receipts with one storage identity and per-lock-key
+              evidence. Focused unified gate: 342 passed in 21.77s. Broad gate:
+              1533 passed, 3 failed, 1 skipped, 1 xfailed, 13 warnings in
+              67.29s; the three failures remain FS-BASELINE-001..003 external
+              open baselines. Independent review gates: 109 passed, 95 passed
+              plus 5 passed, and governance review 185 passed. Ruff, compileall,
+              and diff check are green. Catalog hard-fail exit 0: issue_count 0,
+              blocker_count 0, high_count 0, new_issue_count 0, mismatch_count 0.
+              Targeted mypy is 0.
+          write_scope:
+            - src/backend/polaris/kernelone/events/sourcing/file_store.py
+            - src/backend/polaris/kernelone/events/sourcing/models.py
+            - src/backend/polaris/kernelone/events/sourcing/__init__.py
+            - directly paired KernelOne JSONL durability primitive and sourcing tests
+          contract: >-
+            KernelOne provides durability=buffered|flush|fsync as a common
+            capability. FactStream public callers select strict_integrity; DEO
+            uses strict_integrity with fsync while legacy defaults stay unchanged.
+            Each parent batch derives an independent irreversible stream token.
+            One parent binding has exactly one shared operation_stream_token.
+            A generic guarded append uses read_guarded_fact_snapshot followed by
+            append_if_guarded_snapshot. Prepare locks/scans both streams, returns
+            deeply immutable facts plus a bound proof, and releases locks;
+            TaskRuntime reduces/authorizes outside locks. Commit locks/scans
+            again, returns exact idempotent replay before drift, compares both
+            recomputed proofs, and fsyncs one target append only if unchanged.
+            Proof binds workspace, both refs, strict revision, exact heads, and
+            full fact digests; commit derives heads from proof, not caller input.
+            Child transitions target operations and guard registry; DEO-3 parent
+            close targets registry and guards operation head. Same-key different
+            semantic events fail typed; v1 rejects identical target/guard streams.
+            KernelOne owns physical proof/lock checks without TaskRuntime import.
+            The normative non-authenticating continuity_digest is validated
+            before any proof-controlled resolution; strict recomputation from
+            current descriptor-read facts is authority. LockedRegularFileSetV1 /
+            StreamLeaseSet uses a platform-owned persistent lock authority
+            isolated by storage identity. Its persistent anchor.lock is separate
+            from the realm and binds storage identity, realm device/inode, and
+            format revision. Explicit bootstrap or offline maintenance provisions
+            under anchor LOCK_EX. Ordinary acquire only opens an existing
+            authority, validates the binding under anchor LOCK_SH, and then takes
+            canonical per-stream LOCK_EX leases with a monotonic bounded timeout.
+            Missing, mismatched, linked, or incorrectly bound authority fails
+            closed; acquire never creates, rebinds, repairs, or rotates it. V1 has
+            no online rotation and no lock upgrade/downgrade. Each prepare or
+            commit retains anchor LOCK_SH through descriptor scans and, for
+            commit, append, file fsync, parent fsync, final validation, and the
+            receipt verdict; TaskRuntime domain/tool work occurs after prepare
+            releases all locks. A post-fsync authority drift returns
+            post_fsync_authority_reconciliation_required, emits no success
+            receipt, performs no rollback, and requires strict replay. All lease
+            I/O and close share one owner lifecycle mutex with
+            ACTIVE/CLOSING/CLOSED state and atomic fd detach, so repeated close is
+            idempotent and cannot close a reused fd. The authority enrollment is
+            a derived capability/projection, not a second SSoT. All
+            JsonlEventStore FactStream writers cut over together. Root-relative
+            descriptor traversal rejects links/special files/identity drift;
+            absent targets are created only after proof match with
+            O_CREAT|O_EXCL, file fsync, and parent-directory fsync. Windows v1
+            fails unavailable without an equivalent reparse-safe handle backend.
+          strict_parser: >-
+            Public failures use strict_stream_corruption with mandatory typed
+            strict_reason evidence including torn_tail and sequence_violation.
+            A malformed final unterminated record blocks use pending explicit
+            locked repair. Middle corruption and an unknown schema/version in
+            strict mode fail closed with no skip or workspace-wide fallback;
+            guarded_snapshot_prepare_failed and guarded_append_failed are
+            prohibited generic fallbacks.
+          snapshot_policy: >-
+            Snapshots are rebuildable scoped projections only; they never grant
+            authorization or replace strict stream facts.
+          performance_target: >-
+            Non-hard-CI configurable benchmark: M<=64, normal<=320 events,
+            snapshot at 512 events or 2MiB, tail<=32, p95<100ms, p99<500ms with
+            four processes, and <8MiB incremental memory.
+          exit_criteria:
+            - strict and legacy compatibility tests prove durability selection and parser outcomes
+            - token isolation prevents parent-batch workspace-history scans
+            - snapshot non-authority is mechanically tested
+            - deep immutability, continuity-proof tampering, exact replay-after-drift, target/guard drift, strict corruption, canonical lock order, and no partial write tests pass
+            - sibling-transition, deterministic close-vs-child, and cross-process parent admission race tests pass
+            - explicit provision/acquire, missing or mismatched anchor, realm binding, no online rotation, and no lock upgrade/downgrade tests pass
+            - parent rename/replacement, anchor or realm displacement, FIFO/device, hardlink, and no-target-on-drift tests pass
+            - lifecycle close race, repeated close, atomic fd detach, and fd-reuse tests pass
+            - first-create parent fsync, post-fsync reconciliation, mixed legacy/guarded writer, and Windows unavailable tests pass
+            - public and implementation tests prove exact parity with the normative failure taxonomy
+            - architecture test proves every JsonlEventStore FactStream writer uses the platform lock authority
+            - every formal production entrypoint delegates to the one bootstrap service before first FactStream I/O
+            - static catalog and dynamic DEO enrollment prove idempotency, concurrent serialization, exact typed failures, and no ordinary-acquire mutation
+            - optional NATS OSError, startup cleanup boundary, and Cell metadata/context-pack freshness are evidenced
+            - registry initialization is thread-safe, failure publishes no partial singleton, and explicit retry is tested
+            - same-path runtime-root inode replacement fails closed; enrollment receipts prove final authority/root/anchor/realm/key validation after fsync
+            - formal Director/role CLI delegates before I/O, ordinary TaskRuntime/adapter I/O does not lazily bootstrap, and shutdown preserves application-body exceptions
+            - a governance gate rejects FactStream export/manifest/README/context-pack/global-graph drift
+            - directed_effect_operation mypy has no remaining DEO-1A contract errors
+          historical_evidence_superseded: >-
+            The 121-pass, 328-focused, and 611-with-3-baselines snapshots are
+            historical review evidence only. They do not describe current
+            closure; the closure_evidence record under second_review is current.
+          scoped_writer_inventory: >-
+            This bucket covers JsonlEventStore writers in the FactStream sourcing
+            and public surfaces. The generic polaris/kernelone/events/io_events.py
+            and polaris/kernelone/fs/jsonl/* .seq/.seq.lock/.lock mechanisms are
+            outside this inventory; this ledger makes no all-repository JSONL
+            migration claim.
+          graph_governance_item: >-
+            FactStream root exports, cell.yaml, README.agent.md, generated
+            context-pack, and global graph catalog reconciliation must be fresh
+            at DEO-1A exit after implementation and public contracts stabilize.
+            A governance gate must reject drift; stale surfaces block exit.
+          pending_small_items:
+            - id: DEO-1A-A
+              status: completed
+              title: formal entrypoint delegation inventory
+            - id: DEO-1A-B
+              status: completed
+              title: static platform stream catalog enrollment receipt
+            - id: DEO-1A-C
+              status: completed
+              title: dynamic DEO maintenance enrollment port
+            - id: DEO-1A-D
+              status: completed
+              title: authority final validation and ELOOP mapping
+            - id: DEO-1A-E
+              status: completed
+              title: strict corruption public taxonomy parity
+            - id: DEO-1A-F
+              status: completed
+              title: startup NATS cleanup and Cell context evidence
+            - id: DEO-1A-G
+              status: completed
+              title: thread-safe FactStream registry initialization and no partial publication
+            - id: DEO-1A-H
+              status: completed
+              title: runtime-root inode binding and final enrollment receipt proof
+            - id: DEO-1A-I
+              status: completed
+              title: shutdown OSError cleanup completion and application-error precedence
+            - id: DEO-1A-J
+              status: completed
+              title: exact unknown-error propagation and FactStream surface drift governance
+            - id: DEO-1A-K
+              status: completed
+              title: directed_effect_operation mypy type-contract closure
+        - id: DEO-1B
+          status: closed
+          title: TaskRuntime guarded aggregate, enrollment, settlement pre-barrier, and in-memory projection
+          write_scope:
+            - src/backend/polaris/cells/runtime/task_runtime/public/contracts.py
+            - src/backend/polaris/cells/runtime/task_runtime/public/service.py
+            - src/backend/polaris/cells/runtime/task_runtime/public/__init__.py
+            - src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py
+            - src/backend/polaris/cells/runtime/task_runtime/internal/service.py
+            - src/backend/polaris/cells/runtime/task_runtime/tests/test_service.py
+            - directly paired TaskRuntime public/internal/concurrency/architecture tests
+            - behavior-stable TaskRuntime cell.yaml, README.agent.md, context packs, and global catalog governance synchronization
+          contract: >-
+            TaskRuntime exposes explicit registry and operation-stream maintenance
+            enrollment commands, both carrying the complete execution_attempt and
+            the operation command additionally carrying parent_binding, returning
+            non-authoritative receipt observability. Registry enrollment validates
+            the attempt before deriving its identity/token. Operation enrollment first
+            validates the attempt, derives registry identity from that attempt,
+            strict-rebuilds the registry, looks up binding_id, and compares canonical
+            workspace/task/attempt plus every supplied/durable binding field before
+            any FactStream enrollment call. Business paths never enroll implicitly.
+            The sequence is registry enrollment, parent admission, operation
+            enrollment with parent binding, then child get/admit/claim/abort. Every child transition performs
+            guarded prepare(target operation, guard registry), outside-lock strict
+            rebuild/replay/authorization, then guarded commit. Exact replay comes
+            before parent OPEN. expected_seq is target-head only; expected_version
+            is operation-version only. Only target_snapshot_drift or
+            guard_snapshot_drift retry, for at most three total attempts; exhaustion
+            is guarded_reprepare_exhausted with attempt, drift, head, identity, and
+            binding evidence. Writers emit operation schema v2 without recorded_at;
+            exact v1/v2 parsers normalize to one schema-neutral transition and
+            replay descriptor. Historical v1 replay returns its original receipt
+            before guarded commit; idempotency excludes schema/timestamp/CAS
+            volatility; changed semantics conflict and ambiguous outcomes reconcile
+            by strict replay without duplication. Parent admission uses one bounded
+            local-session -> cooperative-session-file -> FactStream lock order for
+            locked validation, strict read/reduction, and registry append only;
+            tools, network, TaskBoard, Run Ledger, and projections are outside the
+            lock, and locks are not an SSoT. Full GuardedFactAppendedV1 validation
+            requires event_id, workspace, stream, storage_path, appended_at,
+            appended_seq, and semantic_digest. TaskRuntime must use FactStream's
+            public exact-replay receipt and strict facts rather than reproduce the
+            private semantic_digest algorithm. Ambiguous failure first resolves an
+            exact durable event/receipt, before inactive-attempt handling, and
+            append_write_failed remains a typed causal mapping.
+            Enrollment is non-authoritative and does not take the session locks;
+            parent admission is the sole production parent-registry fact writer.
+            TaskRuntimeService owns local-session then cooperative-session-file
+            locking, validates the active attempt under those locks, and invokes a
+            repository admission method that must not recursively validate,
+            reacquire, import, or call back into the service. The local RLock is a
+            per-service optimization; the cooperative file lock is the
+            cross-instance/process correctness boundary. Every active-to-inactive
+            writer runs the same strict registry pre-barrier under that file lock.
+            Exact absent/unenrolled or enrolled strict-empty permits the write;
+            OPEN returns settlement_parent_close_required with no session/row/fact
+            inactive write; CLOSED without DEO-3 outcome proof, corruption, read or
+            identity failure, unknown state, and ambiguity fail closed.
+            `_persist_snapshot`/`_snapshot_path` disk writes are deleted in favor of
+            in-memory rebuild-derived projection only.
+          exit_criteria:
+            - A: complete validated execution_attempt on both public maintenance commands, attempt-derived registry identity, parent_binding on operation command, typed result, and receipt non-authority
+            - B: unenrolled streams and denied paths fail closed before any FactStream enrollment call
+            - C: validate attempt, derive registry identity, strict-read, binding_id lookup, and complete canonical durable-binding comparison
+            - D: explicit registry-parent-operation-child sequence and no implicit business enrollment
+            - E: guarded child prepare/commit with no append_fact_event bypass
+            - F: exact v1/v2 parsing into one normalized transition and replay descriptor
+            - G: historical v1 original-receipt replay before commit and schema-neutral idempotency
+            - H: changed-semantic conflict and ambiguous-outcome strict reconciliation without duplicate append
+            - I: bounded three-attempt drift-only reprepare exhaustion evidence
+            - J: replay before parent OPEN, no post-close non-replay append, and no disk snapshot write
+            - "K: real thread/process parent-admit-versus-public-settle sequence, not AST only: admission first yields OPEN and settlement_parent_close_required with no inactive write, or allowed empty/nonexistent-registry settle first makes admission reject the inactive attempt"
+            - "L: hard import/call fence proves parent admission is the sole production registry-fact writer; canonical settle, stale fencing, bulk cancellation suspension, rework failure, dedupe cancellation, role-adapter failure, and reopen suspension all use the pre-barrier; reset rejects active sessions; repository admission does not recursively validate/reacquire/import the service; Cell/catalog synchronization is complete"
+          completion_rule: >-
+            DEO-1B may transition from pending only after A-L are all green; L is
+            a hard gate and cannot be deferred as post-completion cleanup.
+          closure_evidence:
+            status: closed_2026-07-15
+            main_task_runtime_rerun:
+              passed: 457
+              failed: 0
+              warnings:
+                - nats-py environment warning: 1
+            quality_gates:
+              - ruff green
+              - mypy green
+              - compileall green
+              - git diff --check green
+            independent_audit: A-L all PASS
+            production_evidence:
+              - bounded guarded reprepare exhausts after three total attempts
+              - real thread and process parent-admission-versus-public-settle sequences use complete public enrollment
+              - 23 durable-binding mismatch cases deny enrollment before a success receipt, verified with the enrollment spy
+            boundary: >-
+              This closes DEO-1B only. It does not implement parent close,
+              outcome-bound receipt eligibility, close recovery, DEO-2/3/4, or
+              an end-to-end Bench.
+          next_bucket: >-
+            DEO-1B is closed. DEO-1C is pending as the next read-only
+            readiness/fence bucket; its enforcement remains not_enabled.
+          separate_governance_item: >-
+            After behavior stabilizes, TaskRuntime cell manifest, README,
+            context-pack, and global catalog reconciliation are required governance
+            evidence; this does not authorize KernelOne/FactStream changes.
+          forbidden_scope:
+            - DEO-1C readiness
+            - DEO-2 token or orchestration
+            - DEO-3 pending intent, guarded close, outcome-bound proof, receipt eligibility, or recovery
+            - DEO-4 legacy removal
+            - KernelOne or FactStream modification
+          cross_bucket_p0:
+            status: open
+            owner_bucket: DEO-3
+            finding: >-
+              DEO-1B blocks active-to-inactive writes when a registry is OPEN or
+              otherwise lacks an eligible outcome-bound close; it does not close
+              the parent. The remaining settle-versus-child TOCTOU stays open.
+              DEO-3 must preserve the existing public settle command as the sole
+              terminal entry and order pending terminal intent, guarded parent
+              close (registry target, operation-head guard), receipt eligibility
+              and outcome-bound proof, then session terminalization and recovery.
+            bench_effect: not_schedulable
+          pending_small_items:
+            - id: DEO-1B-A
+              status: completed
+              title: complete-attempt public enrollment contracts and receipt non-authority
+            - id: DEO-1B-B
+              status: completed
+              title: unenrolled and denied paths fail before FactStream enrollment
+            - id: DEO-1B-C
+              status: completed
+              title: operation enrollment attempt validation and durable binding attestation
+            - id: DEO-1B-D
+              status: completed
+              title: explicit registry-parent-operation-child sequence and no implicit enrollment
+            - id: DEO-1B-E
+              status: completed
+              title: guarded child prepare-authorize-commit with no append_fact_event bypass
+            - id: DEO-1B-F
+              status: completed
+              title: exact v1 and v2 parsing into schema-neutral normalized forms
+            - id: DEO-1B-G
+              status: completed
+              title: historical v1 original-receipt replay and schema-neutral idempotency
+            - id: DEO-1B-H
+              status: completed
+              title: changed-semantic conflict and ambiguous-outcome reconciliation
+            - id: DEO-1B-I
+              status: completed
+              title: bounded three-attempt drift-only reprepare evidence
+            - id: DEO-1B-J
+              status: completed
+              title: replay-before-open, post-close denial, and no disk snapshot persistence
+            - id: DEO-1B-K
+              status: completed
+              title: real thread/process parent-admit-versus-public-settle pre-barrier linearization sequence
+            - id: DEO-1B-L
+              status: completed
+              title: active-to-inactive bypass inventory, no-recursive-lock/import fence, TaskRuntime ownership, and Cell/catalog synchronization
+            - id: DEO-1B-M
+              status: completed
+              title: exact seven-field guarded receipt validation, durable-event-first reconciliation, and append_write_failed mapping
+        - id: DEO-1C
+          status: pending
+          title: readiness query and fence
+          write_scope:
+            - TaskRuntime public read-only readiness contracts/query
+            - minimal TaskRuntime projection/fence implementation and paired tests
+          contract: >-
+            Readiness is scoped to one workspace and parent stream token and is
+            diagnostic only with enforcement="not_enabled".
+          forbidden_connections:
+            - settle
+            - terminal admission
+            - UI
+            - Run Ledger
+          exit_criteria:
+            - readiness query fails closed on strict-stream ambiguity
+            - mechanical fence proves no forbidden connection
+            - DEO-3 is the first bucket that may enable readiness for outcome-bound successful terminal admission; DEO-1B direct pre-barrier remains blocker-only
+    - id: DEO-2
+      status: p0_open
+      scheduling_status: not_schedulable
+      title: kernel-owned batch admission and Director adapter
+      expected_operation_inventory: pending
+    - id: DEO-3
+      status: pending
+      scheduling_status: not_schedulable
+      title: receipt closure, recovery, and terminal admission
+      contract: >-
+        Keep SettleTaskRuntimeExecutionAttemptCommandV1 and public
+        settle_execution_attempt as the sole terminal entry. Internally order
+        pending terminal intent, guarded parent close with registry target and
+        operation-head guard, receipt eligibility and outcome-bound close proof,
+        then session terminalization; recover pending intent/close and own
+        receipt/recovery evidence plus heartbeat-versus-reclaim fencing. This
+        upgrades DEO-1B's settlement_parent_close_required blocker to successful
+        terminal settlement. No specialized settle bypass is permitted.
+    - id: DEO-4
+      status: pending
+      scheduling_status: not_schedulable
+      title: legacy removal and architecture fence
+      residual: remove remaining admission, guarded-child, and terminal-settlement bypasses
+      guarded_commit_control: >-
+        Allowlist only TaskRuntime as the DEO guarded-commit consumer. This is an
+        architecture control, not a security boundary or substitute for proof
+        validation. Fence split locking only across JsonlEventStore FactStream
+        writers and require that scoped writer inventory to consume the platform
+        lock authority. Generic io_events.py and kernelone/fs/jsonl/* writers are
+        outside this DEO fence.
+  bench:
+    status: not_schedulable
+    condition: >-
+      Do not run until DEO-1A..4 exits, 38-surface closure, crash/cancel evidence,
+      targeted quality gates, and independent audit are complete.
+    eta_policy: >-
+      No calendar ETA. A credible ETA is gate-based and must name the worktree
+      fingerprint, isolated command, owner, timeout, and work directory.
+
+factstream_external_baselines:
+  status: external_open_baselines
+  scope_boundary: >-
+    These three broad filesystem baseline failures are not DEO-1A guarded
+    FactStream defects and must not be counted as that bucket's implementation
+    work or closure evidence.
+  audit_evidence: >-
+    Broad gate: 1533 passed, 3 failed, 1 skipped, 1 xfailed, 13 warnings in
+    67.29s. The three failures below remain external/open baselines and do not
+    make a whole-repository-green claim.
+  items:
+    - id: FS-BASELINE-001
+      status: external_open
+      test: >-
+        src/backend/polaris/kernelone/fs/tests/test_kernel_filesystem.py::test_append_evidence_record_writes_jsonl
+      finding: >-
+        _TestFileSystemAdapter.append_text() does not accept the durability
+        keyword expected by the broad filesystem test.
+    - id: FS-BASELINE-002
+      status: external_open
+      test: >-
+        src/backend/polaris/kernelone/fs/tests/test_kernel_filesystem.py::test_append_log_line_writes_runtime_log
+      finding: >-
+        _TestFileSystemAdapter.append_text() does not accept the durability
+        keyword expected by the broad filesystem test.
+    - id: FS-BASELINE-003
+      status: external_open
+      test: >-
+        src/backend/polaris/kernelone/fs/tests/test_text_ops_quality.py::test_write_text_atomic_retries_transient_windows_replace_permission_error
+      finding: >-
+        The broad filesystem test has a separate transient Windows replace-path
+        behavior failure.

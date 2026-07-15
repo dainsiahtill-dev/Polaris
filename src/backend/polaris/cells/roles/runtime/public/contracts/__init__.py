@@ -135,6 +135,9 @@ from polaris.cells.roles.runtime.public.contracts._validation import (
     _require_refs_namespace,
     _to_dict_copy,
 )
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 from polaris.kernelone.roles.shared_contracts import (
     AgentMessage,
     AgentStatus,
@@ -206,6 +209,7 @@ __all__ = [
     # ── Stream Contract Types (Task #2) ───────────────────────────────────
     "StandardStreamEvent",
     "StreamTurnOptions",
+    "TaskRuntimeExecutionAttemptIdentityV1",
     "create_protocol_fsm",
     "get_builtin_role_runtime_spec",
 ]

@@ -675,6 +675,7 @@ class TurnTransactionController:
             workspace=self.config.workspace,
             run_id=self.config.run_id,
             task_id=self.config.task_id,
+            transition_id=self.config.transition_id,
             ledger=ledger,
             result=result,
             completion_status=completion_status,

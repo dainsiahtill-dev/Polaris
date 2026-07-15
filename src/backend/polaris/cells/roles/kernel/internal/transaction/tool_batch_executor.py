@@ -66,6 +66,7 @@ from polaris.cells.roles.kernel.internal.transaction.receipt_utils import (
 )
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_latest_user_message,
+    extract_platform_tool_contract_missing_target_files,
     extract_platform_tool_contract_scope_paths,
     extract_platform_tool_contract_target_files,
     platform_tool_contract_bypasses_read_write_barrier,
@@ -1823,6 +1824,16 @@ class ToolBatchExecutor:
         known_target_files = extract_target_files_from_message(latest_user_request)
         known_target_files.extend(extract_platform_tool_contract_target_files(context))
         known_target_files = list(dict.fromkeys(str(item) for item in known_target_files if str(item)))
+        authoritative_absent_targets = {
+            _normalize_file_reference_path(target).casefold()
+            for target in extract_platform_tool_contract_missing_target_files(context)
+            if _normalize_file_reference_path(target)
+        }
+        known_target_keys = {
+            _normalize_file_reference_path(target).casefold()
+            for target in known_target_files
+            if _normalize_file_reference_path(target)
+        }
         target_files_known = bool(known_target_files) or bool(ledger.mutation_obligation.target_files_known)
         missing_read_evidence = int(ledger.mutation_obligation.read_evidence_count or 0) <= 0
         if (
@@ -1835,18 +1846,25 @@ class ToolBatchExecutor:
             and not has_direct_read
             and not _has_write
         ):
-            # From-scratch create trap (live factory-bench L3-16): when every known
-            # target file is still absent on disk, demanding read_file on them sends
-            # the Director to read a non-existent file (which fails and yields no read
-            # evidence), so it loops on broad exploration and the entry file (main.py)
-            # is never written. Steer to a direct write — never a read of a file that
-            # does not exist — when no known target has been materialized yet.
+            # A platform materialization contract is authoritative workspace evidence.
+            # It can describe the target workspace even when this executor runs from
+            # a different local workspace, so do not replace that evidence with a
+            # local filesystem probe and demand an impossible read.
+            targets_authoritatively_absent = bool(known_target_keys) and known_target_keys.issubset(
+                authoritative_absent_targets
+            )
+
+            # From-scratch create trap: when every known target file is absent,
+            # demanding read_file sends the Director to read a non-existent file
+            # (which yields no read evidence), so it loops on broad exploration and
+            # never materializes the entry file. The filesystem fallback preserves
+            # this behavior when no platform evidence is available.
             existing_targets = [
                 target
                 for target in known_target_files
                 if _resolve_existing_workspace_file(workspace=workspace, raw_path=target) is not None
             ]
-            if known_target_files and not existing_targets:
+            if targets_authoritatively_absent or (known_target_files and not existing_targets):
                 self._raise_contract_violation(
                     turn_id=turn_id,
                     error_type="known_target_requires_write",
@@ -1860,6 +1878,7 @@ class ToolBatchExecutor:
                         "tool_names": non_empty_tool_names,
                         "known_target_files": known_target_files[:6],
                         "absent_targets": True,
+                        "authoritative_absent_targets": sorted(authoritative_absent_targets)[:6],
                     },
                 )
             self._raise_contract_violation(

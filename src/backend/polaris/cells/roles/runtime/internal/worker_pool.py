@@ -32,6 +32,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 from polaris.kernelone.fs.jsonl.ops import append_jsonl_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage import resolve_runtime_path
@@ -72,22 +76,8 @@ def _resolve_worker_runtime_path(workspace: Path, rel_path: str) -> Path:
 
 
 class _TaskRuntimeFinalizationPort(Protocol):
-    def complete_execution(
-        self,
-        task_id: Any,
-        *,
-        session_id: str,
-        result_summary: str = "",
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
-    def fail_execution(
-        self,
-        task_id: Any,
-        *,
-        session_id: str,
-        error: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
+    def settle_execution_attempt(self, command: SettleTaskRuntimeExecutionAttemptCommandV1) -> dict[str, Any]: ...
+
 
 class TaskRuntimePort(_TaskRuntimeFinalizationPort, Protocol):
     def claim_next_execution(
@@ -102,6 +92,7 @@ class TaskRuntimePort(_TaskRuntimeFinalizationPort, Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
+
 class _LegacyTaskRuntimePort(_TaskRuntimeFinalizationPort, Protocol):
     def list_ready_task_rows(self) -> list[dict[str, Any]]: ...
     def claim_execution(
@@ -115,6 +106,7 @@ class _LegacyTaskRuntimePort(_TaskRuntimeFinalizationPort, Protocol):
         selection_source: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
+
 
 TaskRuntimeLike = TaskRuntimePort | _LegacyTaskRuntimePort
 
@@ -146,7 +138,7 @@ class WorkerTask:
     env: dict = field(default_factory=dict)
     timeout: int = 300
     metadata: dict = field(default_factory=dict)
-    session_id: str = ""
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
 
 
 @dataclass
@@ -217,11 +209,16 @@ def _row_metadata(row: dict[str, Any]) -> dict[str, Any]:
     return dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
 
 
-def _session_id_from_claim(claim_result: dict[str, Any]) -> str:
-    raw_session = claim_result.get("session")
-    if not isinstance(raw_session, dict):
-        return ""
-    return str(raw_session.get("session_id") or "").strip()
+def _execution_attempt_from_claim(
+    claim_result: dict[str, Any],
+) -> TaskRuntimeExecutionAttemptIdentityV1 | None:
+    raw_attempt = claim_result.get("execution_attempt")
+    if not isinstance(raw_attempt, dict):
+        return None
+    try:
+        return TaskRuntimeExecutionAttemptIdentityV1.from_record(raw_attempt)
+    except (TypeError, ValueError):
+        return None
 
 
 def _worker_timeout(metadata: dict[str, Any]) -> int:
@@ -234,7 +231,7 @@ def _worker_timeout(metadata: dict[str, Any]) -> int:
 def _worker_task_from_runtime_row(
     row: dict[str, Any],
     *,
-    session_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
     work_dir: Path,
 ) -> WorkerTask | None:
     task_id = _row_task_id(row)
@@ -248,8 +245,9 @@ def _worker_task_from_runtime_row(
         env=dict(metadata.get("env") or {}),
         timeout=_worker_timeout(metadata),
         metadata=metadata,
-        session_id=session_id,
+        execution_attempt=execution_attempt,
     )
+
 
 def _claim_result_to_worker_task(
     claim_result: dict[str, Any],
@@ -261,11 +259,15 @@ def _claim_result_to_worker_task(
     runtime_row = claim_row if isinstance(claim_row, dict) else fallback_row
     if runtime_row is None:
         return None
+    execution_attempt = _execution_attempt_from_claim(claim_result)
+    if execution_attempt is None:
+        return None
     return _worker_task_from_runtime_row(
         runtime_row,
-        session_id=_session_id_from_claim(claim_result),
+        execution_attempt=execution_attempt,
         work_dir=work_dir,
     )
+
 
 def _has_legacy_ready_task(task_runtime: TaskRuntimeLike | None) -> bool:
     if task_runtime is None:
@@ -274,6 +276,7 @@ def _has_legacy_ready_task(task_runtime: TaskRuntimeLike | None) -> bool:
     if not callable(list_ready_task_rows):
         return False
     return bool(list_ready_task_rows())
+
 
 def _claim_next_runtime_task(
     task_runtime: TaskRuntimeLike,
@@ -314,6 +317,7 @@ def _claim_next_runtime_task(
         )
     return True, task
 
+
 def _claim_legacy_ready_task(
     task_runtime: TaskRuntimeLike,
     *,
@@ -343,6 +347,7 @@ def _claim_legacy_ready_task(
         if task is not None:
             return task
     return None
+
 
 def _claim_ready_runtime_task(
     task_runtime: TaskRuntimeLike | None,
@@ -529,20 +534,28 @@ class Worker:
         with self._state_lock:
             self._current_task = None
 
-        if self.task_runtime and task.session_id:
+        if self.task_runtime and task.execution_attempt is not None:
             if result.success:
-                finalization = self.task_runtime.complete_execution(
-                    task.task_id,
-                    session_id=task.session_id,
-                    result_summary=result.output,
-                    metadata={"worker_id": self.config.worker_id},
+                finalization = self.task_runtime.settle_execution_attempt(
+                    SettleTaskRuntimeExecutionAttemptCommandV1(
+                        workspace=task.execution_attempt.workspace,
+                        identity=task.execution_attempt,
+                        outcome="completed",
+                        summary=result.output,
+                        lock_timeout_seconds=5.0,
+                        metadata={"worker_id": self.config.worker_id},
+                    )
                 )
             else:
-                finalization = self.task_runtime.fail_execution(
-                    task.task_id,
-                    session_id=task.session_id,
-                    error=result.error,
-                    metadata={"worker_id": self.config.worker_id},
+                finalization = self.task_runtime.settle_execution_attempt(
+                    SettleTaskRuntimeExecutionAttemptCommandV1(
+                        workspace=task.execution_attempt.workspace,
+                        identity=task.execution_attempt,
+                        outcome="failed",
+                        summary=result.error,
+                        lock_timeout_seconds=5.0,
+                        metadata={"worker_id": self.config.worker_id},
+                    )
                 )
             result = _merge_task_runtime_finalization_result(result, finalization)
 
@@ -796,20 +809,28 @@ class AsyncWorker:
         async with self._state_lock:
             self._current_task = None
 
-        if self.task_runtime and task.session_id:
+        if self.task_runtime and task.execution_attempt is not None:
             if result.success:
-                finalization = self.task_runtime.complete_execution(
-                    task.task_id,
-                    session_id=task.session_id,
-                    result_summary=result.output,
-                    metadata={"worker_id": self.config.worker_id},
+                finalization = self.task_runtime.settle_execution_attempt(
+                    SettleTaskRuntimeExecutionAttemptCommandV1(
+                        workspace=task.execution_attempt.workspace,
+                        identity=task.execution_attempt,
+                        outcome="completed",
+                        summary=result.output,
+                        lock_timeout_seconds=5.0,
+                        metadata={"worker_id": self.config.worker_id},
+                    )
                 )
             else:
-                finalization = self.task_runtime.fail_execution(
-                    task.task_id,
-                    session_id=task.session_id,
-                    error=result.error,
-                    metadata={"worker_id": self.config.worker_id},
+                finalization = self.task_runtime.settle_execution_attempt(
+                    SettleTaskRuntimeExecutionAttemptCommandV1(
+                        workspace=task.execution_attempt.workspace,
+                        identity=task.execution_attempt,
+                        outcome="failed",
+                        summary=result.error,
+                        lock_timeout_seconds=5.0,
+                        metadata={"worker_id": self.config.worker_id},
+                    )
                 )
             result = _merge_task_runtime_finalization_result(result, finalization)
 

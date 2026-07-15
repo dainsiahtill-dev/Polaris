@@ -44,6 +44,24 @@ def _bootstrap_backend_import_path():
 logger = logging.getLogger(__name__)
 
 
+def _bootstrap_director_fact_stream(workspace: str, maintenance_reason: str) -> None:
+    """Delegate one formal Director entrypoint to FactStream bootstrap."""
+
+    from polaris.cells.events.fact_stream.public import (
+        BootstrapFactStreamWorkspaceCommandV1,
+        bootstrap_fact_stream_workspace,
+        fact_stream_bootstrap_streams,
+    )
+
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=workspace,
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason=maintenance_reason,
+        )
+    )
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser."""
     parser = argparse.ArgumentParser(
@@ -121,7 +139,10 @@ async def run_director(
     forever: bool = False,
 ) -> None:
     """Run director in iterative mode."""
-    director_config_cls, director_service_cls, iteration_service_cls, task_priority_cls = _bootstrap_backend_import_path()
+    _bootstrap_director_fact_stream(workspace, "director_v2_cli_startup")
+    director_config_cls, director_service_cls, iteration_service_cls, task_priority_cls = (
+        _bootstrap_backend_import_path()
+    )
 
     if command:
         service = director_service_cls(
@@ -162,6 +183,7 @@ async def run_director(
 
 async def run_status(workspace: str) -> None:
     """Run director in status mode."""
+    _bootstrap_director_fact_stream(workspace, "director_v2_cli_status")
     director_config_cls, director_service_cls, _, _ = _bootstrap_backend_import_path()
 
     service = director_service_cls(config=director_config_cls(workspace=workspace))

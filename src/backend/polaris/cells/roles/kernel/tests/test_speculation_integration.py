@@ -62,7 +62,20 @@ def _spec_key(tool_name: str, args: dict[str, Any]) -> str:
 def controller(monkeypatch: pytest.MonkeyPatch) -> TurnTransactionController:
     monkeypatch.setenv("ENABLE_SPECULATIVE_EXECUTION", "true")
     llm_provider = AsyncMock()
-    tool_runtime = AsyncMock(return_value={"success": True, "result": {"replay": True}})
+
+    async def _tool_runtime(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {"success": True, "result": {"replay": True}}
+        if WriteToolPhases.is_write_tool(tool_name):
+            file_path = str(arguments.get("file") or arguments.get("path") or "")
+            result["effect_receipt"] = {
+                "schema_version": "effect_receipt.v1",
+                "operation": tool_name,
+                "file": file_path,
+                "changed_files": [file_path] if file_path else [],
+            }
+        return result
+
+    tool_runtime = AsyncMock(side_effect=_tool_runtime)
     return TurnTransactionController(
         llm_provider=llm_provider,
         tool_runtime=tool_runtime,

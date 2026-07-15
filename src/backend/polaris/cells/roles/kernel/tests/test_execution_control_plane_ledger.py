@@ -9,6 +9,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     read_run_ledger_projection,
 )
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
+    _bind_transaction_attempt,
+    _start_transaction_invocation,
+)
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.public.turn_contracts import (
     FinalizeMode,
@@ -185,6 +189,15 @@ class _NoopPublisher:
         return True
 
 
+def _bind_direct_executor_attempt(request: RoleTurnRequest, workspace: str) -> None:
+    invocation_id = _start_transaction_invocation(
+        request,
+        role="director",
+        workspace=workspace,
+    )
+    _bind_transaction_attempt(request, invocation_id=invocation_id, attempt=0)
+
+
 @pytest.fixture(autouse=True)
 def _route_transaction_factory_to_test_kernel(monkeypatch: pytest.MonkeyPatch) -> None:
     def _factory(kernel: Any, role: str, profile: Any, request: Any) -> Any:
@@ -235,11 +248,13 @@ async def test_role_execution_dropped_tool_dispatch_commits_ledger_and_blocks_qa
         message="[mode:materialize]\nCreate src/index.js",
         task_id="TASK-1",
         run_id="run-dropped",
+        metadata={"turn_request_id": "ledger-dropped-turn"},
         context_override={
             "delivery_mode": "materialize_changes",
             "target_files": ["src/index.js"],
         },
     )
+    _bind_direct_executor_attempt(request, str(tmp_path))
 
     result = await TransactionTurnExecutor(_DroppedToolDispatchKernel(str(tmp_path))).execute_turn(  # type: ignore[arg-type]
         "director",
@@ -303,6 +318,7 @@ async def test_stream_role_execution_dropped_tool_dispatch_commits_ledger(
         message="[mode:materialize]\nCreate src/index.js",
         task_id="TASK-1",
         run_id="run-stream-dropped",
+        metadata={"turn_request_id": "ledger-stream-dropped-turn"},
         context_override={
             "delivery_mode": "materialize_changes",
             "target_files": ["src/index.js"],
@@ -370,11 +386,13 @@ async def test_role_execution_successful_turn_with_missing_target_commits_task_b
         message="[mode:materialize]\nCreate src/index.js",
         task_id="TASK-1",
         run_id="run-missing-target",
+        metadata={"turn_request_id": "ledger-missing-target-turn"},
         context_override={
             "delivery_mode": "materialize_changes",
             "target_files": ["src/index.js"],
         },
     )
+    _bind_direct_executor_attempt(request, str(tmp_path))
 
     result = await TransactionTurnExecutor(_SuccessfulNoMaterializationKernel(str(tmp_path))).execute_turn(  # type: ignore[arg-type]
         "director",
@@ -442,11 +460,13 @@ async def test_role_execution_successful_turn_with_missing_entrypoint_commits_ta
         message="[mode:materialize]\nCreate package.json",
         task_id="TASK-1",
         run_id="run-missing-entrypoint",
+        metadata={"turn_request_id": "ledger-missing-entrypoint-turn"},
         context_override={
             "delivery_mode": "materialize_changes",
             "target_files": ["package.json"],
         },
     )
+    _bind_direct_executor_attempt(request, str(tmp_path))
 
     result = await TransactionTurnExecutor(_SuccessfulNoMaterializationKernel(str(tmp_path))).execute_turn(  # type: ignore[arg-type]
         "director",
@@ -510,6 +530,7 @@ async def test_stream_role_execution_successful_turn_with_missing_target_commits
         message="[mode:materialize]\nCreate src/index.js",
         task_id="TASK-1",
         run_id="run-stream-missing-target",
+        metadata={"turn_request_id": "ledger-stream-missing-target-turn"},
         context_override={
             "delivery_mode": "materialize_changes",
             "target_files": ["src/index.js"],
@@ -584,6 +605,7 @@ async def test_stream_role_execution_successful_turn_with_missing_entrypoint_com
         message="[mode:materialize]\nCreate package.json",
         task_id="TASK-1",
         run_id="run-stream-missing-entrypoint",
+        metadata={"turn_request_id": "ledger-stream-missing-entrypoint-turn"},
         context_override={
             "delivery_mode": "materialize_changes",
             "target_files": ["package.json"],
@@ -656,6 +678,7 @@ async def test_stream_forced_write_zero_dispatch_fails_with_dropped_lifecycle(
         message="[mode:materialize]\nCreate src/index.js",
         task_id="TASK-1",
         run_id="run-stream-forced-write-dropped",
+        metadata={"turn_request_id": "ledger-stream-forced-write-turn"},
         context_override={
             "delivery_mode": "materialize_changes",
             "target_files": ["src/index.js"],
@@ -731,6 +754,7 @@ async def test_stream_normal_completed_turn_unaffected_by_lifecycle_receipt(
         message="Summarize the repository",
         task_id="TASK-1",
         run_id="run-stream-normal-complete",
+        metadata={"turn_request_id": "ledger-stream-normal-turn"},
         context_override={},
     )
 

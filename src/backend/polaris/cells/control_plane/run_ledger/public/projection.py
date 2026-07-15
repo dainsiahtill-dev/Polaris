@@ -10,6 +10,7 @@ from polaris.cells.control_plane.run_ledger.public.task_boundary import (
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_tool_lifecycle_event,
     project_tool_lifecycle_failure_status,
+    project_tool_lifecycle_requirement,
     project_tool_lifecycle_summary,
     summarize_tool_lifecycle_events,
 )
@@ -275,24 +276,37 @@ def _repair_modality(physical_evidence: dict[str, Any]) -> dict[str, Any] | None
     if not receipts and not policy:
         return None
 
-    authoritative_success = bool(policy.get("authoritative_success")) if policy else bool(receipts) and all(
-        bool(receipt.get("authoritative"))
-        and _clean_string(receipt.get("status")) == "applied"
-        and _clean_string(receipt.get("evidence_status")) == "resolved_evidence"
-        for receipt in receipts
+    authoritative_success = (
+        bool(policy.get("authoritative_success"))
+        if policy
+        else bool(receipts)
+        and all(
+            bool(receipt.get("authoritative"))
+            and _clean_string(receipt.get("status")) == "applied"
+            and _clean_string(receipt.get("evidence_status")) == "resolved_evidence"
+            for receipt in receipts
+        )
     )
-    missing_evidence_count = _int_value(policy.get("missing_evidence_receipt_count")) if policy else sum(
-        1 for receipt in receipts if _clean_string(receipt.get("evidence_status")) == "missing_evidence"
+    missing_evidence_count = (
+        _int_value(policy.get("missing_evidence_receipt_count"))
+        if policy
+        else sum(1 for receipt in receipts if _clean_string(receipt.get("evidence_status")) == "missing_evidence")
     )
-    failed_evidence_count = _int_value(policy.get("failed_evidence_receipt_count")) if policy else sum(
-        1 for receipt in receipts if _clean_string(receipt.get("evidence_status")) == "failed_evidence"
+    failed_evidence_count = (
+        _int_value(policy.get("failed_evidence_receipt_count"))
+        if policy
+        else sum(1 for receipt in receipts if _clean_string(receipt.get("evidence_status")) == "failed_evidence")
     )
-    non_authoritative_count = _int_value(policy.get("non_authoritative_receipt_count")) if policy else sum(
-        1
-        for receipt in receipts
-        if not bool(receipt.get("authoritative"))
-        or _clean_string(receipt.get("status")) != "applied"
-        or _clean_string(receipt.get("evidence_status")) != "resolved_evidence"
+    non_authoritative_count = (
+        _int_value(policy.get("non_authoritative_receipt_count"))
+        if policy
+        else sum(
+            1
+            for receipt in receipts
+            if not bool(receipt.get("authoritative"))
+            or _clean_string(receipt.get("status")) != "applied"
+            or _clean_string(receipt.get("evidence_status")) != "resolved_evidence"
+        )
     )
     blocker = ""
     if missing_evidence_count:
@@ -417,9 +431,7 @@ def _environment_prep_modality(physical_evidence: dict[str, Any]) -> dict[str, A
     if not receipts:
         return None
     failed = [
-        receipt
-        for receipt in receipts
-        if _clean_string(receipt.get("status")) not in {"succeeded", "skipped_fresh"}
+        receipt for receipt in receipts if _clean_string(receipt.get("status")) not in {"succeeded", "skipped_fresh"}
     ]
     ok = not failed
     return {
@@ -718,6 +730,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     tool_receipt_hash_deltas: list[dict[str, Any]] = []
     task_boundary_verdicts: list[dict[str, Any]] = []
     tool_lifecycle_events: list[dict[str, Any]] = []
+    tool_lifecycle_requirement_events: list[dict[str, Any]] = []
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -734,6 +747,11 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 content_id=event.get("content_id") or event.get("event_id"),
             )
             tool_lifecycle_events.append(lifecycle_event)
+            continue
+        if event_type == "tool_lifecycle_requirement":
+            requirement_raw = event.get("tool_lifecycle_requirement")
+            if isinstance(requirement_raw, dict):
+                tool_lifecycle_requirement_events.append(dict(requirement_raw))
             continue
         task_boundary_raw = event.get("task_boundary_verdict")
         if event_type == "task_boundary_verdict" or isinstance(task_boundary_raw, dict):
@@ -848,14 +866,19 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         task_key = _task_boundary_task_key(verdict)
         latest_task_boundary_by_task.pop(task_key, None)
         latest_task_boundary_by_task[task_key] = dict(verdict)
-    historical_failed_task_boundary_count = sum(
-        not bool(verdict.get("ok")) for verdict in task_boundary_verdicts
-    )
+    historical_failed_task_boundary_count = sum(not bool(verdict.get("ok")) for verdict in task_boundary_verdicts)
     failed_task_boundaries = [
         verdict for verdict in latest_task_boundary_by_task.values() if not bool(verdict.get("ok"))
     ]
     task_boundary_ok = not failed_task_boundaries
-    tool_lifecycle_summary = summarize_tool_lifecycle_events(tool_lifecycle_events)
+    tool_lifecycle_requirement = project_tool_lifecycle_requirement(
+        tool_lifecycle_requirement_events,
+        tool_lifecycle_events,
+    )
+    tool_lifecycle_summary = summarize_tool_lifecycle_events(
+        tool_lifecycle_events,
+        requirement_projection=tool_lifecycle_requirement,
+    )
     tool_lifecycle_projection = project_tool_lifecycle_summary(tool_lifecycle_summary)
     tool_lifecycle_ok = bool(tool_lifecycle_projection.get("ok"))
     integrity_ok = bool(gates) and capability_ok and evidence_policy_integrity_ok and tool_lifecycle_ok
@@ -949,11 +972,11 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
     if tool_lifecycle_map and not bool(tool_lifecycle_map.get("ok", True)):
         failure_status = project_tool_lifecycle_failure_status(tool_lifecycle_map)
         failure_evidence_raw = tool_lifecycle_map.get("failure_evidence")
-        failure_evidence = [
-            dict(item)
-            for item in failure_evidence_raw
-            if isinstance(item, dict)
-        ] if isinstance(failure_evidence_raw, list) else []
+        failure_evidence = (
+            [dict(item) for item in failure_evidence_raw if isinstance(item, dict)]
+            if isinstance(failure_evidence_raw, list)
+            else []
+        )
         failure = _clean_string(failure_status.get("failure_class")) or "TOOL_LIFECYCLE_FAILED"
         return {
             "ok": False,

@@ -34,7 +34,12 @@ from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
     project_director_repair_revalidation_evidence,
 )
-from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
+from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+    create_task_runtime_execution_attempt_authority,
+)
 from polaris.kernelone.fs.materialization import materialized_file_paths
 
 # ``scan_workspace_artifact_quality`` MUST stay a name on THIS module: the test
@@ -890,7 +895,7 @@ def _finalize_claimed_execution(
     adapter: Any,
     *,
     target_task_id: str,
-    session_id: str,
+    authority: TaskRuntimeExecutionAttemptAuthorityV1 | None,
     outcome: str,
     result_summary: str = "",
     error: str = "",
@@ -898,25 +903,24 @@ def _finalize_claimed_execution(
 ) -> dict[str, Any]:
     """Finalize a runtime task and surface terminal-state conflicts as data."""
 
-    if not str(session_id or "").strip():
-        return {"success": False, "reason": "missing_session_id"}
+    del adapter, target_task_id
+    if authority is None:
+        return {"success": False, "reason": "missing_execution_attempt_authority"}
     try:
         if outcome == "completed":
-            result = adapter.task_runtime.complete_execution(
-                target_task_id,
-                session_id=session_id,
-                result_summary=result_summary,
-                metadata=metadata,
-            )
+            settlement_outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1 = "completed"
+            summary = result_summary
         elif outcome == "failed":
-            result = adapter.task_runtime.fail_execution(
-                target_task_id,
-                session_id=session_id,
-                error=error or "director_execution_failed",
-                metadata=metadata,
-            )
+            settlement_outcome = "failed"
+            summary = error or "director_execution_failed"
         else:
             return {"success": False, "reason": "invalid_outcome", "outcome": outcome}
+        verdict = authority.settle(
+            outcome=settlement_outcome,
+            summary=summary,
+            lock_timeout_seconds=5.0,
+            metadata=dict(metadata or {}),
+        )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         return {
             "success": False,
@@ -924,9 +928,20 @@ def _finalize_claimed_execution(
             "error": str(exc),
             "outcome": outcome,
         }
-    if not isinstance(result, dict):
-        return {"success": False, "reason": "task_runtime_invalid_finalize_result", "outcome": outcome}
-    if result.get("success") is not True:
+    task_runtime_verdict = verdict.task_runtime_verdict.to_record() if verdict.task_runtime_verdict is not None else None
+    result = {
+        "success": verdict.success,
+        "code": verdict.code,
+        "reason": str((task_runtime_verdict or {}).get("code") or verdict.code),
+        "outcome": verdict.outcome,
+        "identity": verdict.identity.to_record() if verdict.identity is not None else None,
+        "callback_error_type": verdict.callback_error_type,
+    }
+    if task_runtime_verdict is not None:
+        result["task_runtime_verdict"] = task_runtime_verdict
+    if verdict.code == "settlement_callback_exception":
+        result["reason"] = "task_runtime_terminal_transition_failed"
+    if verdict.success is not True:
         return {
             **result,
             "success": False,
@@ -934,6 +949,17 @@ def _finalize_claimed_execution(
             "outcome": outcome,
         }
     return result
+
+
+def _execution_attempt_authority_from_context(
+    context: dict[str, Any],
+) -> TaskRuntimeExecutionAttemptAuthorityV1 | None:
+    """Read the one public execution-attempt authority carried by this turn."""
+
+    authority = context.get("task_runtime_execution_attempt_authority")
+    if isinstance(authority, TaskRuntimeExecutionAttemptAuthorityV1):
+        return authority
+    return None
 
 
 def _task_runtime_finalization_failed_result(
@@ -1079,17 +1105,30 @@ async def _suspend_claimed_execution_for_cancellation(
     *,
     target_task_id: str,
     run_id: str,
-    session_id: str,
+    authority: TaskRuntimeExecutionAttemptAuthorityV1 | None,
 ) -> dict[str, Any]:
     """Suspend a claimed Director task during cancellation and emit failure evidence."""
 
     try:
-        suspend_result = adapter.task_runtime.suspend_execution(
-            target_task_id,
-            session_id=session_id,
-            reason="director_execution_cancelled",
+        if authority is None:
+            return {"success": False, "reason": "missing_execution_attempt_authority"}
+        verdict = authority.settle(
+            outcome="suspended",
+            summary="director_execution_cancelled",
+            lock_timeout_seconds=5.0,
             metadata={"adapter_phase": "pending"},
         )
+        task_runtime_verdict = verdict.task_runtime_verdict.to_record() if verdict.task_runtime_verdict is not None else None
+        suspend_result = {
+            "success": verdict.success,
+            "code": verdict.code,
+            "reason": str((task_runtime_verdict or {}).get("code") or verdict.code),
+            "outcome": verdict.outcome,
+            "identity": verdict.identity.to_record() if verdict.identity is not None else None,
+            "callback_error_type": verdict.callback_error_type,
+        }
+        if task_runtime_verdict is not None:
+            suspend_result["task_runtime_verdict"] = task_runtime_verdict
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         suspend_result = {
             "success": False,
@@ -1105,6 +1144,12 @@ async def _suspend_claimed_execution_for_cancellation(
     if not reason:
         reason = "task_runtime_suspend_failed"
     detail = str(result.get("error") or result.get("detail") or reason).strip()
+    suspension_identity = result.get("identity")
+    suspension_session_id = (
+        str(suspension_identity.get("session_id") or "")
+        if isinstance(suspension_identity, dict)
+        else ""
+    )
     try:
         await adapter._emit_task_trace_event(
             task_id=target_task_id,
@@ -1118,7 +1163,7 @@ async def _suspend_claimed_execution_for_cancellation(
             reason=reason,
             refs={
                 "task_runtime_suspend_result": dict(result),
-                "task_runtime_session_id": session_id,
+                "task_runtime_session_id": suspension_session_id,
             },
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -1359,14 +1404,41 @@ async def execute_director_task(
     session_raw = task_claim_result.get("session")
     task_claim_session: dict[str, Any] = session_raw if isinstance(session_raw, dict) else {}
     task_claim_session_id = str(task_claim_session.get("session_id") or "").strip()
-    if board_claim_applied and task_claim_session_id:
+    attempt_record = task_claim_result.get("execution_attempt")
+    try:
+        task_execution_attempt = (
+            TaskRuntimeExecutionAttemptIdentityV1.from_record(attempt_record)
+            if isinstance(attempt_record, dict)
+            else None
+        )
+    except (TypeError, ValueError):
+        task_execution_attempt = None
+    task_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None
+    if board_claim_applied and task_execution_attempt is None:
+        return {
+            "success": False,
+            "task_id": target_task_id,
+            "error": "director_task_runtime_execution_attempt_missing",
+            "control_plane_failure_code": "director_task_runtime_execution_attempt_missing",
+        }
+    if board_claim_applied and task_execution_attempt is not None:
+        if task_claim_session_id and task_claim_session_id != task_execution_attempt.session_id:
+            return {
+                "success": False,
+                "task_id": target_task_id,
+                "error": "director_task_runtime_execution_attempt_session_mismatch",
+                "control_plane_failure_code": "director_task_runtime_execution_attempt_session_mismatch",
+            }
+        task_claim_session_id = task_execution_attempt.session_id
         # Propagate the physical task-runtime lease into RoleRuntime/TransactionKernel.
         # The kernel checks this immediately before executing tools, so a late LLM
         # response from a cancelled/suspended Director claim cannot still write files.
+        task_execution_attempt_authority = create_task_runtime_execution_attempt_authority(task_execution_attempt)
         context = dict(context or {})
         context["session_id"] = task_claim_session_id
         context["task_runtime_session_id"] = task_claim_session_id
         context["task_runtime_guard"] = True
+        context["task_runtime_execution_attempt_authority"] = task_execution_attempt_authority
         metadata = dict(context.get("metadata") or {})
         metadata.setdefault("session_id", task_claim_session_id)
         metadata["task_runtime_session_id"] = task_claim_session_id
@@ -1407,14 +1479,27 @@ async def execute_director_task(
                 return
             except asyncio.TimeoutError:
                 try:
-                    heartbeat_result = adapter.task_runtime.heartbeat_execution(
-                        target_task_id,
-                        session_id=task_claim_session_id,
+                    if task_execution_attempt_authority is None:
+                        raise RuntimeError("director_task_runtime_execution_attempt_authority_missing")
+                    heartbeat_verdict = task_execution_attempt_authority.heartbeat(
                         lease_ttl_seconds=_DEFAULT_TASK_LEASE_TTL_SECONDS,
+                        lock_timeout_seconds=5.0,
                         context_summary=selected_subject,
                     )
-                    if isinstance(heartbeat_result, dict) and heartbeat_result.get("success") is not True:
-                        decision_signals.append(_task_runtime_heartbeat_failed_signal(heartbeat_result))
+                    if heartbeat_verdict.success is not True:
+                        decision_signals.append(
+                            _task_runtime_heartbeat_failed_signal(
+                                {
+                                    "success": False,
+                                    "reason": heartbeat_verdict.code,
+                                    "identity": (
+                                        heartbeat_verdict.identity.to_record()
+                                        if heartbeat_verdict.identity is not None
+                                        else None
+                                    ),
+                                }
+                            )
+                        )
                         return
                 except (OSError, RuntimeError, TypeError, ValueError) as exc:
                     decision_signals.append(_task_runtime_heartbeat_exception_signal(exc))
@@ -1427,7 +1512,7 @@ async def execute_director_task(
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
 
-    if board_claim_applied and task_claim_session_id:
+    if board_claim_applied and task_execution_attempt_authority is not None:
         heartbeat_task = asyncio.create_task(_run_task_claim_heartbeat())
 
     try:
@@ -1482,13 +1567,13 @@ async def execute_director_task(
                         task=task, task_id=target_task_id, run_id=run_id, context=context
                     )
 
-                if board_claim_applied and task_claim_session_id:
+                if board_claim_applied and task_execution_attempt_authority is not None:
                     if bool(result.get("success")):
                         finalize_result = _finalize_claimed_execution(
                             adapter,
                             target_task_id=target_task_id,
                             outcome="completed",
-                            session_id=task_claim_session_id,
+                            authority=task_execution_attempt_authority,
                             result_summary=f"director_{'hybrid' if use_hybrid else 'sequential'}_completed",
                             metadata={"adapter_phase": "completed"},
                         )
@@ -1504,7 +1589,7 @@ async def execute_director_task(
                             adapter,
                             target_task_id=target_task_id,
                             outcome="failed",
-                            session_id=task_claim_session_id,
+                            authority=task_execution_attempt_authority,
                             error=str(result.get("error") or "director_sequential_execution_failed"),
                             metadata={"adapter_phase": "failed"},
                         )
@@ -1516,12 +1601,12 @@ async def execute_director_task(
                             )
                 return _with_decision_signals(result, decision_signals) if isinstance(result, dict) else result
             except asyncio.CancelledError:
-                if board_claim_applied and task_claim_session_id:
+                if board_claim_applied and task_execution_attempt_authority is not None:
                     await _suspend_claimed_execution_for_cancellation(
                         adapter,
                         target_task_id=target_task_id,
                         run_id=run_id,
-                        session_id=task_claim_session_id,
+                        authority=task_execution_attempt_authority,
                     )
                 raise
 
@@ -1543,16 +1628,17 @@ async def execute_director_task(
                 decision_signals,
                 baseline_files,
                 selected_subject,
+                task_execution_attempt_authority=task_execution_attempt_authority,
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             error = f"director_runtime_exception:{exc}"
             runtime_exception_finalize_result: dict[str, Any] | None = None
-            if board_claim_applied and task_claim_session_id:
+            if board_claim_applied and task_execution_attempt_authority is not None:
                 runtime_exception_finalize_result = _finalize_claimed_execution(
                     adapter,
                     target_task_id=target_task_id,
                     outcome="failed",
-                    session_id=task_claim_session_id,
+                    authority=task_execution_attempt_authority,
                     error=error,
                     metadata={"adapter_phase": "failed", "exception_type": type(exc).__name__},
                 )
@@ -1581,12 +1667,12 @@ async def execute_director_task(
             )
 
     except asyncio.CancelledError:
-        if board_claim_applied and task_claim_session_id:
+        if board_claim_applied and task_execution_attempt_authority is not None:
             await _suspend_claimed_execution_for_cancellation(
                 adapter,
                 target_task_id=target_task_id,
                 run_id=run_id,
-                session_id=task_claim_session_id,
+                authority=task_execution_attempt_authority,
             )
         raise
     finally:
@@ -1723,6 +1809,7 @@ async def _claim_task_with_retry(
             "reason": "claimed",
             "task": claimed_task,
             "session": session_data,
+            "execution_attempt": claim_next_result.get("execution_attempt"),
         }
         snapshot = adapter._state_tracker.build_taskboard_observation_snapshot(adapter.task_runtime)
         return active_task, active_task_id, active_source, True, snapshot, attempts, last_claim_result
@@ -1972,6 +2059,7 @@ async def _execute_standard_llm_flow(
     decision_signals: list[dict[str, Any]],
     baseline_files: dict[str, str],
     selected_subject: str,
+    task_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
 ) -> dict[str, Any]:
     """执行标准 LLM 流程"""
     await _attach_director_file_event_bus(adapter)
@@ -2010,6 +2098,7 @@ async def _execute_standard_llm_flow(
         run_id=run_id,
         context=context,
         board_claim_applied=board_claim_applied,
+        task_execution_attempt_authority=task_execution_attempt_authority,
         task_claim_session_id=task_claim_session_id,
         decision_signals=decision_signals,
         requires_fresh_materialization=requires_fresh_materialization,
@@ -2108,7 +2197,6 @@ async def _execute_standard_llm_flow(
         task=task,
         requires_fresh_materialization=requires_fresh_materialization,
         write_tool_evidence=write_tool_evidence,
-        primary_llm_summary=primary_llm_summary,
     )
 
     (
@@ -2157,6 +2245,7 @@ async def _execute_standard_llm_flow(
         context=context,
         baseline_files=baseline_files,
         board_claim_applied=board_claim_applied,
+        task_execution_attempt_authority=task_execution_attempt_authority,
         can_accept_existing_scope=can_accept_existing_scope,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
@@ -2179,6 +2268,7 @@ async def _execute_standard_llm_flow(
         run_id=run_id,
         context=context,
         board_claim_applied=board_claim_applied,
+        task_execution_attempt_authority=task_execution_attempt_authority,
         can_accept_existing_scope=can_accept_existing_scope,
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
@@ -2204,6 +2294,7 @@ async def _execute_standard_llm_flow(
         run_id=run_id,
         context=context,
         board_claim_applied=board_claim_applied,
+        task_execution_attempt_authority=task_execution_attempt_authority,
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
@@ -2266,6 +2357,7 @@ async def _execute_standard_llm_flow(
         context=context,
         artifact_quality_errors=artifact_quality_errors,
         board_claim_applied=board_claim_applied,
+        task_execution_attempt_authority=task_execution_attempt_authority,
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
@@ -2307,6 +2399,7 @@ async def _execute_standard_llm_flow(
         run_id=run_id,
         context=context,
         board_claim_applied=board_claim_applied,
+        task_execution_attempt_authority=task_execution_attempt_authority,
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
@@ -2330,6 +2423,7 @@ async def _execute_standard_llm_flow(
         run_id=run_id,
         context=context,
         board_claim_applied=board_claim_applied,
+        task_execution_attempt_authority=task_execution_attempt_authority,
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
@@ -2350,6 +2444,7 @@ def _phase_finalize_materialization(
     adapter: Any,
     *,
     board_claim_applied: bool,
+    task_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     context: dict[str, Any],
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
@@ -2412,12 +2507,12 @@ def _phase_finalize_materialization(
                 no_write_materialization_retry_summary
             )
         finalize_result: dict[str, Any] | None = None
-        if board_claim_applied and task_claim_session_id:
+        if board_claim_applied:
             finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
-                session_id=task_claim_session_id,
+                authority=task_execution_attempt_authority,
                 error=error,
                 metadata=failure_metadata,
             )
@@ -2507,12 +2602,12 @@ def _phase_finalize_materialization(
     )
     completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
 
-    if board_claim_applied and task_claim_session_id:
+    if board_claim_applied:
         finalize_result = _finalize_claimed_execution(
             adapter,
             target_task_id=target_task_id,
             outcome="completed",
-            session_id=task_claim_session_id,
+            authority=task_execution_attempt_authority,
             result_summary=f"changed_files={len(all_affected_files)}; tools_executed={len(tool_results)}",
             metadata=completion_metadata,
         )
@@ -2665,6 +2760,7 @@ def _phase_existing_scope_preflight(
     adapter: Any,
     *,
     board_claim_applied: bool,
+    task_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     context: dict[str, Any],
     decision_signals: list[dict[str, Any]],
     requires_fresh_materialization: bool,
@@ -2691,7 +2787,6 @@ def _phase_existing_scope_preflight(
         task=task,
         requires_fresh_materialization=requires_fresh_materialization,
         write_tool_evidence=False,
-        primary_llm_summary=None,
     )
     if (
         not all_affected_files
@@ -2727,12 +2822,12 @@ def _phase_existing_scope_preflight(
             export_handoff=True,
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
-        if board_claim_applied and task_claim_session_id:
+        if board_claim_applied:
             finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="completed",
-                session_id=task_claim_session_id,
+                authority=task_execution_attempt_authority,
                 result_summary=(
                     "preflight_verified_existing_workspace_scope="
                     f"{len(preflight_existing_contract_evidence.get('existing_paths') or [])}"
@@ -3183,6 +3278,7 @@ def _phase_pre_materialization_quality(
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
             workspace_name=workspace_name,
             context=context,
+            task_boundary=True,
         )
         deterministic_quality_tool_results, deterministic_quality_summary = (
             _run_materialization_quality_public_boundary(
@@ -3227,7 +3323,6 @@ def _phase_pre_materialization_quality(
                 task=task,
                 requires_fresh_materialization=requires_fresh_materialization,
                 write_tool_evidence=write_tool_evidence,
-                primary_llm_summary=primary_llm_summary,
             )
     # Post-execution language-specific repair pass: always run deterministic
     # repairs after Director finishes writing files, regardless of quality gate
@@ -3333,6 +3428,7 @@ async def _phase_quality_repair_loop(
         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
         workspace_name=workspace_name,
         context=context,
+        task_boundary=True,
     )
     artifact_quality_errors += _collect_step_verify_errors(
         adapter,
@@ -3427,6 +3523,7 @@ async def _phase_quality_repair_loop(
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
                 workspace_name=workspace_name,
                 context=context,
+                task_boundary=True,
             )
             artifact_quality_errors += _collect_step_verify_errors(
                 adapter,
@@ -3485,6 +3582,7 @@ async def _phase_quality_repair_loop(
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
                 workspace_name=workspace_name,
                 context=context,
+                task_boundary=True,
             )
             artifact_quality_errors += _collect_step_verify_errors(
                 adapter,
@@ -3550,6 +3648,7 @@ async def _phase_quality_repair_loop(
                         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
                         workspace_name=workspace_name,
                         context=context,
+                        task_boundary=True,
                     )
                     artifact_quality_errors += _collect_step_verify_errors(
                         adapter,
@@ -3734,6 +3833,7 @@ async def _phase_semantic_quality_repair_loop(
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
             workspace_name=workspace_name,
             context=context,
+            task_boundary=True,
         )
         artifact_quality_errors += _collect_step_verify_errors(
             adapter,
@@ -3851,7 +3951,7 @@ def _primary_llm_provider_failure_payload(primary_llm_summary: dict[str, Any] | 
         return {
             "error": "model_provider_timeout",
             "error_code": "model_provider_timeout",
-            "failure_class": QaFailureClassV1.MODEL_PROVIDER_TIMEOUT.value,
+            "failure_class": FailureClassV1.MODEL_PROVIDER_TIMEOUT.value,
             "responsible_layer": "model_provider",
             "materialization_mode": "llm_call_failed",
             "failure_stage": "director_llm_call",
@@ -3875,7 +3975,7 @@ def _primary_llm_provider_failure_payload(primary_llm_summary: dict[str, Any] | 
         return {
             "error": "model_provider_failure",
             "error_code": "model_provider_failure",
-            "failure_class": QaFailureClassV1.MODEL_PROVIDER_FAILURE.value,
+            "failure_class": FailureClassV1.MODEL_PROVIDER_FAILURE.value,
             "responsible_layer": "model_provider",
             "materialization_mode": "llm_call_failed",
             "failure_stage": "director_llm_call",
@@ -4010,6 +4110,7 @@ def _phase_no_materialized_changes(
     *,
     baseline_files: dict[str, str],
     board_claim_applied: bool,
+    task_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     can_accept_existing_scope: bool,
     context: dict[str, Any],
     direct_fallback_summary: dict[str, Any] | None,
@@ -4075,7 +4176,7 @@ def _phase_no_materialized_changes(
             error = "director_materialized_out_of_scope"
             materialization_mode = "materialized_out_of_scope"
             public_error_code = error
-            failure_class = QaFailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value
+            failure_class = FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value
             responsible_layer = "director_scope_guard"
             failure_stage = "director_materialization"
             root_cause_hint = "no_changed_files"
@@ -4084,7 +4185,7 @@ def _phase_no_materialized_changes(
             error = "director_no_materialized_changes"
             materialization_mode = "no_materialized_changes"
             public_error_code = "incomplete_materialization"
-            failure_class = QaFailureClassV1.INCOMPLETE_MATERIALIZATION.value
+            failure_class = FailureClassV1.INCOMPLETE_MATERIALIZATION.value
             responsible_layer = "director"
             failure_stage = "director_materialization"
             root_cause_hint = "no_changed_files"
@@ -4194,12 +4295,12 @@ def _phase_no_materialized_changes(
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         finalize_result: dict[str, Any] | None = None
-        if board_claim_applied and task_claim_session_id:
+        if board_claim_applied:
             finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
-                session_id=task_claim_session_id,
+                authority=task_execution_attempt_authority,
                 error=error,
                 metadata=completion_metadata,
             )
@@ -4242,6 +4343,7 @@ def _phase_existing_scope_verified(
     adapter: Any,
     *,
     board_claim_applied: bool,
+    task_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     can_accept_existing_scope: bool,
     context: dict[str, Any],
     decision_signals: list[dict[str, Any]],
@@ -4303,12 +4405,12 @@ def _phase_existing_scope_verified(
             export_handoff=True,
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
-        if board_claim_applied and task_claim_session_id:
+        if board_claim_applied:
             finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="completed",
-                session_id=task_claim_session_id,
+                authority=task_execution_attempt_authority,
                 result_summary=(
                     "verified_existing_workspace_scope="
                     f"{len(existing_contract_evidence.get('existing_paths') or [])}; "
@@ -4352,6 +4454,7 @@ def _phase_missing_write_receipt(
     adapter: Any,
     *,
     board_claim_applied: bool,
+    task_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     context: dict[str, Any],
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
@@ -4418,12 +4521,12 @@ def _phase_missing_write_receipt(
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         finalize_result: dict[str, Any] | None = None
-        if board_claim_applied and task_claim_session_id:
+        if board_claim_applied:
             finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
-                session_id=task_claim_session_id,
+                authority=task_execution_attempt_authority,
                 error=error,
                 metadata=completion_metadata,
             )
@@ -4533,6 +4636,7 @@ async def _phase_cross_artifact_unplannable_llm_escalation(
             all_affected_files=scan_paths,
             workspace_name=workspace_name,
             context=context,
+            task_boundary=True,
         )
         artifact_quality_errors += _collect_step_verify_errors(
             adapter,
@@ -4559,6 +4663,7 @@ def _phase_quality_failed(
     *,
     artifact_quality_errors: list[str],
     board_claim_applied: bool,
+    task_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     context: dict[str, Any],
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
@@ -4635,12 +4740,12 @@ def _phase_quality_failed(
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         finalize_result: dict[str, Any] | None = None
-        if board_claim_applied and task_claim_session_id:
+        if board_claim_applied:
             finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
-                session_id=task_claim_session_id,
+                authority=task_execution_attempt_authority,
                 error=error,
                 metadata=completion_metadata,
             )
@@ -4685,6 +4790,7 @@ def _phase_semantic_quality_failed(
     adapter: Any,
     *,
     board_claim_applied: bool,
+    task_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     context: dict[str, Any],
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
@@ -4762,12 +4868,12 @@ def _phase_semantic_quality_failed(
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         finalize_result: dict[str, Any] | None = None
-        if board_claim_applied and task_claim_session_id:
+        if board_claim_applied:
             finalize_result = _finalize_claimed_execution(
                 adapter,
                 target_task_id=target_task_id,
                 outcome="failed",
-                session_id=task_claim_session_id,
+                authority=task_execution_attempt_authority,
                 error=error,
                 metadata=completion_metadata,
             )

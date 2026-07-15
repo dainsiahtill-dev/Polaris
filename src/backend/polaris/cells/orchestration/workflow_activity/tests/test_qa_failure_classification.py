@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.orchestration.workflow_activity.internal.activities.qa_activities import (
     _qa_activity_classification,
 )
@@ -10,7 +11,6 @@ from polaris.cells.orchestration.workflow_activity.internal.workflows.qa_workflo
     _register_traceability_verdict_activity,
     _workflow_classification,
 )
-from polaris.cells.qa.audit_verdict.public import QaFailureClassV1
 
 
 def test_qa_activity_classification_uses_canonical_failure_class() -> None:
@@ -30,7 +30,7 @@ def test_qa_activity_classification_routes_test_environment_failures_to_qa() -> 
     classification = _qa_activity_classification(
         passed=False,
         reason="QA command runtime error",
-        failure_class=QaFailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
+        failure_class=FailureClassV1.TEST_ENVIRONMENT_FAILURE.value,
     )
 
     assert classification["failure_class"] == "TEST_ENVIRONMENT_FAILURE"
@@ -52,14 +52,14 @@ def test_workflow_classification_marks_unfinished_director_as_incomplete_materia
     assert classification["responsible_layer"] == "director"
 
 
-def test_workflow_classification_marks_passed_with_canonical_enum_value() -> None:
+def test_workflow_classification_keeps_pass_separate_from_failure_class() -> None:
     classification = _workflow_classification(
         passed=True,
         reason="qa_passed",
         director_status="completed",
     )
 
-    assert classification["failure_class"] == QaFailureClassV1.PASSED.value
+    assert classification["failure_class"] is None
     assert classification["route"] == "resolved"
     assert classification["repairable_by_director"] is False
     assert classification["responsible_layer"] == "qa"

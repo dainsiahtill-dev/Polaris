@@ -15,6 +15,8 @@ from collections.abc import Iterable, Set as AbstractSet
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.runtime.task_runtime.public.contracts import TASK_RUNTIME_EXECUTION_STREAM_V1
+
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 TASK_RUNTIME_OWNER = POLARIS_ROOT / "cells" / "runtime" / "task_runtime"
@@ -32,6 +34,10 @@ ROLE_ADAPTER_BASE = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" /
 PM_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm_adapter.py"
 PM_PLANNING_AGENT = POLARIS_ROOT / "cells" / "orchestration" / "pm_planning" / "internal" / "pm_agent.py"
 DIRECTOR_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "director" / "adapter.py"
+DIRECTOR_EXECUTE_METHOD = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "director" / "execute_method.py"
+KERNEL_TRANSACTION_FACTORY = (
+    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "kernel" / "transaction_factory.py"
+)
 PM_BOARD_TASKS = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm" / "board_tasks.py"
 QA_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "qa_adapter.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
@@ -74,6 +80,7 @@ RAW_TASK_ROW_READ_METHODS = {"list_task_rows"}
 TASK_RUNTIME_RECEIVER_NAMES = {"task_runtime", "task_board"}
 RUNTIME_EXECUTION_MUTATING_METHODS = {"pop", "setdefault", "update"}
 TASK_RUNTIME_UPDATE_ROW_METADATA_ONLY_ALLOWLIST = {
+    "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
     "polaris/cells/roles/adapters/internal/pm/board_tasks.py",
     "polaris/cells/roles/adapters/internal/qa_adapter.py",
     "polaris/delivery/cli/pm/engine/taskboard.py",
@@ -84,12 +91,15 @@ TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST = {
         "polaris/cells/roles/adapters/internal/pm/board_tasks.py",
     },
     "complete_execution": {
+        "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
         "polaris/cells/roles/adapters/internal/director/execute_method.py",
+        "polaris/cells/roles/runtime/public/cli_runner.py",
         "polaris/cells/roles/runtime/internal/worker_pool.py",
         "polaris/delivery/cli/pm/engine/taskboard.py",
     },
     "fail_execution": {
         "polaris/cells/roles/adapters/internal/director/execute_method.py",
+        "polaris/cells/roles/runtime/public/cli_runner.py",
         "polaris/cells/roles/runtime/internal/worker_pool.py",
         "polaris/delivery/cli/pm/engine/taskboard.py",
     },
@@ -104,6 +114,17 @@ TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST = {
         "polaris/delivery/http/routers/factory.py",
     },
 }
+TASK_RUNTIME_RETIRED_TERMINAL_METHODS = frozenset(
+    {
+        "complete_execution",
+        "fail_execution",
+        "suspend_execution",
+    }
+)
+TASK_RUNTIME_TYPED_SETTLEMENT_CONTRACT = "SettleTaskRuntimeExecutionAttemptCommandV1"
+TASK_RUNTIME_TYPED_SETTLEMENT_SERVICE = "settle_task_runtime_execution_attempt"
+TASK_RUNTIME_PUBLIC_CONTRACTS = TASK_RUNTIME_OWNER / "public" / "contracts.py"
+TASK_RUNTIME_PUBLIC_SERVICE = TASK_RUNTIME_OWNER / "public" / "service.py"
 TASK_RUNTIME_EXECUTION_EVENT_CHECK_REQUIRED = {
     "polaris/cells/orchestration/pm_planning/internal/pm_agent.py": {
         "_tool_taskboard_create",
@@ -153,15 +174,15 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES = {
     ("_reopen_with_execution_event", "reopen"): 1,
     ("_update_with_execution_event", "update"): 1,
     ("cancel_task_row_for_deduplication", "update"): 1,
-    ("claim_execution", "update"): 2,
-    ("complete_execution", "update"): 1,
-    ("fail_execution", "update"): 1,
+    ("claim_execution", "update"): 1,
+    ("_project_settled_execution_attempt_locked", "update"): 2,
     ("fail_task_row_after_rework_exhausted", "update"): 1,
     ("fail_task_row_from_role_adapter", "update"): 1,
+    ("_heartbeat_execution_attempt_locked", "update"): 1,
     ("heartbeat_execution", "update"): 1,
     ("refresh_dependency_unblocks", "update"): 2,
     ("suspend_active_executions_for_run", "update"): 1,
-    ("suspend_execution", "update"): 1,
+    ("fence_expired_factory_run_sessions", "update"): 1,
 }
 REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_task_entity_for_dependency_side_effect", "get"): 1,
@@ -170,6 +191,7 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
     ("_task_entity_for_owner_terminal_transition", "get"): 1,
     ("_task_entity_for_claim_execution", "get"): 1,
     ("_task_entity_for_terminal_session_reconcile", "get"): 1,
+    ("_project_settled_execution_attempt_locked", "get"): 1,
 }
 TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER = "_list_file_task_entities"
 TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_HELPER = "_task_entity_for_claim_execution"
@@ -177,9 +199,7 @@ TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_CONSUMERS = frozenset({"claim_execut
 TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_HELPER = "_task_entity_for_transition"
 TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_CONSUMERS = frozenset(
     {
-        "complete_execution",
-        "fail_execution",
-        "suspend_execution",
+        "settle_execution_attempt",
     }
 )
 TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_HELPER = "_task_entity_for_owner_terminal_transition"
@@ -202,6 +222,7 @@ TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
     {
         "_list_file_task_rows",
         "refresh_dependency_unblocks",
+        "_reset_records_authorized",
         "reset_task_rows_for_reexecution",
         "suspend_active_executions_for_run",
     }
@@ -210,11 +231,17 @@ TASK_RUNTIME_SERVICE_EXPECTED_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
     {
         "_list_file_task_rows",
         "refresh_dependency_unblocks",
+        "_reset_records_authorized",
         "reset_task_rows_for_reexecution",
         "suspend_active_executions_for_run",
     }
 )
 TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_OWNER_REQUIREMENTS = {
+    "_reset_records_authorized": frozenset(
+        {
+            "self._append_execution_event",
+        }
+    ),
     "refresh_dependency_unblocks": frozenset(
         {
             "self._append_execution_event",
@@ -304,7 +331,6 @@ TASK_RUNTIME_SERVICE_REQUIRED_READ_MODEL_METHODS = {
     "list_observable_task_rows",
     "list_ready_task_rows",
 }
-TASK_RUNTIME_EXECUTION_STREAM = "task_runtime.execution"
 TASK_RUNTIME_EXECUTION_EVENT_FILE = "task_runtime.execution.jsonl"
 TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS = {
     "open",
@@ -508,7 +534,7 @@ def _task_runtime_execution_writer_violations(path: Path) -> list[str]:
         if not isinstance(node, ast.Call):
             continue
         call = _call_name(node.func)
-        if call == "AppendFactEventCommandV1" and _contains_string_literal(node, TASK_RUNTIME_EXECUTION_STREAM):
+        if call == "AppendFactEventCommandV1" and _contains_string_literal(node, TASK_RUNTIME_EXECUTION_STREAM_V1):
             offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} appends task_runtime.execution facts")
             continue
         method = call.rsplit(".", maxsplit=1)[-1]
@@ -532,7 +558,7 @@ def _task_runtime_execution_reader_violations(path: Path) -> list[str]:
         call = _call_name(node.func)
         if call in {"QueryFactEventsV1", "query_fact_events"} and _contains_string_literal(
             node,
-            TASK_RUNTIME_EXECUTION_STREAM,
+            TASK_RUNTIME_EXECUTION_STREAM_V1,
         ):
             offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} reads task_runtime.execution facts")
             continue
@@ -1078,6 +1104,112 @@ def _owner_transition_call_boundary_violations(path: Path) -> list[str]:
     return offenders
 
 
+def _function_definition(path: Path, function_name: str) -> ast.FunctionDef | None:
+    """Return one module-level function definition by name."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            return node
+    return None
+
+
+def _module_defines_symbol(path: Path, symbol: str) -> bool:
+    """Return whether a public module declares the required symbol."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return any(isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name == symbol for node in tree.body)
+
+
+def _function_uses_typed_public_settlement(path: Path, function_name: str) -> list[str]:
+    """Verify the PM caller flows retained identity through public settlement."""
+
+    function = _function_definition(path, function_name)
+    if function is None:
+        return [f"{path.relative_to(BACKEND_ROOT)}:{function_name}() is missing"]
+    assignments = [node for node in ast.walk(function) if isinstance(node, ast.Assign)]
+    retained_identity_names = {
+        target.elts[0].id
+        for assignment in assignments
+        if isinstance(assignment.value, ast.Call)
+        and isinstance(assignment.value.func, ast.Name)
+        and assignment.value.func.id == "_task_runtime_terminal_identity"
+        for target in assignment.targets
+        if isinstance(target, ast.Tuple) and target.elts and isinstance(target.elts[0], ast.Name)
+    }
+    if not retained_identity_names:
+        return [
+            f"{path.relative_to(BACKEND_ROOT)}:{function_name}() must retain identity from "
+            "_task_runtime_terminal_identity()"
+        ]
+
+    constructors = [
+        assignment
+        for assignment in assignments
+        if len(assignment.targets) == 1
+        and isinstance(assignment.targets[0], ast.Name)
+        and isinstance(assignment.value, ast.Call)
+        and isinstance(assignment.value.func, ast.Name)
+        and assignment.value.func.id == TASK_RUNTIME_TYPED_SETTLEMENT_CONTRACT
+    ]
+    required_keywords = {"workspace", "identity", "outcome", "summary", "metadata"}
+    if not constructors:
+        return [
+            f"{path.relative_to(BACKEND_ROOT)}:{function_name}() must construct "
+            f"{TASK_RUNTIME_TYPED_SETTLEMENT_CONTRACT}"
+        ]
+    valid_command_names: set[str] = set()
+    for assignment in constructors:
+        constructor = assignment.value
+        assert isinstance(constructor, ast.Call)
+        keywords = {keyword.arg: keyword.value for keyword in constructor.keywords if keyword.arg}
+        if not required_keywords <= set(keywords):
+            continue
+        identity_value = keywords["identity"]
+        if not isinstance(identity_value, ast.Name) or identity_value.id not in retained_identity_names:
+            continue
+        target = assignment.targets[0]
+        assert isinstance(target, ast.Name)
+        valid_command_names.add(target.id)
+    if not valid_command_names:
+        return [
+            f"{path.relative_to(BACKEND_ROOT)}:{function_name}() must construct a complete typed settlement "
+            "command whose identity is returned by _task_runtime_terminal_identity()"
+        ]
+    service_calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TASK_RUNTIME_TYPED_SETTLEMENT_SERVICE
+    ]
+    if not any(
+        len(call.args) == 1 and isinstance(call.args[0], ast.Name) and call.args[0].id in valid_command_names
+        for call in service_calls
+    ):
+        return [
+            f"{path.relative_to(BACKEND_ROOT)}:{function_name}() must pass its typed settlement command variable "
+            f"to {TASK_RUNTIME_TYPED_SETTLEMENT_SERVICE}()"
+        ]
+    return []
+
+
+def _retired_terminal_caller_violations(path: Path) -> list[str]:
+    """Return direct legacy terminal calls outside the TaskRuntime owner cell."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr in TASK_RUNTIME_RETIRED_TERMINAL_METHODS:
+            offenders.append(
+                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly calls retired terminal method "
+                f"{node.func.attr}()"
+            )
+    return offenders
+
+
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
@@ -1212,6 +1344,167 @@ def test_task_runtime_owner_transition_callers_are_reviewed() -> None:
         "added to the WS2 allowlist with coverage, otherwise TaskRuntime stops "
         "being the execution-state SSoT:\n" + "\n".join(offenders)
     )
+
+
+def test_production_terminal_callers_use_typed_public_settlement() -> None:
+    """WS2-A: terminal PM paths use the public typed settlement contract only."""
+
+    assert _module_defines_symbol(TASK_RUNTIME_PUBLIC_CONTRACTS, TASK_RUNTIME_TYPED_SETTLEMENT_CONTRACT)
+    assert _module_defines_symbol(TASK_RUNTIME_PUBLIC_SERVICE, TASK_RUNTIME_TYPED_SETTLEMENT_SERVICE)
+
+    offenders = _function_uses_typed_public_settlement(
+        DELIVERY_PM_TASKBOARD,
+        "_finalize_taskboard_runtime_entry",
+    )
+    this_file = Path(__file__).resolve()
+    for path in POLARIS_ROOT.rglob("*.py"):
+        if path.resolve() == this_file or "__pycache__" in path.parts or "tests" in path.parts:
+            continue
+        if _is_allowed_owner_path(path):
+            continue
+        offenders.extend(_retired_terminal_caller_violations(path))
+
+    assert not offenders, (
+        "Production terminal callers must construct SettleTaskRuntimeExecutionAttemptCommandV1 and call "
+        "settle_task_runtime_execution_attempt(); direct legacy terminal methods are not an allowed boundary:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_ws2_b2_execution_attempt_authority_stays_task_runtime_public() -> None:
+    """Director and Kernel share one public authority without a private holder."""
+
+    offenders: list[str] = []
+    for path in (DIRECTOR_ADAPTER, DIRECTOR_EXECUTE_METHOD, KERNEL_TRANSACTION_FACTORY):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        rel = path.relative_to(BACKEND_ROOT).as_posix()
+        public_authority_import = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = str(node.module or "")
+                imported = {alias.name for alias in node.names}
+                if path in {DIRECTOR_ADAPTER, DIRECTOR_EXECUTE_METHOD} and module.startswith(
+                    "polaris.cells.roles.kernel.internal"
+                ):
+                    offenders.append(f"{rel}:{node.lineno} imports roles.kernel.internal")
+                if (
+                    module == "polaris.cells.runtime.task_runtime.public"
+                    and "TaskRuntimeExecutionAttemptAuthorityV1" in imported
+                ):
+                    public_authority_import = True
+            elif isinstance(node, ast.ClassDef):
+                normalized_name = node.name.lower().replace("_", "")
+                if "holder" in normalized_name and (
+                    "executionattempt" in normalized_name or "authority" in normalized_name
+                ):
+                    offenders.append(f"{rel}:{node.lineno} declares private execution-attempt holder {node.name}")
+        if path in {DIRECTOR_EXECUTE_METHOD, KERNEL_TRANSACTION_FACTORY} and not public_authority_import:
+            offenders.append(f"{rel} does not import TaskRuntimeExecutionAttemptAuthorityV1 from TaskRuntime public")
+
+    director_entry_tree = ast.parse(DIRECTOR_ADAPTER.read_text(encoding="utf-8"))
+    director_entry = next(
+        (
+            node
+            for node in ast.walk(director_entry_tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "execute"
+        ),
+        None,
+    )
+    if director_entry is None:
+        offenders.append("DirectorAdapter.execute() is missing")
+    elif (
+        sum(
+            1
+            for node in ast.walk(director_entry)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "execute_director_task"
+        )
+        != 1
+    ):
+        offenders.append("DirectorAdapter.execute() must delegate exactly once to its Director task entry")
+
+    claim_source = DIRECTOR_EXECUTE_METHOD.read_text(encoding="utf-8")
+    claim_tree = ast.parse(claim_source)
+    factory_calls = [
+        node
+        for node in ast.walk(claim_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "create_task_runtime_execution_attempt_authority"
+    ]
+    if len(factory_calls) != 1:
+        offenders.append("Director claim path must create exactly one public execution-attempt authority")
+    authority_context_assignments = [
+        node
+        for node in ast.walk(claim_tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "task_execution_attempt_authority"
+        and any(
+            isinstance(target, ast.Subscript)
+            and isinstance(target.slice, ast.Constant)
+            and target.slice.value == "task_runtime_execution_attempt_authority"
+            for target in node.targets
+        )
+    ]
+    if len(authority_context_assignments) != 1:
+        offenders.append("Director claim path must pass its public authority through request context exactly once")
+
+    finalize = _function_definition(DIRECTOR_EXECUTE_METHOD, "_finalize_claimed_execution")
+    if finalize is None:
+        offenders.append("_finalize_claimed_execution() is missing")
+    else:
+        calls = [
+            node for node in ast.walk(finalize) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ]
+        if not any(
+            isinstance(node.func.value, ast.Name) and node.func.value.id == "authority" and node.func.attr == "settle"
+            for node in calls
+        ):
+            offenders.append("_finalize_claimed_execution() must settle through the public authority")
+        if any(node.func.attr == "settle_execution_attempt" for node in calls):
+            offenders.append("_finalize_claimed_execution() bypasses authority.settle()")
+
+    for helper_name in ("_finalize_claimed_execution", "_suspend_claimed_execution_for_cancellation"):
+        helper_calls = [
+            node
+            for node in ast.walk(claim_tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == helper_name
+        ]
+        if not helper_calls:
+            offenders.append(f"{helper_name}() is not reachable from the Director claim path")
+            continue
+        if any(
+            not any(
+                keyword.arg == "authority"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "task_execution_attempt_authority"
+                for keyword in call.keywords
+            )
+            for call in helper_calls
+        ):
+            offenders.append(f"{helper_name}() must receive the single public claim authority")
+
+    guard = _function_definition(KERNEL_TRANSACTION_FACTORY, "_assert_task_runtime_guard_allows_tool")
+    if guard is None:
+        offenders.append("_assert_task_runtime_guard_allows_tool() is missing")
+    else:
+        calls = [
+            node for node in ast.walk(guard) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ]
+        if not any(
+            isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "authority"
+            and node.func.attr == "heartbeat"
+            for node in calls
+        ):
+            offenders.append("Kernel tool guard must heartbeat through the public authority")
+        if any(node.func.attr == "heartbeat_task_runtime_execution_attempt" for node in calls):
+            offenders.append("Kernel tool guard bypasses authority.heartbeat()")
+
+    assert not offenders, "WS2-B2 TaskRuntime public authority fence:\n" + "\n".join(offenders)
 
 
 def test_production_read_side_uses_observable_task_rows() -> None:
@@ -2739,12 +3032,16 @@ def test_factory_stage_executor_reads_task_rows_through_task_runtime_projection(
 
     assert not offenders, (
         "Factory stage executor must not scan runtime/tasks/task_*.json as an "
-        "execution fact source. Use TaskRuntimeService.list_observable_task_rows() "
-        "so task_runtime.execution facts remain in the read projection:\n" + "\n".join(offenders)
+        "execution fact source. Use the typed TaskRuntime observable projection "
+        "so task_runtime.execution facts and their authority remain explicit:\n" + "\n".join(offenders)
     )
-    assert "list_observable_task_rows" in source, (
-        "Factory stage executor must consume TaskRuntimeService.list_observable_task_rows() "
-        "for read-only task status projections."
+    assert "query_observable_task_rows_projection" in source, (
+        "Factory stage executor must consume the typed TaskRuntime observable "
+        "projection rather than a provenance-free row list."
+    )
+    assert ".authoritative" in source, (
+        "Factory completion control flow must explicitly require an authoritative "
+        "TaskRuntime projection before treating task rows as execution facts."
     )
 
 
@@ -2954,13 +3251,12 @@ def test_claim_execution_routes_task_entity_read_through_claim_helper() -> None:
 def test_execution_transition_methods_route_task_entity_reads_through_helper() -> None:
     """WS2 execution-transition entity-read fence.
 
-    ``complete_execution()``, ``fail_execution()``, and
-    ``suspend_execution()`` need the raw ``Task`` entity only as a legacy
-    fallback when ``TaskBoard.update`` returns ``None``. That raw owner-cell
-    read must stay centralized in ``_task_entity_for_transition()`` so future
-    execution transitions cannot quietly grow separate ``self._board.get()``
-    paths with different normalization, error handling, or read-model
-    semantics.
+    ``settle_execution_attempt()`` reads the owner Task row once before its
+    double-locked session commit. The later TaskBoard idempotence lookup is
+    owned by ``_project_settled_execution_attempt_locked()`` under a separate
+    projection lock. The pre-commit raw owner-cell read must stay centralized
+    in ``_task_entity_for_transition()`` so settlement cannot quietly grow a
+    second normalization or missing-row path.
     """
 
     methods = _task_runtime_service_method_defs()
@@ -2996,7 +3292,7 @@ def test_execution_transition_methods_route_task_entity_reads_through_helper() -
         "Offenders:\n" + "\n".join(direct_get_offenders)
     )
     assert not missing_helper_offenders, (
-        "Execution transition methods that need raw Task entity fallback "
+        "Execution settlement methods that need the pre-commit raw Task entity "
         f"must call self.{helper_name}() instead of owning raw TaskBoard.get() "
         "reads themselves. Offenders:\n" + "\n".join(missing_helper_offenders)
     )
@@ -3370,7 +3666,7 @@ def test_task_runtime_service_raw_board_entity_consumer_allowlist_is_locked() ->
         TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS == TASK_RUNTIME_SERVICE_EXPECTED_RAW_BOARD_ENTITY_CONSUMERS
     ), (
         "TaskRuntimeService raw Task entity consumers must stay locked to the "
-        "reviewed file-row projection bridge plus the three owner mutation "
+        "reviewed file-row projection bridge plus the four owner mutation "
         "boundaries. Add a dedicated owner-boundary AST requirement before "
         "changing this set."
     )
@@ -6017,299 +6313,177 @@ def _append_execution_event_row_write_receipt_projection_violations() -> list[st
     return offenders
 
 
-TASK_RUNTIME_TERMINAL_TRANSITION_METHODS = (
-    "complete_execution",
-    "fail_execution",
-    "suspend_execution",
-)
-TASK_RUNTIME_APPEND_FAILURE_RESULT_KEYS = frozenset({"ok", "error", "append_error", "publish_error"})
+TASK_RUNTIME_SETTLEMENT_ENTRYPOINT = "settle_execution_attempt"
+TASK_RUNTIME_SETTLEMENT_LOCKED_PHASE = "_settle_execution_attempt_locked"
+TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE = "_project_settled_execution_attempt"
+TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE = "_project_settled_execution_attempt_locked"
+TASK_RUNTIME_LEGACY_SESSION_TERMINAL_METHODS = frozenset({"complete_execution", "fail_execution", "suspend_execution"})
 
 
-def _contains_append_execution_event_call(node: ast.AST) -> bool:
-    return any(
-        isinstance(child, ast.Call) and _call_name(child.func) == "self._append_execution_event"
-        for child in ast.walk(node)
-    )
+def _direct_self_call_lines(method_def: ast.FunctionDef, method_name: str) -> list[int]:
+    return [call.lineno for call in _direct_self_method_calls(method_def, method_name)]
 
 
-def _append_execution_event_result_names(method_def: ast.FunctionDef) -> set[str]:
-    """Return locals assigned from ``self._append_execution_event(...)``."""
-
-    names: set[str] = set()
-    for node in _walk_task_runtime_method_body(method_def):
-        value: ast.AST | None = None
-        targets: list[ast.AST] = []
-        if isinstance(node, ast.Assign):
-            value = node.value
-            targets = list(node.targets)
-        elif isinstance(node, ast.AnnAssign):
-            value = node.value
-            targets = [node.target]
-        if value is None or not _contains_append_execution_event_call(value):
-            continue
-        names.update(_target_names(targets))
-    return names
-
-
-def _expression_sources_append_execution_event_result(node: ast.AST, append_result_names: AbstractSet[str]) -> bool:
-    if isinstance(node, ast.Name) and node.id in append_result_names:
-        return True
-    return _contains_append_execution_event_call(node)
-
-
-def _call_receives_append_execution_event_result(
-    node: ast.Call,
-    *,
-    append_result_names: AbstractSet[str],
-) -> bool:
-    values = list(node.args) + [keyword.value for keyword in node.keywords]
-    return any(_expression_sources_append_execution_event_result(value, append_result_names) for value in values)
-
-
-def _transition_result_builder_helper_defs(method_defs: dict[str, ast.FunctionDef]) -> dict[str, ast.FunctionDef]:
-    """Return private TaskRuntimeService helpers that build transition results."""
-
-    return {
-        name: method_def
-        for name, method_def in method_defs.items()
-        if name.startswith("_")
-        and not name.startswith("__")
-        and any(
-            isinstance(node, ast.Call) and _call_name(node.func) == "build_task_execution_transition_result"
-            for node in _walk_task_runtime_method_body(method_def)
-        )
-    }
-
-
-def _transition_helper_builds_with_execution_event(helper_name: str, helper_def: ast.FunctionDef) -> list[str]:
-    append_result_names = {
-        arg.arg
-        for arg in (*helper_def.args.args, *helper_def.args.kwonlyargs)
-        if "event" in arg.arg or "append" in arg.arg
-    }
-    offenders = _terminal_transition_append_failure_check_violations(
-        helper_name,
-        helper_def,
-        append_result_names=append_result_names,
-    )
-    builder_calls = [
-        node
-        for node in _walk_task_runtime_method_body(helper_def)
-        if isinstance(node, ast.Call) and _call_name(node.func) == "build_task_execution_transition_result"
-    ]
-    if not builder_calls:
-        offenders.append(f"TaskRuntimeService.{helper_name}() does not call build_task_execution_transition_result()")
-        return offenders
-    if any(_call_keyword_value(node, "execution_event") is not None for node in builder_calls):
-        return offenders
-    offenders.append(
-        f"TaskRuntimeService.{helper_name}() calls build_task_execution_transition_result() "
-        "without execution_event=; the shared helper must own append-result projection"
-    )
-    return offenders
-
-
-def _terminal_transition_helper_call_names(
-    method_def: ast.FunctionDef,
-    *,
-    helper_names: AbstractSet[str],
-    append_result_names: AbstractSet[str],
-) -> set[str]:
-    return {
-        helper_name
-        for node in _walk_task_runtime_method_body(method_def)
-        if isinstance(node, ast.Call)
-        for helper_name in [_self_method_call_name(node)]
-        if helper_name in helper_names
-        and _call_receives_append_execution_event_result(node, append_result_names=append_result_names)
-    }
-
-
-def _terminal_transition_direct_builder_violations(
-    method_name: str,
-    method_def: ast.FunctionDef,
-    *,
-    append_result_names: AbstractSet[str],
-) -> list[str]:
-    offenders: list[str] = []
-    for node in _walk_task_runtime_method_body(method_def):
-        if not isinstance(node, ast.Call):
-            continue
-        if _call_name(node.func) != "build_task_execution_transition_result":
-            continue
-        if not _call_receives_append_execution_event_result(node, append_result_names=append_result_names):
-            continue
-        offenders.append(
-            f"TaskRuntimeService.{method_name}() calls build_task_execution_transition_result() "
-            "directly with the _append_execution_event result; route terminal transition "
-            "projection through the shared private helper"
-        )
-    return offenders
-
-
-def _append_result_failure_field_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Call):
-        func = node.func
-        if isinstance(func, ast.Attribute) and func.attr == "get" and node.args:
-            return _string_literal(node.args[0])
-    if isinstance(node, ast.Subscript):
-        return _string_literal(node.slice)
-    return ""
-
-
-def _terminal_transition_append_failure_check_violations(
-    method_name: str,
-    method_def: ast.FunctionDef,
-    *,
-    append_result_names: AbstractSet[str],
-) -> list[str]:
-    offenders: list[str] = []
-    for node in _walk_task_runtime_method_body(method_def):
-        if isinstance(node, ast.Call) and _call_name(node.func).endswith("_execution_event_append_failed"):
-            offenders.append(
-                f"TaskRuntimeService.{method_name}() calls {_call_name(node.func)}(); "
-                "append failure projection belongs in the shared transition-result helper"
-            )
-            continue
-        if isinstance(node, ast.Call):
-            func = node.func
-            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-                field_name = _append_result_failure_field_name(node)
-                if func.value.id in append_result_names and field_name in TASK_RUNTIME_APPEND_FAILURE_RESULT_KEYS:
-                    offenders.append(
-                        f"TaskRuntimeService.{method_name}() reads _append_execution_event result field "
-                        f"{field_name!r} directly; use the shared transition-result helper"
-                    )
-            continue
-        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-            field_name = _append_result_failure_field_name(node)
-            if node.value.id in append_result_names and field_name in TASK_RUNTIME_APPEND_FAILURE_RESULT_KEYS:
-                offenders.append(
-                    f"TaskRuntimeService.{method_name}() reads _append_execution_event result field "
-                    f"{field_name!r} directly; use the shared transition-result helper"
-                )
-            continue
-        if isinstance(node, ast.Compare):
-            left_field = _string_literal(node.left)
-            if left_field not in TASK_RUNTIME_APPEND_FAILURE_RESULT_KEYS:
-                continue
-            if not any(isinstance(op, ast.In | ast.NotIn) for op in node.ops):
-                continue
-            if any(
-                isinstance(comparator, ast.Name) and comparator.id in append_result_names
-                for comparator in node.comparators
-            ):
-                offenders.append(
-                    f"TaskRuntimeService.{method_name}() checks whether _append_execution_event "
-                    f"result contains field {left_field!r}; use the shared transition-result helper"
-                )
-    return offenders
-
-
-def _terminal_transition_shared_result_helper_violations() -> list[str]:
-    """Validate terminal/suspended transitions converge through one helper.
-
-    ``complete_execution()``, ``fail_execution()``, and ``suspend_execution()``
-    may still perform their own state mutation and event detail construction,
-    but the append result must flow into one private TaskRuntimeService helper
-    that owns ``build_task_execution_transition_result(...)``. This keeps
-    append-failure projection in one place instead of allowing three terminal
-    methods to hand-roll subtly different checks.
-    """
+def _two_phase_terminal_settlement_violations() -> list[str]:
+    """Prove terminal state flows through settlement then lock-free projection."""
 
     method_defs = _task_runtime_service_method_defs()
-    helper_defs = _transition_result_builder_helper_defs(method_defs)
-    helper_names = frozenset(helper_defs)
-    helper_calls_by_method: dict[str, set[str]] = {}
+    settle = method_defs.get(TASK_RUNTIME_SETTLEMENT_ENTRYPOINT)
+    settle_locked = method_defs.get(TASK_RUNTIME_SETTLEMENT_LOCKED_PHASE)
+    projection = method_defs.get(TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE)
+    projection_locked = method_defs.get(TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE)
     offenders: list[str] = []
 
-    for method_name in TASK_RUNTIME_TERMINAL_TRANSITION_METHODS:
-        method_def = method_defs.get(method_name)
-        if method_def is None:
-            offenders.append(f"TaskRuntimeService.{method_name}() not found")
-            continue
-        append_result_names = _append_execution_event_result_names(method_def)
-        has_append_event_call = any(
-            isinstance(node, ast.Call) and _call_name(node.func) == "self._append_execution_event"
-            for node in _walk_task_runtime_method_body(method_def)
+    for legacy_method in sorted(TASK_RUNTIME_LEGACY_SESSION_TERMINAL_METHODS):
+        if legacy_method in method_defs:
+            offenders.append(f"TaskRuntimeService.{legacy_method}() must not exist")
+
+    if settle is None:
+        return [*offenders, f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_ENTRYPOINT}() not found"]
+    if settle_locked is None:
+        offenders.append(f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_LOCKED_PHASE}() not found")
+    if projection is None:
+        offenders.append(f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE}() not found")
+    if projection_locked is None:
+        offenders.append(f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE}() not found")
+    if offenders:
+        return offenders
+
+    if len(_direct_self_call_lines(settle, TASK_RUNTIME_SETTLEMENT_LOCKED_PHASE)) != 1:
+        offenders.append(
+            f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_ENTRYPOINT}() must call "
+            f"self.{TASK_RUNTIME_SETTLEMENT_LOCKED_PHASE}() exactly once"
         )
-        if not has_append_event_call:
-            offenders.append(f"TaskRuntimeService.{method_name}() must call self._append_execution_event(...)")
-        helper_calls = _terminal_transition_helper_call_names(
-            method_def,
-            helper_names=helper_names,
-            append_result_names=append_result_names,
+    if len(_direct_self_call_lines(settle, TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE)) != 1:
+        offenders.append(
+            f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_ENTRYPOINT}() must call "
+            f"self.{TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE}() exactly once"
         )
-        helper_calls_by_method[method_name] = helper_calls
-        offenders.extend(
-            _terminal_transition_direct_builder_violations(
-                method_name,
-                method_def,
-                append_result_names=append_result_names,
-            )
+    if len(_direct_self_call_lines(projection, TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE)) != 1:
+        offenders.append(
+            f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE}() must call "
+            f"self.{TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE}() exactly once"
         )
-        offenders.extend(
-            _terminal_transition_append_failure_check_violations(
-                method_name,
-                method_def,
-                append_result_names=append_result_names,
-            )
+
+    callers_by_phase = {
+        TASK_RUNTIME_SETTLEMENT_LOCKED_PHASE: TASK_RUNTIME_SETTLEMENT_ENTRYPOINT,
+        TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE: TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE,
+    }
+    for phase, expected_caller in callers_by_phase.items():
+        observed_callers = sorted(
+            method_name
+            for method_name, method_def in method_defs.items()
+            if _direct_self_method_calls(method_def, phase)
         )
-        if not helper_calls:
+        if observed_callers != [expected_caller]:
             offenders.append(
-                f"TaskRuntimeService.{method_name}() must pass its _append_execution_event "
-                "result into a private TaskRuntimeService helper that builds the transition result"
+                f"TaskRuntimeService.{phase}() callers must be [{expected_caller!r}], observed {observed_callers!r}"
             )
 
-    if all(helper_calls_by_method.get(name) for name in TASK_RUNTIME_TERMINAL_TRANSITION_METHODS):
-        common_helpers = set.intersection(
-            *(helper_calls_by_method[name] for name in TASK_RUNTIME_TERMINAL_TRANSITION_METHODS)
+    projection_calls = _direct_self_method_calls(settle, TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE)
+    releases = [
+        node
+        for node in ast.walk(settle)
+        if isinstance(node, ast.Call) and _call_name(node.func) == "session_lock.release"
+    ]
+    if len(releases) != 1 or not projection_calls or projection_calls[0].lineno <= releases[0].lineno:
+        offenders.append(
+            f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_ENTRYPOINT}() must invoke the "
+            "projection phase only after releasing its session lock"
         )
-        if len(common_helpers) != 1:
-            rendered = {
-                name: sorted(helper_calls_by_method.get(name, set()))
-                for name in TASK_RUNTIME_TERMINAL_TRANSITION_METHODS
-            }
-            offenders.append(
-                "complete_execution(), fail_execution(), and suspend_execution() must use "
-                f"exactly one shared private transition-result helper; observed {rendered!r}"
+
+    projection_parents = _parent_lookup(projection)
+    projection_lock_assignments = [
+        node
+        for node in _walk_task_runtime_method_body(projection)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and _call_name(node.value.func) == "self._get_settlement_projection_lock"
+        and any(isinstance(target, ast.Name) and target.id == "projection_lock" for target in node.targets)
+    ]
+    projection_acquires = [
+        node
+        for node in _walk_task_runtime_method_body(projection)
+        if isinstance(node, ast.Call)
+        and _call_name(node.func) == "projection_lock.acquire"
+        and any(keyword.arg == "timeout" for keyword in node.keywords)
+    ]
+    projection_releases = [
+        node
+        for try_node in _walk_task_runtime_method_body(projection)
+        if isinstance(try_node, ast.Try)
+        for node in ast.walk(ast.Module(body=try_node.finalbody, type_ignores=[]))
+        if isinstance(node, ast.Call) and _call_name(node.func) == "projection_lock.release"
+    ]
+    projection_file_locks = [
+        node
+        for node in _walk_task_runtime_method_body(projection)
+        if isinstance(node, ast.With)
+        and any(
+            isinstance(item.context_expr, ast.Call)
+            and _call_name(item.context_expr.func) == "self._board._file_lock"
+            and any(
+                _call_name(candidate.func) == "self._settlement_projection_file_lock_path"
+                for candidate in ast.walk(item.context_expr)
+                if isinstance(candidate, ast.Call)
             )
-        else:
-            shared_helper = next(iter(common_helpers))
-            for method_name, helpers in helper_calls_by_method.items():
-                if helpers != {shared_helper}:
-                    offenders.append(
-                        f"TaskRuntimeService.{method_name}() uses transition helper(s) "
-                        f"{sorted(helpers)!r}; expected only {shared_helper!r}"
-                    )
-            offenders.extend(_transition_helper_builds_with_execution_event(shared_helper, helper_defs[shared_helper]))
+            for item in node.items
+        )
+    ]
+    locked_projection_calls = _direct_self_method_calls(
+        projection,
+        TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE,
+    )
+    if not (
+        len(projection_lock_assignments) == 1
+        and len(projection_acquires) == 1
+        and len(projection_releases) == 1
+        and len(projection_file_locks) == 1
+        and len(locked_projection_calls) == 1
+        and _node_is_descendant_of(locked_projection_calls[0], projection_file_locks[0], projection_parents)
+    ):
+        offenders.append(
+            f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE}() must hold one "
+            "bounded local projection lock and one cooperative projection-file lock around "
+            "the locked projection phase"
+        )
+    for forbidden_method in (
+        SESSION_WRITE_LOCK_HELPER,
+        SESSION_WRITE_FILE_LOCK_PATH_HELPER,
+        SESSION_READ_OWNER_METHOD,
+        SESSION_WRITE_RECEIPT_OWNER_METHOD,
+        TASK_RUNTIME_SETTLEMENT_LOCKED_PHASE,
+    ):
+        if _direct_self_method_calls(projection, forbidden_method):
+            offenders.append(
+                f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE}() must not call "
+                f"self.{forbidden_method}(); projection must not re-enter the session-lock domain"
+            )
+
+    if not any(
+        _call_name(node.func) == "self._append_execution_event"
+        for node in _walk_task_runtime_method_body(projection_locked)
+        if isinstance(node, ast.Call)
+    ):
+        offenders.append(
+            f"TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE}() must own "
+            "terminal execution-event append projection"
+        )
 
     return offenders
 
 
-def test_task_runtime_terminal_transitions_use_shared_append_result_helper() -> None:
-    """WS2 terminal transition fence for execution-ledger append failures.
-
-    ``complete_execution()``, ``fail_execution()``, and ``suspend_execution()``
-    are the terminal/suspended state transitions that append
-    ``task_runtime.execution`` facts. They must not build transition results
-    directly from ``_append_execution_event`` or each grow local append-failure
-    branches; one private helper must own the
-    ``build_task_execution_transition_result(..., execution_event=...)``
-    projection so append/publish failures stay a single SSoT concern.
-    """
+def test_task_runtime_terminal_settlement_uses_two_phase_fence() -> None:
+    """WS2 terminal transition fence for canonical settlement and projection."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
-    offenders = _terminal_transition_shared_result_helper_violations()
+    offenders = _two_phase_terminal_settlement_violations()
 
     assert not offenders, (
-        "WS2 terminal transition SSoT fence: "
-        f"{rel}:TaskRuntimeService complete_execution(), fail_execution(), and "
-        "suspend_execution() must pass _append_execution_event results into one "
-        "shared private helper that builds build_task_execution_transition_result"
-        "(..., execution_event=...). The three methods must not call the builder "
-        "directly with append results or hand-roll append failure checks. "
-        "Offenders:\n" + "\n".join(offenders)
+        "WS2 terminal settlement fence: "
+        f"{rel}:TaskRuntimeService must expose settle_execution_attempt() as the "
+        "only terminal entrypoint, commit the winner under session locks, then append "
+        "terminal facts only from the separately locked projection phase. Offenders:\n" + "\n".join(offenders)
     )
 
 
@@ -7728,10 +7902,10 @@ def _with_dependency_execution_events_fail_closed_violations() -> list[str]:
     return offenders
 
 
-def _complete_execution_dependency_projection_violations() -> list[str]:
-    """Validate ``complete_execution`` returns through the dependency projection."""
+def _settled_execution_dependency_projection_violations() -> list[str]:
+    """Validate settled-completion projection owns dependency side effects."""
 
-    method_def = _task_runtime_service_method_def("complete_execution")
+    method_def = _task_runtime_service_method_def(TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE)
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     offenders: list[str] = []
 
@@ -7740,90 +7914,70 @@ def _complete_execution_dependency_projection_violations() -> list[str]:
         for node in ast.walk(method_def)
         if isinstance(node, ast.Call) and _call_name(node.func) == "self._apply_dependency_completion_side_effects"
     ]
-    append_completed_calls = [
-        node
-        for node in ast.walk(method_def)
-        if (
-            isinstance(node, ast.Call)
-            and _call_name(node.func) == "self._append_execution_event"
-            and node.args
-            and _string_literal(node.args[0]) == "completed"
-        )
-    ]
-    projection_return_calls = [
-        node.value
-        for node in ast.walk(method_def)
-        if (
-            isinstance(node, ast.Return)
-            and isinstance(node.value, ast.Call)
-            and _call_name(node.value.func) == "self._with_dependency_execution_events"
-        )
-    ]
-
     if not dependency_calls:
         offenders.append(
-            f"{rel}:TaskRuntimeService.complete_execution() must apply "
-            "dependency completion side effects; otherwise this WS2 fence is "
-            "vacuous and should be retired with the dependency fan-out path."
-        )
-        return offenders
-    if not append_completed_calls:
-        offenders.append(
-            f"{rel}:TaskRuntimeService.complete_execution() must append the "
-            "parent completed execution event before projecting dependency "
-            "event failures."
-        )
-        return offenders
-    if not projection_return_calls:
-        offenders.append(
-            f"{rel}:TaskRuntimeService.complete_execution() must return "
-            "self._with_dependency_execution_events(result, dependency_events) "
-            "so dependency append failures cannot be hidden behind a successful "
-            "parent completion result."
+            f"{rel}:TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE}() "
+            "must apply dependency completion side effects from the completed settlement "
+            "projection path."
         )
         return offenders
 
-    projection_call = projection_return_calls[0]
-    call_arg_names = [arg.id for arg in projection_call.args if isinstance(arg, ast.Name)]
-    if "result" not in call_arg_names or "dependency_events" not in call_arg_names:
+    dependency_result_assignments = [
+        node
+        for node in ast.walk(method_def)
+        if isinstance(node, ast.Assign)
+        and _assignment_targets_name(node, "dependency_events")
+        and _node_references_name_or_attribute(node.value, "_apply_dependency_completion_side_effects")
+    ]
+    if not dependency_result_assignments:
         offenders.append(
-            f"{rel}:TaskRuntimeService.complete_execution() must pass both "
-            "result and dependency_events into _with_dependency_execution_events()."
+            f"{rel}:TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE}() "
+            "must retain dependency side-effect results in dependency_events."
         )
-    if projection_call.lineno <= max(dependency_calls[0].lineno, append_completed_calls[0].lineno):
+        return offenders
+
+    dependency_projection_assignments: list[ast.Assign] = []
+    for node in ast.walk(method_def):
+        if not isinstance(node, ast.Assign):
+            continue
+        assigned_value = _assignment_to_subscript_key(node, "dependency_events")
+        if assigned_value is not None and _node_references_name_or_attribute(assigned_value, "dependency_events"):
+            dependency_projection_assignments.append(node)
+    if not dependency_projection_assignments:
         offenders.append(
-            f"{rel}:TaskRuntimeService.complete_execution() must call "
-            "_with_dependency_execution_events() after dependency side effects "
-            "and the parent completed event append have both been attempted."
+            f"{rel}:TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE}() "
+            "must project dependency_events into its settlement result."
+        )
+    elif dependency_projection_assignments[0].lineno <= dependency_calls[0].lineno:
+        offenders.append(
+            f"{rel}:TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE}() "
+            "must project dependency events after executing the dependency side effects."
         )
 
     return offenders
 
 
-def test_complete_execution_dependency_event_failures_are_fail_closed() -> None:
+def test_settled_execution_dependency_events_stay_on_projection_path() -> None:
     """WS2 dependency-event failure projection fence.
 
-    ``complete_execution()`` can update the completed parent row and then emit
-    dependency-row events for rows it unblocked. A downstream dependency event
-    append failure must not leave the public finalization result as
-    ``success=True``. The result must keep the dependency event evidence,
-    preserve the requested terminal reason, set ``success=False``, and mark
-    ``state_mutation_applied=True`` / ``failure_class=ledger_append_failed`` so
-    worker/factory callers can surface the Execution Ledger SSoT failure.
+    The completed settlement projection emits dependency-row events for rows it
+    unblocks. The projection must retain those event results in the canonical
+    settlement result so callers can distinguish a dependency effect failure
+    from a missing projection.
     """
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     offenders = [
-        *_complete_execution_dependency_projection_violations(),
+        *_settled_execution_dependency_projection_violations(),
         *_with_dependency_execution_events_fail_closed_violations(),
     ]
 
     assert not offenders, (
-        "WS2 dependency-event failure projection fence: "
-        f"{rel}:TaskRuntimeService.complete_execution() must route dependency "
-        "completion side-effect events through _with_dependency_execution_events(), "
-        "and that helper must fail-close otherwise-successful results when any "
-        "dependency execution event append reports ok=False. Offenders:\n" + "\n".join(offenders)
+        "WS2 dependency-event settlement projection fence: "
+        f"{rel}:TaskRuntimeService.{TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE}() "
+        "must retain dependency completion evidence on the canonical settled path, and "
+        "_with_dependency_execution_events() must continue to fail-close projected "
+        "dependency append failures. Offenders:\n" + "\n".join(offenders)
     )
 
 
@@ -8170,8 +8324,7 @@ def _top_level_function_defs(path: Path) -> list[ast.FunctionDef]:
 
 TASK_RUNTIME_EXECUTION_STREAM_CONSTANT_NAMES = frozenset(
     {
-        "_TASK_RUNTIME_EXECUTION_STREAM",
-        "TASK_RUNTIME_EXECUTION_STREAM",
+        "TASK_RUNTIME_EXECUTION_STREAM_V1",
     }
 )
 
@@ -8183,7 +8336,7 @@ def _references_execution_fact_stream(node: ast.AST) -> bool:
         if (
             isinstance(child, ast.Constant)
             and isinstance(child.value, str)
-            and child.value == TASK_RUNTIME_EXECUTION_STREAM
+            and child.value == TASK_RUNTIME_EXECUTION_STREAM_V1
         ):
             return True
         if isinstance(child, ast.Name) and child.id in TASK_RUNTIME_EXECUTION_STREAM_CONSTANT_NAMES:
@@ -8249,7 +8402,7 @@ def _execution_fact_query_gateway_violations() -> list[str]:
     ):
         offenders.append(
             f"{rel}:TaskRuntimeService.{TASK_RUNTIME_EXECUTION_FACT_QUERY_GATEWAY}() must construct "
-            "QueryFactEventsV1(..., stream=_TASK_RUNTIME_EXECUTION_STREAM, ...)."
+            "QueryFactEventsV1(..., stream=TASK_RUNTIME_EXECUTION_STREAM_V1, ...)."
         )
 
     for method_name, method_def in sorted(method_defs.items()):
@@ -9939,12 +10092,12 @@ def test_role_stats_fence_allows_get_observable_task_row_stats() -> None:
 # ---------------------------------------------------------------------------
 #
 # ``TaskRuntimeService._write_session()`` is the only owner of durable
-# execution-session writes. Claim / heartbeat / complete / fail / suspend
-# transitions may mutate a ``TaskExecutionSession`` and delegate persistence to
-# ``_write_session()``, but they must not hand-build write receipts. This keeps
-# the execution-ledger anchor coupled to the actual ``write_json_atomic()``
-# success path instead of letting transition methods drift into independent
-# receipt writers.
+# execution-session writes. Claim / heartbeat and the locked settlement phase
+# may mutate a ``TaskExecutionSession`` and delegate persistence to the locked
+# write helper, but they must not hand-build write receipts. This keeps the
+# execution-ledger anchor coupled to the actual ``write_json_atomic()`` success
+# path instead of letting terminal settlement or projection drift into
+# independent receipt writers.
 
 SESSION_WRITE_RECEIPT_ANCHOR = "_last_session_write_receipt"
 SESSION_WRITE_RECEIPT_ACCESSOR = "last_session_write_receipt"
@@ -9964,28 +10117,17 @@ SESSION_TERMINAL_SNAPSHOT_METHOD = "_find_terminal_session_snapshot"
 SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD = "_find_terminal_session_snapshot_locked"
 SESSION_BULK_SUSPEND_METHOD = "suspend_active_executions_for_run"
 SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD = "_suspend_active_session_for_run_locked"
-SESSION_WRITE_LOCKED_HELPER_CALLERS = frozenset(
-    {
-        SESSION_WRITE_RECEIPT_OWNER_METHOD,
-        SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD,
-    }
-)
+TYPED_HEARTBEAT_LOCKED_METHOD = "_heartbeat_execution_attempt_locked"
+TYPED_HEARTBEAT_OWNER_METHOD = "heartbeat_execution_attempt"
 SESSION_READ_LOCKED_HELPER_METHODS = frozenset({SESSION_READ_LOCKED_HELPER_METHOD})
-SESSION_READ_LOCKED_HELPER_CALLERS = frozenset(
-    {
-        SESSION_READ_OWNER_METHOD,
-        SESSION_TERMINAL_SNAPSHOT_LOCKED_METHOD,
-        SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD,
-        SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD,
-    }
-)
 SESSION_WRITE_RECEIPT_TRANSITION_METHODS = frozenset(
     {
         "claim_execution",
         "heartbeat_execution",
-        "complete_execution",
-        "fail_execution",
-        "suspend_execution",
+        TASK_RUNTIME_SETTLEMENT_ENTRYPOINT,
+        TASK_RUNTIME_SETTLEMENT_LOCKED_PHASE,
+        TASK_RUNTIME_SETTLEMENT_PROJECTION_PHASE,
+        TASK_RUNTIME_SETTLEMENT_PROJECTION_LOCKED_PHASE,
         "suspend_active_executions_for_run",
     }
 )
@@ -10189,7 +10331,12 @@ def _session_task_id_local_names(method_def: ast.FunctionDef) -> set[str]:
             if value is None:
                 continue
             if not (
-                _node_references_attribute_owner(value, owner_names={"session"}, attribute="task_id")
+                _node_references_attribute_owner(
+                    value,
+                    owner_names={"identity", "session"},
+                    attribute="task_id",
+                )
+                or _node_references_attribute_owner(value, owner_names={"task"}, attribute="id")
                 or _node_references_any_local_name(value, task_id_names)
             ):
                 continue
@@ -10205,7 +10352,7 @@ def _session_task_id_local_names(method_def: ast.FunctionDef) -> set[str]:
 def _node_references_session_task_id(node: ast.AST, *, task_id_names: AbstractSet[str]) -> bool:
     return _node_references_attribute_owner(
         node,
-        owner_names={"session"},
+        owner_names={"identity", "session"},
         attribute="task_id",
     ) or _node_references_any_local_name(node, task_id_names)
 
@@ -10219,8 +10366,27 @@ def _get_session_lock_call_uses_task_id(
     return any(_node_references_session_task_id(arg, task_id_names=task_id_names) for arg in lock_args)
 
 
+def _session_lock_local_names(method_def: ast.FunctionDef) -> set[str]:
+    """Infer locals bound to the per-task in-process lock."""
+
+    task_id_names = _session_task_id_local_names(method_def)
+    names: set[str] = set()
+    for assignment in _walk_task_runtime_method_body(method_def):
+        if not isinstance(assignment, ast.Assign | ast.AnnAssign) or assignment.value is None:
+            continue
+        value = assignment.value
+        if not isinstance(value, ast.Call) or _call_name(value.func) != f"self.{SESSION_WRITE_LOCK_HELPER}":
+            continue
+        if not _get_session_lock_call_uses_task_id(value, task_id_names=task_id_names):
+            continue
+        for target in _assignment_targets(assignment):
+            names.update(_assignment_target_names(target))
+    return names
+
+
 def _write_session_per_task_lock_with_nodes(method_def: ast.FunctionDef) -> list[ast.With]:
     task_id_names = _session_task_id_local_names(method_def)
+    session_lock_names = _session_lock_local_names(method_def)
     lock_with_nodes: list[ast.With] = []
 
     for node in _walk_task_runtime_method_body(method_def):
@@ -10228,11 +10394,13 @@ def _write_session_per_task_lock_with_nodes(method_def: ast.FunctionDef) -> list
             continue
         for item in node.items:
             context_expr = item.context_expr
-            if not isinstance(context_expr, ast.Call):
+            if isinstance(context_expr, ast.Name) and context_expr.id in session_lock_names:
+                lock_with_nodes.append(node)
                 continue
-            if _call_name(context_expr.func) != f"self.{SESSION_WRITE_LOCK_HELPER}":
-                continue
-            if _get_session_lock_call_uses_task_id(context_expr, task_id_names=task_id_names):
+            if isinstance(context_expr, ast.Call) and (
+                _call_name(context_expr.func) == f"self.{SESSION_WRITE_LOCK_HELPER}"
+                and _get_session_lock_call_uses_task_id(context_expr, task_id_names=task_id_names)
+            ):
                 lock_with_nodes.append(node)
 
     return lock_with_nodes
@@ -10327,17 +10495,20 @@ def _write_session_combined_with_orders_file_lock_after_session_lock(
 ) -> bool:
     task_id_names = _session_task_id_local_names(method_def)
     file_lock_path_names = _session_file_lock_path_local_names(method_def)
+    session_lock_names = _session_lock_local_names(method_def)
     session_lock_index: int | None = None
     file_lock_index: int | None = None
 
     for index, item in enumerate(with_node.items):
         context_expr = item.context_expr
+        if isinstance(context_expr, ast.Name) and context_expr.id in session_lock_names:
+            session_lock_index = index
+            continue
         if not isinstance(context_expr, ast.Call):
             continue
         call_name = _call_name(context_expr.func)
         if call_name == f"self.{SESSION_WRITE_LOCK_HELPER}" and _get_session_lock_call_uses_task_id(
-            context_expr,
-            task_id_names=task_id_names,
+            context_expr, task_id_names=task_id_names
         ):
             session_lock_index = index
             continue
@@ -10444,6 +10615,149 @@ def _session_lock_boundary_nodes(
         )
     file_lock_node = candidate_file_lock_node
     return offenders, lock_node, file_lock_node, parents
+
+
+def _locked_session_helper_call_scope_violations(
+    method_defs: dict[str, ast.FunctionDef],
+    *,
+    helper_name: str,
+) -> list[str]:
+    """Prove every locked-helper call is reached through both session locks.
+
+    A locked helper may be reached directly from a double-lock scope, or from
+    another private helper whose every in-repository caller is itself reached
+    through that same scope.  This follows the AST call graph instead of
+    granting helper callers a name-based exception.
+    """
+
+    def typed_heartbeat_call_is_bounded_lock_scoped(_call: ast.Call) -> bool:
+        owner = method_defs.get(TYPED_HEARTBEAT_OWNER_METHOD)
+        if owner is None:
+            return False
+        parents = _parent_lookup(owner)
+        session_lock_assignments = [
+            node
+            for node in _walk_task_runtime_method_body(owner)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "session_lock" for target in node.targets)
+            and isinstance(node.value, ast.Call)
+            and _call_name(node.value.func) == f"self.{SESSION_WRITE_LOCK_HELPER}"
+        ]
+        bounded_acquires = [
+            node
+            for node in _walk_task_runtime_method_body(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "session_lock"
+            and node.func.attr == "acquire"
+            and any(keyword.arg == "timeout" for keyword in node.keywords)
+        ]
+        file_locks = _write_session_file_lock_with_nodes(owner)
+        locked_helper_calls = _direct_self_method_calls(owner, TYPED_HEARTBEAT_LOCKED_METHOD)
+        return (
+            len(session_lock_assignments) == 1
+            and len(bounded_acquires) == 1
+            and len(file_locks) == 1
+            and len(locked_helper_calls) == 1
+            and _node_is_descendant_of(locked_helper_calls[0], file_locks[0], parents)
+        )
+
+    def manual_session_lock_owner_is_bounded(method_def: ast.FunctionDef, call: ast.Call) -> bool:
+        """Prove the explicit acquire/try/finally session-lock owner shape.
+
+        Settlement and validation use bounded ``acquire()`` rather than a
+        context manager so they can return a typed timeout verdict.  The proof
+        therefore binds the lock local, its bounded acquire, the cooperative
+        file lock containing the locked helper call, and the matching release
+        in a ``finally`` block.  It is structural, not a caller whitelist.
+        """
+
+        if method_def.name not in {
+            TASK_RUNTIME_SETTLEMENT_ENTRYPOINT,
+            "validate_execution_attempt",
+        }:
+            return False
+        parents = _parent_lookup(method_def)
+        task_id_names = _session_task_id_local_names(method_def)
+        lock_assignments = [
+            node
+            for node in _walk_task_runtime_method_body(method_def)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and _call_name(node.value.func) == f"self.{SESSION_WRITE_LOCK_HELPER}"
+            and _get_session_lock_call_uses_task_id(node.value, task_id_names=task_id_names)
+            and any(isinstance(target, ast.Name) and target.id == "session_lock" for target in node.targets)
+        ]
+        bounded_acquires = [
+            node
+            for node in _walk_task_runtime_method_body(method_def)
+            if isinstance(node, ast.Call)
+            and _call_name(node.func) == "session_lock.acquire"
+            and any(keyword.arg == "timeout" for keyword in node.keywords)
+        ]
+        releases_in_finally = [
+            release
+            for try_node in _walk_task_runtime_method_body(method_def)
+            if isinstance(try_node, ast.Try)
+            for release in ast.walk(ast.Module(body=try_node.finalbody, type_ignores=[]))
+            if isinstance(release, ast.Call) and _call_name(release.func) == "session_lock.release"
+        ]
+        file_locks = _write_session_file_lock_with_nodes(method_def)
+        return (
+            len(lock_assignments) == 1
+            and len(bounded_acquires) == 1
+            and len(releases_in_finally) == 1
+            and len(file_locks) == 1
+            and _node_is_descendant_of(call, file_locks[0], parents)
+        )
+
+    def call_is_double_lock_scoped(method_def: ast.FunctionDef, call: ast.Call) -> bool:
+        if method_def.name == TYPED_HEARTBEAT_LOCKED_METHOD:
+            return typed_heartbeat_call_is_bounded_lock_scoped(call)
+        if manual_session_lock_owner_is_bounded(method_def, call):
+            return True
+        scope_offenders, lock_node, file_lock_node, parents = _session_lock_boundary_nodes(
+            method_def,
+            method_name=method_def.name,
+            operation_label=f"calls self.{helper_name}()",
+        )
+        return (
+            not scope_offenders
+            and lock_node is not None
+            and file_lock_node is not None
+            and _node_is_descendant_of(call, lock_node, parents)
+            and _node_is_descendant_of(call, file_lock_node, parents)
+        )
+
+    def method_is_only_entered_under_locks(method_name: str, trail: frozenset[str]) -> bool:
+        if method_name in trail:
+            return False
+        invocations = [
+            (caller_name, caller_def, call)
+            for caller_name, caller_def in method_defs.items()
+            for call in _direct_self_method_calls(caller_def, method_name)
+        ]
+        if not invocations:
+            return False
+        return all(
+            call_is_double_lock_scoped(caller_def, call)
+            or method_is_only_entered_under_locks(caller_name, trail | {method_name})
+            for caller_name, caller_def, call in invocations
+        )
+
+    offenders: list[str] = []
+    for method_name, method_def in sorted(method_defs.items()):
+        for call in _direct_self_method_calls(method_def, helper_name):
+            if call_is_double_lock_scoped(method_def, call):
+                continue
+            if method_is_only_entered_under_locks(method_name, frozenset()):
+                continue
+            offenders.append(
+                f"TaskRuntimeService.{method_name}():{call.lineno} calls self.{helper_name}() "
+                "without a mechanically proven per-task and cooperative session-file lock scope"
+            )
+    return offenders
 
 
 def _session_write_receipt_record_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
@@ -10874,16 +11188,12 @@ def _write_session_lock_boundary_violations() -> list[str]:
                 "session write receipts after durable writes"
             )
 
-    for method_name, method_def in sorted(method_defs.items()):
-        if method_name in SESSION_WRITE_LOCKED_HELPER_CALLERS:
-            continue
-        for call in _direct_self_method_calls(method_def, SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD):
-            offenders.append(
-                f"TaskRuntimeService.{method_name}():{call.lineno} calls "
-                f"self.{SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD}(); durable session writes must enter "
-                "through TaskRuntimeService._write_session() or a reviewed lock-scoped helper so the "
-                "per-task session lock is always held"
-            )
+    offenders.extend(
+        _locked_session_helper_call_scope_violations(
+            method_defs,
+            helper_name=SESSION_WRITE_RECEIPT_LOCKED_OWNER_METHOD,
+        )
+    )
 
     allowed_scope_methods = _session_write_scope_method_names(method_defs)
     for method_name, method_def in sorted(method_defs.items()):
@@ -10971,15 +11281,12 @@ def _read_session_lock_boundary_violations() -> list[str]:
                 f"inside allowed locked helpers {sorted(allowed_read_json_methods)}"
             )
 
-    for method_name, method_def in sorted(method_defs.items()):
-        if method_name in SESSION_READ_LOCKED_HELPER_CALLERS or method_name in SESSION_READ_LOCKED_HELPER_METHODS:
-            continue
-        for call in _direct_self_method_calls(method_def, SESSION_READ_LOCKED_HELPER_METHOD):
-            offenders.append(
-                f"TaskRuntimeService.{method_name}():{call.lineno} calls "
-                f"self.{SESSION_READ_LOCKED_HELPER_METHOD}(); locked session reads may "
-                "only be entered by reviewed lock-scoped session read/write paths"
-            )
+    offenders.extend(
+        _locked_session_helper_call_scope_violations(
+            method_defs,
+            helper_name=SESSION_READ_LOCKED_HELPER_METHOD,
+        )
+    )
 
     if terminal_snapshot is None:
         offenders.append(f"TaskRuntimeService.{SESSION_TERMINAL_SNAPSHOT_METHOD}() not found")
@@ -11312,16 +11619,16 @@ def test_last_session_write_receipt_accessor_does_not_leak_mutable_internal_stat
 
 
 def test_session_write_receipt_is_only_written_by_write_session_owner() -> None:
-    """WS2 execution-ledger fence: transition methods must not write receipts."""
+    """WS2 execution-ledger fence: settlement phases must not write receipts."""
 
     rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
     offenders = _check_session_write_receipt_owner_boundary()
 
     assert not offenders, (
         "WS2 execution ledger SSoT session receipt fence: "
-        f"{rel}:claim/heartbeat/complete/fail/suspend paths may only call "
-        "_write_session(); they must not assign or construct session write "
-        "receipts themselves. Offenders:\n" + "\n".join(offenders)
+        f"{rel}:claim/heartbeat/settle/projection paths may only delegate session "
+        "persistence to _write_session_locked(); they must not assign or construct "
+        "session write receipts themselves. Offenders:\n" + "\n".join(offenders)
     )
 
 

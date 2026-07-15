@@ -23,10 +23,12 @@ cell should read or write either path directly.
 
 from __future__ import annotations
 
+import copy
 import errno
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -42,8 +44,9 @@ from typing import Any, Callable, cast
 from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
     FactStreamError,
+    QueryFactStreamHeadV1,
 )
-from polaris.cells.events.fact_stream.public.service import append_fact_event
+from polaris.cells.events.fact_stream.public.service import append_fact_event, query_fact_stream_head
 from polaris.domain.entities.task import (
     TaskPriority as PolarisTaskPriority,
     TaskStatus as PolarisTaskStatus,
@@ -55,6 +58,8 @@ from polaris.kernelone.storage import resolve_runtime_path
 logger = logging.getLogger(__name__)
 
 _TASKBOARD_TERMINAL_EVENTS_STREAM = "taskboard.terminal.events"
+_TERMINAL_EVENT_CAS_MAX_ATTEMPTS = 64
+_FACTORY_RUN_BINDING_CAS_MAX_ATTEMPTS = 8
 
 # ---------------------------------------------------------------------------
 # Enums (canonical source: domain/entities/task.py)
@@ -118,6 +123,40 @@ class InvalidTaskStateTransitionError(ValueError):
 
 class TaskBoardRowWriteConflictError(RuntimeError):
     """Raised when a task row changed before an atomic replace."""
+
+
+class TaskBoardFileLockTimeoutError(TimeoutError):
+    """Raised when a cooperative TaskBoard file lock cannot be acquired in time."""
+
+
+class TaskFactoryRunBindingConflictError(RuntimeError):
+    """Raised when a task row is already bound to another Factory run."""
+
+    def __init__(
+        self,
+        *,
+        task_id: int,
+        existing_factory_run_id: str,
+        requested_factory_run_id: str,
+    ) -> None:
+        self.task_id = int(task_id)
+        self.existing_factory_run_id = str(existing_factory_run_id)
+        self.requested_factory_run_id = str(requested_factory_run_id)
+        super().__init__(
+            "TaskRuntime Factory run binding conflict: "
+            f"task_id={self.task_id!r} "
+            f"existing_factory_run_id={self.existing_factory_run_id!r} "
+            f"requested_factory_run_id={self.requested_factory_run_id!r}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TaskFactoryRunBindingMutation:
+    """Atomic TaskBoard compare-and-set outcome for Factory run identity."""
+
+    task: Task
+    row_updated: bool
+    previous_factory_run_id: str
 
 
 _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
@@ -530,13 +569,16 @@ class TaskBoard:
                 ) as exc:
                     logger.warning("Failed to load task from %s: %s", task_file, exc)
 
-    def _load_task_from_disk(self, task_id: int) -> Task | None:
+    def _load_task_snapshot_from_disk(self, task_id: int) -> tuple[Task, str] | None:
+        """Load one durable task row and hash the exact decoded UTF-8 payload."""
+
         task_path = self.tasks_dir / f"task_{int(task_id)}.json"
         if not task_path.is_file():
             return None
         try:
             logical = self._logical_path(task_path)
-            data = json.loads(self._kernel_fs.read_text(logical, encoding="utf-8"))
+            payload = self._kernel_fs.read_text(logical, encoding="utf-8")
+            data = json.loads(payload)
             task = Task.from_dict(data)
         except (
             OSError,
@@ -547,6 +589,13 @@ class TaskBoard:
         ) as exc:
             logger.warning("Failed to load task from %s: %s", task_path, exc)
             return None
+        return task, _sha256_text(payload)
+
+    def _load_task_from_disk(self, task_id: int) -> Task | None:
+        snapshot = self._load_task_snapshot_from_disk(task_id)
+        if snapshot is None:
+            return None
+        task, _payload_hash = snapshot
         self._cache[task.id] = task
         return task
 
@@ -612,8 +661,31 @@ class TaskBoard:
         normalized_task_id = _normalize_task_id(task_id)
         return self.tasks_dir / f".task_{normalized_task_id}.json.lock"
 
-    def _save_task(self, task: Task) -> None:
-        """Atomically save a task row under a cross-process row lock."""
+    def _save_task(
+        self,
+        task: Task,
+        *,
+        expected_before_hash: str | None = None,
+    ) -> TaskBoardRowWriteReceipt:
+        """Commit one task row through the sole durable row-write boundary.
+
+        Args:
+            task: Complete task entity to persist.
+            expected_before_hash: Optional hash of the exact row snapshot used
+                to derive ``task``. A mismatch fails before staging, allowing
+                callers to retry a compare-and-set decision without overwriting
+                a concurrent writer.
+
+        Returns:
+            Receipt published only after the atomic replace succeeds.
+
+        Raises:
+            TaskBoardRowWriteConflictError: The durable row changed before the
+                compare-and-set commit.
+
+        Complexity:
+            O(n) time and memory for one serialized row of size ``n``.
+        """
 
         with self.transaction():
             task_path = self.tasks_dir / f"task_{task.id}.json"
@@ -624,6 +696,22 @@ class TaskBoard:
             try:
                 with self._file_lock(lock_path):
                     before_hash = self._read_current_task_file_hash(task_path)
+                    if expected_before_hash is not None and before_hash != expected_before_hash:
+                        expected_label = expected_before_hash or "<absent>"
+                        current_label = before_hash or "<absent>"
+                        logger.warning(
+                            "TaskBoard row write conflict: task_id=%s task_path=%s expected_hash=%s current_hash=%s",
+                            task.id,
+                            task_logical,
+                            expected_label,
+                            current_label,
+                        )
+                        raise TaskBoardRowWriteConflictError(
+                            "TaskBoard row write conflict: "
+                            f"task_id={task.id!r} task_path={task_logical!r} "
+                            f"before_hash={expected_label!r} current_hash={current_label!r}"
+                        )
+
                     payload = json.dumps(task.to_dict(), indent=2, ensure_ascii=False) + "\n"
                     after_hash = _sha256_text(payload)
                     self._kernel_fs.write_text(tmp_logical, payload, encoding="utf-8")
@@ -642,8 +730,10 @@ class TaskBoard:
                         operation="replace",
                         written_at=datetime.now(timezone.utc).isoformat(),
                     )
+                    self._cache[int(task.id)] = task
                     self._last_row_write_receipt = receipt
                     self._row_write_receipts_by_task_id[int(task.id)] = receipt
+                    return receipt
             finally:
                 with suppress(OSError):
                     tmp_path.unlink(missing_ok=True)
@@ -677,27 +767,31 @@ class TaskBoard:
         self._kernel_fs.write_text(logical, str(int(value)), encoding="utf-8")
 
     @contextmanager
-    def _file_lock(self, lock_file_path: Path) -> Any:
-        """Cross-platform exclusive file lock context manager."""
+    def _file_lock(
+        self,
+        lock_file_path: Path,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> Any:
+        """Acquire a cross-platform exclusive file lock with an optional deadline.
+
+        ``None`` preserves the historic blocking behavior. A finite timeout
+        uses non-blocking lock attempts and bounded sleeps so a caller can
+        retain control over its shutdown and settlement state machine.
+        """
+
+        if timeout_seconds is not None:
+            if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+                raise TypeError("timeout_seconds must be a finite number or None")
+            if not math.isfinite(float(timeout_seconds)) or float(timeout_seconds) < 0:
+                raise ValueError("timeout_seconds must be a finite number >= 0")
         lock_file_path.parent.mkdir(parents=True, exist_ok=True)
         lock_file = None
+        lock_acquired = False
+        deadline = None if timeout_seconds is None else time.monotonic() + float(timeout_seconds)
         try:
             lock_file = open(lock_file_path, "a+", encoding="utf-8")  # noqa: SIM115
-            if os.name == "nt":
-                import msvcrt
-
-                lock_file.seek(0)
-                msvcrt_vars = vars(msvcrt)
-                locking = cast(Callable[[int, int, int], None], msvcrt_vars["locking"])
-                lock_flag = cast(int, msvcrt_vars["LK_LOCK"])
-                locking(lock_file.fileno(), lock_flag, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
-            yield lock_file
-        finally:
-            if lock_file:
+            while not lock_acquired:
                 try:
                     if os.name == "nt":
                         import msvcrt
@@ -705,9 +799,41 @@ class TaskBoard:
                         lock_file.seek(0)
                         msvcrt_vars = vars(msvcrt)
                         locking = cast(Callable[[int, int, int], None], msvcrt_vars["locking"])
+                        lock_flag = cast(
+                            int,
+                            msvcrt_vars["LK_LOCK"] if deadline is None else msvcrt_vars["LK_NBLCK"],
+                        )
+                        locking(lock_file.fileno(), lock_flag, 1)
+                    else:
+                        import fcntl
+
+                        lock_flag = fcntl.LOCK_EX
+                        if deadline is not None:
+                            lock_flag |= fcntl.LOCK_NB
+                        fcntl.flock(lock_file.fileno(), lock_flag)  # type: ignore[attr-defined]
+                    lock_acquired = True
+                except OSError as exc:
+                    if deadline is None:
+                        raise
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TaskBoardFileLockTimeoutError(
+                            f"Timed out acquiring TaskBoard lock: {lock_file_path}"
+                        ) from exc
+                    time.sleep(min(0.01, remaining))
+            yield lock_file
+        finally:
+            if lock_file:
+                try:
+                    if lock_acquired and os.name == "nt":
+                        import msvcrt
+
+                        lock_file.seek(0)
+                        msvcrt_vars = vars(msvcrt)
+                        locking = cast(Callable[[int, int, int], None], msvcrt_vars["locking"])
                         unlock_flag = cast(int, msvcrt_vars["LK_UNLCK"])
                         locking(lock_file.fileno(), unlock_flag, 1)
-                    else:
+                    elif lock_acquired:
                         import fcntl
 
                         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
@@ -806,6 +932,82 @@ class TaskBoard:
             return None
         task = self.get(normalized)
         return task.to_dict() if task is not None else None
+
+    def bind_factory_run_id(
+        self,
+        task_id: int | str,
+        factory_run_id: str,
+    ) -> TaskFactoryRunBindingMutation | None:
+        """Atomically bind one task row to a Factory portfolio run.
+
+        Binding is compare-and-set under the row's cross-process file lock.
+        Empty bindings are rejected, equal bindings are idempotent, and a
+        different existing binding raises ``TaskFactoryRunBindingConflictError``.
+
+        Complexity:
+            O(n) time and memory over one serialized task row; O(1) task rows.
+        """
+
+        normalized_task_id = _normalize_task_id(task_id)
+        requested_factory_run_id = str(factory_run_id or "").strip()
+        if not requested_factory_run_id:
+            raise ValueError("factory_run_id must be a non-empty string")
+
+        last_row_conflict: TaskBoardRowWriteConflictError | None = None
+        for _attempt in range(_FACTORY_RUN_BINDING_CAS_MAX_ATTEMPTS):
+            with self.transaction():
+                snapshot = self._load_task_snapshot_from_disk(normalized_task_id)
+                if snapshot is None:
+                    return None
+                task, snapshot_hash = snapshot
+                self._cache[task.id] = task
+                existing_factory_run_id = str(task.metadata.get("factory_run_id") or "").strip()
+                if existing_factory_run_id and existing_factory_run_id != requested_factory_run_id:
+                    raise TaskFactoryRunBindingConflictError(
+                        task_id=normalized_task_id,
+                        existing_factory_run_id=existing_factory_run_id,
+                        requested_factory_run_id=requested_factory_run_id,
+                    )
+                if existing_factory_run_id == requested_factory_run_id:
+                    return TaskFactoryRunBindingMutation(
+                        task=copy.deepcopy(task),
+                        row_updated=False,
+                        previous_factory_run_id=existing_factory_run_id,
+                    )
+
+                task.metadata["factory_run_id"] = requested_factory_run_id
+                try:
+                    self._save_task(task, expected_before_hash=snapshot_hash)
+                except TaskBoardRowWriteConflictError as exc:
+                    last_row_conflict = exc
+                    continue
+                return TaskFactoryRunBindingMutation(
+                    task=copy.deepcopy(task),
+                    row_updated=True,
+                    previous_factory_run_id=existing_factory_run_id,
+                )
+
+        final_snapshot = self._load_task_snapshot_from_disk(normalized_task_id)
+        if final_snapshot is None:
+            return None
+        final_task, _final_snapshot_hash = final_snapshot
+        self._cache[final_task.id] = final_task
+        final_factory_run_id = str(final_task.metadata.get("factory_run_id") or "").strip()
+        if final_factory_run_id and final_factory_run_id != requested_factory_run_id:
+            raise TaskFactoryRunBindingConflictError(
+                task_id=normalized_task_id,
+                existing_factory_run_id=final_factory_run_id,
+                requested_factory_run_id=requested_factory_run_id,
+            )
+        if final_factory_run_id == requested_factory_run_id:
+            return TaskFactoryRunBindingMutation(
+                task=copy.deepcopy(final_task),
+                row_updated=False,
+                previous_factory_run_id=final_factory_run_id,
+            )
+        if last_row_conflict is None:
+            raise RuntimeError("Factory run binding compare-and-set exhausted without a conflict")
+        raise last_row_conflict
 
     def _validate_transition(self, old_status: TaskStatus, new_status: TaskStatus) -> None:
         allowed = _VALID_TRANSITIONS.get(old_status, {old_status})
@@ -906,20 +1108,64 @@ class TaskBoard:
         return result_task
 
     def _append_terminal_event(self, event_data: dict[str, Any]) -> None:
-        """Append one compatibility projection through atomic FactStream."""
+        """Append one compatibility projection through FactStream CAS."""
 
         event_type = str(event_data.get("status") or "terminal").strip().lower() or "terminal"
         task_id = str(event_data.get("task_id") or "").strip() or None
-        append_fact_event(
-            AppendFactEventCommandV1(
+        encoded = json.dumps(
+            event_data,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        idempotency_key = f"taskboard-terminal:{hashlib.sha256(encoded).hexdigest()}"
+        last_drift: FactStreamError | None = None
+        for _attempt in range(_TERMINAL_EVENT_CAS_MAX_ATTEMPTS):
+            expected_seq = self._next_terminal_event_expected_seq()
+            try:
+                append_fact_event(
+                    AppendFactEventCommandV1(
+                        workspace=str(self.workspace),
+                        stream=_TASKBOARD_TERMINAL_EVENTS_STREAM,
+                        event_type=event_type,
+                        payload=dict(event_data),
+                        source="runtime.task_runtime.task_board",
+                        task_id=task_id,
+                        expected_seq=expected_seq,
+                        idempotency_key=idempotency_key,
+                    )
+                )
+                return
+            except FactStreamError as exc:
+                if exc.code != "expected_seq_drift":
+                    raise
+                if exc.details.get("existing_seq"):
+                    # The same idempotent payload was already committed but
+                    # the caller retried with the now-advanced head.  For this
+                    # compatibility projection, the durable existing event is
+                    # a successful outcome rather than another append attempt.
+                    return
+                last_drift = exc
+        raise FactStreamError(
+            "taskboard terminal event CAS retry budget exhausted",
+            code="terminal_event_cas_exhausted",
+            details={
+                "workspace": str(self.workspace),
+                "attempts": _TERMINAL_EVENT_CAS_MAX_ATTEMPTS,
+                "last_error": str(last_drift or "expected_seq_drift"),
+            },
+        )
+
+    def _next_terminal_event_expected_seq(self) -> int:
+        """Return the optimistic next sequence for terminal compatibility facts."""
+
+        return query_fact_stream_head(
+            QueryFactStreamHeadV1(
                 workspace=str(self.workspace),
                 stream=_TASKBOARD_TERMINAL_EVENTS_STREAM,
-                event_type=event_type,
-                payload=dict(event_data),
-                source="runtime.task_runtime.task_board",
-                task_id=task_id,
             )
-        )
+        ).next_expected_seq
 
     def _write_terminal_event(self, event_data: dict[str, Any]) -> None:
         """Write a compatibility terminal event outside the board transaction.

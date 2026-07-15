@@ -198,6 +198,22 @@ def extract_platform_tool_contract_target_files(context: list[dict]) -> tuple[st
     return tuple(dict.fromkeys(targets))
 
 
+def extract_platform_tool_contract_missing_target_files(context: list[dict]) -> tuple[str, ...]:
+    """Return targets that authoritative platform evidence says are absent.
+
+    ``missing_target_files`` is produced by the platform materialization
+    evidence path. It is intentionally kept separate from generic target
+    extraction: a target named by the user or a general tool contract is not
+    sufficient to prove that a read would be impossible.
+    """
+    contract = extract_platform_tool_contract(context)
+    return tuple(
+        path
+        for path in _normalize_contract_path_values(contract.get("missing_target_files"))
+        if _contract_path_looks_like_file_target(path)
+    )
+
+
 def extract_platform_tool_contract_scope_paths(context: list[dict]) -> tuple[str, ...]:
     """Return directory scopes carried by platform tool-contract metadata."""
     contract = extract_platform_tool_contract(context)

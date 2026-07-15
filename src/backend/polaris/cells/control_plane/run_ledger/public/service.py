@@ -33,8 +33,15 @@ from polaris.cells.control_plane.run_ledger.public.projection import (
     summarize_run_ledger_projection,
 )
 from polaris.cells.control_plane.run_ledger.public.provenance import build_run_provenance_bundle
+from polaris.cells.control_plane.run_ledger.public.settlement_barrier import (
+    FactorySettlementBarrierQueryV1,
+    FactorySettlementBarrierResultV1,
+    project_factory_settlement_barrier,
+)
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    ToolLifecycleRequirementV1,
     build_tool_call_lifecycle_run_ledger_event,
+    build_tool_lifecycle_requirement_run_ledger_event,
     empty_tool_lifecycle_summary,
     merge_tool_lifecycle_summaries,
 )
@@ -44,13 +51,15 @@ from polaris.cells.events.fact_stream.public import (
     append_fact_event,
     query_fact_events,
 )
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    TASK_RUNTIME_EXECUTION_STREAM_V1,
+)
 from polaris.infrastructure.log_pipeline.jetstream_publisher import get_log_jetstream_publisher
 from polaris.kernelone.storage import resolve_storage_roots
 
 logger = logging.getLogger(__name__)
 _JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 _EXECUTION_CONTROL_PLANE_STREAM = "execution.control_plane"
-_TASK_RUNTIME_EXECUTION_STREAM = "task_runtime.execution"
 
 
 def _count_value(value: Any) -> int:
@@ -231,6 +240,134 @@ def _task_runtime_fact_matches_scope(
     return not project_id or str(payload.get("factory_bench_project_id") or "").strip() == project_id
 
 
+def _structured_string_list(value: Any) -> list[str]:
+    """Normalize a structured string sequence without parsing prose."""
+
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return list(dict.fromkeys(token for item in value if (token := str(item or "").strip())))
+
+
+def _read_task_runtime_execution_facts(
+    *,
+    workspace: Path,
+    run_id: str = "",
+    factory_run_id: str = "",
+    project_id: str = "",
+) -> list[dict[str, Any]]:
+    """Read exact TaskRuntime facts for one run or factory/project scope.
+
+    TaskRuntime remains the execution-state authority. This adapter preserves
+    source fact identity while exposing only structured payload fields to the
+    Run Ledger projection.
+
+    Complexity:
+        O(n) time and memory over selected TaskRuntime facts.
+    """
+
+    selected_run_id = str(run_id or "").strip()
+    factory_scope = bool(factory_run_id or project_id)
+    facts: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        page = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(workspace),
+                stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
+                limit=1000,
+                offset=offset,
+                run_id=selected_run_id if selected_run_id and not factory_scope else None,
+            )
+        )
+        for fact in page.events:
+            payload_raw = fact.get("payload")
+            payload = dict(payload_raw) if isinstance(payload_raw, dict) else {}
+            if factory_scope and not _task_runtime_fact_matches_scope(
+                payload,
+                factory_run_id=factory_run_id,
+                project_id=project_id,
+            ):
+                continue
+            if selected_run_id and not factory_scope and _event_run_id(payload) != selected_run_id:
+                continue
+            payload["fact_event_id"] = str(fact.get("event_id") or "")
+            payload["fact_event_seq"] = int(fact.get("seq") or 0)
+            payload["fact_stream"] = TASK_RUNTIME_EXECUTION_STREAM_V1
+            payload.setdefault("project_id", str(payload.get("factory_bench_project_id") or "").strip())
+            facts.append(payload)
+        if page.next_offset == 0:
+            return facts
+        offset = page.next_offset
+
+
+def _task_runtime_tool_lifecycle_requirement_event(
+    fact: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Project a Director materialization claim into a lifecycle requirement.
+
+    Only canonical TaskRuntime claim facts can activate this requirement. A
+    JobToken is capability evidence, not proof that Director execution began.
+    """
+
+    if str(fact.get("fact_stream") or "").strip() != TASK_RUNTIME_EXECUTION_STREAM_V1:
+        return None
+    if str(fact.get("event_type") or "").strip().lower() not in {"claimed", "claim_renewed"}:
+        return None
+    task_row_raw = fact.get("task_row_snapshot")
+    task_row = dict(task_row_raw) if isinstance(task_row_raw, dict) else {}
+    metadata_raw = task_row.get("metadata")
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    runtime_execution_raw = metadata.get("runtime_execution")
+    runtime_execution = dict(runtime_execution_raw) if isinstance(runtime_execution_raw, dict) else {}
+    if str(runtime_execution.get("role_id") or "").strip().lower() != "director":
+        return None
+    task_contract_raw = metadata.get("task_contract")
+    task_contract = dict(task_contract_raw) if isinstance(task_contract_raw, dict) else {}
+    target_files = _structured_string_list(metadata.get("target_files"))
+    if not target_files:
+        target_files = _structured_string_list(task_contract.get("target_files"))
+    if not target_files and metadata.get("materialization_required") is not True:
+        return None
+    task_id = str(
+        metadata.get("external_task_id")
+        or metadata.get("pm_task_id")
+        or fact.get("task_id")
+        or task_row.get("id")
+        or ""
+    ).strip()
+    run_id = _event_run_id(fact)
+    fact_event_id = str(fact.get("fact_event_id") or "").strip()
+    fact_event_seq = int(fact.get("fact_event_seq") or 0)
+    evidence_ref = ":".join(
+        part
+        for part in (
+            TASK_RUNTIME_EXECUTION_STREAM_V1,
+            fact_event_id,
+            str(fact_event_seq) if fact_event_seq else "",
+        )
+        if part
+    )
+    requirement = ToolLifecycleRequirementV1(
+        task_id=task_id,
+        run_id=run_id,
+        source=TASK_RUNTIME_EXECUTION_STREAM_V1,
+        reason="director_materialization_claimed",
+        evidence_refs=(evidence_ref,) if evidence_ref else (),
+    )
+    return build_tool_lifecycle_requirement_run_ledger_event(
+        requirement,
+        project_id=str(fact.get("project_id") or "").strip(),
+    )
+
+
+def _tool_lifecycle_requirement_events_from_task_runtime(
+    facts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return canonical requirement events from TaskRuntime execution facts."""
+
+    return [event for fact in facts if (event := _task_runtime_tool_lifecycle_requirement_event(fact)) is not None]
+
+
 def _discover_factory_child_run_ids(
     *,
     workspace: Path,
@@ -245,31 +382,12 @@ def _discover_factory_child_run_ids(
     a scope miss must not widen to unrelated workspace runs.
     """
 
-    run_ids: list[str] = []
-    offset = 0
-    while True:
-        page = query_fact_events(
-            QueryFactEventsV1(
-                workspace=str(workspace),
-                stream=_TASK_RUNTIME_EXECUTION_STREAM,
-                limit=1000,
-                offset=offset,
-            )
-        )
-        for fact in page.events:
-            payload = fact.get("payload")
-            fact_payload = payload if isinstance(payload, dict) else {}
-            if not _task_runtime_fact_matches_scope(
-                fact_payload,
-                factory_run_id=factory_run_id,
-                project_id=project_id,
-            ):
-                continue
-            run_ids.append(_event_run_id(fact_payload))
-        if page.next_offset == 0:
-            break
-        offset = page.next_offset
-    return _unique_run_ids(run_ids)
+    facts = _read_task_runtime_execution_facts(
+        workspace=workspace,
+        factory_run_id=factory_run_id,
+        project_id=project_id,
+    )
+    return _unique_run_ids([_event_run_id(fact) for fact in facts])
 
 
 def _read_execution_control_plane_facts(
@@ -514,11 +632,12 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
     query_scope = _query_scope(query)
     factory_project_scoped = _has_factory_project_scope(query)
     if factory_project_scoped:
-        child_run_ids = _discover_factory_child_run_ids(
+        task_runtime_facts = _read_task_runtime_execution_facts(
             workspace=workspace,
             factory_run_id=query.factory_run_id,
             project_id=query.project_id,
         )
+        child_run_ids = _unique_run_ids([_event_run_id(fact) for fact in task_runtime_facts])
         consumed_run_ids = _unique_run_ids((query.run_id, *child_run_ids))
         paths = _ledger_paths_for_run_ids(
             workspace,
@@ -530,6 +649,10 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
             run_ids=consumed_run_ids,
         )
     else:
+        task_runtime_facts = _read_task_runtime_execution_facts(
+            workspace=workspace,
+            run_id=query.run_id,
+        )
         consumed_run_ids = _unique_run_ids((query.run_id,))
         paths = _ledger_paths(
             workspace,
@@ -541,7 +664,8 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
             workspace=workspace,
             run_id=query.run_id,
         )
-    if not paths and not events:
+    lifecycle_requirement_events = _tool_lifecycle_requirement_events_from_task_runtime(task_runtime_facts)
+    if not paths and not events and not lifecycle_requirement_events:
         return RunLedgerProjectionResultV1(
             projection=_empty_projection(
                 workspace=workspace,
@@ -554,6 +678,7 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
     if not events:
         for path in paths:
             events.extend(_read_events(path))
+    events.extend(lifecycle_requirement_events)
     if not events:
         return RunLedgerProjectionResultV1(
             projection=_empty_projection(
@@ -622,6 +747,47 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
             "task_boundary": task_boundary,
             "tool_lifecycle": tool_lifecycle,
         }
+    )
+
+
+def query_factory_settlement_barrier(
+    workspace: str | Path,
+    factory_run_id: str,
+) -> FactorySettlementBarrierResultV1:
+    """Return the current settlement barrier for one exact Factory run.
+
+    The query reads only canonical ``task_runtime.execution`` and
+    ``execution.control_plane`` FactStream projections.  It never consults
+    migration ledgers, waits for future events, or writes derived state.
+
+    Complexity:
+        O(T + C) FactStream reads and O(T + C) projection work for ``T``
+        TaskRuntime facts and ``C`` control-plane facts in the selected run.
+    """
+
+    query = FactorySettlementBarrierQueryV1(
+        workspace=str(workspace or ""),
+        factory_run_id=factory_run_id,
+    )
+    resolved_workspace = Path(query.workspace).expanduser().resolve()
+    task_runtime_facts = _read_task_runtime_execution_facts(
+        workspace=resolved_workspace,
+        factory_run_id=query.factory_run_id,
+    )
+    consumed_run_ids = _unique_run_ids([_event_run_id(fact) for fact in task_runtime_facts])
+    ledger_facts = _read_execution_control_plane_facts(
+        workspace=resolved_workspace,
+        run_ids=consumed_run_ids,
+    )
+    lifecycle_requirements = _tool_lifecycle_requirement_events_from_task_runtime(task_runtime_facts)
+    run_projection = build_run_ledger_projection([*ledger_facts, *lifecycle_requirements])
+    return project_factory_settlement_barrier(
+        workspace=str(resolved_workspace),
+        factory_run_id=query.factory_run_id,
+        run_projection=run_projection,
+        task_runtime_facts=task_runtime_facts,
+        ledger_facts=ledger_facts,
+        consumed_run_ids=consumed_run_ids,
     )
 
 

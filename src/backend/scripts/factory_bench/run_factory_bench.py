@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# The direct-execution bootstrap must add this module's source tree before
+# importing the Polaris packages below.
+# ruff: noqa: E402
+
 """Factory-bench runner — drive the FULL Polaris role chain per project.
 
 For each project in ``projects_v2.json`` (L1→L12, sequential — the local vLLM
@@ -24,6 +28,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -37,11 +42,15 @@ from pathlib import Path
 from typing import Any, Callable, cast
 from urllib.parse import urlparse
 
-sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
+_MODULE_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_MODULE_BACKEND_ROOT))
 
 from polaris.cells.factory.pipeline.internal.bench_gates import (
+    CANONICAL_BENCH_PROJECTION_SOURCE,
+    LEGACY_BENCH_ARTIFACT_SOURCE,
     aggregate_goal_audit,
     apply_factory_bench_failure_taxonomy,
+    build_canonical_bench_projection,
     build_llm_route_audit,
     build_real_run_gate,
     collect_llm_events,
@@ -65,6 +74,8 @@ from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_root
 from scripts.factory_bench.backend_fingerprint import (
     build_run_backend_metadata,
     check_backend_freshness,
+    compute_source_fingerprint,
+    resolve_backend_source_root,
 )
 from scripts.factory_bench.factory_http_client import (
     _http_post_json as _shared_http_post_json,
@@ -77,7 +88,7 @@ from scripts.factory_bench.factory_http_client import (
 _logger = logging.getLogger(__name__)
 
 _FIXTURE = Path(__file__).resolve().parent / "projects_v2.json"
-_BACKEND_ROOT = Path("/home/dains/Documents/polaris/src/backend")
+_BACKEND_ROOT = resolve_backend_source_root(_MODULE_BACKEND_ROOT)
 _REPO_ROOT = _BACKEND_ROOT.parent.parent
 FACTORY_BENCH_REQUIRED_LLM_ROLES = ("pm", "chief_engineer", "director", "qa")
 _LAUNCHER_INSTANCE_MODES = {"observed", "isolated"}
@@ -714,6 +725,9 @@ def read_chain_results(runtime_dir: Path | None) -> dict[str, Any]:
     SKIPPED (director_failures_present), so the audit must surface content.
     """
     summary: dict[str, Any] = {
+        "source": LEGACY_BENCH_ARTIFACT_SOURCE,
+        "authoritative": False,
+        "degraded": True,
         "qa_ran": None,
         "qa_passed": None,
         "qa_reason": "",
@@ -788,24 +802,18 @@ def read_chain_results_from_runtime_dirs(runtime_dirs: list[Path]) -> dict[str, 
     return merged
 
 
-_EXIT_CLASS_BY_CODE = {0: "clean", 4: "director_partial", 5: "qa_failed"}
 _NON_TERMINAL_CHAIN_ERRORS = {"start_failed", "workspace_switch_failed", "event_wait_timeout"}
 
 
 def grade_chain_state(chain_results: dict[str, Any], exit_code: Any) -> str:
-    """Three-state chain verdict: clean / partial / fail.
+    """Project the display chain state from canonical execution only."""
 
-    Prefers the chain's own exit_class (chain-summary/1); falls back to the
-    graded exit code for pre-summary runs.
-    """
-    exit_class = str(chain_results.get("exit_class") or "")
-    if not exit_class and isinstance(exit_code, int):
-        exit_class = _EXIT_CLASS_BY_CODE.get(exit_code, "hard_failed")
-    if exit_class == "clean":
-        return "clean"
-    if exit_class in {"director_partial", "qa_failed"}:
-        return "partial"
-    return "fail"
+    del exit_code
+    if chain_results.get("source") != CANONICAL_BENCH_PROJECTION_SOURCE:
+        return "fail"
+    execution = chain_results.get("execution")
+    execution_map = execution if isinstance(execution, Mapping) else {}
+    return "clean" if bool(execution_map.get("ok")) else "fail"
 
 
 def _chain_reached_terminal(chain: dict[str, Any]) -> bool:
@@ -958,7 +966,7 @@ def _emit_bench_event(
     except ImportError:
         # If we cannot import the local emitter, we can still push to the
         # Factory HTTP backend below — do NOT bail out before that.
-        emit_event = None  # type: ignore[assignment]
+        emit_event = None
 
     payload_meta: dict[str, Any] = dict(meta or {})
     payload_meta.setdefault("project_id", str(project_id))
@@ -1626,6 +1634,8 @@ def _bench_project_instance_id(
     bench_session_id: str,
     project_id: str,
     bench_workspace: Path | str | None = None,
+    run_id: str = "",
+    launch_nonce: str = "",
 ) -> str:
     if bench_session_id:
         raw = f"{bench_session_id}-{project_id}"
@@ -1635,11 +1645,147 @@ def _bench_project_instance_id(
             raw = f"{workspace_name}-{project_id}"
         else:
             raw = f"factory-bench-{workspace_name}-{project_id}" if workspace_name else f"factory-bench-{project_id}"
+    if launch_nonce:
+        run_token = re.sub(r"[^A-Za-z0-9]+", "-", str(run_id or "local").lower()).strip("-")[-24:] or "local"
+        nonce_token = re.sub(r"[^A-Za-z0-9]+", "-", str(launch_nonce).lower()).strip("-")[-20:]
+        suffix = f"-run-{run_token}-{nonce_token}"
+        raw = f"{raw[: max(1, 80 - len(suffix))]}{suffix}"
     try:
         from polaris.cells.instances.internal.service import sanitize_instance_id
     except (ImportError, RuntimeError):
         return re.sub(r"[^A-Za-z0-9_.:-]+", "-", raw).strip("-").lower()[:80] or "factory-bench-project"
     return sanitize_instance_id(raw)
+
+
+def _new_isolated_bench_launch_receipt(
+    *,
+    bench_session_id: str,
+    run_id: str,
+    project_id: str,
+    requested_project_id: str,
+    canonical_project_id: str,
+    bench_workspace: Path,
+    project_workspace: str,
+) -> dict[str, Any]:
+    """Create the immutable identity claim for one isolated bench launch."""
+    nonce = secrets.token_hex(8)
+    requested_instance_id = _bench_project_instance_id(
+        bench_session_id=bench_session_id,
+        project_id=project_id,
+        bench_workspace=bench_workspace,
+    )
+    instance_id = _bench_project_instance_id(
+        bench_session_id=bench_session_id,
+        project_id=project_id,
+        bench_workspace=bench_workspace,
+        run_id=run_id,
+        launch_nonce=nonce,
+    )
+    workspace = str(Path(project_workspace).resolve())
+    return {
+        "schema_version": "factory_bench.isolated_launch_receipt.v1",
+        "launch_nonce": nonce,
+        "launch_scope": f"{run_id}:{project_id}:{nonce}",
+        "run_id": run_id,
+        "bench_session_id": bench_session_id,
+        "project_id": project_id,
+        "requested_project_id": requested_project_id,
+        "canonical_project_id": canonical_project_id,
+        "requested_instance_id": requested_instance_id,
+        "instance_id": instance_id,
+        "workspace": workspace,
+        "runtime_root": str((Path(workspace) / "runtime").resolve()),
+        "expected_backend_root": str(_BACKEND_ROOT),
+        "expected_source_fingerprint": compute_source_fingerprint(_BACKEND_ROOT),
+        "issued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def _validate_isolated_bench_launch(
+    *,
+    instance: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+    backend_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Fail closed unless the launched backend proves this runner's identity claim."""
+    errors: list[str] = []
+    metadata_raw = instance.get("metadata")
+    metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+    persisted_raw = metadata.get("instance_launch_receipt")
+    persisted = persisted_raw if isinstance(persisted_raw, Mapping) else {}
+    expected_instance_id = str(receipt.get("instance_id") or "")
+    expected_workspace = str(receipt.get("workspace") or "")
+    expected_runtime_root = str(receipt.get("runtime_root") or "")
+    expected_backend_root = str(receipt.get("expected_backend_root") or "")
+    expected_fingerprint = str(receipt.get("expected_source_fingerprint") or "")
+    if not expected_instance_id or str(instance.get("instance_id") or "") != expected_instance_id:
+        errors.append("instance_id_mismatch")
+    if str(instance.get("workspace") or "") != expected_workspace:
+        errors.append("workspace_mismatch")
+    if str(instance.get("runtime_root") or "") != expected_runtime_root:
+        errors.append("runtime_root_mismatch")
+    for field in (
+        "launch_scope",
+        "launch_nonce",
+        "run_id",
+        "project_id",
+        "requested_project_id",
+        "canonical_project_id",
+        "requested_instance_id",
+        "instance_id",
+        "workspace",
+        "runtime_root",
+        "expected_backend_root",
+        "expected_source_fingerprint",
+    ):
+        if persisted.get(field) != receipt.get(field):
+            errors.append(f"launch_receipt_{field}_mismatch")
+
+    freshness_raw = backend_context.get("backend_freshness")
+    freshness = freshness_raw if isinstance(freshness_raw, Mapping) else {}
+    backend_info_raw = freshness.get("backend_info")
+    backend_info = backend_info_raw if isinstance(backend_info_raw, Mapping) else {}
+    if not bool(freshness.get("ok")):
+        errors.append("backend_fingerprint_not_fresh")
+    if not expected_fingerprint or str(freshness.get("expected_fingerprint") or "") != expected_fingerprint:
+        errors.append("expected_source_fingerprint_mismatch")
+    if str(freshness.get("actual_fingerprint") or "") != expected_fingerprint:
+        errors.append("actual_source_fingerprint_mismatch")
+    if str(backend_info.get("workspace") or "") != expected_workspace:
+        errors.append("backend_workspace_mismatch")
+    instance_backend_pid = instance.get("backend_pid")
+    if not isinstance(instance_backend_pid, int) or isinstance(instance_backend_pid, bool) or instance_backend_pid <= 0:
+        errors.append("instance_backend_pid_missing")
+    elif backend_info.get("pid") != instance_backend_pid:
+        errors.append("backend_pid_mismatch")
+    if str(backend_info.get("instance_id") or "") != expected_instance_id:
+        errors.append("backend_instance_id_mismatch")
+    try:
+        receipt_backend_path = Path(expected_backend_root)
+        observed_backend_path = Path(str(backend_info.get("backend_root") or ""))
+        backend_root_matches = (
+            receipt_backend_path.is_absolute()
+            and observed_backend_path.is_absolute()
+            and receipt_backend_path.resolve() == _BACKEND_ROOT
+            and observed_backend_path.resolve() == _BACKEND_ROOT
+        )
+    except (OSError, RuntimeError, ValueError):
+        backend_root_matches = False
+    if not backend_root_matches:
+        errors.append("backend_root_mismatch")
+    return {
+        "ok": not errors,
+        "error": "measurement_contaminated" if errors else "",
+        "reasons": errors,
+        "launch_scope": str(receipt.get("launch_scope") or ""),
+        "requested_instance_id": str(receipt.get("requested_instance_id") or ""),
+        "instance_id": expected_instance_id,
+        "run_id": str(receipt.get("run_id") or ""),
+        "backend_pid": instance_backend_pid if isinstance(instance_backend_pid, int) else None,
+        "backend_root": expected_backend_root,
+        "expected_source_fingerprint": expected_fingerprint,
+        "actual_source_fingerprint": str(freshness.get("actual_fingerprint") or ""),
+    }
 
 
 def _wait_backend_health(backend_url: str, token: str, *, timeout_s: float = 45.0) -> bool:
@@ -1666,10 +1812,15 @@ def _start_isolated_bench_project_instance(
     bench_workspace: Path,
     project_workspace: str,
     backend_token: str,
+    launch_receipt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Start a project-scoped Polaris instance for internal factory_bench runs."""
     try:
-        from polaris.cells.instances.internal.service import InstanceSupervisor, default_polaris_root
+        from polaris.cells.instances.internal.service import (
+            InstanceRegistryError,
+            InstanceSupervisor,
+            default_polaris_root,
+        )
     except (ImportError, RuntimeError) as exc:
         return {
             "ok": False,
@@ -1679,40 +1830,74 @@ def _start_isolated_bench_project_instance(
         }
 
     token = backend_token or _DEFAULT_LOCAL_BACKEND_TOKEN
+    receipt = dict(
+        launch_receipt
+        or _new_isolated_bench_launch_receipt(
+            bench_session_id=bench_session_id,
+            run_id="local",
+            project_id=project_id,
+            requested_project_id=project_id,
+            canonical_project_id=project_id,
+            bench_workspace=bench_workspace,
+            project_workspace=project_workspace,
+        )
+    )
     try:
+        receipt_backend_root = resolve_backend_source_root(str(receipt.get("expected_backend_root") or ""))
+        if receipt_backend_root != _BACKEND_ROOT:
+            raise RuntimeError(
+                f"isolated launch receipt source root mismatch: runner={_BACKEND_ROOT} receipt={receipt_backend_root}"
+            )
+        polaris_root = default_polaris_root()
+        supervisor_backend_root = resolve_backend_source_root(polaris_root / "src" / "backend")
+        if supervisor_backend_root != _BACKEND_ROOT:
+            raise RuntimeError(
+                f"instance supervisor source root mismatch: runner={_BACKEND_ROOT} supervisor={supervisor_backend_root}"
+            )
         instance = InstanceSupervisor().start_instance(
             {
-                "instance_id": _bench_project_instance_id(
-                    bench_session_id=bench_session_id,
-                    project_id=project_id,
-                    bench_workspace=bench_workspace,
-                ),
+                "instance_id": str(receipt["instance_id"]),
                 "name": f"{project_id} {project_title}".strip(),
                 "kind": "bench_project",
-                "polaris_root": str(default_polaris_root()),
-                "workspace": project_workspace,
-                "runtime_root": str((Path(project_workspace) / "runtime").resolve()),
+                "polaris_root": str(polaris_root),
+                "workspace": str(receipt["workspace"]),
+                "runtime_root": str(receipt["runtime_root"]),
                 "backend_port": None,
                 "frontend_port": None,
                 "token": token,
                 "backend_reload": False,
                 "frontend_vite": True,
                 "start_frontend": True,
+                "require_fresh_instance": True,
                 "bench": {
                     "session_id": bench_session_id,
                     "project_id": project_id,
                     "level": level,
                     "bench_workspace": str(bench_workspace),
                     "registration_mode": "factory_bench_runner",
+                    "run_id": str(receipt["run_id"]),
+                    "launch_scope": str(receipt["launch_scope"]),
                 },
                 "metadata": {
                     "registered_by": "factory_bench",
                     "internal_test_only": True,
                     "backend_binding": "isolated_backend_instance",
                     "launcher_instance_mode": "isolated",
+                    "instance_launch_receipt": receipt,
                 },
             }
         )
+    except InstanceRegistryError as exc:
+        _logger.error("factory bench isolated instance registry unavailable: %s", exc)
+        return {
+            "ok": False,
+            "error": "instance_registry_unavailable",
+            "failure_class": "platform_failure",
+            "error_code": exc.code,
+            "error_type": type(exc).__name__,
+            "error_detail": str(exc),
+            "platform_error": exc.to_dict(),
+        }
     except (OSError, RuntimeError, ValueError) as exc:
         _logger.debug("factory bench isolated instance start failed", exc_info=True)
         return {
@@ -1725,6 +1910,7 @@ def _start_isolated_bench_project_instance(
         metadata = instance.get("metadata")
         if isinstance(metadata, dict):
             metadata["backend_health"] = "starting"
+    instance["launch_receipt"] = receipt
     instance["ok"] = True
     return instance
 
@@ -1760,81 +1946,58 @@ def map_factory_run_to_chain_results(
     run_status: dict[str, Any],
     audit_bundle: dict[str, Any],
 ) -> dict[str, Any]:
-    """Translate /v2/factory/runs status + audit-bundle into the dict shape
-    previously produced by read_chain_results()."""
-    summary_raw = audit_bundle.get("summary_json") or {}
-    summary_json: dict[str, Any]
-    if isinstance(summary_raw, str):
-        try:
-            parsed_summary = json.loads(summary_raw)
-        except ValueError:
-            summary_json = {}
-        else:
-            summary_json = parsed_summary if isinstance(parsed_summary, dict) else {}
-    elif isinstance(summary_raw, dict):
-        summary_json = cast(dict[str, Any], summary_raw)
-    else:
-        summary_json = {}
+    """Return legacy artifact observations without execution authority.
 
-    gates_raw = audit_bundle.get("gates") or run_status.get("gates") or []
-    gates = gates_raw if isinstance(gates_raw, list) else []
-    qa_gate: dict[str, Any] = next(
-        (cast(dict[str, Any], g) for g in gates if isinstance(g, dict) and g.get("gate_name") == "quality_gate"),
-        {},
-    )
-    qa_passed = bool(qa_gate.get("passed"))
-    qa_ran = bool(qa_gate)
+    ``audit_bundle`` is retained for operator inspection only. Canonical
+    execution state is projected later from Run Ledger, TaskBoundary, and QA
+    verdict facts; no JSON string or prose is parsed here.
+    """
 
-    status = str(run_status.get("status") or "").lower()
-    phase = str(run_status.get("phase") or "").lower()
-    metadata_raw = run_status.get("metadata")
-    metadata: dict[str, Any] = cast(dict[str, Any], metadata_raw) if isinstance(metadata_raw, dict) else {}
-    current_stage = str(metadata.get("current_stage") or run_status.get("current_stage") or "").lower()
-    failed_stage = str(metadata.get("last_failed_stage") or "").lower()
-    stage_hint = failed_stage or current_stage or phase
-
-    exit_class = "hard_failed"
-    if status == "completed" and qa_passed:
-        exit_class = "clean"
-    elif (status == "completed" and qa_ran and not qa_passed) or (status == "failed" and phase == "qa_gate"):
-        exit_class = "qa_failed"
-    elif status == "failed":
-        if "pm" in stage_hint:
-            exit_class = "pm_failed"
-        elif "chief" in stage_hint or "engineer" in stage_hint:
-            exit_class = "chief_engineer_failed"
-        elif "director" in stage_hint:
-            exit_class = "director_partial"
-        elif "qa" in stage_hint or "quality" in stage_hint:
-            exit_class = "qa_failed"
-
-    director = summary_json.get("director") or {}
-    if not director:
-        events_tail_raw = audit_bundle.get("events_tail") or []
-        events_tail = events_tail_raw if isinstance(events_tail_raw, list) else []
-        for evt in reversed(events_tail):
-            if (
-                isinstance(evt, dict)
-                and evt.get("stage") == "director_dispatch"
-                and isinstance(evt.get("result"), dict)
-            ):
-                director = cast(dict[str, Any], evt["result"])
-                break
-
+    summary_raw = audit_bundle.get("summary_json")
+    summary_json = dict(summary_raw) if isinstance(summary_raw, Mapping) else {}
+    director_raw = summary_json.get("director")
+    director = dict(director_raw) if isinstance(director_raw, Mapping) else {}
     return {
-        "qa_ran": qa_ran,
-        "qa_passed": qa_passed,
-        "qa_reason": qa_gate.get("message") or "",
+        "source": LEGACY_BENCH_ARTIFACT_SOURCE,
+        "authoritative": False,
+        "degraded": True,
+        "qa_ran": None,
+        "qa_passed": None,
+        "qa_reason": "",
         "director": {
-            "total": director.get("total") if isinstance(director, dict) else None,
-            "successes": director.get("successes") if isinstance(director, dict) else None,
-            "failures": director.get("failures") if isinstance(director, dict) else None,
-            "blocked": director.get("blocked") if isinstance(director, dict) else None,
+            "total": director.get("total"),
+            "successes": director.get("successes"),
+            "failures": director.get("failures"),
+            "blocked": director.get("blocked"),
         },
         "contract_goal": "",
-        "exit_class": exit_class,
-        "factory_stage_hint": stage_hint,
+        "exit_class": "legacy_unknown",
+        "factory_stage_hint": str(run_status.get("phase") or "").strip().lower(),
     }
+
+
+def project_final_request_refs(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Project stable final-request references from normalized LLM events."""
+
+    keys = (
+        "role",
+        "context_snapshot_ref",
+        "final_request_context_audit_hash",
+        "final_request_evidence_hash",
+        "final_request_evidence_authority_hash",
+    )
+    projected: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for event in events:
+        row = {key: str(event.get(key) or "").strip() for key in keys}
+        if not any(row[key] for key in keys[1:]):
+            continue
+        identity = tuple(row[key] for key in keys)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        projected.append(row)
+    return projected
 
 
 def required_llm_roles_for_factory_record(
@@ -1922,12 +2085,17 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
     for a different brief.
     """
 
-    chain_results = record.get("chain_results")
-    if not isinstance(chain_results, dict):
-        chain_results = {}
-    chain_state = str(record.get("chain_state") or "")
-    chain_exit_code = chain.get("exit_code")
+    del chain
+    canonical = record.get("canonical_projection")
+    canonical_map = canonical if isinstance(canonical, Mapping) else build_canonical_bench_projection(record)
+    execution = canonical_map.get("execution")
+    execution_map = execution if isinstance(execution, Mapping) else {}
     gates = [
+        _bench_gate(
+            "canonical_execution",
+            bool(execution_map.get("ok")),
+            str(execution_map.get("reason_code") or "canonical execution projection missing"),
+        ),
         _bench_gate(
             "plan_artifact_present",
             bool(record.get("has_plan_doc")),
@@ -1937,21 +2105,6 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
             "blueprint_artifact_present",
             bool(record.get("has_blueprint_doc")),
             "blueprint artifact discovered" if record.get("has_blueprint_doc") else "blueprint artifact missing",
-        ),
-        _bench_gate(
-            "qa_verdict_artifact_present",
-            bool(record.get("has_qa_verdict")),
-            "QA verdict artifact discovered" if record.get("has_qa_verdict") else "QA verdict artifact missing",
-        ),
-        _bench_gate(
-            "chain_clean",
-            chain_state == "clean" and chain_exit_code == 0,
-            f"chain_state={chain_state or 'unknown'} exit_code={chain_exit_code}",
-        ),
-        _bench_gate(
-            "integration_qa_passed",
-            chain_results.get("qa_ran") is True and chain_results.get("qa_passed") is True,
-            f"qa_ran={chain_results.get('qa_ran')} qa_passed={chain_results.get('qa_passed')}",
         ),
         _bench_gate(
             "wrong_product_guard",
@@ -1993,14 +2146,6 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
         )
     else:
         gates.append(_bench_gate("real_run_gate", False, "real run gate missing"))
-    run_ledger_status = summarize_run_ledger_projection(record.get("run_ledger_projection"))
-    gates.append(
-        _bench_gate(
-            "run_ledger_projection",
-            bool(run_ledger_status.get("ok")),
-            str(run_ledger_status.get("detail") or "run ledger status missing detail"),
-        )
-    )
     llm_route_audit = record.get("llm_route_audit")
     if isinstance(llm_route_audit, dict):
         gates.append(
@@ -2231,6 +2376,8 @@ def build_bench_backend_audit_context(
         expected_fingerprint=str(freshness.get("expected_fingerprint") or ""),
         actual_fingerprint=str(freshness.get("actual_fingerprint") or ""),
         backend_pid=backend_info_dict.get("pid") if isinstance(backend_info_dict.get("pid"), int) else None,
+        backend_instance_id=str(backend_info_dict.get("instance_id") or ""),
+        backend_root=str(backend_info_dict.get("backend_root") or ""),
         backend_startup_time=str(backend_info_dict.get("startup_time") or ""),
         fingerprint_source=str(backend_info_dict.get("source") or ""),
     )
@@ -2282,6 +2429,9 @@ def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
     """Fold full-chain gates into ``all_checks_passed`` in-place."""
 
     static_checks_passed = bool(record.get("static_checks_passed", record.get("all_checks_passed")))
+    canonical = record.get("canonical_projection")
+    if not isinstance(canonical, Mapping) or canonical.get("source") != CANONICAL_BENCH_PROJECTION_SOURCE:
+        record["canonical_projection"] = build_canonical_bench_projection(record)
     record["run_ledger_projection_status"] = summarize_run_ledger_projection(record.get("run_ledger_projection"))
     gates = build_factory_bench_gates(record, chain)
     record["static_checks_passed"] = static_checks_passed
@@ -3179,6 +3329,9 @@ def main() -> int:
     run_errors: list[str] = []
     failed = 0
     expected_llm_bindings = resolve_expected_llm_bindings()
+    # This run id is part of every isolated launch identity. It must be chosen
+    # before any registry interaction, not only when audit files are written.
+    run_id = _sanitize_run_id(os.environ.get("FACTORY_BENCH_RUN_ID"))
     bench_session_id = os.environ.get("FACTORY_BENCH_SESSION_ID") or ""
     launcher_instance_mode = str(args.launcher_instance_mode or "isolated").strip().lower()
     bench_session_reporting = str(args.bench_session_reporting or "auto").strip().lower()
@@ -3195,6 +3348,7 @@ def main() -> int:
         project_ids=[str(p["id"]) for p in selected],
         total=len(selected),
         metadata={
+            "run_id": run_id,
             "levels": sorted({int(p.get("level") or 0) for p in selected}),
             "launcher_instance_mode": launcher_instance_mode,
             "bench_session_reporting": bench_session_reporting,
@@ -3230,9 +3384,6 @@ def main() -> int:
     ]
     catalog_schema_version = "factory-bench/2"
 
-    # Resolve a single run_id for the entire bench run.
-    # FACTORY_BENCH_RUN_ID env takes precedence; otherwise generate once.
-    run_id = _sanitize_run_id(os.environ.get("FACTORY_BENCH_RUN_ID"))
     audit_dir = base / "audits" / run_id
     audit_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3273,6 +3424,24 @@ def main() -> int:
         project_backend_audit_context = backend_audit_context
         launcher_instance_meta: dict[str, Any] = {"mode": launcher_instance_mode}
         if launcher_instance_mode == "isolated":
+            launch_receipt = _new_isolated_bench_launch_receipt(
+                bench_session_id=bench_session_id,
+                run_id=run_id,
+                project_id=str(pid),
+                requested_project_id=requested_pid,
+                canonical_project_id=canonical_pid,
+                bench_workspace=base,
+                project_workspace=project_workspace,
+            )
+            # Preserve the requested identity in the report if the supervisor
+            # rejects or cannot start it; this never mutates an older record.
+            launcher_instance_meta.update(
+                {
+                    "requested_instance_id": launch_receipt["requested_instance_id"],
+                    "instance_id": launch_receipt["instance_id"],
+                    "launch_receipt": launch_receipt,
+                }
+            )
             isolated_instance = _start_isolated_bench_project_instance(
                 bench_session_id=bench_session_id,
                 project_id=str(pid),
@@ -3281,6 +3450,7 @@ def main() -> int:
                 bench_workspace=base,
                 project_workspace=project_workspace,
                 backend_token=backend_token,
+                launch_receipt=launch_receipt,
             )
             if isolated_instance and bool(isolated_instance.get("ok", True)):
                 project_backend_url = str(isolated_instance.get("backend_url") or backend_url).rstrip("/")
@@ -3290,15 +3460,23 @@ def main() -> int:
                     backend_token=project_backend_token,
                     workspace=project_workspace,
                 )
+                launch_validation = _validate_isolated_bench_launch(
+                    instance=isolated_instance,
+                    receipt=launch_receipt,
+                    backend_context=project_backend_audit_context,
+                )
                 launcher_instance_meta.update(
                     {
-                        "ok": True,
+                        "ok": bool(launch_validation["ok"]),
+                        "requested_instance_id": launch_receipt["requested_instance_id"],
                         "instance_id": isolated_instance.get("instance_id"),
                         "backend_url": isolated_instance.get("backend_url"),
                         "frontend_url": isolated_instance.get("frontend_url"),
+                        "launch_receipt": launch_receipt,
+                        "launch_validation": launch_validation,
                     }
                 )
-                workspace_switch_ok = True
+                workspace_switch_ok = bool(launch_validation["ok"])
             else:
                 workspace_switch_ok = False
                 launcher_instance_meta.update(
@@ -3307,6 +3485,9 @@ def main() -> int:
                         "error": str((isolated_instance or {}).get("error") or "isolated_instance_start_failed"),
                         "error_type": str((isolated_instance or {}).get("error_type") or ""),
                         "error_detail": str((isolated_instance or {}).get("error_detail") or ""),
+                        "failure_class": str((isolated_instance or {}).get("failure_class") or ""),
+                        "error_code": str((isolated_instance or {}).get("error_code") or ""),
+                        "platform_error": (isolated_instance or {}).get("platform_error"),
                     }
                 )
         else:
@@ -3415,7 +3596,11 @@ def main() -> int:
                 "runtime_project_contamination"
                 if runtime_foreign_keys
                 else (
-                    "isolated_instance_start_failed"
+                    "measurement_contaminated"
+                    if launcher_instance_mode == "isolated"
+                    and isinstance(launcher_instance_meta.get("launch_validation"), Mapping)
+                    and not bool(launcher_instance_meta["launch_validation"].get("ok"))
+                    else "isolated_instance_start_failed"
                     if launcher_instance_mode == "isolated"
                     else "workspace_switch_failed"
                 )
@@ -3599,9 +3784,14 @@ def main() -> int:
         # ~L8-45 (container engine) at best_other≈0.1.
         record["wrong_product_suspect"] = bool(contract_goal and best_other > max(0.18, own_overlap + 0.1))
         record["wrong_product_match"] = best_other_id if record["wrong_product_suspect"] else ""
-        record["chain_state"] = grade_chain_state(record["chain_results"], chain.get("exit_code"))
+        record["chain_state"] = "pending_canonical_projection"
         raw_audit_bundle = chain.get("audit_bundle")
         audit_bundle: dict[str, Any] = raw_audit_bundle if isinstance(raw_audit_bundle, dict) else {}
+        task_runtime_projection = audit_bundle.get("task_runtime_projection")
+        if isinstance(task_runtime_projection, Mapping):
+            record["task_runtime_projection"] = dict(task_runtime_projection)
+        elif not isinstance(record.get("task_runtime_projection"), Mapping):
+            record["task_runtime_projection"] = {}
         record.update(project_backend_audit_context)
         record["run_id"] = run_id
         record["project_id"] = pid
@@ -3609,7 +3799,10 @@ def main() -> int:
         record["canonical_project_id"] = canonical_pid
         record["canonical_catalog_project_id"] = canonical_pid
         record["factory_run_id"] = str(chain.get("run_id") or run_id)
+        record["requested_instance_id"] = str(launcher_instance_meta.get("requested_instance_id") or "")
         record["instance_id"] = str(launcher_instance_meta.get("instance_id") or "")
+        record["instance_launch_receipt"] = dict(launcher_instance_meta.get("launch_receipt") or {})
+        record["instance_launch_validation"] = dict(launcher_instance_meta.get("launch_validation") or {})
         record["workspace"] = project_workspace
         record["project_workspace"] = project_workspace
         record["backend_url"] = project_backend_url
@@ -3656,8 +3849,10 @@ def main() -> int:
         )
         required_llm_roles = required_llm_roles_for_factory_record(chain=chain, record=record)
         record["required_llm_roles"] = list(required_llm_roles)
+        llm_events = collect_llm_events(workspace, runtime_dirs, audit_bundle)
+        record["final_request_refs"] = project_final_request_refs(llm_events)
         record["llm_route_audit"] = build_llm_route_audit(
-            collect_llm_events(workspace, runtime_dirs, audit_bundle),
+            llm_events,
             expected_bindings=expected_llm_bindings,
             required_roles=required_llm_roles,
             require_all_director_routes=False,
@@ -3670,6 +3865,9 @@ def main() -> int:
             record,
             audit_bundle,
         )
+        record["canonical_projection"] = build_canonical_bench_projection(record)
+        record["legacy_artifacts"] = record["canonical_projection"]["legacy_artifacts"]
+        record["chain_state"] = grade_chain_state(record["canonical_projection"], chain.get("exit_code"))
         apply_factory_bench_gates(record, chain)
         apply_factory_bench_failure_taxonomy(record)
         convergence = audit_bundle.get("director_convergence")
@@ -3677,12 +3875,13 @@ def main() -> int:
             record["director_convergence"] = convergence
         records.append(record)
         status = "PASS" if record["all_checks_passed"] else "FAIL"
+        canonical_qa = record["canonical_projection"]["qa"]
         print(
             f"[factory-bench] {pid} {status}: chain={record['chain_state']} "
             f"files={record['code_file_count']} source={record.get('source_file_count', '?')} "
             f"plan={record['has_plan_doc']} blueprint={record['has_blueprint_doc']} "
-            f"verdict={record['has_qa_verdict']} qa_ran={record['chain_results']['qa_ran']} "
-            f"qa_passed={record['chain_results']['qa_passed']} director={record['chain_results']['director']} "
+            f"verdict_artifact={record['has_qa_verdict']} qa_authoritative={canonical_qa['authoritative']} "
+            f"qa_passed={canonical_qa['ok']} director_artifact={record['chain_results']['director']} "
             f"goal_overlap={record['goal_brief_overlap']}"
             f"{' [WRONG-PRODUCT? ~' + record['wrong_product_match'] + ']' if record['wrong_product_suspect'] else ''} "
             f"chain_exit={chain.get('exit_code')} ({chain.get('duration_s')}s)",

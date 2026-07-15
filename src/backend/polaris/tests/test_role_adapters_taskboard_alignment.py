@@ -21,6 +21,10 @@ from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapt
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter
 from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 from polaris.kernelone.storage import resolve_runtime_path
 from polaris.kernelone.storage.paths import resolve_signal_path
 
@@ -37,7 +41,7 @@ def _update_task_row(adapter: Any, task_id: Any, **kwargs: Any) -> dict[str, Any
     return row
 
 
-def _claim_task_row_for_test(adapter: Any, task_id: Any) -> str:
+def _claim_task_row_for_test(adapter: Any, task_id: Any) -> TaskRuntimeExecutionAttemptIdentityV1:
     result = adapter.task_runtime.claim_execution(
         task_id,
         worker_id="test-worker",
@@ -46,11 +50,9 @@ def _claim_task_row_for_test(adapter: Any, task_id: Any) -> str:
         selection_source="test_role_adapters_taskboard_alignment",
     )
     assert result.get("success") is True
-    session = result.get("session")
-    assert isinstance(session, dict)
-    session_id = str(session.get("session_id") or "").strip()
-    assert session_id
-    return session_id
+    execution_attempt = result.get("execution_attempt")
+    assert isinstance(execution_attempt, dict)
+    return TaskRuntimeExecutionAttemptIdentityV1.from_record(execution_attempt)
 
 
 def _complete_task_row_for_test(
@@ -59,12 +61,15 @@ def _complete_task_row_for_test(
     *,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    session_id = _claim_task_row_for_test(adapter, task_id)
-    result = adapter.task_runtime.complete_execution(
-        task_id,
-        session_id=session_id,
-        result_summary="test completed",
-        metadata=metadata,
+    identity = _claim_task_row_for_test(adapter, task_id)
+    result = adapter.task_runtime.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="completed",
+            summary="test completed",
+            metadata=metadata or {},
+        )
     )
     assert result.get("success") is True
     row = result.get("task")
@@ -78,12 +83,15 @@ def _fail_task_row_for_test(
     *,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    session_id = _claim_task_row_for_test(adapter, task_id)
-    result = adapter.task_runtime.fail_execution(
-        task_id,
-        session_id=session_id,
-        error="test failed",
-        metadata=metadata,
+    identity = _claim_task_row_for_test(adapter, task_id)
+    result = adapter.task_runtime.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="failed",
+            summary="test failed",
+            metadata=metadata or {},
+        )
     )
     assert result.get("success") is True
     row = result.get("task")
@@ -2484,13 +2492,16 @@ class TestAtomicClaimNextExecution:
             selection_source="test",
         )
         assert claim_result["success"] is True
-        session_id = claim_result["session"]["session_id"]
+        identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(claim_result["execution_attempt"])
 
-        # Suspend the task to make it resumable
-        suspend_result = service.suspend_execution(
-            task_b["id"],
-            session_id=session_id,
-            reason="test_suspend",
+        # Suspend the task to make it resumable.
+        suspend_result = service.settle_execution_attempt(
+            SettleTaskRuntimeExecutionAttemptCommandV1(
+                workspace=identity.workspace,
+                identity=identity,
+                outcome="suspended",
+                summary="test_suspend",
+            )
         )
         assert suspend_result["success"] is True
 

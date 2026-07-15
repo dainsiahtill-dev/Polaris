@@ -28,7 +28,11 @@ from typing import Any
 
 _logger = logging.getLogger(__name__)
 
-_BACKEND_ROOT = Path("/home/dains/Documents/polaris/src/backend")
+_MODULE_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+_BACKEND_ROOT_MARKERS = (
+    Path("polaris/__init__.py"),
+    Path("scripts/factory_bench/backend_fingerprint.py"),
+)
 _FINGERPRINT_SOURCES = (
     "polaris/delivery",
     "polaris/kernelone/runtime",
@@ -44,6 +48,21 @@ _FINGERPRINT_HASH_ALGO = "sha256"
 _FINGERPRINT_TRUNCATE = 16
 
 
+def resolve_backend_source_root(backend_root: Path | str | None = None) -> Path:
+    """Resolve and validate one trusted Polaris backend source root."""
+
+    candidate = Path(backend_root).expanduser() if backend_root is not None else _MODULE_BACKEND_ROOT
+    root = candidate.resolve()
+    missing = [str(marker) for marker in _BACKEND_ROOT_MARKERS if not (root / marker).is_file()]
+    if not root.is_dir() or missing:
+        detail = ", ".join(missing) if missing else "backend directory"
+        raise ValueError(f"invalid Polaris backend source root {root}: missing {detail}")
+    return root
+
+
+_BACKEND_ROOT = resolve_backend_source_root()
+
+
 def compute_source_fingerprint(
     backend_root: Path | str | None = None,
     *,
@@ -52,12 +71,10 @@ def compute_source_fingerprint(
     """Compute a deterministic hash of key backend source files.
 
     Hashes the content of all ``*.py`` files under each source directory/file
-    (sorted by relative path) and returns a truncated hex digest.  Returns ""
-    if no source files are found (e.g. backend_root does not exist).
+    (sorted by relative path) and returns a truncated hex digest. Explicit roots
+    are canonicalized and must contain the Polaris backend markers.
     """
-    root = Path(backend_root) if backend_root else _BACKEND_ROOT
-    if not root.is_dir():
-        return ""
+    root = resolve_backend_source_root(backend_root)
 
     h = hashlib.new(_FINGERPRINT_HASH_ALGO)
     file_count = 0
@@ -168,6 +185,8 @@ def resolve_backend_fingerprint(
             "pid": data.get("pid"),
             "startup_time": str(data.get("startup_time") or ""),
             "workspace": str(data.get("workspace") or ""),
+            "instance_id": str(data.get("instance_id") or ""),
+            "backend_root": str(data.get("backend_root") or ""),
             "source": str(data.get("source") or "runtime/fingerprint"),
         }
 
@@ -182,6 +201,8 @@ def resolve_backend_fingerprint(
             "pid": data.get("pid"),
             "startup_time": str(data.get("timestamp") or ""),
             "workspace": "",
+            "instance_id": "",
+            "backend_root": "",
             "source": "health",
         }
 
@@ -192,6 +213,8 @@ def resolve_backend_fingerprint(
         "pid": None,
         "startup_time": "",
         "workspace": "",
+        "instance_id": "",
+        "backend_root": "",
         "source": "unreachable",
     }
 
@@ -278,6 +301,8 @@ def build_run_backend_metadata(
     expected_fingerprint: str = "",
     actual_fingerprint: str = "",
     backend_pid: int | None = None,
+    backend_instance_id: str = "",
+    backend_root: str = "",
     backend_startup_time: str = "",
     fingerprint_source: str = "",
 ) -> dict[str, Any]:
@@ -293,6 +318,8 @@ def build_run_backend_metadata(
         "expected_source_fingerprint": expected_fingerprint,
         "actual_backend_fingerprint": actual_fingerprint,
         "backend_pid": backend_pid,
+        "backend_instance_id": backend_instance_id,
+        "backend_root": backend_root,
         "backend_startup_time": backend_startup_time,
         "fingerprint_source": fingerprint_source,
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

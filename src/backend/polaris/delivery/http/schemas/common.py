@@ -169,6 +169,7 @@ class FactoryRunAuditBundleResponse(BaseModel):
     run_identity: dict[str, Any] | None = None
     control_plane_projection: dict[str, Any] | None = None
     run_ledger_projection: dict[str, Any] | None = None
+    task_runtime_projection: dict[str, Any] | None = None
     control_plane_projection_error: dict[str, Any] | None = None
 
 

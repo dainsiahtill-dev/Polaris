@@ -1,24 +1,128 @@
 from __future__ import annotations
 
+import inspect
+import shutil
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from dataclasses import fields
+from typing import TYPE_CHECKING, Callable, get_args, get_type_hints
 
 import pytest
-from polaris.cells.events.fact_stream.public.service import (
+from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
+    AppendIfGuardedSnapshotCommandV1,
+    BootstrapFactStreamWorkspaceCommandV1,
+    EnrollFactStreamStreamsCommandV1,
+    FactStreamMaintenanceReceiptV1,
+    ProvisionFactStreamLockAuthorityCommandV1,
+)
+from polaris.cells.events.fact_stream.public.service import (
     FactStreamError,
+    FactStreamProvenanceV1,
     QueryFactEventsV1,
+    QueryFactStreamHeadV1,
     append_fact_event,
+    append_if_guarded_snapshot,
+    enroll_fact_stream_streams,
+    provision_fact_stream_lock_authority,
     query_fact_events,
+    query_fact_stream_head,
+)
+from polaris.cells.events.fact_stream.public.workspace_bootstrap import bootstrap_fact_stream_workspace
+from polaris.kernelone.events.sourcing import (
+    ExpectedSequenceDriftError,
+    IdempotencyConflictError,
+    JsonlEventStore,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _annotation_references_maintenance_receipt(annotation: object) -> bool:
+    """Return whether an input annotation admits a maintenance receipt DTO."""
+
+    return annotation is FactStreamMaintenanceReceiptV1 or any(
+        _annotation_references_maintenance_receipt(argument) for argument in get_args(annotation)
+    )
+
+
+def _bootstrap_workspace(workspace: Path, *streams: str) -> None:
+    """Explicitly prepare the authority required by ordinary FactStream I/O."""
+
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=streams,
+            maintenance_reason="test_owned_fact_stream_bootstrap",
+        )
+    )
+
+
+def test_maintenance_receipts_are_non_authoritative_and_services_revalidate_physical_state(
+    tmp_path: Path,
+) -> None:
+    """Receipt DTOs are outputs only; every effect boundary accepts commands."""
+
+    command_types = (
+        ProvisionFactStreamLockAuthorityCommandV1,
+        EnrollFactStreamStreamsCommandV1,
+        BootstrapFactStreamWorkspaceCommandV1,
+        AppendFactEventCommandV1,
+        AppendIfGuardedSnapshotCommandV1,
+    )
+    service_functions: tuple[Callable[..., object], ...] = (
+        provision_fact_stream_lock_authority,
+        enroll_fact_stream_streams,
+        bootstrap_fact_stream_workspace,
+        append_fact_event,
+        append_if_guarded_snapshot,
+    )
+
+    for command_type in command_types:
+        command_hints = get_type_hints(command_type)
+        assert all(
+            not _annotation_references_maintenance_receipt(annotation)
+            for annotation in command_hints.values()
+        )
+        assert all(field_info.name != "maintenance_receipt" for field_info in fields(command_type))
+
+    for service_function in service_functions:
+        parameter_hints = get_type_hints(service_function)
+        assert tuple(inspect.signature(service_function).parameters) == ("command",)
+        assert all(
+            not _annotation_references_maintenance_receipt(annotation)
+            for name, annotation in parameter_hints.items()
+            if name != "return"
+        )
+
+    workspace = tmp_path / "workspace"
+    authority_root = tmp_path / "authority"
+    workspace.mkdir()
+    receipt = provision_fact_stream_lock_authority(
+        ProvisionFactStreamLockAuthorityCommandV1(
+            workspace=str(workspace),
+            maintenance_reason="receipt_non_authority_regression",
+            platform_lock_root=str(authority_root),
+        )
+    )
+    assert isinstance(receipt, FactStreamMaintenanceReceiptV1)
+
+    shutil.rmtree(authority_root)
+    with pytest.raises(FactStreamError):
+        enroll_fact_stream_streams(
+            EnrollFactStreamStreamsCommandV1(
+                workspace=str(workspace),
+                streams=("task_runtime.execution",),
+                maintenance_reason="receipt_non_authority_regression",
+                platform_lock_root=str(authority_root),
+            )
+        )
+
+
 def test_append_fact_event_and_query_roundtrip(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "task_runtime.execution")
 
     appended = append_fact_event(
         AppendFactEventCommandV1(
@@ -51,9 +155,67 @@ def test_append_fact_event_and_query_roundtrip(tmp_path: Path) -> None:
     assert queried.events[0]["task_id"] == "task-1"
 
 
+def test_query_fact_stream_head_projects_next_expected_sequence(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "task_runtime.execution")
+    query = QueryFactStreamHeadV1(
+        workspace=str(workspace),
+        stream="task_runtime.execution",
+    )
+
+    empty_head = query_fact_stream_head(query)
+    assert empty_head.current_seq == 0
+    assert empty_head.next_expected_seq == 1
+    assert empty_head.storage_path == "runtime/events/task_runtime.execution.jsonl"
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="created",
+            payload={"task_id": "task-head"},
+            source="runtime.task_runtime",
+            task_id="task-head",
+            expected_seq=empty_head.next_expected_seq,
+        )
+    )
+
+    advanced_head = query_fact_stream_head(query)
+    assert advanced_head.current_seq == 1
+    assert advanced_head.next_expected_seq == 2
+
+
+def test_stream_enrollment_projects_verified_lock_key_identity(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    provision_fact_stream_lock_authority(
+        ProvisionFactStreamLockAuthorityCommandV1(
+            workspace=str(workspace),
+            streams=(),
+            maintenance_reason="test_verified_key_identity",
+        )
+    )
+
+    receipt = enroll_fact_stream_streams(
+        EnrollFactStreamStreamsCommandV1(
+            workspace=str(workspace),
+            streams=("task_runtime.execution",),
+            maintenance_reason="test_verified_key_identity",
+        )
+    )
+
+    proof = receipt.proofs[0]
+    key = proof.lock_keys[0]
+    assert proof.final_validation is True
+    assert key.identity.device >= 0
+    assert key.identity.inode >= 1
+
+
 def test_append_fact_event_is_idempotent_by_key(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "task_runtime.execution")
 
     command = AppendFactEventCommandV1(
         workspace=str(workspace),
@@ -83,9 +245,150 @@ def test_append_fact_event_is_idempotent_by_key(tmp_path: Path) -> None:
     assert queried.total == 1
 
 
+def test_append_fact_event_records_typed_transition_provenance(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace, "roles.kernel.turn_outcomes")
+    provenance = FactStreamProvenanceV1(
+        workspace=str(workspace.resolve()),
+        run_id="run-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        transition_id="transition-1",
+    )
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="roles.kernel.turn_outcomes",
+            event_type="turn_outcome_committed",
+            payload={"provenance": provenance.to_record(), "outcome": {"status": "completed"}},
+            source="roles.kernel.transaction",
+            run_id="run-1",
+            task_id="task-1",
+            provenance=provenance,
+            idempotency_key="turn-outcome:transition-1",
+        )
+    )
+
+    event = query_fact_events(
+        QueryFactEventsV1(workspace=str(workspace), stream="roles.kernel.turn_outcomes", limit=10)
+    ).events[0]
+    assert event["metadata"]["provenance"] == provenance.to_record()
+    assert event["metadata"]["storage_identity"]["workspace_abs"] == str(workspace.resolve())
+
+
+def test_append_fact_event_rejects_provenance_from_another_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    other_workspace = tmp_path / "other-workspace"
+    workspace.mkdir()
+    other_workspace.mkdir()
+    _bootstrap_workspace(workspace, "roles.kernel.turn_outcomes")
+    provenance = FactStreamProvenanceV1(
+        workspace=str(other_workspace.resolve()),
+        run_id="run-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        transition_id="transition-1",
+    )
+
+    with pytest.raises(FactStreamError, match="provenance workspace"):
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=str(workspace),
+                stream="roles.kernel.turn_outcomes",
+                event_type="turn_outcome_committed",
+                payload={"provenance": provenance.to_record()},
+                source="roles.kernel.transaction",
+                provenance=provenance,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("command_run_id", "command_task_id", "mismatch_field"),
+    [
+        ("run-stale", "task-1", "run_id"),
+        ("run-1", "task-stale", "task_id"),
+    ],
+)
+def test_append_fact_event_rejects_contradictory_provenance_identity(
+    tmp_path: Path,
+    command_run_id: str,
+    command_task_id: str,
+    mismatch_field: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace, "roles.kernel.turn_outcomes")
+    provenance = FactStreamProvenanceV1(
+        workspace=str(workspace.resolve()),
+        run_id="run-1",
+        task_id="task-1",
+        turn_id="turn-1",
+        transition_id="transition-1",
+    )
+
+    with pytest.raises(FactStreamError) as exc_info:
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=str(workspace),
+                stream="roles.kernel.turn_outcomes",
+                event_type="turn_outcome_committed",
+                payload={"provenance": provenance.to_record()},
+                source="roles.kernel.transaction",
+                run_id=command_run_id,
+                task_id=command_task_id,
+                provenance=provenance,
+            )
+        )
+
+    assert exc_info.value.code == "provenance_mismatch"
+    assert exc_info.value.details["fields"] == (mismatch_field,)
+    assert (
+        query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="roles.kernel.turn_outcomes")).total == 0
+    )
+
+
+def test_append_fact_event_promotes_provenance_when_optional_command_identity_is_empty(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace, "roles.kernel.turn_outcomes")
+    provenance = FactStreamProvenanceV1(
+        workspace=str(workspace.resolve()),
+        run_id="run-from-provenance",
+        task_id="task-from-provenance",
+        turn_id="turn-1",
+        transition_id="transition-1",
+    )
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="roles.kernel.turn_outcomes",
+            event_type="turn_outcome_committed",
+            payload={"provenance": provenance.to_record()},
+            source="roles.kernel.transaction",
+            run_id=" ",
+            task_id=None,
+            provenance=provenance,
+        )
+    )
+
+    event = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="roles.kernel.turn_outcomes")).events[
+        0
+    ]
+    assert event["metadata"]["run_id"] == provenance.run_id
+    assert event["metadata"]["task_id"] == provenance.task_id
+    assert event["aggregate_id"] == provenance.task_id
+
+
 def test_query_fact_events_pagination(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "taskboard.terminal.events")
 
     for idx in range(3):
         append_fact_event(
@@ -130,6 +433,7 @@ def test_append_fact_event_default_expected_seq_is_none_and_assigns_seq_one(
     """Default append behaviour is unchanged: no expected_seq → next free seq."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "task_runtime.execution")
 
     appended = append_fact_event(
         AppendFactEventCommandV1(
@@ -163,6 +467,7 @@ def test_append_fact_event_expected_seq_match_succeeds(tmp_path: Path) -> None:
     """CAS path: caller supplies expected_seq matching next free → append lands."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "ledger.expected_seq")
 
     first = append_fact_event(
         AppendFactEventCommandV1(
@@ -209,6 +514,7 @@ def test_append_fact_event_expected_seq_drift_fails_closed_and_does_not_append(
     """CAS drift must raise FactStreamError and not produce any new event."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "ledger.expected_seq.drift")
 
     append_fact_event(
         AppendFactEventCommandV1(
@@ -239,6 +545,8 @@ def test_append_fact_event_expected_seq_drift_fails_closed_and_does_not_append(
 
     assert exc_info.value.code == "expected_seq_drift"
     assert exc_info.value.details.get("expected_seq") == 99
+    assert isinstance(exc_info.value.__cause__, ExpectedSequenceDriftError)
+    assert exc_info.value.__cause__.code == "expected_seq_drift"
 
     # Crucially: no second event was written.
     queried = query_fact_events(
@@ -261,6 +569,7 @@ def test_append_fact_event_idempotent_hit_with_mismatched_expected_seq_fails(
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "ledger.expected_seq.idem")
 
     command = AppendFactEventCommandV1(
         workspace=str(workspace),
@@ -295,6 +604,8 @@ def test_append_fact_event_idempotent_hit_with_mismatched_expected_seq_fails(
     assert exc_info.value.code == "expected_seq_drift"
     assert exc_info.value.details.get("existing_seq") == 1
     assert exc_info.value.details.get("expected_seq") == 42
+    assert isinstance(exc_info.value.__cause__, ExpectedSequenceDriftError)
+    assert exc_info.value.__cause__.code == "expected_seq_drift"
 
     # Confirm we did NOT write a duplicate event.
     queried = query_fact_events(
@@ -316,6 +627,7 @@ def test_append_fact_event_idempotent_hit_with_matching_expected_seq_succeeds(
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "ledger.expected_seq.idem.match")
 
     first = append_fact_event(
         AppendFactEventCommandV1(
@@ -363,6 +675,7 @@ def test_append_fact_event_idempotent_hit_with_matching_expected_seq_succeeds(
 def test_append_fact_event_concurrent_idempotency_is_atomic(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "roles.kernel.turn_outcomes")
     command = AppendFactEventCommandV1(
         workspace=str(workspace),
         stream="roles.kernel.turn_outcomes",
@@ -392,6 +705,7 @@ def test_append_fact_event_concurrent_idempotency_is_atomic(tmp_path: Path) -> N
 def test_append_fact_event_rejects_idempotency_key_payload_conflict(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_workspace(workspace, "roles.kernel.turn_outcomes")
     append_fact_event(
         AppendFactEventCommandV1(
             workspace=str(workspace),
@@ -420,3 +734,58 @@ def test_append_fact_event_rejects_idempotency_key_payload_conflict(tmp_path: Pa
         )
 
     assert exc_info.value.code == "idempotency_conflict"
+    assert isinstance(exc_info.value.__cause__, IdempotencyConflictError)
+    assert exc_info.value.__cause__.code == "idempotency_conflict"
+
+
+def test_strict_fact_stream_public_append_and_query_preserve_utf8(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace, "strict.public")
+
+    appended = append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="strict.public",
+            event_type="recorded",
+            source="test",
+            payload={"message": "中文"},
+            expected_seq=1,
+            durability="fsync",
+            strict_integrity=True,
+        )
+    )
+
+    queried = query_fact_events(
+        QueryFactEventsV1(workspace=str(workspace), stream="strict.public", strict_integrity=True)
+    )
+    head = query_fact_stream_head(
+        QueryFactStreamHeadV1(workspace=str(workspace), stream="strict.public", strict_integrity=True)
+    )
+
+    assert appended.appended_seq == 1
+    assert queried.events[0]["payload"]["message"] == "中文"
+    assert head.next_expected_seq == 2
+
+
+def test_strict_fact_stream_public_query_exposes_torn_tail_evidence(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace, "strict.torn.public")
+    store = JsonlEventStore(str(workspace))
+    path = store._kernel_fs.resolve_path(store.stream_logical_path("strict.torn.public"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"schema_version":1', encoding="utf-8")
+
+    with pytest.raises(FactStreamError) as caught:
+        query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(workspace),
+                stream="strict.torn.public",
+                strict_integrity=True,
+            )
+        )
+
+    assert caught.value.code == "strict_stream_corruption"
+    assert caught.value.details["strict_failure_code"] == "torn_tail"
+    assert caught.value.details["recovery_required"] is True

@@ -173,6 +173,7 @@ def test_stream_continues_after_tool_results_with_transcript_context(monkeypatch
         message="帮我阅读并总结代码",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "stream-transcript"},
     )
 
     async def _collect() -> list[dict[str, object]]:
@@ -279,6 +280,7 @@ def test_stream_executes_native_tool_calls_without_text_wrapper(monkeypatch) -> 
         message="直接读取并总结 README",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "stream-native-tool"},
     )
 
     async def _collect() -> list[dict[str, object]]:
@@ -381,6 +383,7 @@ def test_stream_executes_normalized_tool_calls_even_with_anthropic_provider_meta
         message="直接读取并总结 README",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "stream-anthropic-tool"},
     )
 
     async def _collect() -> list[dict[str, object]]:
@@ -411,11 +414,8 @@ def test_stream_executes_normalized_tool_calls_even_with_anthropic_provider_meta
     )
 
 
-def test_stream_repeated_identical_tool_cycle_emits_safety_error(monkeypatch) -> None:
-    """TransactionKernel single-turn semantics: one failed tool call + finalization.
-
-    New architecture has no multi-turn stall loop.
-    """
+def test_stream_failed_tool_batch_fails_closed(monkeypatch) -> None:
+    """A decoded batch containing only failed tool results cannot finalize."""
     kernel = _build_kernel()
 
     monkeypatch.setattr(
@@ -476,6 +476,7 @@ def test_stream_repeated_identical_tool_cycle_emits_safety_error(monkeypatch) ->
         message="继续",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "stream-failed-tool"},
     )
 
     async def _collect() -> list[dict[str, object]]:
@@ -489,10 +490,11 @@ def test_stream_repeated_identical_tool_cycle_emits_safety_error(monkeypatch) ->
     tool_calls = [item for item in events if str(item.get("type") or "") == "tool_call"]
     tool_results = [item for item in events if str(item.get("type") or "") == "tool_result"]
 
-    assert not errors
+    assert errors
+    assert all("tool_dispatch_failed" in str(item.get("error") or "") for item in errors)
     assert len(tool_calls) == 1
-    assert len(tool_results) == 1
-    assert any(str(item.get("type") or "") == "complete" for item in events)
+    assert not tool_results
+    assert not any(str(item.get("type") or "") == "complete" for item in events)
 
 
 def test_stream_compacts_large_tool_receipts_in_transcript(monkeypatch) -> None:
@@ -578,6 +580,7 @@ def test_stream_compacts_large_tool_receipts_in_transcript(monkeypatch) -> None:
         message="读取并总结 README",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "stream-large-receipt"},
     )
 
     async def _collect() -> list[dict[str, object]]:
@@ -673,6 +676,7 @@ def test_stream_keeps_read_file_receipt_when_context_budget_allows(monkeypatch) 
         message="总结这个项目代码",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "stream-medium-receipt"},
     )
 
     async def _collect() -> list[dict[str, object]]:
@@ -731,6 +735,7 @@ def test_stream_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
         message="你能调用哪些工具",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "stream-code-block"},
     )
 
     async def _collect() -> list[dict[str, object]]:
@@ -781,6 +786,7 @@ def test_stream_thinking_only_response_emits_explicit_error(monkeypatch) -> None
         message="给我结论",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "stream-thinking-only"},
     )
 
     async def _collect() -> list[dict[str, object]]:
@@ -829,6 +835,7 @@ def test_stream_blank_response_emits_explicit_error(monkeypatch) -> None:
         message="给我结论",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "stream-blank"},
     )
 
     async def _collect() -> list[dict[str, object]]:
@@ -926,6 +933,7 @@ def test_run_continues_after_tool_results_with_transcript_context(monkeypatch) -
         message="帮我阅读并总结代码",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "run-transcript"},
         validate_output=False,
     )
 
@@ -956,11 +964,8 @@ def test_run_continues_after_tool_results_with_transcript_context(monkeypatch) -
     assert result.tool_results[0]["tool"] == "read_file"
 
 
-def test_run_repeated_identical_tool_cycle_does_not_trigger_stall(monkeypatch) -> None:
-    """Single-turn run(): one failed tool call + finalization completes normally.
-
-    TransactionKernel has no multi-turn stall loop.
-    """
+def test_run_failed_tool_batch_fails_closed_before_finalization(monkeypatch) -> None:
+    """A failed tool batch stops before the LLM_ONCE finalization call."""
     kernel = _build_kernel()
     call_count = [0]
 
@@ -1023,16 +1028,16 @@ def test_run_repeated_identical_tool_cycle_does_not_trigger_stall(monkeypatch) -
         message="继续",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "run-failed-tool"},
         validate_output=False,
     )
 
     result = asyncio.run(kernel.run("pm", request))
 
-    assert result.error is None
-    assert result.is_complete is True
-    assert call_count[0] == 2
-    assert len(result.tool_calls) == 1
-    assert len(result.tool_results) == 1
+    assert "tool_dispatch_failed" in str(result.error or "")
+    assert result.is_complete is False
+    assert call_count[0] == 1
+    assert not result.tool_results
 
 
 def test_run_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
@@ -1107,6 +1112,7 @@ def test_run_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
         message="你能调用哪些工具",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "run-code-block"},
         validate_output=False,
     )
 
@@ -1163,6 +1169,7 @@ def test_run_thinking_only_response_returns_explicit_error(monkeypatch) -> None:
         message="给我结论",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "run-thinking-only"},
         validate_output=False,
     )
 
@@ -1216,6 +1223,7 @@ def test_run_blank_response_returns_explicit_error(monkeypatch) -> None:
         message="给我结论",
         history=[],
         context_override={},
+        metadata={"turn_request_id": "run-blank"},
         validate_output=False,
     )
 

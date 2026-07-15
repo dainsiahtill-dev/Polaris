@@ -30,7 +30,9 @@ from polaris.cells.roles.kernel.internal.kernel.task_boundary import (
 )
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion import (
     MISSING_DISPATCH_COMPLETION_ERROR,
+    build_task_boundary_ledger_append_failure_verdict,
     record_missing_dispatch_lifecycle_receipt,
+    task_boundary_ledger_append_failure_error,
 )
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
@@ -223,6 +225,19 @@ class StreamEventProjector:
             tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_metadata(metadata),
         )
         task_boundary_error = _task_boundary_error_message(task_boundary_verdict, metadata)
+        control_plane_error = task_boundary_ledger_append_failure_error(task_boundary_verdict)
+        if control_plane_error:
+            self._record_projection_outcome(success=False, reason="stream control-plane failure")
+            return await self._publish_result(
+                {
+                    "type": "error",
+                    "error": control_plane_error,
+                    "error_type": "control_plane_failure",
+                    "turn_id": event.turn_id,
+                    "metadata": dict(metadata),
+                },
+                should_stop=True,
+            )
         if lifecycle_receipt is not None:
             # Dropped required-write dispatch outranks the task-boundary error:
             # the missing materialization is a symptom of the dropped dispatch.
@@ -322,9 +337,20 @@ class StreamEventProjector:
                 needs_followup_workflow=False,
                 evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
             )
-        except (OSError, RuntimeError, TypeError, ValueError):
-            logger.debug("failed to append stream director task boundary verdict", exc_info=True)
-            return None
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            run_id = str(self.request.run_id or turn_id)
+            logger.error(
+                "Stream TaskBoundary Run Ledger append failed: run_id=%s turn_id=%s error_type=%s",
+                run_id,
+                turn_id,
+                type(exc).__name__,
+                exc_info=True,
+            )
+            return build_task_boundary_ledger_append_failure_verdict(
+                error=exc,
+                run_id=run_id,
+                turn_id=turn_id,
+            )
 
     async def _publish_result(
         self,
@@ -353,4 +379,7 @@ def _lift_completion_audit_evidence(metadata: dict[str, Any], monitoring: dict[s
 
 
 def _task_boundary_error_message(verdict: dict[str, Any] | None, metadata: dict[str, Any]) -> str | None:
-    return project_task_boundary_failure_to_metadata(metadata, verdict)
+    task_boundary_error = project_task_boundary_failure_to_metadata(metadata, verdict)
+    if task_boundary_error is None:
+        return None
+    return task_boundary_ledger_append_failure_error(verdict) or task_boundary_error

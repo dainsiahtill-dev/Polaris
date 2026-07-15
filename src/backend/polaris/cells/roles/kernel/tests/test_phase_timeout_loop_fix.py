@@ -56,8 +56,23 @@ def _make_executor(
     guard_mode: Literal["strict", "warn", "off"] = "warn",
     role_id: str = "",
 ) -> ToolBatchExecutor:
+    async def _tool_runtime(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        file_path = str(arguments.get("file") or arguments.get("path") or "")
+        result: dict[str, Any] = {
+            "success": True,
+            "result": {"file": file_path, "ok": True},
+        }
+        if tool_name not in {"read_file", "glob", "repo_rg"}:
+            result["effect_receipt"] = {
+                "schema_version": "effect_receipt.v1",
+                "operation": tool_name,
+                "file": file_path,
+                "changed_files": [file_path] if file_path else [],
+            }
+        return result
+
     return ToolBatchExecutor(
-        tool_runtime=AsyncMock(),
+        tool_runtime=AsyncMock(side_effect=_tool_runtime),
         config=TransactionConfig(mutation_guard_mode=guard_mode, role_id=role_id),
         emit_event=mock_emit_event,
         guard_assert_single_tool_batch=mock_guard_assert,

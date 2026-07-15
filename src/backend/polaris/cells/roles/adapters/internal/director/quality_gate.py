@@ -44,7 +44,7 @@ from .artifact_quality_diagnostics import (
     _parse_missing_declared_target_files,
     _relative_import_repair_target_candidates,
 )
-from .contract_verify import resolve_contract_step_verify_command
+from .contract_verify import resolve_contract_step_verify
 from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
 from .materialization_quality_boundary import run_materialization_quality_public_boundary
@@ -1356,7 +1356,11 @@ def _collect_step_verify_errors(
         assess_legacy_step_verify_command_safety,
     )
 
-    verify = resolve_contract_step_verify_command(context)
+    resolution = resolve_contract_step_verify(context, task=task)
+    if resolution.disposition == "deferred":
+        _record_deferred_step_verify_obligation(context, resolution.to_dict())
+        return []
+    verify = resolution.command
     if not verify:
         return []
     safety = assess_legacy_step_verify_command_safety(verify)
@@ -1415,6 +1419,23 @@ def _collect_step_verify_errors(
         workspace_name=workspace_name,
         context=context,
     )
+
+
+def _record_deferred_step_verify_obligation(
+    context: dict[str, Any] | None,
+    resolution: Mapping[str, Any],
+) -> None:
+    """Record a deferred project verifier without treating it as a failure."""
+
+    if not isinstance(context, dict):
+        return
+    record = dict(resolution)
+    existing = context.get("director_task_boundary_deferred_verification_obligations")
+    if isinstance(existing, list):
+        if record not in existing:
+            existing.append(record)
+        return
+    context["director_task_boundary_deferred_verification_obligations"] = [record]
 
 
 _STEP_VERIFY_NODE_ENV_COMMAND_RE = re.compile(
@@ -1927,9 +1948,7 @@ def _filter_project_completion_errors_to_task_boundary(
         return errors
 
     issues_by_raw = {
-        artifact_quality_issue_raw(issue): issue
-        for issue in issue_payloads
-        if artifact_quality_issue_raw(issue)
+        artifact_quality_issue_raw(issue): issue for issue in issue_payloads if artifact_quality_issue_raw(issue)
     }
     retained: list[str] = []
     deferred: list[str] = []
@@ -2026,6 +2045,7 @@ def _collect_materialization_quality_errors(
     all_affected_files: list[str],
     workspace_name: str,
     context: dict[str, Any] | None = None,
+    task_boundary: bool = False,
 ) -> list[str]:
     errors, _issues = _collect_materialization_quality_findings(
         adapter,
@@ -2033,6 +2053,7 @@ def _collect_materialization_quality_errors(
         all_affected_files=all_affected_files,
         workspace_name=workspace_name,
         context=context,
+        task_boundary=task_boundary,
     )
     return errors
 
@@ -2044,9 +2065,10 @@ def _collect_materialization_quality_findings(
     all_affected_files: list[str],
     workspace_name: str,
     context: dict[str, Any] | None = None,
+    task_boundary: bool = False,
 ) -> tuple[list[str], tuple[dict[str, Any], ...]]:
     workspace_full = str(getattr(adapter, "workspace", "") or "")
-    step_target = _single_file_step_target(context) or _single_file_step_target(task)
+    step_target = "" if task_boundary else (_single_file_step_target(context) or _single_file_step_target(task))
     if step_target:
         # Adversarial-review C-fix: a pinned single-file step turn is judged
         # only on the file it owns. Scanning package.json or other affected
@@ -2309,6 +2331,7 @@ def _run_post_llm_materialization_runtime_guard(
         all_affected_files=_materialization_quality_scan_paths(changed_files, repair_tool_results),
         workspace_name=workspace_name,
         context=context,
+        task_boundary=True,
     )
     if not post_repair_errors:
         return [], {"attempted": False, "reason": "post_llm_artifact_quality_clean"}
@@ -6253,9 +6276,13 @@ def _can_accept_existing_workspace_scope(
     task: dict[str, Any],
     requires_fresh_materialization: bool,
     write_tool_evidence: bool,
-    primary_llm_summary: dict[str, Any] | None,
 ) -> bool:
-    """Return True when no-diff execution can complete from existing scope evidence."""
+    """Return whether authoritative evidence permits a no-diff completion.
+
+    Provider prose and provider availability never authorize completion. A
+    task requiring fresh materialization must either carry a successful write
+    receipt or be a verification-only task over declared existing targets.
+    """
     if not requires_fresh_materialization:
         return True
     if write_tool_evidence:
@@ -6275,23 +6302,14 @@ def _can_accept_existing_workspace_scope(
     ):
         return False
     phase = str(task.get("phase") or metadata.get("phase") or "").strip().lower()
-    if phase in {"verification", "validation", "verify", "qa", "test", "testing"} and _task_has_declared_target_files(
-        task
-    ):
-        return True
-    primary_summary = primary_llm_summary or {}
-    if bool(primary_summary.get("success")) and _safe_int(primary_summary.get("content_length")) > 0:
-        return True
-    error = str(primary_summary.get("error") or "").strip().lower()
-    transient_unavailable_hints = (
-        "single_batch_contract_violation",
-        "circuit_open",
-        "too many requests",
-        "429",
-        "rate limit",
-        "rate_limit",
-    )
-    return any(hint in error for hint in transient_unavailable_hints)
+    return phase in {
+        "verification",
+        "validation",
+        "verify",
+        "qa",
+        "test",
+        "testing",
+    } and _task_has_declared_target_files(task)
 
 
 def _director_direct_text_patch_only_enabled(context: dict[str, Any]) -> bool:

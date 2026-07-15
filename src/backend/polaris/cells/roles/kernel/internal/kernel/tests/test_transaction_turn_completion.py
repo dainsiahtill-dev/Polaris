@@ -147,6 +147,69 @@ def test_completion_owner_fails_when_task_boundary_verdict_fails(monkeypatch: py
     context_gateway.record_projection_outcome.assert_called_once_with(success=False, tokens_used=11)
 
 
+def test_completion_owner_fails_closed_when_task_boundary_ledger_append_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        completion,
+        "get_output_parser",
+        lambda _kernel: SimpleNamespace(
+            parse_thinking=lambda content: SimpleNamespace(clean_content=content, thinking=None),
+            extract_json=lambda _content: None,
+        ),
+    )
+    monkeypatch.setattr(completion, "_commit_turn_to_snapshot", lambda **_: None)
+
+    def raise_ledger_write_error(**_: Any) -> dict[str, Any]:
+        raise OSError("ledger volume is read-only")
+
+    monkeypatch.setattr(
+        completion,
+        "append_role_turn_task_boundary_verdict",
+        raise_ledger_write_error,
+    )
+
+    context_gateway = MagicMock(record_projection_outcome=MagicMock(return_value={"route_weight": 0.03}))
+    result = completion.build_transaction_turn_completion_result(
+        kernel=RoleExecutionKernel.create_default(workspace="."),
+        role="director",
+        profile=cast(RoleProfile, _Profile()),
+        request=cast(RoleTurnRequest, _Request()),
+        fingerprint=SimpleNamespace(full_hash="abc"),
+        turn_id="turn-ledger-failure",
+        tk_result={
+            "kind": "final_answer",
+            "visible_content": "done",
+            "batch_receipt": {},
+            "metrics": {"duration_ms": 7, "llm_calls": 1, "tool_calls": 0},
+            "ledger": {"events": []},
+        },
+        response_schema=None,
+        runtime_tool_policy_audit={"tool_policy_mode": "native"},
+        tool_filter_audit=None,
+        context_gateway=context_gateway,
+        context_result=SimpleNamespace(token_estimate=11),
+    )
+
+    assert result.is_complete is False
+    assert result.error == (
+        "control_plane_failure:run_ledger_append_failed: TaskBoundary verdict could not be committed to the Run Ledger"
+    )
+    verdict = result.metadata["task_boundary_verdict"]
+    assert verdict["failure_class"] == "RUN_LEDGER_APPEND_FAILED"
+    assert verdict["responsible_layer"] == "execution_control_plane"
+    assert verdict["exception_evidence"] == {
+        "operation": "append_task_boundary_verdict",
+        "exception_type": "OSError",
+        "message": "ledger volume is read-only",
+    }
+    assert result.metadata["task_boundary_failed"] is True
+    assert result.metadata["task_boundary_failure_class"] == "RUN_LEDGER_APPEND_FAILED"
+    assert result.metadata["failure_evidence"][0]["responsible_layer"] == "execution_control_plane"
+    assert result.metadata["failure_evidence"][0]["metadata"]["exception_evidence"] == verdict["exception_evidence"]
+    context_gateway.record_projection_outcome.assert_called_once_with(success=False, tokens_used=11)
+
+
 def test_completion_owner_fails_closed_when_required_write_has_no_dispatch_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -241,15 +304,19 @@ def test_completion_owner_does_not_report_missing_dispatch_when_batch_has_eviden
     monkeypatch.setattr(completion, "_commit_turn_to_snapshot", lambda **_: None)
     task_boundary_calls: list[dict[str, Any]] = []
     lifecycle_events: list[dict[str, Any]] = []
-    monkeypatch.setattr(
-        completion,
-        "append_role_turn_task_boundary_verdict",
-        lambda **kwargs: task_boundary_calls.append(dict(kwargs))
-        or {
+
+    def append_task_boundary(**kwargs: Any) -> dict[str, Any]:
+        task_boundary_calls.append(dict(kwargs))
+        return {
             "schema_version": "polaris.task_boundary_verdict.v1",
             "status": "ok",
             "ok": True,
-        },
+        }
+
+    monkeypatch.setattr(
+        completion,
+        "append_role_turn_task_boundary_verdict",
+        append_task_boundary,
     )
     monkeypatch.setattr(
         completion,

@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from polaris.cells.runtime.projection.task_market_projection import TaskMarketProjection
 from polaris.cells.runtime.task_market.internal.models import TaskWorkItemRecord
+from polaris.cells.runtime.task_market.internal.projection import TaskMarketProjection
 from polaris.cells.runtime.task_market.public.projection_api import (
     get_dashboard,
     get_worker_load,
@@ -273,7 +273,7 @@ class TestProjectionAPI:
         mock_store.load_items.return_value = sample_items
         mock_store.load_dead_letters.return_value = []
 
-        with patch("polaris.cells.runtime.projection.task_market_projection.get_store") as mock_get_store:
+        with patch("polaris.cells.runtime.task_market.internal.projection.get_store") as mock_get_store:
             mock_get_store.return_value = mock_store
             result = get_dashboard(TEST_WORKSPACE)
 
@@ -285,7 +285,7 @@ class TestProjectionAPI:
     ) -> None:
         mock_store.load_items.return_value = sample_items
 
-        with patch("polaris.cells.runtime.projection.task_market_projection.get_store") as mock_get_store:
+        with patch("polaris.cells.runtime.task_market.internal.projection.get_store") as mock_get_store:
             mock_get_store.return_value = mock_store
             result = list_active_items(TEST_WORKSPACE, stage="pending_design")
 
@@ -297,7 +297,7 @@ class TestProjectionAPI:
     ) -> None:
         mock_store.load_items.return_value = sample_items
 
-        with patch("polaris.cells.runtime.projection.task_market_projection.get_store") as mock_get_store:
+        with patch("polaris.cells.runtime.task_market.internal.projection.get_store") as mock_get_store:
             mock_get_store.return_value = mock_store
             result = get_worker_load(TEST_WORKSPACE)
 

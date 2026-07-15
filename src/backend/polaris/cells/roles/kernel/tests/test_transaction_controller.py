@@ -800,10 +800,10 @@ class TestErrorHandling:
             )
 
     @pytest.mark.asyncio
-    async def test_tool_failure_continues(
+    async def test_tool_failure_fails_closed(
         self, controller, mock_llm_provider, mock_tool_runtime, basic_context, basic_tool_definitions
     ) -> None:
-        """工具执行失败但turn继续 - code域默认LLM_ONCE"""
+        """全失败工具批次必须停止 turn，不能进入 LLM_ONCE finalization。"""
         mock_llm_provider.side_effect = [
             {
                 "content": "读取 missing.py。",
@@ -821,12 +821,12 @@ class TestErrorHandling:
 
         mock_tool_runtime.side_effect = Exception("File not found")
 
-        result = await controller.execute(
-            turn_id="turn_tool_fail", context=basic_context, tool_definitions=basic_tool_definitions
-        )
+        with pytest.raises(RuntimeError, match="tool_dispatch_failed"):
+            await controller.execute(
+                turn_id="turn_tool_fail", context=basic_context, tool_definitions=basic_tool_definitions
+            )
 
-        # turn仍然完成 - state_trajectory is at result root level, not in metrics
-        assert "COMPLETED" in result["state_trajectory"]
+        assert mock_llm_provider.await_count == 1
 
 
 # ============ Test Ledger and Events ============

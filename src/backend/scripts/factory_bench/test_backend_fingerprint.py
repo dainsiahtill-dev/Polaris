@@ -1,3 +1,6 @@
+# The direct test module mirrors the runner's source-tree bootstrap.
+# ruff: noqa: E402
+
 """Tests for backend_fingerprint: resolver, metadata, stale fail-closed, fresh pass.
 
 Covers:
@@ -10,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 import tempfile
@@ -19,13 +23,16 @@ from pathlib import Path
 from threading import Thread
 from typing import Any
 
-sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
+_TEST_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_TEST_BACKEND_ROOT))
 
+from scripts.factory_bench import backend_fingerprint as fingerprint_module
 from scripts.factory_bench.backend_fingerprint import (
     build_run_backend_metadata,
     check_backend_freshness,
     compute_source_fingerprint,
     resolve_backend_fingerprint,
+    resolve_backend_source_root,
     resolve_token_source,
 )
 
@@ -74,6 +81,15 @@ def _stop_mock_backend(server: HTTPServer) -> None:
     server.shutdown()
 
 
+def _mark_backend_root(root: Path) -> None:
+    (root / "polaris").mkdir(parents=True, exist_ok=True)
+    (root / "polaris" / "__init__.py").write_text("", encoding="utf-8")
+    marker = root / "scripts" / "factory_bench" / "backend_fingerprint.py"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    if not marker.exists():
+        marker.write_text("# backend root marker\n", encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Tests: compute_source_fingerprint
 # ---------------------------------------------------------------------------
@@ -82,18 +98,21 @@ def _stop_mock_backend(server: HTTPServer) -> None:
 class TestComputeSourceFingerprint(unittest.TestCase):
     """Test deterministic source fingerprint computation."""
 
-    def test_returns_empty_for_missing_root(self) -> None:
-        result = compute_source_fingerprint("/nonexistent/path")
-        self.assertEqual(result, "")
+    def test_rejects_missing_root(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid Polaris backend source root"):
+            compute_source_fingerprint("/nonexistent/path")
 
-    def test_returns_empty_for_empty_dir(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = compute_source_fingerprint(tmpdir)
-            self.assertEqual(result, "")
+    def test_rejects_unmarked_root(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            self.assertRaisesRegex(ValueError, "missing polaris/__init__.py"),
+        ):
+            compute_source_fingerprint(tmpdir)
 
     def test_deterministic_for_same_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            _mark_backend_root(root)
             (root / "polaris" / "delivery").mkdir(parents=True)
             (root / "polaris" / "delivery" / "server.py").write_text("print('hello')", encoding="utf-8")
             fp1 = compute_source_fingerprint(root, sources=("polaris/delivery",))
@@ -104,6 +123,7 @@ class TestComputeSourceFingerprint(unittest.TestCase):
     def test_changes_on_content_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            _mark_backend_root(root)
             (root / "src").mkdir()
             (root / "src" / "a.py").write_text("v1", encoding="utf-8")
             fp1 = compute_source_fingerprint(root, sources=("src",))
@@ -114,6 +134,7 @@ class TestComputeSourceFingerprint(unittest.TestCase):
     def test_includes_subdirectories(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            _mark_backend_root(root)
             (root / "deep" / "nested" / "dir").mkdir(parents=True)
             (root / "deep" / "nested" / "dir" / "mod.py").write_text("x=1", encoding="utf-8")
             fp = compute_source_fingerprint(root, sources=("deep",))
@@ -122,6 +143,7 @@ class TestComputeSourceFingerprint(unittest.TestCase):
     def test_ignores_non_py_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            _mark_backend_root(root)
             root.joinpath("data.txt").write_text("not python", encoding="utf-8")
             fp = compute_source_fingerprint(root, sources=("data.txt",))
             # data.txt is not a .py file but is a direct file source, so it IS included
@@ -152,6 +174,8 @@ class TestResolveBackendFingerprint(unittest.TestCase):
                     "pid": 12345,
                     "startup_time": "2026-06-21T00:00:00Z",
                     "workspace": "/tmp/test",
+                    "instance_id": "bench-run-1",
+                    "backend_root": "/tmp/frozen/src/backend",
                 },
             }
         )
@@ -160,6 +184,8 @@ class TestResolveBackendFingerprint(unittest.TestCase):
             self.assertTrue(result["reachable"])
             self.assertEqual(result["fingerprint"], "abc123def456")
             self.assertEqual(result["pid"], 12345)
+            self.assertEqual(result["instance_id"], "bench-run-1")
+            self.assertEqual(result["backend_root"], "/tmp/frozen/src/backend")
             self.assertEqual(result["source"], "runtime/fingerprint:process_startup")
         finally:
             _stop_mock_backend(server)
@@ -196,6 +222,38 @@ class TestResolveBackendFingerprint(unittest.TestCase):
             self.assertEqual(result["fingerprint"], "")
         finally:
             _stop_mock_backend(server)
+
+
+class TestBackendRootResolution(unittest.TestCase):
+    def test_default_root_tracks_loaded_module(self) -> None:
+        self.assertEqual(resolve_backend_source_root(), Path(fingerprint_module.__file__).resolve().parents[2])
+
+    def test_relocated_module_resolves_relocated_backend_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "frozen" / "src" / "backend"
+            _mark_backend_root(root)
+            relocated = root / "scripts" / "factory_bench" / "backend_fingerprint.py"
+            relocated.write_text(
+                Path(fingerprint_module.__file__).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            spec = importlib.util.spec_from_file_location("relocated_backend_fingerprint", relocated)
+            self.assertIsNotNone(spec)
+            self.assertIsNotNone(spec.loader if spec is not None else None)
+            module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+            assert spec is not None and spec.loader is not None
+            spec.loader.exec_module(module)
+
+            self.assertEqual(module.resolve_backend_source_root(), root.resolve())
+            self.assertEqual(module._BACKEND_ROOT, root.resolve())
+
+    def test_sources_contain_no_developer_machine_backend_path(self) -> None:
+        for path in (
+            Path(fingerprint_module.__file__),
+            _TEST_BACKEND_ROOT / "scripts" / "factory_bench" / "run_factory_bench.py",
+        ):
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn("/home/dains/Documents/polaris/src/backend", source)
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +449,8 @@ class TestBuildRunBackendMetadata(unittest.TestCase):
             expected_fingerprint="abc",
             actual_fingerprint="abc",
             backend_pid=1234,
+            backend_instance_id="bench-run-01",
+            backend_root="/tmp/relocated/src/backend",
             backend_startup_time="2026-06-21T00:00:00Z",
             fingerprint_source="runtime/fingerprint",
         )
@@ -400,6 +460,8 @@ class TestBuildRunBackendMetadata(unittest.TestCase):
         self.assertEqual(meta["expected_source_fingerprint"], "abc")
         self.assertEqual(meta["actual_backend_fingerprint"], "abc")
         self.assertEqual(meta["backend_pid"], 1234)
+        self.assertEqual(meta["backend_instance_id"], "bench-run-01")
+        self.assertEqual(meta["backend_root"], "/tmp/relocated/src/backend")
         self.assertIn("recorded_at", meta)
 
 

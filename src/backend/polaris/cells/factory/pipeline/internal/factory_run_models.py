@@ -164,6 +164,7 @@ class StageResult:
     artifacts: list[str] = field(default_factory=list)
     started_at: str | None = None
     completed_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -19,11 +19,18 @@ from polaris.cells.roles.runtime.public.contracts._validation import (
     _require_non_empty,
     _to_dict_copy,
 )
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 
 
 @dataclass(frozen=True)
 class ExecuteRoleTaskCommandV1:
-    """Execute one role task under the runtime role kernel."""
+    """Execute one role task under the runtime role kernel.
+
+    ``session_id`` is TaskRuntime execution-attempt authority for this command,
+    never a role-chat session identifier.
+    """
 
     role: str
     task_id: str
@@ -37,6 +44,7 @@ class ExecuteRoleTaskCommandV1:
     timeout_seconds: int | None = None
     stream: bool = False
     host_kind: str | None = None  # Task #2: unified host protocol
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "role", _require_non_empty("role", self.role))
@@ -46,6 +54,29 @@ class ExecuteRoleTaskCommandV1:
         object.__setattr__(self, "domain", _normalize_optional_domain(self.domain))
         object.__setattr__(self, "context", _to_dict_copy(self.context))
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        forbidden_metadata_keys = {
+            "task_runtime_session_id",
+            "task_runtime_execution_attempt",
+        }
+        supplied_authority_keys = forbidden_metadata_keys.intersection(self.metadata)
+        if supplied_authority_keys:
+            raise ValueError(
+                "TaskRuntime execution authority must use typed execution_attempt, not metadata: "
+                f"{sorted(supplied_authority_keys)!r}"
+            )
+        if self.execution_attempt is not None and not isinstance(
+            self.execution_attempt,
+            TaskRuntimeExecutionAttemptIdentityV1,
+        ):
+            raise TypeError("execution_attempt must be TaskRuntimeExecutionAttemptIdentityV1 or None")
+        if self.execution_attempt is not None:
+            supplied_session_id = (
+                _require_non_empty("session_id", self.session_id) if self.session_id is not None else None
+            )
+            canonical_session_id = self.execution_attempt.session_id
+            if supplied_session_id is not None and supplied_session_id != canonical_session_id:
+                raise ValueError("session_id must equal execution_attempt.session_id")
+            object.__setattr__(self, "session_id", canonical_session_id)
         if self.timeout_seconds is not None and self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be > 0 when provided")
 

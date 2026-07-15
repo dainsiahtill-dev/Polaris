@@ -34,22 +34,42 @@ class QAConfig:
     min_test_coverage: float = 0.7
 
 
-@dataclass
-class AuditResult:
-    """Result of a quality audit."""
+@dataclass(frozen=True)
+class QaAuditEvidenceV1:
+    """Typed local observations collected by :class:`QAService`.
+
+    This object is evidence, not a workflow verdict. ``observed_verdict`` is a
+    compatibility projection for local diagnostics; callers must use
+    ``QaVerdictEnvelopeV1`` for authoritative ``ok``/verdict/routing fields.
+    """
 
     audit_id: str
     target: str  # file, task, or project
-    verdict: str  # PASS, FAIL, NEEDS_REVIEW
-    issues: list[dict] = field(default_factory=list)
+    issues: list[dict[str, Any]] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    schema_version: str = "qa.audit_evidence.v1"
+    authoritative: bool = False
+
+    @property
+    def observed_verdict(self) -> str:
+        """Return the local observation summary without granting authority."""
+
+        has_errors = any(str(issue.get("severity") or "").strip().lower() == "error" for issue in self.issues)
+        return "FAIL" if has_errors else "PASS"
+
+    @property
+    def verdict(self) -> str:
+        """Compatibility alias for legacy evidence readers."""
+
+        return self.observed_verdict
+
+
+AuditResult = QaAuditEvidenceV1
 
 
 class PathSecurityError(Exception):
     """Raised when a path security violation is detected."""
-
-    pass
 
 
 class QAService:
@@ -77,7 +97,7 @@ class QAService:
         self.config = config
         self._workspace = Path(config.workspace).resolve()
         self._bus = message_bus or MessageBus()
-        self._audits: dict[str, AuditResult] = {}
+        self._audits: dict[str, QaAuditEvidenceV1] = {}
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -180,7 +200,7 @@ class QAService:
         changed_files: list[str],
         *,
         require_changed_files: bool = False,
-    ) -> AuditResult:
+    ) -> QaAuditEvidenceV1:
         """Audit a completed task.
 
         Args:
@@ -190,7 +210,8 @@ class QAService:
             require_changed_files: Whether an empty changed file set is an audit-blocking error.
 
         Returns:
-            AuditResult containing the audit verdict and issues found
+            Typed evidence containing observations and metrics. It cannot
+            authorize a task transition.
         """
         logger.info("[QA Service] Auditing task: %s", task_subject)
 
@@ -274,26 +295,21 @@ class QAService:
 
         metrics["issues_found"] = len(issues)
 
-        # Determine verdict
-        errors = [i for i in issues if i.get("severity") == "error"]
-        verdict = "PASS" if not errors else "FAIL"
-
-        audit = AuditResult(
+        audit = QaAuditEvidenceV1(
             audit_id=f"audit-{len(self._audits) + 1}",
             target=task_id,
-            verdict=verdict,
             issues=issues,
             metrics=metrics,
         )
         self._audits[audit.audit_id] = audit
 
-        logger.info("[QA Service] Audit complete: %s (%s issues)", verdict, len(issues))
+        logger.info("[QA Service] Audit evidence collected: %s issues", len(issues))
 
         # Emit typed event
         typed_event = TypedAuditCompleted.create(
             audit_id=audit.audit_id,
             target=task_id,
-            verdict=verdict,
+            verdict=audit.observed_verdict,
             issue_count=len(issues),
             workspace=str(self._workspace),
         )
@@ -306,7 +322,8 @@ class QAService:
             {
                 "audit_id": audit.audit_id,
                 "target": task_id,
-                "verdict": verdict,
+                "observed_verdict": audit.observed_verdict,
+                "authoritative": False,
                 "issue_count": len(issues),
             },
         )

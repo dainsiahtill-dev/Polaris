@@ -1,210 +1,262 @@
-"""Tests for hallucinated npm dependency repair in WorkspaceQualityRunner.
-
-Regression tests for the fix that removes non-existent npm packages from
-package.json when npm install fails with ETARGET/notarget errors.
-"""
+"""Regression tests for retired Factory workspace mutation shortcuts."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
+import pytest
+from polaris.cells.factory.pipeline.internal.factory_run_service import (
+    FactoryConfig,
+    FactoryRun,
+    FactoryRunStatus,
+    OrchestrationStageExecutor,
+)
 from polaris.cells.factory.pipeline.internal.factory_workspace_quality import (
     WorkspaceQualityRunner,
 )
 
 
-class TestNpmDependencyRepair:
-    """Validate repair_hallucinated_npm_dependencies removes bad deps."""
+def _factory_run(run_id: str) -> FactoryRun:
+    return FactoryRun(
+        id=run_id,
+        config=FactoryConfig(name=run_id),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-07-13T00:00:00+00:00",
+    )
 
-    def _write_package_json(self, tmp_path: Path, payload: dict) -> None:
-        (tmp_path / "package.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    def test_remove_nonexistent_dependency_etarget(self, tmp_path: Path) -> None:
-        """npm ETARGET error -> remove the hallucinated package."""
-        self._write_package_json(
-            tmp_path,
+def _write_package_json(tmp_path: Path, payload: dict[str, Any]) -> str:
+    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    (tmp_path / "package.json").write_text(content, encoding="utf-8")
+    return content
+
+
+def test_workspace_quality_runner_has_no_workspace_mutation_api(tmp_path: Path) -> None:
+    """Quality measurement must not expose the retired Factory repair surface."""
+
+    runner = WorkspaceQualityRunner(tmp_path)
+
+    assert not hasattr(runner, "repair_hallucinated_npm_dependencies")
+    assert not hasattr(runner, "repair_cjs_export_import_mismatch")
+    assert not hasattr(runner, "repair_test_trim_mismatch")
+    assert not hasattr(runner, "consume_repair_receipts")
+    assert not hasattr(runner, "_apply_workspace_quality_patch")
+
+
+def test_workspace_quality_skips_long_lived_http_server_start(tmp_path: Path) -> None:
+    """Static web servers must not be required to exit during validation."""
+
+    _write_package_json(
+        tmp_path,
+        {
+            "name": "web-project",
+            "scripts": {
+                "build": "tsc -p tsconfig.json",
+                "test": "npm run build",
+                "start": "npx --yes http-server . -p ${PORT:-0} -c-1",
+            },
+        },
+    )
+
+    commands = WorkspaceQualityRunner(tmp_path).workspace_quality_commands({})
+
+    assert ["npm", "run", "build"] in commands
+    assert ["npm", "test"] in commands
+    assert ["npm", "run", "start"] not in commands
+
+
+def test_workspace_quality_keeps_exiting_node_start_smoke(tmp_path: Path) -> None:
+    """CLI-style npm start scripts remain real entrypoint smoke checks."""
+
+    _write_package_json(
+        tmp_path,
+        {
+            "name": "cli-project",
+            "scripts": {
+                "build": "tsc -p tsconfig.json",
+                "start": "node dist/main.js",
+            },
+        },
+    )
+
+    commands = WorkspaceQualityRunner(tmp_path).workspace_quality_commands({})
+
+    assert ["npm", "run", "build"] in commands
+    assert ["npm", "run", "start"] in commands
+
+
+@pytest.mark.asyncio
+async def test_npm_prepare_failure_is_preserved_without_workspace_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed npm install remains evidence; Factory never edits or retries it."""
+
+    package_before = _write_package_json(
+        tmp_path,
+        {
+            "name": "dependency-contract",
+            "dependencies": {"nonexistent-package": "0.0.0"},
+        },
+    )
+    source_path = tmp_path / "src" / "index.js"
+    source_path.parent.mkdir(parents=True)
+    source_before = "module.exports = 'stable';\n"
+    source_path.write_text(source_before, encoding="utf-8")
+    test_path = tmp_path / "tests" / "behavior.test.js"
+    test_path.parent.mkdir(parents=True)
+    test_before = "throw new Error('not reached');\n"
+    test_path.write_text(test_before, encoding="utf-8")
+
+    executor = OrchestrationStageExecutor(tmp_path)
+    command_calls: list[list[str]] = []
+
+    def run_command(command: list[str], timeout_seconds: float) -> dict[str, Any]:
+        del timeout_seconds
+        command_calls.append(command)
+        assert command == ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]
+        return {
+            "command": command,
+            "exit_code": 1,
+            "passed": False,
+            "stdout_tail": "",
+            "stderr_tail": "npm error notarget No matching version found for nonexistent-package@0.0.0",
+            "error": "npm install failed",
+        }
+
+    monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+    monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+    monkeypatch.setattr(
+        executor,
+        "_workspace_quality_prepare_commands",
+        lambda commands, context: [["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]],
+    )
+    monkeypatch.setattr(executor, "_run_workspace_quality_command", run_command)
+
+    passed, artifact = await executor._run_workspace_quality_checks(
+        _factory_run("factory-npm-prepare-failure"),
+        {},
+    )
+
+    assert passed is False
+    assert command_calls == [["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]]
+    assert (tmp_path / "package.json").read_text(encoding="utf-8") == package_before
+    assert source_path.read_text(encoding="utf-8") == source_before
+    assert test_path.read_text(encoding="utf-8") == test_before
+    payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+    prepare_result = payload["commands"][0]
+    assert prepare_result["phase"] == "prepare"
+    assert prepare_result["passed"] is False
+    assert "No matching version found" in prepare_result["stderr_tail"]
+    assert "repair" not in prepare_result
+    assert payload["repair"]["attempted"] is False
+
+
+@pytest.mark.asyncio
+async def test_check_failure_enters_runtime_then_llm_repair_without_factory_shortcut(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ordinary check failures use the existing Director runtime/LLM loop."""
+
+    package_before = _write_package_json(
+        tmp_path,
+        {"name": "runtime-repair-contract", "scripts": {"test": "node tests/behavior.test.js"}},
+    )
+    source_path = tmp_path / "src" / "index.js"
+    source_path.parent.mkdir(parents=True)
+    source_before = "module.exports = { value: ' Tide ' };\n"
+    source_path.write_text(source_before, encoding="utf-8")
+    test_path = tmp_path / "tests" / "behavior.test.js"
+    test_path.parent.mkdir(parents=True)
+    test_before = "assert.strictEqual(result.value, 'Tide');\n"
+    test_path.write_text(test_before, encoding="utf-8")
+
+    executor = OrchestrationStageExecutor(tmp_path)
+    state = {"director_repair_completed": False}
+    runtime_calls: list[list[str]] = []
+    llm_calls: list[list[str]] = []
+
+    def run_command(command: list[str], timeout_seconds: float) -> dict[str, Any]:
+        del timeout_seconds
+        return {
+            "command": command,
+            "exit_code": 0 if state["director_repair_completed"] else 1,
+            "passed": state["director_repair_completed"],
+            "stdout_tail": "" if state["director_repair_completed"] else "AssertionError: ' Tide ' !== 'Tide'",
+            "stderr_tail": "",
+            "error": "" if state["director_repair_completed"] else "npm test failed",
+        }
+
+    def runtime_repair(
+        *,
+        run_id: str,
+        artifact_quality_errors: list[str],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        assert run_id == "factory-check-runtime-route"
+        runtime_calls.append(list(artifact_quality_errors))
+        return [], {
+            "attempted": True,
+            "success": False,
+            "source_tools": [],
+            "tool_results": 0,
+            "write_tool_evidence": False,
+        }
+
+    async def llm_repair(
+        *,
+        run_id: str,
+        context: dict[str, Any],
+        artifact_quality_errors: list[str],
+        repair_attempt: int,
+        **_: Any,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        assert run_id == "factory-check-runtime-route"
+        assert context["workspace_quality_repair_max_rounds"] == 1
+        assert repair_attempt == 1
+        llm_calls.append(list(artifact_quality_errors))
+        state["director_repair_completed"] = True
+        return (
+            [
+                {
+                    "tool": "write_file",
+                    "success": True,
+                    "result": {
+                        "source_tool": "director_llm_workspace_quality_repair",
+                        "file": "src/index.js",
+                        "operation": "modify",
+                    },
+                }
+            ],
             {
-                "name": "test-project",
-                "version": "1.0.0",
-                "dependencies": {"alchemist": "0.0.0", "express": "^4.18.0"},
+                "attempted": True,
+                "success": True,
+                "source_tools": ["director_llm_workspace_quality_repair"],
+                "tool_results": 1,
+                "write_tool_evidence": True,
             },
         )
-        runner = WorkspaceQualityRunner(tmp_path)
-        stderr = "npm error code ETARGET\nnpm error notarget No matching version found for alchemist@0.0.0."
-        removed = runner.repair_hallucinated_npm_dependencies(stderr)
-        assert removed == ["alchemist"]
-        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
-        assert "alchemist" not in pkg["dependencies"]
-        assert "express" in pkg["dependencies"]
-        receipts = runner.consume_repair_receipts()
-        assert len(receipts) == 1
-        assert receipts[0]["source_tool"] == "factory_workspace_quality.hallucinated_npm_dependency"
-        assert receipts[0]["path"] == "package.json"
-        assert receipts[0]["metadata"]["removed_dependencies"] == ["alchemist"]
-        assert receipts[0]["runtime_migration_required"] is True
-        assert runner.consume_repair_receipts() == []
 
-    def test_remove_nonexistent_dependency_404(self, tmp_path: Path) -> None:
-        """npm E404 error -> remove the hallucinated package."""
-        self._write_package_json(
-            tmp_path,
-            {
-                "name": "test-project",
-                "dependencies": {"dream-forge": "1.0.0", "lodash": "^4.0.0"},
-            },
-        )
-        runner = WorkspaceQualityRunner(tmp_path)
-        stderr = "npm error code E404\nnpm error 404 Not Found: dream-forge@1.0.0"
-        removed = runner.repair_hallucinated_npm_dependencies(stderr)
-        assert removed == ["dream-forge"]
-        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
-        assert "dream-forge" not in pkg["dependencies"]
-        assert "lodash" in pkg["dependencies"]
+    monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+    monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+    monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+    monkeypatch.setattr(executor, "_run_workspace_quality_command", run_command)
+    monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", runtime_repair)
+    monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", llm_repair)
 
-    def test_remove_from_devdependencies(self, tmp_path: Path) -> None:
-        """Hallucinated dep in devDependencies -> also removed."""
-        self._write_package_json(
-            tmp_path,
-            {
-                "name": "test-project",
-                "dependencies": {},
-                "devDependencies": {"fake-tool": "0.0.1"},
-            },
-        )
-        runner = WorkspaceQualityRunner(tmp_path)
-        stderr = "npm error notarget No matching version found for fake-tool@0.0.1."
-        removed = runner.repair_hallucinated_npm_dependencies(stderr)
-        assert removed == ["fake-tool"]
+    passed, artifact = await executor._run_workspace_quality_checks(
+        _factory_run("factory-check-runtime-route"),
+        {"workspace_quality_repair_max_rounds": 1},
+    )
 
-    def test_no_removal_when_no_match(self, tmp_path: Path) -> None:
-        """Unrelated npm error -> no changes."""
-        self._write_package_json(
-            tmp_path,
-            {"name": "test-project", "dependencies": {"express": "^4.18.0"}},
-        )
-        runner = WorkspaceQualityRunner(tmp_path)
-        stderr = "npm error code ECONNREFUSED\nnpm error network request failed"
-        removed = runner.repair_hallucinated_npm_dependencies(stderr)
-        assert removed == []
-        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
-        assert "express" in pkg["dependencies"]
-
-    def test_workspace_quality_skips_long_lived_http_server_start(self, tmp_path: Path) -> None:
-        """Static web server start scripts should not be required to exit for workspace validation."""
-        self._write_package_json(
-            tmp_path,
-            {
-                "name": "web-project",
-                "scripts": {
-                    "build": "tsc -p tsconfig.json",
-                    "test": "npm run build",
-                    "start": "npx --yes http-server . -p ${PORT:-0} -c-1",
-                },
-            },
-        )
-
-        commands = WorkspaceQualityRunner(tmp_path).workspace_quality_commands({})
-
-        assert ["npm", "run", "build"] in commands
-        assert ["npm", "test"] in commands
-        assert ["npm", "run", "start"] not in commands
-
-    def test_workspace_quality_keeps_exiting_node_start_smoke(self, tmp_path: Path) -> None:
-        """CLI-style npm start scripts still run as entrypoint smoke checks."""
-        self._write_package_json(
-            tmp_path,
-            {
-                "name": "cli-project",
-                "scripts": {
-                    "build": "tsc -p tsconfig.json",
-                    "start": "node dist/main.js",
-                },
-            },
-        )
-
-        commands = WorkspaceQualityRunner(tmp_path).workspace_quality_commands({})
-
-        assert ["npm", "run", "build"] in commands
-        assert ["npm", "run", "start"] in commands
-
-    def test_no_package_json(self, tmp_path: Path) -> None:
-        """Missing package.json -> no crash, empty result."""
-        runner = WorkspaceQualityRunner(tmp_path)
-        removed = runner.repair_hallucinated_npm_dependencies("notarget foo@1.0.0")
-        assert removed == []
-
-    def test_multiple_bad_deps(self, tmp_path: Path) -> None:
-        """Multiple hallucinated deps -> all removed."""
-        self._write_package_json(
-            tmp_path,
-            {
-                "name": "test-project",
-                "dependencies": {
-                    "alchemist": "0.0.0",
-                    "dream-engine": "1.0.0",
-                    "express": "^4.18.0",
-                },
-            },
-        )
-        runner = WorkspaceQualityRunner(tmp_path)
-        stderr = (
-            "npm error notarget No matching version found for alchemist@0.0.0.\n"
-            "npm error notarget No matching version found for dream-engine@1.0.0."
-        )
-        removed = runner.repair_hallucinated_npm_dependencies(stderr)
-        assert sorted(removed) == ["alchemist", "dream-engine"]
-        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
-        assert "alchemist" not in pkg["dependencies"]
-        assert "dream-engine" not in pkg["dependencies"]
-        assert "express" in pkg["dependencies"]
-
-    def test_empty_stderr(self, tmp_path: Path) -> None:
-        """Empty stderr -> no changes."""
-        self._write_package_json(tmp_path, {"name": "test", "dependencies": {"a": "1.0"}})
-        runner = WorkspaceQualityRunner(tmp_path)
-        assert runner.repair_hallucinated_npm_dependencies("") == []
-
-    def test_cjs_export_import_mismatch_uses_controlled_patch_receipt(self, tmp_path: Path) -> None:
-        """CJS direct export mismatch -> controlled patch with receipt evidence."""
-        (tmp_path / "src" / "models").mkdir(parents=True)
-        (tmp_path / "src" / "models" / "Dream.js").write_text(
-            "class Dream {}\nmodule.exports = Dream;\n",
-            encoding="utf-8",
-        )
-        consumer = tmp_path / "src" / "main.js"
-        consumer.write_text(
-            'const { Dream } = require("./models/Dream");\nmodule.exports = new Dream();\n',
-            encoding="utf-8",
-        )
-        runner = WorkspaceQualityRunner(tmp_path)
-
-        repairs = runner.repair_cjs_export_import_mismatch()
-
-        assert repairs == [{"file": "src/main.js", "fix": "destructure_to_direct:Dream"}]
-        assert consumer.read_text(encoding="utf-8").startswith('const Dream = require("./models/Dream");')
-        receipts = runner.consume_repair_receipts()
-        assert len(receipts) == 1
-        assert receipts[0]["source_tool"] == "factory_workspace_quality.cjs_export_import_mismatch"
-        assert receipts[0]["path"] == "src/main.js"
-        assert receipts[0]["before_hash"] != receipts[0]["after_hash"]
-
-    def test_trim_mismatch_uses_controlled_patch_receipt(self, tmp_path: Path) -> None:
-        """Whitespace assertion mismatch -> controlled test patch with receipt evidence."""
-        (tmp_path / "tests").mkdir()
-        test_file = tmp_path / "tests" / "behavior.test.js"
-        test_file.write_text(
-            'const assert = require("assert");\nassert.strictEqual(result.name, "Tide");\n',
-            encoding="utf-8",
-        )
-        runner = WorkspaceQualityRunner(tmp_path)
-
-        patched = runner.repair_test_trim_mismatch("AssertionError: ' Tide ' !== 'Tide'")
-
-        assert patched == ["tests/behavior.test.js"]
-        assert "result.name.trim()" in test_file.read_text(encoding="utf-8")
-        receipts = runner.consume_repair_receipts()
-        assert len(receipts) == 1
-        assert receipts[0]["source_tool"] == "factory_workspace_quality.test_trim_mismatch"
-        assert receipts[0]["path"] == "tests/behavior.test.js"
-        assert receipts[0]["metadata"]["stderr_pattern"] == "whitespace_only_assertion_diff"
+    assert passed is True
+    assert runtime_calls and llm_calls
+    assert (tmp_path / "package.json").read_text(encoding="utf-8") == package_before
+    assert source_path.read_text(encoding="utf-8") == source_before
+    assert test_path.read_text(encoding="utf-8") == test_before
+    payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+    assert payload["passed"] is True
+    assert payload["repair"]["source_tools"] == ["director_llm_workspace_quality_repair"]
+    assert "deterministic_repairs" not in payload["repair"]

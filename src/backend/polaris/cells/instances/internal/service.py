@@ -16,16 +16,18 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.fs.jsonl.locking import file_lock
 
 SCHEMA_VERSION = 1
 DEFAULT_BACKEND_PORT = 49977
@@ -40,9 +42,51 @@ PORT_RELEASE_TIMEOUT_SECONDS = 8.0
 BACKEND_IDENTITY_TIMEOUT_SECONDS = 75.0
 FRONTEND_IDENTITY_TIMEOUT_SECONDS = 10.0
 PARTIAL_STARTUP_GRACE_SECONDS = 120.0
-BACKEND_WORKSPACE_IDENTITY_ENDPOINTS = ("/v2/settings", "/settings")
+REGISTRY_LOCK_TIMEOUT_SECONDS = 30.0
+RESERVATION_LEASE_TTL_SECONDS = 180.0
+BACKEND_PROCESS_IDENTITY_ENDPOINT = "/v2/runtime/fingerprint"
+BACKEND_PROCESS_IDENTITY_SOURCE = "runtime/fingerprint:process_startup"
+BACKEND_PROCESS_IDENTITY_METADATA_KEY = "backend_process_identity"
+RESERVATION_LEASE_METADATA_KEY = "reservation_lease"
+START_FAILURES_METADATA_KEY = "start_failures"
 
 logger = logging.getLogger(__name__)
+
+_REGISTRY_LOCKS: dict[str, threading.RLock] = {}
+_REGISTRY_LOCKS_GUARD = threading.Lock()
+_REGISTRY_LOCK_STATE = threading.local()
+
+
+class InstanceRegistryError(RuntimeError):
+    """Base failure for an unavailable authoritative instance registry."""
+
+    code = "instance_registry_error"
+
+    def __init__(self, registry_path: Path, *, reason: str, detail: str = "") -> None:
+        self.registry_path = registry_path
+        self.reason = reason
+        self.detail = detail
+        message = f"{self.code}: path={registry_path} reason={reason}"
+        if detail:
+            message = f"{message} detail={detail}"
+        super().__init__(message)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "degraded": True,
+            "registry_path": str(self.registry_path),
+            "reason": self.reason,
+            "detail": self.detail,
+        }
+
+
+class RegistryReadError(InstanceRegistryError):
+    code = "instance_registry_read_error"
+
+
+class RegistryCorruptionError(InstanceRegistryError):
+    code = "instance_registry_corrupt"
 
 
 def utc_timestamp() -> str:
@@ -66,6 +110,28 @@ def parse_utc_timestamp(value: str) -> float | None:
     return parsed.timestamp()
 
 
+def _reservation_lease(record: InstanceRecord) -> dict[str, Any]:
+    raw = record.metadata.get(RESERVATION_LEASE_METADATA_KEY)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _reservation_lease_is_active(record: InstanceRecord, *, now: float | None = None) -> bool:
+    if record.status != "starting":
+        return False
+    lease = _reservation_lease(record)
+    if str(lease.get("state") or "") != "active" or not str(lease.get("lease_id") or ""):
+        return False
+    try:
+        expires_at = float(lease.get("expires_at_epoch") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return expires_at > (time.time() if now is None else now)
+
+
+def _record_reserves_ports(record: InstanceRecord) -> bool:
+    return record.status == "running" or _reservation_lease_is_active(record)
+
+
 def instance_start_age_seconds(record: InstanceRecord) -> float:
     candidates = (
         record.last_started_at,
@@ -78,10 +144,16 @@ def instance_start_age_seconds(record: InstanceRecord) -> float:
     return max(0.0, time.time() - started_at)
 
 
-def sanitize_instance_id(value: str) -> str:
+def normalize_instance_id(value: str) -> str:
+    """Return the canonical instance identifier without inventing a fallback."""
+
     token = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(value or "").strip())
     token = "-".join(part for part in token.split("-") if part)
-    return token[:80] or f"instance-{secrets.token_hex(4)}"
+    return token[:80]
+
+
+def sanitize_instance_id(value: str) -> str:
+    return normalize_instance_id(value) or f"instance-{secrets.token_hex(4)}"
 
 
 def default_polaris_root() -> Path:
@@ -89,7 +161,7 @@ def default_polaris_root() -> Path:
     for parent in current.parents:
         if (parent / "package.json").is_file() and (parent / "src/backend/polaris").is_dir():
             return parent
-    return Path.cwd()
+    raise RuntimeError(f"unable to resolve Polaris root from instance service module: {current}")
 
 
 def default_instance_home() -> Path:
@@ -276,6 +348,37 @@ class InstanceRecord:
         return cls(**payload)
 
 
+@dataclass(frozen=True, slots=True)
+class InstanceRegistrySnapshot:
+    schema_version: int
+    records: tuple[InstanceRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BackendProcessIdentity:
+    pid: int
+    instance_id: str
+    workspace: str
+    backend_root: str
+    fingerprint: str
+    current_source_fingerprint: str
+    source: str
+    verified_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": "instance.backend_process_identity.v1",
+            "pid": self.pid,
+            "instance_id": self.instance_id,
+            "workspace": self.workspace,
+            "backend_root": self.backend_root,
+            "fingerprint": self.fingerprint,
+            "current_source_fingerprint": self.current_source_fingerprint,
+            "source": self.source,
+            "verified_at": self.verified_at,
+        }
+
+
 class InstanceRegistry:
     def __init__(self, home: Path | None = None, *, publish_events: bool = True) -> None:
         self.home = ensure_absolute_dir(home or default_instance_home())
@@ -284,11 +387,10 @@ class InstanceRegistry:
         self.publish_events = publish_events
 
     def list_records(self) -> list[InstanceRecord]:
-        raw = self._read_raw()
-        records = raw.get("instances", [])
-        if not isinstance(records, list):
-            return []
-        return [InstanceRecord.from_dict(item) for item in records if isinstance(item, dict)]
+        return list(self._read_raw().records)
+
+    def assert_healthy(self) -> None:
+        self._read_raw()
 
     def get(self, instance_id: str) -> InstanceRecord | None:
         wanted = sanitize_instance_id(instance_id)
@@ -297,15 +399,53 @@ class InstanceRegistry:
                 return record
         return None
 
+    @contextmanager
+    def mutation_lock(self) -> Iterator[None]:
+        """Serialize registry mutations across runner processes.
+
+        A bench launch reserves its ports in the registry before spawning. The
+        lock keeps two isolated runners from choosing the same free port in the
+        gap between probing and binding it.
+        """
+        key = str(self.registry_path.resolve())
+        with _REGISTRY_LOCKS_GUARD:
+            lock = _REGISTRY_LOCKS.setdefault(key, threading.RLock())
+        with lock:
+            held: dict[str, tuple[int, Any]] = getattr(_REGISTRY_LOCK_STATE, "held", {})
+            depth_and_handle = held.get(key)
+            if depth_and_handle is not None:
+                held[key] = (depth_and_handle[0] + 1, depth_and_handle[1])
+                _REGISTRY_LOCK_STATE.held = held
+                try:
+                    yield
+                finally:
+                    held[key] = (held[key][0] - 1, held[key][1])
+                    if held[key][0] == 0:
+                        held.pop(key, None)
+                return
+
+            self.home.mkdir(parents=True, exist_ok=True)
+            lock_path = self.home / "registry.lock"
+            with file_lock(str(lock_path), timeout_sec=REGISTRY_LOCK_TIMEOUT_SECONDS) as acquired:
+                if not acquired:
+                    raise RuntimeError(f"instance registry lock acquisition timed out: {lock_path}")
+                held[key] = (1, lock_path)
+                _REGISTRY_LOCK_STATE.held = held
+                try:
+                    yield
+                finally:
+                    held.pop(key, None)
+
     def save(self, record: InstanceRecord) -> InstanceRecord:
-        records = [item for item in self.list_records() if item.instance_id != record.instance_id]
-        record.updated_at = utc_timestamp()
-        records.append(record)
-        records.sort(key=lambda item: item.instance_id)
-        self._write_raw({"schema_version": SCHEMA_VERSION, "instances": [item.to_dict() for item in records]})
-        if self.publish_events:
-            publish_instances_update(action="saved", record=record, records=records)
-        return record
+        with self.mutation_lock():
+            records = [item for item in self.list_records() if item.instance_id != record.instance_id]
+            record.updated_at = utc_timestamp()
+            records.append(record)
+            records.sort(key=lambda item: item.instance_id)
+            self._write_raw({"schema_version": SCHEMA_VERSION, "instances": [item.to_dict() for item in records]})
+            if self.publish_events:
+                publish_instances_update(action="saved", record=record, records=records)
+            return record
 
     def replace_records(
         self,
@@ -314,32 +454,170 @@ class InstanceRegistry:
         action: str,
         record: InstanceRecord | None = None,
     ) -> None:
-        records.sort(key=lambda item: item.instance_id)
-        self._write_raw({"schema_version": SCHEMA_VERSION, "instances": [item.to_dict() for item in records]})
-        if self.publish_events:
-            publish_instances_update(action=action, record=record, records=records)
+        with self.mutation_lock():
+            self.assert_healthy()
+            records.sort(key=lambda item: item.instance_id)
+            self._write_raw({"schema_version": SCHEMA_VERSION, "instances": [item.to_dict() for item in records]})
+            if self.publish_events:
+                publish_instances_update(action=action, record=record, records=records)
 
     def delete(self, instance_id: str) -> bool:
-        wanted = sanitize_instance_id(instance_id)
-        records = self.list_records()
-        next_records = [item for item in records if item.instance_id != wanted]
-        if len(next_records) == len(records):
-            return False
-        self._write_raw({"schema_version": SCHEMA_VERSION, "instances": [item.to_dict() for item in next_records]})
-        if self.publish_events:
-            publish_instances_update(action="deleted", record=None, records=next_records)
-        return True
+        with self.mutation_lock():
+            wanted = sanitize_instance_id(instance_id)
+            records = self.list_records()
+            next_records = [item for item in records if item.instance_id != wanted]
+            if len(next_records) == len(records):
+                return False
+            self._write_raw({"schema_version": SCHEMA_VERSION, "instances": [item.to_dict() for item in next_records]})
+            if self.publish_events:
+                publish_instances_update(action="deleted", record=None, records=next_records)
+            return True
 
-    def _read_raw(self) -> dict[str, Any]:
-        if not self.registry_path.is_file():
-            return {"schema_version": SCHEMA_VERSION, "instances": []}
+    def _read_raw(self) -> InstanceRegistrySnapshot:
         try:
-            data = json.loads(self.registry_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {"schema_version": SCHEMA_VERSION, "instances": []}
-        return data if isinstance(data, dict) else {"schema_version": SCHEMA_VERSION, "instances": []}
+            raw_text = self.registry_path.read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            if self.registry_path.is_symlink():
+                raise RegistryReadError(
+                    self.registry_path,
+                    reason="dangling_registry_path",
+                    detail=type(exc).__name__,
+                ) from exc
+            return InstanceRegistrySnapshot(schema_version=SCHEMA_VERSION, records=())
+        except UnicodeDecodeError as exc:
+            raise RegistryCorruptionError(
+                self.registry_path,
+                reason="invalid_utf8",
+                detail=f"byte_offset={exc.start}",
+            ) from exc
+        except OSError as exc:
+            raise RegistryReadError(
+                self.registry_path,
+                reason="read_failed",
+                detail=f"{type(exc).__name__}: {exc}",
+            ) from exc
+
+        try:
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise RegistryCorruptionError(
+                self.registry_path,
+                reason="invalid_json",
+                detail=f"line={exc.lineno} column={exc.colno}",
+            ) from exc
+        if not isinstance(data, dict):
+            raise RegistryCorruptionError(self.registry_path, reason="root_not_object")
+
+        schema_version = data.get("schema_version")
+        if type(schema_version) is not int or schema_version != SCHEMA_VERSION:
+            raise RegistryCorruptionError(
+                self.registry_path,
+                reason="unsupported_schema_version",
+                detail=f"expected={SCHEMA_VERSION} observed={schema_version!r}",
+            )
+        raw_instances = data.get("instances")
+        if not isinstance(raw_instances, list):
+            raise RegistryCorruptionError(self.registry_path, reason="instances_not_array")
+
+        records: list[InstanceRecord] = []
+        seen_instance_ids: set[str] = set()
+        for index, raw_record in enumerate(raw_instances):
+            if not isinstance(raw_record, dict):
+                raise RegistryCorruptionError(
+                    self.registry_path,
+                    reason="record_not_object",
+                    detail=f"index={index}",
+                )
+            try:
+                record = InstanceRecord.from_dict(raw_record)
+            except (TypeError, ValueError) as exc:
+                raise RegistryCorruptionError(
+                    self.registry_path,
+                    reason="invalid_record_shape",
+                    detail=f"index={index} error={type(exc).__name__}: {exc}",
+                ) from exc
+            self._validate_record(record, index=index)
+            if record.instance_id in seen_instance_ids:
+                raise RegistryCorruptionError(
+                    self.registry_path,
+                    reason="duplicate_instance_id",
+                    detail=f"index={index} instance_id={record.instance_id!r}",
+                )
+            seen_instance_ids.add(record.instance_id)
+            records.append(record)
+        return InstanceRegistrySnapshot(schema_version=schema_version, records=tuple(records))
+
+    def _validate_record(self, record: InstanceRecord, *, index: int) -> None:
+        string_fields = (
+            "instance_id",
+            "name",
+            "kind",
+            "polaris_root",
+            "workspace",
+            "runtime_root",
+            "backend_url",
+            "frontend_url",
+            "token",
+            "status",
+            "created_at",
+            "updated_at",
+            "last_started_at",
+            "last_stopped_at",
+        )
+        invalid_string_field = next(
+            (field_name for field_name in string_fields if not isinstance(getattr(record, field_name), str)),
+            "",
+        )
+        if invalid_string_field:
+            raise RegistryCorruptionError(
+                self.registry_path,
+                reason="invalid_record_field_type",
+                detail=f"index={index} field={invalid_string_field} expected=string",
+            )
+        if not record.instance_id or normalize_instance_id(record.instance_id) != record.instance_id:
+            raise RegistryCorruptionError(
+                self.registry_path,
+                reason="invalid_instance_id",
+                detail=f"index={index} instance_id={record.instance_id!r}",
+            )
+        if type(record.schema_version) is not int or record.schema_version != SCHEMA_VERSION:
+            raise RegistryCorruptionError(
+                self.registry_path,
+                reason="invalid_record_schema_version",
+                detail=f"index={index} observed={record.schema_version!r}",
+            )
+        for field_name in ("backend_port", "frontend_port"):
+            value = getattr(record, field_name)
+            if type(value) is not int or value < 0 or value > 65535:
+                raise RegistryCorruptionError(
+                    self.registry_path,
+                    reason="invalid_record_port",
+                    detail=f"index={index} field={field_name} observed={value!r}",
+                )
+        for field_name in ("backend_pid", "frontend_pid"):
+            value = getattr(record, field_name)
+            if value is not None and (type(value) is not int or value <= 0):
+                raise RegistryCorruptionError(
+                    self.registry_path,
+                    reason="invalid_record_pid",
+                    detail=f"index={index} field={field_name} observed={value!r}",
+                )
+        for field_name in ("backend_reload", "frontend_vite", "start_frontend"):
+            if type(getattr(record, field_name)) is not bool:
+                raise RegistryCorruptionError(
+                    self.registry_path,
+                    reason="invalid_record_field_type",
+                    detail=f"index={index} field={field_name} expected=boolean",
+                )
+        if not isinstance(record.bench, dict) or not isinstance(record.metadata, dict):
+            raise RegistryCorruptionError(
+                self.registry_path,
+                reason="invalid_record_mapping",
+                detail=f"index={index}",
+            )
 
     def _write_raw(self, data: dict[str, Any]) -> None:
+        self.assert_healthy()
         self.home.mkdir(parents=True, exist_ok=True)
         self._fs.workspace_write_text_atomic(
             "registry.json",
@@ -432,46 +710,75 @@ class InstanceSupervisor:
         excluded_backend_ports: set[int] = set()
         excluded_frontend_ports: set[int] = set()
         last_error: BaseException | None = None
+        launch_request_id = secrets.token_hex(16)
 
         for attempt in range(max_attempts):
-            request_for_attempt = dict(request)
-            if excluded_backend_ports:
-                request_for_attempt["_excluded_backend_ports"] = sorted(excluded_backend_ports)
-            if excluded_frontend_ports:
-                request_for_attempt["_excluded_frontend_ports"] = sorted(excluded_frontend_ports)
-            record = self._build_record(request_for_attempt)
-            existing = self.registry.get(record.instance_id)
-            # Reuse an existing record ONLY when its recorded backend PID is still
-            # *this instance's* backend process. A bare ``is_process_alive`` check is
-            # PID-recycling-unsafe: ``pid_max`` is small (often <100k) and bench runs
-            # churn many short-lived backends, so a long-dead instance's PID is
-            # routinely recycled to an unrelated live process. Trusting that made the
-            # supervisor hand back a stale record pointing at a dead port (the
-            # backend was never re-spawned), and the bench chain then connection-
-            # refused on that port. ``_pid_looks_like_instance_process`` verifies via
-            # /proc/<pid>/cmdline that the PID really is the polaris backend bound to
-            # this workspace+port, so a recycled PID falls through to a fresh start.
-            if existing and self._pid_looks_like_instance_process(
-                existing, existing.backend_pid, process_kind="backend"
-            ):
-                if self._record_matches_start_request(existing, record):
-                    return self._with_health(existing, probe_http=True).to_dict()
-                self._terminate_record_processes_for_replacement(existing)
-                self._wait_for_record_ports_free(existing)
-                existing.frontend_pid = None
-                existing.backend_pid = None
-                existing.status = "stopped"
-                existing.last_stopped_at = utc_timestamp()
-                self.registry.save(existing)
-            elif existing and is_process_alive(existing.backend_pid):
-                # Recorded PID is alive but is NOT our backend (recycled) — clear the
-                # stale liveness so downstream spawn/identity logic starts clean and
-                # never targets the unrelated process.
-                existing.frontend_pid = None
-                existing.backend_pid = None
-                existing.status = "stopped"
-                existing.last_stopped_at = utc_timestamp()
-                self.registry.save(existing)
+            with self.registry.mutation_lock():
+                # Corruption must be detected before workspace creation, port
+                # probing/allocation, process inspection, or spawn.
+                self.registry.assert_healthy()
+                request_for_attempt = dict(request)
+                if excluded_backend_ports:
+                    request_for_attempt["_excluded_backend_ports"] = sorted(excluded_backend_ports)
+                if excluded_frontend_ports:
+                    request_for_attempt["_excluded_frontend_ports"] = sorted(excluded_frontend_ports)
+                record = self._build_record(request_for_attempt)
+                existing = self.registry.get(record.instance_id)
+                owned_retry = bool(existing and self._reservation_owned_by(existing, launch_request_id))
+                if existing and bool(request.get("require_fresh_instance")) and not owned_retry:
+                    raise RuntimeError(f"fresh instance identity collision: {record.instance_id}")
+                if existing and _reservation_lease_is_active(existing) and not owned_retry:
+                    raise RuntimeError(f"instance start already reserved: {record.instance_id}")
+                if existing and owned_retry:
+                    record.created_at = existing.created_at
+                    failures = existing.metadata.get(START_FAILURES_METADATA_KEY)
+                    if isinstance(failures, list):
+                        record.metadata[START_FAILURES_METADATA_KEY] = [
+                            dict(item) for item in failures if isinstance(item, dict)
+                        ]
+                # Reuse an existing record ONLY when its recorded backend PID is still
+                # *this instance's* backend process. A bare ``is_process_alive`` check is
+                # PID-recycling-unsafe: ``pid_max`` is small (often <100k) and bench runs
+                # churn many short-lived backends, so a long-dead instance's PID is
+                # routinely recycled to an unrelated live process. Trusting that made the
+                # supervisor hand back a stale record pointing at a dead port (the
+                # backend was never re-spawned), and the bench chain then connection-
+                # refused on that port. ``_pid_looks_like_instance_process`` verifies via
+                # /proc/<pid>/cmdline that the PID really is the polaris backend bound to
+                # this workspace+port, so a recycled PID falls through to a fresh start.
+                if (
+                    existing
+                    and not owned_retry
+                    and self._pid_looks_like_instance_process(existing, existing.backend_pid, process_kind="backend")
+                ):
+                    if self._record_matches_start_request(existing, record):
+                        return self._with_health(existing, probe_http=True).to_dict()
+                    self._terminate_record_processes_for_replacement(existing)
+                    self._wait_for_record_ports_free(existing)
+                    existing.frontend_pid = None
+                    existing.backend_pid = None
+                    existing.status = "stopped"
+                    existing.last_stopped_at = utc_timestamp()
+                    self.registry.save(existing)
+                elif existing and not owned_retry and is_process_alive(existing.backend_pid):
+                    # Recorded PID is alive but is NOT our backend (recycled) — clear the
+                    # stale liveness so downstream spawn/identity logic starts clean and
+                    # never targets the unrelated process.
+                    existing.frontend_pid = None
+                    existing.backend_pid = None
+                    existing.status = "stopped"
+                    existing.last_stopped_at = utc_timestamp()
+                    self.registry.save(existing)
+
+                # Persist a port reservation before spawning. Other processes consult
+                # every registry record during allocation, so they cannot select these
+                # ports while this process is between bind probing and subprocess start.
+                self._activate_start_reservation(
+                    record,
+                    launch_request_id=launch_request_id,
+                    attempt=attempt + 1,
+                )
+                self.registry.save(record)
 
             instance_dir = self._instance_dir(record.instance_id)
             log_dir = ensure_absolute_dir(instance_dir / "logs")
@@ -482,6 +789,7 @@ class InstanceSupervisor:
                 if record.start_frontend:
                     record.frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
                     self._wait_for_frontend_identity(record)
+                self._commit_start_reservation(record)
             except Exception as exc:
                 self._terminate_pid(record.frontend_pid)
                 self._terminate_pid(record.backend_pid)
@@ -490,7 +798,14 @@ class InstanceSupervisor:
                     excluded_backend_ports.add(int(record.backend_port))
                 if auto_frontend_port and record.frontend_port:
                     excluded_frontend_ports.add(int(record.frontend_port))
-                if attempt + 1 >= max_attempts or not _is_retryable_auto_port_start_error(exc):
+                final_failure = attempt + 1 >= max_attempts or not _is_retryable_auto_port_start_error(exc)
+                self._record_start_failure(
+                    record,
+                    exc=exc,
+                    attempt=attempt + 1,
+                    final=final_failure,
+                )
+                if final_failure:
                     raise
                 logger.warning(
                     "instance auto-port start retry: instance=%s backend_port=%s frontend_port=%s error=%s",
@@ -500,9 +815,6 @@ class InstanceSupervisor:
                     exc,
                 )
                 continue
-            record.status = "running"
-            record.last_started_at = utc_timestamp()
-            self.registry.save(record)
             return self._with_health(record, probe_http=True).to_dict()
         if last_error is not None:
             raise RuntimeError(str(last_error)) from last_error
@@ -520,10 +832,112 @@ class InstanceSupervisor:
             and existing_binding == requested_binding
         )
 
+    @staticmethod
+    def _reservation_owned_by(record: InstanceRecord, launch_request_id: str) -> bool:
+        lease = _reservation_lease(record)
+        return (
+            record.status == "retrying"
+            and str(lease.get("launch_request_id") or "") == launch_request_id
+            and str(lease.get("state") or "") == "released"
+        )
+
+    @staticmethod
+    def _activate_start_reservation(
+        record: InstanceRecord,
+        *,
+        launch_request_id: str,
+        attempt: int,
+    ) -> None:
+        now = time.time()
+        metadata = dict(record.metadata)
+        metadata[RESERVATION_LEASE_METADATA_KEY] = {
+            "schema_version": "instance.reservation_lease.v1",
+            "lease_id": f"{launch_request_id}:{attempt}",
+            "launch_request_id": launch_request_id,
+            "attempt": attempt,
+            "state": "active",
+            "reserved_at": utc_timestamp(),
+            "expires_at_epoch": now + RESERVATION_LEASE_TTL_SECONDS,
+            "backend_port": record.backend_port,
+            "frontend_port": record.frontend_port,
+        }
+        record.metadata = metadata
+        record.status = "starting"
+
+    def _record_start_failure(
+        self,
+        record: InstanceRecord,
+        *,
+        exc: BaseException,
+        attempt: int,
+        final: bool,
+    ) -> None:
+        with self.registry.mutation_lock():
+            current = self.registry.get(record.instance_id)
+            current_lease = _reservation_lease(current) if current is not None else {}
+            record_lease = _reservation_lease(record)
+            if current is None or current_lease.get("lease_id") != record_lease.get("lease_id"):
+                raise RuntimeError(f"instance reservation ownership lost: {record.instance_id}") from exc
+
+            failed_at = utc_timestamp()
+            failure = {
+                "attempt": attempt,
+                "final": final,
+                "failed_at": failed_at,
+                "error_type": type(exc).__name__,
+                "error_detail": str(exc),
+                "backend_port": record.backend_port,
+                "frontend_port": record.frontend_port,
+            }
+            failures_raw = record.metadata.get(START_FAILURES_METADATA_KEY)
+            failures = (
+                [dict(item) for item in failures_raw if isinstance(item, dict)]
+                if isinstance(failures_raw, list)
+                else []
+            )
+            failures.append(failure)
+            lease = dict(record_lease)
+            lease.update(
+                {
+                    "state": "released",
+                    "released_at": failed_at,
+                    "release_reason": "start_failed" if final else "retry",
+                }
+            )
+            metadata = dict(record.metadata)
+            metadata[RESERVATION_LEASE_METADATA_KEY] = lease
+            metadata[START_FAILURES_METADATA_KEY] = failures
+            metadata["last_start_failure"] = failure
+            record.metadata = metadata
+            record.backend_pid = None
+            record.frontend_pid = None
+            record.status = "failed" if final else "retrying"
+            record.last_stopped_at = failed_at
+            self.registry.save(record)
+
+    def _commit_start_reservation(self, record: InstanceRecord) -> None:
+        with self.registry.mutation_lock():
+            current = self.registry.get(record.instance_id)
+            current_lease = _reservation_lease(current) if current is not None else {}
+            record_lease = _reservation_lease(record)
+            if current is None or current_lease.get("lease_id") != record_lease.get("lease_id"):
+                raise RuntimeError(f"instance reservation ownership lost: {record.instance_id}")
+            committed_at = utc_timestamp()
+            lease = dict(record_lease)
+            lease.update({"state": "committed", "committed_at": committed_at})
+            metadata = dict(record.metadata)
+            metadata[RESERVATION_LEASE_METADATA_KEY] = lease
+            record.metadata = metadata
+            record.status = "running"
+            record.last_started_at = committed_at
+            self.registry.save(record)
+
     def _registered_ports(self, exclude_instance_id: str, *, port_kind: str) -> set[int]:
         ports: set[int] = set()
         for record in self.registry.list_records():
             if record.instance_id == exclude_instance_id:
+                continue
+            if not _record_reserves_ports(record):
                 continue
             port = record.backend_port if port_kind == "backend" else record.frontend_port
             if port > 0:
@@ -623,7 +1037,7 @@ class InstanceSupervisor:
         runtime_root = ensure_absolute_dir(Path(str(request.get("runtime_root") or instance_dir / "runtime")))
         kind = str(request.get("kind") or "project")
         metadata = request.get("metadata")
-        metadata_payload: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
+        metadata_payload: dict[str, Any] = dict(metadata) if isinstance(metadata, dict) else {}
         requested_backend_port = request.get("backend_port")
         requested_frontend_port = request.get("frontend_port")
         is_bench_project = kind == "bench_project"
@@ -657,7 +1071,7 @@ class InstanceSupervisor:
             raise RuntimeError(f"frontend port is already in use: {frontend_port}")
         token = str(request.get("token") or f"polaris-{secrets.token_urlsafe(18)}")
         bench = request.get("bench")
-        bench_payload: dict[str, Any] = bench if isinstance(bench, dict) else {}
+        bench_payload: dict[str, Any] = dict(bench) if isinstance(bench, dict) else {}
 
         return InstanceRecord(
             instance_id=instance_id,
@@ -924,23 +1338,94 @@ class InstanceSupervisor:
             self._wait_for_port_free(record.frontend_port)
 
     @staticmethod
-    def _read_backend_workspace(record: InstanceRecord) -> str | None:
-        for endpoint in BACKEND_WORKSPACE_IDENTITY_ENDPOINTS:
-            request = urllib.request.Request(
-                f"{record.backend_url}{endpoint}",
-                headers={"Authorization": f"Bearer {record.token}"},
+    def _read_backend_identity_payload(record: InstanceRecord) -> dict[str, Any] | None:
+        request = urllib.request.Request(
+            f"{record.backend_url}{BACKEND_PROCESS_IDENTITY_ENDPOINT}",
+            headers={"Authorization": f"Bearer {record.token}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=1.0) as response:
+                body = response.read()
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return None
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("backend identity endpoint returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("backend identity endpoint returned a non-object payload")
+        return payload
+
+    @staticmethod
+    def _canonical_identity_path(value: Any, *, field_name: str) -> str:
+        raw = str(value or "").strip()
+        candidate = Path(raw)
+        if not raw or not candidate.is_absolute():
+            raise RuntimeError(f"backend identity mismatch: {field_name} is not an absolute path")
+        try:
+            return str(candidate.resolve())
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise RuntimeError(f"backend identity mismatch: invalid {field_name}") from exc
+
+    @classmethod
+    def _validate_backend_identity_payload(
+        cls,
+        record: InstanceRecord,
+        payload: dict[str, Any],
+    ) -> BackendProcessIdentity:
+        expected_pid = record.backend_pid
+        observed_pid = payload.get("pid")
+        if not isinstance(expected_pid, int) or isinstance(expected_pid, bool) or expected_pid <= 0:
+            raise RuntimeError("backend identity mismatch: launched backend PID is unavailable")
+        if not isinstance(observed_pid, int) or isinstance(observed_pid, bool) or observed_pid != expected_pid:
+            raise RuntimeError(f"backend identity mismatch: pid observed={observed_pid!r} expected={expected_pid}")
+
+        observed_instance_id = str(payload.get("instance_id") or "")
+        if (
+            not observed_instance_id
+            or observed_instance_id != normalize_instance_id(observed_instance_id)
+            or observed_instance_id != record.instance_id
+        ):
+            raise RuntimeError(
+                "backend identity mismatch: "
+                f"instance_id observed={observed_instance_id!r} expected={record.instance_id!r}"
             )
-            try:
-                with urllib.request.urlopen(request, timeout=1.0) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-                continue
-            if not isinstance(payload, dict):
-                continue
-            workspace = payload.get("workspace")
-            if isinstance(workspace, str) and workspace:
-                return workspace
-        return None
+
+        observed_workspace = cls._canonical_identity_path(payload.get("workspace"), field_name="workspace")
+        expected_workspace = str(Path(record.workspace).resolve())
+        if observed_workspace != expected_workspace:
+            raise RuntimeError(
+                f"backend identity mismatch: workspace observed={observed_workspace!r} expected={expected_workspace!r}"
+            )
+
+        observed_backend_root = cls._canonical_identity_path(
+            payload.get("backend_root"),
+            field_name="backend_root",
+        )
+        expected_backend_root = str((Path(record.polaris_root) / "src" / "backend").resolve())
+        if observed_backend_root != expected_backend_root:
+            raise RuntimeError(
+                "backend identity mismatch: "
+                f"backend_root observed={observed_backend_root!r} expected={expected_backend_root!r}"
+            )
+
+        observed_source = str(payload.get("source") or "")
+        if observed_source != BACKEND_PROCESS_IDENTITY_SOURCE:
+            raise RuntimeError(
+                "backend identity mismatch: "
+                f"source observed={observed_source!r} expected={BACKEND_PROCESS_IDENTITY_SOURCE!r}"
+            )
+
+        return BackendProcessIdentity(
+            pid=observed_pid,
+            instance_id=observed_instance_id,
+            workspace=observed_workspace,
+            backend_root=observed_backend_root,
+            fingerprint=str(payload.get("fingerprint") or ""),
+            current_source_fingerprint=str(payload.get("current_source_fingerprint") or ""),
+            source=observed_source,
+            verified_at=utc_timestamp(),
+        )
 
     def _wait_for_backend_identity(
         self,
@@ -949,18 +1434,14 @@ class InstanceSupervisor:
         timeout_seconds: float = BACKEND_IDENTITY_TIMEOUT_SECONDS,
     ) -> None:
         deadline = time.monotonic() + timeout_seconds
-        expected_workspace = str(Path(record.workspace).resolve())
         while time.monotonic() < deadline:
-            observed_workspace = self._read_backend_workspace(record)
-            if observed_workspace:
-                resolved_observed = str(Path(observed_workspace).resolve())
-                if resolved_observed == expected_workspace:
-                    return
-                raise RuntimeError(
-                    "backend identity mismatch: "
-                    f"port {record.backend_port} serves workspace {resolved_observed}, "
-                    f"expected {expected_workspace}"
-                )
+            payload = self._read_backend_identity_payload(record)
+            if payload is not None:
+                identity = self._validate_backend_identity_payload(record, payload)
+                metadata = dict(record.metadata)
+                metadata[BACKEND_PROCESS_IDENTITY_METADATA_KEY] = identity.to_dict()
+                record.metadata = metadata
+                return
             if record.backend_pid and not is_process_alive(record.backend_pid):
                 raise RuntimeError(f"backend process exited before identity check: {record.backend_pid}")
             time.sleep(0.2)

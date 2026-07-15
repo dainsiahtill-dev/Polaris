@@ -340,6 +340,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleProfileBinding as RoleProfileBinding,
     RoleRuntimeChainAssemblyResultV1 as RoleRuntimeChainAssemblyResultV1,
     RoleRuntimeChainEnvelope as RoleRuntimeChainEnvelope,
+    RoleRuntimeError,
     RoleRuntimeObject as RoleRuntimeObject,
     RoleRuntimeObjectResultV1,
     RoleStateCommitReceipt as RoleStateCommitReceipt,
@@ -372,6 +373,12 @@ from polaris.cells.roles.runtime.public.result_mapping import (
 # as a mixin (real class attributes preserved).
 from polaris.cells.roles.runtime.public.strategy_resolution import (
     _StrategyResolutionMixin as _StrategyResolutionMixin,
+)
+from polaris.cells.runtime.task_runtime.public.contracts import (
+    ValidateTaskRuntimeExecutionAttemptQueryV1,
+)
+from polaris.cells.runtime.task_runtime.public.service import (
+    validate_task_runtime_execution_attempt,
 )
 from polaris.kernelone.context.runtime_feature_flags import (
     resolve_context_os_enabled as resolve_context_os_enabled,
@@ -509,12 +516,16 @@ class RoleRuntimeService(
     @staticmethod
     def _build_task_request(command: ExecuteRoleTaskCommandV1) -> RoleTurnRequest:
         metadata = dict(command.metadata)
+        execution_attempt = command.execution_attempt
+        if execution_attempt is not None:
+            metadata["task_runtime_session_id"] = execution_attempt.session_id
+            metadata["task_runtime_execution_attempt"] = execution_attempt.to_record()
         if command.timeout_seconds is not None:
             metadata["timeout_seconds"] = int(command.timeout_seconds)
         context_override, metadata = _augment_context_with_handoff_rehydration_impl(
             workspace=command.workspace,
             role=command.role,
-            session_id=command.session_id,
+            session_id=None,
             context=command.context,
             metadata=metadata,
         )
@@ -551,6 +562,64 @@ class RoleRuntimeService(
             max_retries=max(0, max_retries),
             metadata=metadata,
         )
+
+    @staticmethod
+    def _validate_task_execution_attempt(command: ExecuteRoleTaskCommandV1) -> None:
+        """Fail closed unless the command matches a live TaskRuntime claim."""
+
+        identity = command.execution_attempt
+        if identity is None:
+            raise RoleRuntimeError(
+                "TaskRuntime execution attempt is required for task execution",
+                code="task_runtime_execution_attempt_required",
+            )
+        command_run_id = str(command.run_id or "").strip()
+        alignment = {
+            "workspace": command.workspace == identity.workspace,
+            "task_id": command.task_id == identity.external_task_id,
+            "run_id": command_run_id == identity.run_id,
+            "role": command.role == identity.role_id,
+            "session_id": command.session_id == identity.session_id,
+        }
+        if not all(alignment.values()):
+            raise RoleRuntimeError(
+                "Task command does not align with its canonical TaskRuntime execution attempt",
+                code="task_runtime_execution_attempt_command_mismatch",
+                details={
+                    "alignment": alignment,
+                    "command": {
+                        "workspace": command.workspace,
+                        "task_id": command.task_id,
+                        "run_id": command_run_id,
+                        "role": command.role,
+                    },
+                    "identity": identity.to_record(),
+                },
+            )
+        try:
+            verdict = validate_task_runtime_execution_attempt(
+                ValidateTaskRuntimeExecutionAttemptQueryV1(
+                    workspace=command.workspace,
+                    identity=identity,
+                    lock_timeout_seconds=5.0,
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise RoleRuntimeError(
+                "TaskRuntime execution attempt validation failed",
+                code="task_runtime_execution_attempt_validation_error",
+                details={
+                    "identity": identity.to_record(),
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                },
+            ) from exc
+        if not verdict.valid:
+            raise RoleRuntimeError(
+                "TaskRuntime execution attempt is not valid for task execution",
+                code="task_runtime_execution_attempt_invalid",
+                details=verdict.to_record(),
+            )
 
     @staticmethod
     def _build_session_request(
@@ -666,8 +735,9 @@ class RoleRuntimeService(
         self,
         command: ExecuteRoleTaskCommandV1,
     ) -> RoleExecutionResultV1:
-        kernel = self._get_kernel(command.workspace)
+        self._validate_task_execution_attempt(command)
         request = await self._prepare_task_request(command)
+        kernel = self._get_kernel(command.workspace)
         result = await kernel.run(command.role, request)
         contract_result = _to_contract_result(
             role=command.role,

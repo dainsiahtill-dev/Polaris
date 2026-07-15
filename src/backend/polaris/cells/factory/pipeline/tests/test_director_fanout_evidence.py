@@ -33,6 +33,15 @@ def _make_executor(workspace: Path) -> OrchestrationStageExecutor:
     executor.workspace = workspace
     executor._binding_timeout_counts = {}
     executor._quarantined_bindings = set()
+
+    async def _complete_immediately(
+        _service: Any,
+        initial_result: CommandResult,
+        **_kwargs: Any,
+    ) -> CommandResult:
+        return initial_result
+
+    executor._wait_run_completion = _complete_immediately
     return executor
 
 
@@ -342,13 +351,14 @@ class TestDispatchLogPayload:
             patch.object(executor, "_read_taskboard_stats", side_effect=stats_sequence),
             patch.object(executor, "_execute_director_binding_fanout", return_value=fanout_result),
             patch.object(executor, "_validate_director_binding_coverage", return_value=(True, [])),
+            patch.object(executor, "_chief_engineer_handoff_signals_for_director", return_value=[]),
             patch.object(executor, "_wait_run_completion", return_value=fanout_result),
             patch.object(executor, "_resolve_cancel_event", return_value=None),
             patch.object(executor, "_resolve_abort_checker", return_value=None),
         ):
             await executor._execute_director_dispatch(
                 run,
-                {"director_max_rounds": 1, "timeout": 10, "execution_mode": "parallel", "max_workers": 2},
+                {"director_max_rounds": 1, "timeout": 60, "execution_mode": "parallel", "max_workers": 2},
             )
 
         # Read dispatch log - artifact_path maps dispatch/ to runtime/dispatch/
@@ -432,10 +442,11 @@ class TestDispatchLogPayload:
             patch.object(executor, "_resolve_cancel_event", return_value=None),
             patch.object(executor, "_resolve_abort_checker", return_value=None),
             patch.object(executor, "_validate_director_binding_coverage", return_value=(True, [])),
+            patch.object(executor, "_chief_engineer_handoff_signals_for_director", return_value=[]),
         ):
             await executor._execute_director_dispatch(
                 run,
-                {"director_max_rounds": 1, "timeout": 10, "execution_mode": "serial", "max_workers": 1},
+                {"director_max_rounds": 1, "timeout": 60, "execution_mode": "serial", "max_workers": 1},
             )
 
         # Read dispatch log - artifact_path maps dispatch/ to runtime/dispatch/

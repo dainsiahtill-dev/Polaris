@@ -62,11 +62,16 @@ _TURN_BLOCKED_KEYS = frozenset(
 )
 
 _FIELD_LEAK_KEYS = frozenset(_CONTROL_PLANE_KEYS | _TURN_BLOCKED_KEYS)
+# ``task_id`` is authoritative domain evidence inside PM contracts and CE
+# portfolio plans. It remains forbidden in message metadata, where it denotes
+# control-plane leakage, but a bare occurrence in prompt content is ambiguous
+# and must not make a valid structured contract fail isolation auditing.
+_CONTENT_AMBIGUOUS_DATA_KEYS = frozenset({"task_id"})
 _CONTROL_CONTENT_TOKENS = tuple(
     sorted(
         {
             pattern
-            for key in _FIELD_LEAK_KEYS
+            for key in _FIELD_LEAK_KEYS - _CONTENT_AMBIGUOUS_DATA_KEYS
             for pattern in (
                 f'"{key}"',
                 f"'{key}'",

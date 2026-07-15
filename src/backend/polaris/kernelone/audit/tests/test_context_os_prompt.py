@@ -40,6 +40,45 @@ def test_context_os_prompt_audit_rejects_control_plane_content_leak() -> None:
     assert "context_os_snapshot:" in audit["control_plane"]["content_hits"]
 
 
+def test_context_os_prompt_audit_accepts_task_ids_inside_pm_contract() -> None:
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": "PM contract: {'tasks': [{'task_id': 'TASK-1', 'goal': 'build models'}]}",
+            },
+            {"role": "user", "content": "Produce the Chief Engineer portfolio."},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction="Produce the Chief Engineer portfolio.",
+        expected=True,
+    )
+
+    assert audit["ok"] is True
+    assert audit["control_plane"]["content_hits"] == []
+
+
+def test_context_os_prompt_audit_still_rejects_task_id_metadata() -> None:
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": "Projected context summary.",
+                "metadata": {"task_id": "TASK-1"},
+            },
+            {"role": "user", "content": "Produce the Chief Engineer portfolio."},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction="Produce the Chief Engineer portfolio.",
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert audit["control_plane"]["metadata_key_hits"] == ["task_id"]
+
+
 def test_context_os_prompt_audit_rejects_non_final_current_user_instruction() -> None:
     audit = audit_context_os_prompt_messages(
         messages=[

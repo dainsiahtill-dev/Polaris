@@ -4,7 +4,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal, TypedDict
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,17 @@ _TASK_ROW_STATUS_COUNT_KEYS = (
     "blocked",
     "cancelled",
 )
+
+
+class _TaskRuntimeExecutionProjectionEvidence(TypedDict):
+    """Stable evidence for a failed realtime execution-event projection."""
+
+    schema_version: Literal["task-runtime.execution-event-projection/1"]
+    source: Literal["task_runtime"]
+    stage: Literal["event_publish"]
+    code: Literal["factory_execution_event_publish_returned_false"]
+    status: Literal["not_published"]
+    details: dict[str, Any]
 
 
 def utc_now() -> datetime:
@@ -98,6 +109,55 @@ def _json_compatible_copy(value: Any) -> Any:
     return str(value)
 
 
+def _coerce_workspace_lease_fencing_token(value: Any) -> int | None:
+    """Return a positive Factory fencing token without fabricating authority."""
+
+    if value is None or isinstance(value, (bool, float)):
+        return None
+    if isinstance(value, int):
+        token = value
+    elif isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        try:
+            token = int(normalized)
+        except ValueError:
+            return None
+    else:
+        return None
+    return token if token >= 1 else None
+
+
+def _factory_workspace_run_lease_fact_projection(
+    task_metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project Factory lease provenance carried by task metadata.
+
+    TaskRuntime neither acquires nor validates Factory workspace authority.
+    It detaches the Factory-owned lease record as provenance and exposes only
+    a valid positive fencing token for downstream settlement verification.
+    Invalid lease metadata remains visible for audit, while no token is minted.
+
+    Complexity:
+        O(n) time and memory over the lease metadata payload.
+    """
+
+    lease_raw = task_metadata.get("factory_workspace_run_lease")
+    if not isinstance(lease_raw, Mapping):
+        return {}
+    lease_projection: dict[str, Any] = {str(key): _json_compatible_copy(value) for key, value in lease_raw.items()}
+    if not lease_projection:
+        return {}
+    projection: dict[str, Any] = {
+        "factory_workspace_run_lease": lease_projection,
+    }
+    fencing_token = _coerce_workspace_lease_fencing_token(lease_projection.get("fencing_token"))
+    if fencing_token is not None:
+        projection["workspace_lease_fencing_token"] = fencing_token
+    return projection
+
+
 def build_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
     """Return the complete task-row snapshot stored in execution events.
 
@@ -144,19 +204,27 @@ def project_task_row_from_execution_fact_payload(fact: dict[str, Any]) -> dict[s
     task_id = str(fact.get("task_id") or "").strip()
     if not task_id:
         return {}
+    row_id: str | int = int(task_id) if task_id.isdigit() else task_id
     execution_state = str(fact.get("execution_state") or fact.get("status") or "").strip()
     status = execution_state or str(fact.get("event_type") or "unknown").strip()
     snapshot = fact.get("task_row_snapshot")
     if isinstance(snapshot, dict):
         row = dict(snapshot)
-        row.setdefault("id", task_id)
+        row["id"] = row_id
         row.setdefault("task_id", task_id)
     else:
         row = {
-            "id": task_id,
+            "id": row_id,
             "task_id": task_id,
         }
     metadata = dict(row.get("metadata") or {})
+    details_raw = fact.get("details")
+    details = details_raw if isinstance(details_raw, dict) else {}
+    previous_status = str(details.get("previous_status") or "").strip()
+    if not previous_status:
+        snapshot_status = str(row.get("status") or row.get("state") or "").strip()
+        if snapshot_status and snapshot_status != status:
+            previous_status = snapshot_status
     metadata.update(
         {
             "source": "task_runtime.execution_fact",
@@ -164,6 +232,8 @@ def project_task_row_from_execution_fact_payload(fact: dict[str, Any]) -> dict[s
             "task_runtime_execution_fact": fact,
         }
     )
+    if previous_status:
+        metadata["previous_status"] = previous_status
     row.update(
         {
             "status": status,
@@ -172,6 +242,7 @@ def project_task_row_from_execution_fact_payload(fact: dict[str, Any]) -> dict[s
             "running": is_running_execution_status(status),
             "session_id": str(fact.get("session_id") or ""),
             "workflow_run_id": str(fact.get("run_id") or ""),
+            "factory_run_id": str(fact.get("factory_run_id") or ""),
             "claimed_by": str(fact.get("claimed_by") or ""),
             "last_claimed_by": str(fact.get("last_claimed_by") or ""),
             "resume_state": str(fact.get("resume_state") or ""),
@@ -349,6 +420,7 @@ def build_task_runtime_execution_event_payload(
     factory_run_id = str(task_metadata.get("factory_run_id") or "").strip()
     if factory_run_id:
         payload["factory_run_id"] = factory_run_id
+        payload.update(_factory_workspace_run_lease_fact_projection(task_metadata))
     bench_session_id = str(task_metadata.get("factory_bench_session_id") or "").strip()
     if bench_session_id:
         payload["factory_bench_session_id"] = bench_session_id
@@ -411,6 +483,8 @@ def build_task_runtime_execution_event_append_result(
     details: Mapping[str, Any] | None = None,
     append_error: Any = "",
     publish_error: Any = "",
+    failure_evidence: Mapping[str, Any] | None = None,
+    projection_evidence: _TaskRuntimeExecutionProjectionEvidence | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project fact-stream append evidence for a task-runtime execution event.
 
@@ -425,9 +499,10 @@ def build_task_runtime_execution_event_append_result(
     integer (``>= 1``); missing or invalid input never produces a fabricated
     ``fact_event_seq`` field.
 
-    ``details`` is a read-only projection of the event payload details already
-    built by the service. It is copied as a plain dict when provided as a
-    non-empty mapping; invalid or empty values are omitted.
+    ``details``, ``failure_evidence``, and ``projection_evidence`` are
+    read-only projections of service evidence. Each is recursively detached so
+    callers cannot mutate receipts retained by the state-transition path
+    through a returned result.
     """
 
     clean_event_type = str(event_type or "unknown").strip() or "unknown"
@@ -436,7 +511,15 @@ def build_task_runtime_execution_event_append_result(
     clean_storage_path = str(fact_storage_path or "").strip()
     clean_append_error = str(append_error or "").strip()
     clean_publish_error = str(publish_error or "").strip()
-    clean_details = dict(details) if isinstance(details, Mapping) else {}
+    clean_details = _json_compatible_copy(dict(details)) if isinstance(details, Mapping) else {}
+    clean_failure_evidence = (
+        _json_compatible_copy(dict(failure_evidence)) if isinstance(failure_evidence, Mapping) else {}
+    )
+    clean_projection_evidence = (
+        _json_compatible_copy(dict(projection_evidence))
+        if isinstance(projection_evidence, Mapping)
+        else {}
+    )
 
     clean_fact_event_seq = _coerce_fact_event_seq(fact_event_seq)
     if clean_fact_event_seq is None:
@@ -457,6 +540,10 @@ def build_task_runtime_execution_event_append_result(
         result["fact_event_seq"] = clean_fact_event_seq
     if clean_details:
         result["details"] = clean_details
+    if clean_failure_evidence:
+        result["failure_evidence"] = clean_failure_evidence
+    if clean_projection_evidence:
+        result["projection_evidence"] = clean_projection_evidence
     if clean_append_error:
         result["error"] = sanitize_summary(clean_append_error, max_chars=300)
     if clean_publish_error:
@@ -472,7 +559,10 @@ def _with_execution_event_projection(
 
     projected = dict(payload)
     if execution_event is not None:
-        projected["execution_event"] = dict(execution_event)
+        projected["execution_event"] = _json_compatible_copy(dict(execution_event))
+        projection_evidence = execution_event.get("projection_evidence")
+        if isinstance(projection_evidence, Mapping):
+            projected["projection_evidence"] = _json_compatible_copy(dict(projection_evidence))
     return projected
 
 
@@ -930,6 +1020,7 @@ class TaskExecutionSession:
     last_error: str = ""
     last_result_summary: str = ""
     released_at: str = ""
+    terminal_transition_id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -996,6 +1087,7 @@ class TaskExecutionSession:
             last_error=sanitize_summary(payload.get("last_error")),
             last_result_summary=sanitize_summary(payload.get("last_result_summary")),
             released_at=str(payload.get("released_at") or "").strip(),
+            terminal_transition_id=str(payload.get("terminal_transition_id") or "").strip(),
             metadata=dict(payload.get("metadata") or {}),
         )
 
@@ -1021,6 +1113,7 @@ class TaskExecutionSession:
             "last_error": self.last_error,
             "last_result_summary": self.last_result_summary,
             "released_at": self.released_at,
+            "terminal_transition_id": self.terminal_transition_id,
             "metadata": dict(self.metadata),
         }
 
@@ -1042,6 +1135,21 @@ class TaskExecutionSession:
         if context_summary:
             self.context_summary = sanitize_summary(context_summary)
 
+    def ensure_terminal_transition_id(self) -> str:
+        """Return the durable identity for this settled session transition.
+
+        Completed and failed sessions are terminal task-row outcomes; suspended
+        sessions remain resumable but still represent the one canonical result
+        of their claimed attempt.  Every settled attempt therefore needs the
+        same durable projection and recovery key.
+        """
+
+        if self.status == "active":
+            raise ValueError("terminal transition identity requires a settled session")
+        if not self.terminal_transition_id:
+            self.terminal_transition_id = f"task-transition-{uuid4().hex}"
+        return self.terminal_transition_id
+
     def mark_completed(self, *, result_summary: str = "") -> None:
         """Mark the session as completed."""
         now_iso = utc_now_iso()
@@ -1051,6 +1159,7 @@ class TaskExecutionSession:
         self.lease_expires_at = now_iso
         self.last_result_summary = sanitize_summary(result_summary)
         self.resumable = False
+        self.ensure_terminal_transition_id()
 
     def mark_failed(self, *, error: str) -> None:
         """Mark the session as failed."""
@@ -1061,6 +1170,7 @@ class TaskExecutionSession:
         self.lease_expires_at = now_iso
         self.last_error = sanitize_summary(error)
         self.resumable = False
+        self.ensure_terminal_transition_id()
 
     def mark_suspended(self, *, reason: str, resumable: bool = True) -> None:
         """Mark the session as suspended and optionally resumable."""
@@ -1071,6 +1181,7 @@ class TaskExecutionSession:
         self.lease_expires_at = now_iso
         self.last_error = sanitize_summary(reason)
         self.resumable = bool(resumable)
+        self.ensure_terminal_transition_id()
 
 
 @dataclass(frozen=True, slots=True)

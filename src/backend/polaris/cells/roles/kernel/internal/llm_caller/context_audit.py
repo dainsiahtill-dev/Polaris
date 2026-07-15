@@ -863,6 +863,17 @@ def _find_module_interface_contract(value: Any, *, depth: int = 0) -> dict[str, 
     return {}
 
 
+def _looks_like_pm_contract_evidence(value: Any) -> bool:
+    """Accept one PM contract or a validated project contract set."""
+
+    if looks_like_pm_contract_payload(value):
+        return True
+    if not isinstance(value, dict):
+        return False
+    tasks = value.get("tasks")
+    return isinstance(tasks, (list, tuple)) and any(looks_like_pm_contract_payload(task) for task in tasks)
+
+
 def _pm_contract_payload(ai_request: Any | None) -> dict[str, Any]:
     if ai_request is None:
         return {}
@@ -878,7 +889,7 @@ def _pm_contract_payload(ai_request: Any | None) -> dict[str, Any]:
     ):
         for key in _PM_CONTRACT_CONTEXT_KEYS:
             candidate = container.get(key)
-            if isinstance(candidate, dict) and looks_like_pm_contract_payload(candidate):
+            if isinstance(candidate, dict) and _looks_like_pm_contract_evidence(candidate):
                 return dict(candidate)
     return {}
 
@@ -1671,6 +1682,7 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
 
 def _request_sampling_audit(ai_request: Any, prepared: PreparedLLMRequest) -> dict[str, Any]:
     options = _request_options(ai_request, prepared)
+    request_sampling = _mapping(_request_context(ai_request).get("request_sampling"))
     profile = _execution_profile(ai_request)
     contract = _execution_contract(ai_request)
     raw_contract_sampling = contract.get("sampling")
@@ -1681,7 +1693,10 @@ def _request_sampling_audit(ai_request: Any, prepared: PreparedLLMRequest) -> di
         "temperature": temperature if isinstance(temperature, (int, float)) else None,
         "max_tokens": max_tokens if isinstance(max_tokens, int) else None,
         "temperature_source": str(
-            profile.get("temperature_source") or contract_sampling.get("temperature_source") or "request_options"
+            request_sampling.get("temperature_source")
+            or profile.get("temperature_source")
+            or contract_sampling.get("temperature_source")
+            or "request_options"
         ),
         "temperature_phase": str(profile.get("temperature_phase") or contract_sampling.get("temperature_phase") or ""),
         "sampling_mode": str(profile.get("sampling_mode") or contract_sampling.get("sampling_mode") or ""),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
@@ -43,6 +44,8 @@ def test_pm_taskboard_mainline_uses_task_runtime_rows(tmp_path: Path) -> None:
     assert len(first_batch) == 1
     assert first_batch[0]["task"]["id"] == "TASK-1"
     assert first_batch[0]["task_runtime_session_id"]
+    assert first_batch[0]["task_runtime_execution_attempt"]
+    assert first_batch[0]["task_runtime_session_id"] == first_batch[0]["task_runtime_execution_attempt"]["session_id"]
 
     first_row_id = int(first_batch[0]["board_id"])
     transition = _finalize_taskboard_runtime_entry(
@@ -94,6 +97,153 @@ def test_pm_taskboard_mainline_suspends_needs_continue(tmp_path: Path) -> None:
     metadata = row.get("metadata")
     assert isinstance(metadata, dict)
     assert metadata["last_pm_status"] == "needs_continue"
+
+
+def test_pm_taskboard_mainline_replaces_identity_after_needs_continue(tmp_path: Path) -> None:
+    runtime = _build_taskboard_runtime(
+        workspace_full=str(tmp_path),
+        run_id="run-continue-reclaim",
+        director_tasks=[_task("TASK-1")],
+        max_workers=1,
+    )
+    first_batch = _select_taskboard_ready_batch(runtime, max_workers=1)
+    row_id = int(first_batch[0]["board_id"])
+    first_session_id = str(first_batch[0]["task_runtime_session_id"])
+
+    suspended = _finalize_taskboard_runtime_entry(
+        runtime,
+        board_id=row_id,
+        session_id=first_session_id,
+        pm_status="needs_continue",
+    )
+    assert suspended["success"] is True
+
+    second_batch = _select_taskboard_ready_batch(runtime, max_workers=1)
+    assert len(second_batch) == 1
+    second_session_id = str(second_batch[0]["task_runtime_session_id"])
+    assert second_session_id != first_session_id
+    attempts = runtime["task_runtime_execution_attempts"]
+    assert isinstance(attempts, dict)
+    assert attempts[row_id].session_id == second_session_id
+
+    stale_transition = _finalize_taskboard_runtime_entry(
+        runtime,
+        board_id=row_id,
+        session_id=first_session_id,
+        pm_status="done",
+    )
+    assert stale_transition["success"] is False
+    assert stale_transition["reason"] == "task_runtime_execution_attempt_identity_session_mismatch"
+
+    current_transition = _finalize_taskboard_runtime_entry(
+        runtime,
+        board_id=row_id,
+        session_id=second_session_id,
+        pm_status="done",
+    )
+    assert current_transition["success"] is True
+
+
+def test_pm_taskboard_mainline_settles_failed_outcome(tmp_path: Path) -> None:
+    runtime = _build_taskboard_runtime(
+        workspace_full=str(tmp_path),
+        run_id="run-failed",
+        director_tasks=[_task("TASK-1")],
+        max_workers=1,
+    )
+    batch = _select_taskboard_ready_batch(runtime, max_workers=1)
+    row_id = int(batch[0]["board_id"])
+
+    transition = _finalize_taskboard_runtime_entry(
+        runtime,
+        board_id=row_id,
+        session_id=str(batch[0]["task_runtime_session_id"]),
+        pm_status="failed",
+        metadata={"last_pm_status": "failed"},
+        result_summary="Director execution failed",
+        failure_detail="compiler verification failed",
+    )
+
+    assert transition["success"] is True
+    assert transition["outcome"] == "failed"
+    execution_event = transition["execution_event"]
+    assert isinstance(execution_event, dict)
+    assert execution_event["details"]["error"] == "compiler verification failed"
+
+
+def test_pm_taskboard_mainline_fails_closed_without_claim_identity(tmp_path: Path) -> None:
+    runtime = _build_taskboard_runtime(
+        workspace_full=str(tmp_path),
+        run_id="run-missing-identity",
+        director_tasks=[_task("TASK-1")],
+        max_workers=1,
+    )
+    batch = _select_taskboard_ready_batch(runtime, max_workers=1)
+    row_id = int(batch[0]["board_id"])
+    attempts = runtime["task_runtime_execution_attempts"]
+    assert isinstance(attempts, dict)
+    attempts.pop(row_id)
+
+    transition = _finalize_taskboard_runtime_entry(
+        runtime,
+        board_id=row_id,
+        session_id=str(batch[0]["task_runtime_session_id"]),
+        pm_status="done",
+    )
+
+    assert transition["success"] is False
+    assert transition["reason"] == "task_runtime_execution_attempt_identity_missing"
+    task_runtime = runtime["task_runtime"]
+    row = task_runtime.get_task(row_id)
+    assert row is not None
+    assert row["status"] == "in_progress"
+
+
+def test_pm_taskboard_mainline_fails_closed_for_every_identity_context_mismatch(tmp_path: Path) -> None:
+    cases = (
+        ("workspace", "task_runtime_execution_attempt_identity_workspace_mismatch"),
+        ("task", "task_runtime_execution_attempt_identity_task_mismatch"),
+        ("worker", "task_runtime_execution_attempt_identity_worker_mismatch"),
+        ("role", "task_runtime_execution_attempt_identity_role_mismatch"),
+        ("run", "task_runtime_execution_attempt_identity_run_mismatch"),
+        ("session", "task_runtime_execution_attempt_identity_session_mismatch"),
+    )
+    for mismatch, expected_reason in cases:
+        runtime = _build_taskboard_runtime(
+            workspace_full=str(tmp_path / mismatch),
+            run_id="run-identity-mismatch",
+            director_tasks=[_task("TASK-1")],
+            max_workers=1,
+        )
+        batch = _select_taskboard_ready_batch(runtime, max_workers=1)
+        row_id = int(batch[0]["board_id"])
+        session_id = str(batch[0]["task_runtime_session_id"])
+        attempts = runtime["task_runtime_execution_attempts"]
+        assert isinstance(attempts, dict)
+        identity = attempts[row_id]
+
+        if mismatch == "workspace":
+            runtime["task_runtime_workspace"] = "different-workspace"
+        elif mismatch == "task":
+            attempts[row_id] = replace(identity, task_id=row_id + 1)
+        elif mismatch == "worker":
+            attempts[row_id] = replace(identity, worker_id="different-worker")
+        elif mismatch == "role":
+            attempts[row_id] = replace(identity, role_id="PM")
+        elif mismatch == "run":
+            runtime["run_id"] = "different-run"
+        else:
+            session_id = "different-session"
+
+        transition = _finalize_taskboard_runtime_entry(
+            runtime,
+            board_id=row_id,
+            session_id=session_id,
+            pm_status="done",
+        )
+
+        assert transition["success"] is False
+        assert transition["reason"] == expected_reason
 
 
 def test_pm_taskboard_mainline_records_claim_failure(
