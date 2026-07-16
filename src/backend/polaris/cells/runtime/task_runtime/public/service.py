@@ -20,14 +20,20 @@ from .contracts import (
     AdmitDirectedEffectParentCommandV1,
     BindRuntimeTaskToFactoryRunCommandV1,
     ClaimDirectedEffectCommandV1,
+    DirectedEffectInventoryCodeV1,
+    DirectedEffectInventoryResultV1,
     DirectedEffectOperationResultV1,
+    DirectedEffectParentReadinessResultV1,
     DirectedEffectParentRegistryResultV1,
     DirectedEffectStreamEnrollmentResultV1,
     EnrollDirectedEffectOperationStreamCommandV1,
     EnrollDirectedEffectParentRegistryStreamCommandV1,
     ExpiredFactoryRunSessionFenceResultV1,
     FenceExpiredFactoryRunSessionsCommandV1,
+    FinalizeDirectedEffectInventoryAdmissionCommandV1,
+    GetDirectedEffectInventoryQueryV1,
     GetDirectedEffectOperationQueryV1,
+    GetDirectedEffectParentReadinessQueryV1,
     GetDirectedEffectParentRegistryQueryV1,
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     ObservableTaskRowsProjectionV1,
@@ -35,6 +41,7 @@ from .contracts import (
     OwnerReworkExecutionPreparationResultV1,
     PrepareOwnerReworkExecutionCommandV1,
     RuntimeTaskFactoryRunBindingResultV1,
+    SealDirectedEffectInventoryCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptAuthorityHeartbeatVerdictV1,
     TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1,
@@ -64,12 +71,28 @@ def _directed_effect_authority_failure(
     | ClaimDirectedEffectCommandV1
     | AbortDirectedEffectOperationCommandV1
     | GetDirectedEffectOperationQueryV1
-    | GetDirectedEffectParentRegistryQueryV1,
+    | GetDirectedEffectParentReadinessQueryV1
+    | GetDirectedEffectParentRegistryQueryV1
+    | SealDirectedEffectInventoryCommandV1
+    | FinalizeDirectedEffectInventoryAdmissionCommandV1
+    | GetDirectedEffectInventoryQueryV1,
     repository: DirectedEffectOperationRepository,
 ) -> DirectedEffectOperationResultV1 | None:
     """Validate the persisted attempt before any aggregate read or mutation."""
 
     return repository.validate_attempt(command.workspace, command.execution_attempt)
+
+
+def _inventory_failure(
+    failure: DirectedEffectOperationResultV1,
+) -> DirectedEffectInventoryResultV1:
+    """Copy one typed authority refusal without manufacturing a projection."""
+
+    return DirectedEffectInventoryResultV1(
+        ok=False,
+        code=cast(DirectedEffectInventoryCodeV1, failure.code),
+        evidence=failure.evidence,
+    )
 
 
 def admit_directed_effect_parent(
@@ -120,6 +143,42 @@ def enroll_directed_effect_operation_stream(
     return DirectedEffectOperationRepository().enroll_operation_stream(command)
 
 
+def seal_directed_effect_inventory(
+    command: SealDirectedEffectInventoryCommandV1,
+) -> DirectedEffectInventoryResultV1:
+    """Seal one complete immutable parent inventory before child admission."""
+
+    if not isinstance(command, SealDirectedEffectInventoryCommandV1):
+        raise TypeError("command must be SealDirectedEffectInventoryCommandV1")
+    repository = DirectedEffectOperationRepository()
+    failure = _directed_effect_authority_failure(command, repository)
+    return _inventory_failure(failure) if failure is not None else repository.seal_inventory(command)
+
+
+def finalize_directed_effect_inventory_admission(
+    command: FinalizeDirectedEffectInventoryAdmissionCommandV1,
+) -> DirectedEffectInventoryResultV1:
+    """Finalize exact sealed inventory admission under a guarded snapshot."""
+
+    if not isinstance(command, FinalizeDirectedEffectInventoryAdmissionCommandV1):
+        raise TypeError("command must be FinalizeDirectedEffectInventoryAdmissionCommandV1")
+    repository = DirectedEffectOperationRepository()
+    failure = _directed_effect_authority_failure(command, repository)
+    return _inventory_failure(failure) if failure is not None else repository.finalize_inventory(command)
+
+
+def get_directed_effect_inventory(
+    query: GetDirectedEffectInventoryQueryV1,
+) -> DirectedEffectInventoryResultV1:
+    """Read one strict current sealed inventory projection."""
+
+    if not isinstance(query, GetDirectedEffectInventoryQueryV1):
+        raise TypeError("query must be GetDirectedEffectInventoryQueryV1")
+    repository = DirectedEffectOperationRepository()
+    failure = _directed_effect_authority_failure(query, repository)
+    return _inventory_failure(failure) if failure is not None else repository.get_inventory(query)
+
+
 def admit_directed_effect_operation(
     command: AdmitDirectedEffectOperationCommandV1,
 ) -> DirectedEffectOperationResultV1:
@@ -166,6 +225,24 @@ def get_directed_effect_operation(
     repository = DirectedEffectOperationRepository()
     failure = _directed_effect_authority_failure(query, repository)
     return failure if failure is not None else repository.get(query)
+
+
+def get_directed_effect_parent_readiness(
+    query: GetDirectedEffectParentReadinessQueryV1,
+) -> DirectedEffectParentReadinessResultV1:
+    """Read a strict, non-authoritative parent operation-stream diagnostic."""
+
+    if not isinstance(query, GetDirectedEffectParentReadinessQueryV1):
+        raise TypeError("query must be GetDirectedEffectParentReadinessQueryV1")
+    repository = DirectedEffectOperationRepository()
+    failure = _directed_effect_authority_failure(query, repository)
+    if failure is not None:
+        return DirectedEffectParentReadinessResultV1(
+            ok=False,
+            code=failure.code,
+            evidence=failure.evidence,
+        )
+    return repository.get_parent_readiness(query)
 
 
 def heartbeat_task_runtime_execution_attempt(

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final, Literal
+from pathlib import Path
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
 if TYPE_CHECKING:
     from .service import TaskRuntimeExecutionAttemptAuthorityV1
@@ -25,6 +29,61 @@ def _to_detached_dict(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     """Copy nested evidence so a verdict cannot retain caller-owned state."""
 
     return deepcopy(dict(payload or {}))
+
+
+_SUCCESS_READINESS_EVIDENCE_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "parent_registry_source_head_seq",
+        "operation_source_head_seq",
+    }
+)
+
+
+def _readiness_evidence_key(key: object) -> str:
+    """Require stable string keys while preserving typed failure diagnostics."""
+
+    if not isinstance(key, str):
+        raise TypeError("readiness evidence keys must be strings")
+    return key
+
+
+def _freeze_readiness_evidence(value: Any, *, active_object_ids: set[int]) -> Any:
+    """Detach and recursively freeze one readiness-evidence value."""
+
+    if isinstance(value, (Mapping, list, tuple, set, frozenset)):
+        object_id = id(value)
+        if object_id in active_object_ids:
+            raise ValueError("readiness evidence must not contain cycles")
+        active_object_ids.add(object_id)
+        try:
+            if isinstance(value, Mapping):
+                return MappingProxyType(
+                    {
+                        _readiness_evidence_key(key): _freeze_readiness_evidence(
+                            item,
+                            active_object_ids=active_object_ids,
+                        )
+                        for key, item in value.items()
+                    }
+                )
+            if isinstance(value, (list, tuple)):
+                return tuple(_freeze_readiness_evidence(item, active_object_ids=active_object_ids) for item in value)
+            return frozenset(_freeze_readiness_evidence(item, active_object_ids=active_object_ids) for item in value)
+        finally:
+            active_object_ids.remove(object_id)
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if value is None or isinstance(value, (str, int, float, bool, bytes)):
+        return value
+    raise TypeError("readiness evidence values must be immutable data")
+
+
+def _to_immutable_evidence(payload: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """Return deeply detached, immutable readiness evidence."""
+
+    source = {} if payload is None else payload
+    frozen = _freeze_readiness_evidence(source, active_object_ids=set())
+    return cast(Mapping[str, Any], frozen)
 
 
 def _task_row_fact(row: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1283,6 +1342,10 @@ class RuntimeTaskRuntimeError(RuntimeError):
 DIRECTED_EFFECT_OPERATION_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-operation/1"
 DIRECTED_EFFECT_OPERATION_SCHEMA_V2: Final[str] = "task-runtime.directed-effect-operation/2"
 DIRECTED_EFFECT_OPERATION_SNAPSHOT_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-operation-snapshot/1"
+DIRECTED_EFFECT_CLAIM_GRANT_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-claim-grant/1"
+DIRECTED_EFFECT_INVENTORY_INTENT_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-inventory-intent/1"
+DIRECTED_EFFECT_INVENTORY_MEMBER_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-inventory-member/1"
+DIRECTED_EFFECT_INVENTORY_PROJECTION_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-inventory-projection/1"
 DIRECTED_EFFECT_PARENT_BINDING_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-parent-binding/1"
 DIRECTED_EFFECT_PARENT_CORRELATION_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-parent-correlation/1"
 DIRECTED_EFFECT_PARENT_REGISTRY_IDENTITY_SCHEMA_V1: Final[str] = (
@@ -1292,6 +1355,23 @@ DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1: Final[str] = "task-runtime.directed-e
 DIRECTED_EFFECT_PARENT_REGISTRY_PROJECTION_SCHEMA_V1: Final[str] = (
     "task-runtime.directed-effect-parent-registry-projection/1"
 )
+DIRECTED_EFFECT_PARENT_READINESS_PROJECTION_SCHEMA_V1: Final[str] = (
+    "task-runtime.directed-effect-parent-readiness-projection/1"
+)
+
+DirectedEffectInventoryEffectTypeV1 = Literal["write", "async"]
+DirectedEffectInventoryExecutionModeV1 = Literal["write_serial", "async_receipt"]
+DirectedEffectInventoryContingencyKindV1 = Literal["forward", "rollback"]
+
+_DIRECTED_EFFECT_INVENTORY_EFFECT_MODE_PAIRS: Final[
+    frozenset[tuple[DirectedEffectInventoryEffectTypeV1, DirectedEffectInventoryExecutionModeV1]]
+] = frozenset(
+    {
+        ("write", "write_serial"),
+        ("async", "async_receipt"),
+    }
+)
+_LOWERCASE_HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdef")
 
 DirectedEffectOperationStateV1 = Literal[
     "INTENT_COMMITTED",
@@ -1303,15 +1383,17 @@ DirectedEffectOperationStateV1 = Literal[
     "DEAD_LETTER",
 ]
 
-DirectedEffectOperationCodeV1 = Literal[
-    "parent_admitted",
-    "parent_idempotent_replay",
-    "parent_registry_found",
-    "admitted",
-    "effect_claimed",
-    "aborted",
-    "found",
-    "idempotent_replay",
+_DIRECTED_EFFECT_OPERATION_STATES: tuple[DirectedEffectOperationStateV1, ...] = (
+    "INTENT_COMMITTED",
+    "EFFECT_STARTED",
+    "RECOVERY_PENDING",
+    "RECEIPT_COMMITTED",
+    "CLOSED_BY_PARENT",
+    "ABORTED",
+    "DEAD_LETTER",
+)
+
+DirectedEffectAuthorityFailureCodeV1 = Literal[
     "operation_not_found",
     "parent_binding_not_found",
     "parent_binding_conflict",
@@ -1361,7 +1443,46 @@ DirectedEffectOperationCodeV1 = Literal[
     "guarded_reprepare_exhausted",
     "guarded_receipt_mismatch",
     "idempotency_semantic_conflict",
+    "inventory_not_sealed",
+    "inventory_seal_conflict",
+    "inventory_requires_empty_operation_stream",
+    "inventory_member_not_found",
+    "inventory_member_conflict",
+    "inventory_admission_incomplete",
+    "inventory_admission_unexpected",
+    "inventory_not_ready",
 ]
+
+DirectedEffectOperationCodeV1 = (
+    Literal[
+        "parent_admitted",
+        "parent_idempotent_replay",
+        "parent_registry_found",
+        "admitted",
+        "effect_claimed",
+        "aborted",
+        "found",
+        "idempotent_replay",
+    ]
+    | DirectedEffectAuthorityFailureCodeV1
+)
+
+DirectedEffectInventoryCodeV1 = (
+    Literal[
+        "inventory_sealed",
+        "inventory_seal_idempotent_replay",
+        "inventory_ready",
+        "inventory_ready_idempotent_replay",
+        "inventory_observed",
+    ]
+    | DirectedEffectAuthorityFailureCodeV1
+)
+
+_DIRECTED_EFFECT_AUTHORITY_FAILURE_CODES: Final[frozenset[str]] = frozenset(
+    get_args(DirectedEffectAuthorityFailureCodeV1)
+)
+
+DirectedEffectParentReadinessCodeV1 = DirectedEffectOperationCodeV1 | Literal["readiness_observed"]
 
 
 def _directed_effect_token(name: str, value: str) -> str:
@@ -1378,6 +1499,285 @@ def _directed_effect_non_negative_int(name: str, value: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{name} must be an int >= 0")
     return value
+
+
+def _directed_effect_inventory_token(name: str, value: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{name} must be a non-empty string")
+    return normalized
+
+
+def _directed_effect_inventory_digest(name: str, value: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    if len(value) != 64 or any(character not in _LOWERCASE_HEX_DIGITS for character in value):
+        raise ValueError(f"{name} must be exactly 64 lowercase hexadecimal characters")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectInventoryIntentV1:
+    """One immutable, execution-grade member of a sealed effect inventory."""
+
+    ordinal: int
+    tool_call_id: str
+    normalized_tool_name: str
+    effect_type: DirectedEffectInventoryEffectTypeV1
+    execution_mode: DirectedEffectInventoryExecutionModeV1
+    intended_effect_fingerprint: str
+    policy_verdict_hash: str
+    expected_receipt_binding_hash: str
+    contingency_kind: DirectedEffectInventoryContingencyKindV1 | None = None
+    schema_version: str = DIRECTED_EFFECT_INVENTORY_INTENT_SCHEMA_V1
+
+    def __post_init__(self) -> None:
+        _directed_effect_non_negative_int("ordinal", self.ordinal)
+        object.__setattr__(
+            self,
+            "tool_call_id",
+            _directed_effect_inventory_token("tool_call_id", self.tool_call_id),
+        )
+        object.__setattr__(
+            self,
+            "normalized_tool_name",
+            _directed_effect_inventory_token("normalized_tool_name", self.normalized_tool_name),
+        )
+        if not isinstance(self.effect_type, str):
+            raise TypeError("effect_type must be a string")
+        if not isinstance(self.execution_mode, str):
+            raise TypeError("execution_mode must be a string")
+        if (self.effect_type, self.execution_mode) not in _DIRECTED_EFFECT_INVENTORY_EFFECT_MODE_PAIRS:
+            raise ValueError("effect_type and execution_mode must form a supported pair")
+        for field_name in (
+            "intended_effect_fingerprint",
+            "policy_verdict_hash",
+            "expected_receipt_binding_hash",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _directed_effect_inventory_digest(field_name, getattr(self, field_name)),
+            )
+        if self.contingency_kind is not None and not isinstance(self.contingency_kind, str):
+            raise TypeError("contingency_kind must be a string or None")
+        if self.contingency_kind not in (None, "forward", "rollback"):
+            raise ValueError("contingency_kind must be None, 'forward', or 'rollback'")
+        if not isinstance(self.schema_version, str):
+            raise TypeError("schema_version must be a string")
+        if self.schema_version != DIRECTED_EFFECT_INVENTORY_INTENT_SCHEMA_V1:
+            raise ValueError("unsupported directed effect inventory intent schema")
+
+    def to_record(self) -> dict[str, object]:
+        """Return the exact canonical persisted intent projection."""
+
+        return {
+            "schema_version": self.schema_version,
+            "ordinal": self.ordinal,
+            "tool_call_id": self.tool_call_id,
+            "normalized_tool_name": self.normalized_tool_name,
+            "effect_type": self.effect_type,
+            "execution_mode": self.execution_mode,
+            "intended_effect_fingerprint": self.intended_effect_fingerprint,
+            "policy_verdict_hash": self.policy_verdict_hash,
+            "expected_receipt_binding_hash": self.expected_receipt_binding_hash,
+            "contingency_kind": self.contingency_kind,
+        }
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> DirectedEffectInventoryIntentV1:
+        """Parse one exact canonical inventory intent, failing closed on drift."""
+
+        if not isinstance(record, Mapping):
+            raise TypeError("directed effect inventory intent record must be a mapping")
+        expected_fields = {
+            "schema_version",
+            "ordinal",
+            "tool_call_id",
+            "normalized_tool_name",
+            "effect_type",
+            "execution_mode",
+            "intended_effect_fingerprint",
+            "policy_verdict_hash",
+            "expected_receipt_binding_hash",
+            "contingency_kind",
+        }
+        actual_fields = set(record)
+        if actual_fields != expected_fields:
+            missing_fields = sorted(expected_fields - actual_fields)
+            unexpected_fields = sorted(actual_fields - expected_fields)
+            raise ValueError(
+                "directed effect inventory intent record fields must match canonical schema: "
+                f"missing={missing_fields!r}, unexpected={unexpected_fields!r}"
+            )
+        ordinal = record["ordinal"]
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int):
+            raise TypeError("directed effect inventory intent ordinal must be an int")
+        string_fields = (
+            "schema_version",
+            "tool_call_id",
+            "normalized_tool_name",
+            "effect_type",
+            "execution_mode",
+            "intended_effect_fingerprint",
+            "policy_verdict_hash",
+            "expected_receipt_binding_hash",
+        )
+        for field_name in string_fields:
+            if not isinstance(record[field_name], str):
+                raise TypeError(f"directed effect inventory intent {field_name} must be a string")
+        contingency_kind = record["contingency_kind"]
+        if contingency_kind is not None and not isinstance(contingency_kind, str):
+            raise TypeError("directed effect inventory intent contingency_kind must be a string or None")
+        if record["schema_version"] != DIRECTED_EFFECT_INVENTORY_INTENT_SCHEMA_V1:
+            raise ValueError("directed effect inventory intent schema_version is unsupported")
+        return cls(
+            schema_version=record["schema_version"],
+            ordinal=ordinal,
+            tool_call_id=record["tool_call_id"],
+            normalized_tool_name=record["normalized_tool_name"],
+            effect_type=cast(DirectedEffectInventoryEffectTypeV1, record["effect_type"]),
+            execution_mode=cast(DirectedEffectInventoryExecutionModeV1, record["execution_mode"]),
+            intended_effect_fingerprint=record["intended_effect_fingerprint"],
+            policy_verdict_hash=record["policy_verdict_hash"],
+            expected_receipt_binding_hash=record["expected_receipt_binding_hash"],
+            contingency_kind=cast(DirectedEffectInventoryContingencyKindV1 | None, contingency_kind),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectInventoryMemberV1:
+    """One canonical sealed member with server-derived effect identities."""
+
+    ordinal: int
+    tool_call_id: str
+    effect_id: str
+    operation_id: str
+    normalized_tool_name: str
+    effect_type: DirectedEffectInventoryEffectTypeV1
+    execution_mode: DirectedEffectInventoryExecutionModeV1
+    intended_effect_fingerprint: str
+    policy_verdict_hash: str
+    expected_receipt_binding_hash: str
+    contingency_kind: DirectedEffectInventoryContingencyKindV1 | None = None
+    schema_version: str = DIRECTED_EFFECT_INVENTORY_MEMBER_SCHEMA_V1
+
+    def __post_init__(self) -> None:
+        intent = DirectedEffectInventoryIntentV1(
+            ordinal=self.ordinal,
+            tool_call_id=self.tool_call_id,
+            normalized_tool_name=self.normalized_tool_name,
+            effect_type=self.effect_type,
+            execution_mode=self.execution_mode,
+            intended_effect_fingerprint=self.intended_effect_fingerprint,
+            policy_verdict_hash=self.policy_verdict_hash,
+            expected_receipt_binding_hash=self.expected_receipt_binding_hash,
+            contingency_kind=self.contingency_kind,
+        )
+        for field_name in (
+            "ordinal",
+            "tool_call_id",
+            "normalized_tool_name",
+            "effect_type",
+            "execution_mode",
+            "intended_effect_fingerprint",
+            "policy_verdict_hash",
+            "expected_receipt_binding_hash",
+            "contingency_kind",
+        ):
+            object.__setattr__(self, field_name, getattr(intent, field_name))
+        object.__setattr__(self, "effect_id", _directed_effect_inventory_token("effect_id", self.effect_id))
+        object.__setattr__(
+            self,
+            "operation_id",
+            _directed_effect_inventory_token("operation_id", self.operation_id),
+        )
+        if not isinstance(self.schema_version, str):
+            raise TypeError("schema_version must be a string")
+        if self.schema_version != DIRECTED_EFFECT_INVENTORY_MEMBER_SCHEMA_V1:
+            raise ValueError("unsupported directed effect inventory member schema")
+
+    def to_record(self) -> dict[str, object]:
+        """Return the exact canonical persisted member projection."""
+
+        return {
+            "schema_version": self.schema_version,
+            "ordinal": self.ordinal,
+            "tool_call_id": self.tool_call_id,
+            "effect_id": self.effect_id,
+            "operation_id": self.operation_id,
+            "normalized_tool_name": self.normalized_tool_name,
+            "effect_type": self.effect_type,
+            "execution_mode": self.execution_mode,
+            "intended_effect_fingerprint": self.intended_effect_fingerprint,
+            "policy_verdict_hash": self.policy_verdict_hash,
+            "expected_receipt_binding_hash": self.expected_receipt_binding_hash,
+            "contingency_kind": self.contingency_kind,
+        }
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> DirectedEffectInventoryMemberV1:
+        """Parse one exact canonical inventory member, failing closed on drift."""
+
+        if not isinstance(record, Mapping):
+            raise TypeError("directed effect inventory member record must be a mapping")
+        expected_fields = {
+            "schema_version",
+            "ordinal",
+            "tool_call_id",
+            "effect_id",
+            "operation_id",
+            "normalized_tool_name",
+            "effect_type",
+            "execution_mode",
+            "intended_effect_fingerprint",
+            "policy_verdict_hash",
+            "expected_receipt_binding_hash",
+            "contingency_kind",
+        }
+        actual_fields = set(record)
+        if actual_fields != expected_fields:
+            missing_fields = sorted(expected_fields - actual_fields)
+            unexpected_fields = sorted(actual_fields - expected_fields)
+            raise ValueError(
+                "directed effect inventory member record fields must match canonical schema: "
+                f"missing={missing_fields!r}, unexpected={unexpected_fields!r}"
+            )
+        schema_version = record["schema_version"]
+        if not isinstance(schema_version, str):
+            raise TypeError("directed effect inventory member schema_version must be a string")
+        if schema_version != DIRECTED_EFFECT_INVENTORY_MEMBER_SCHEMA_V1:
+            raise ValueError("directed effect inventory member schema_version is unsupported")
+        intent = DirectedEffectInventoryIntentV1.from_record(
+            {
+                "schema_version": DIRECTED_EFFECT_INVENTORY_INTENT_SCHEMA_V1,
+                "ordinal": record["ordinal"],
+                "tool_call_id": record["tool_call_id"],
+                "normalized_tool_name": record["normalized_tool_name"],
+                "effect_type": record["effect_type"],
+                "execution_mode": record["execution_mode"],
+                "intended_effect_fingerprint": record["intended_effect_fingerprint"],
+                "policy_verdict_hash": record["policy_verdict_hash"],
+                "expected_receipt_binding_hash": record["expected_receipt_binding_hash"],
+                "contingency_kind": record["contingency_kind"],
+            }
+        )
+        return cls(
+            schema_version=schema_version,
+            ordinal=intent.ordinal,
+            tool_call_id=intent.tool_call_id,
+            effect_id=record["effect_id"],
+            operation_id=record["operation_id"],
+            normalized_tool_name=intent.normalized_tool_name,
+            effect_type=intent.effect_type,
+            execution_mode=intent.execution_mode,
+            intended_effect_fingerprint=intent.intended_effect_fingerprint,
+            policy_verdict_hash=intent.policy_verdict_hash,
+            expected_receipt_binding_hash=intent.expected_receipt_binding_hash,
+            contingency_kind=intent.contingency_kind,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1630,6 +2030,382 @@ class DirectedEffectParentBindingV1:
 
 
 @dataclass(frozen=True, slots=True)
+class SealDirectedEffectInventoryCommandV1:
+    """Seal the complete immutable inventory before any child effect claim."""
+
+    workspace: str
+    task_id: int
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    parent_binding: DirectedEffectParentBindingV1
+    intents: tuple[DirectedEffectInventoryIntentV1, ...]
+    expected_registry_version: int
+    expected_registry_seq: int
+    expected_operation_head_seq: int = 0
+    actor: str = "roles.kernel"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.workspace, str):
+            raise TypeError("workspace must be a string")
+        workspace = self.workspace.strip()
+        if not workspace:
+            raise ValueError("workspace must be a non-empty string")
+        canonical_workspace = str(Path(workspace).resolve())
+        if workspace != canonical_workspace:
+            raise ValueError("workspace must be canonical")
+        object.__setattr__(self, "workspace", canonical_workspace)
+
+        _directed_effect_positive_int("task_id", self.task_id)
+        if type(self.execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1:
+            raise TypeError("execution_attempt must be exactly TaskRuntimeExecutionAttemptIdentityV1")
+        if type(self.parent_binding) is not DirectedEffectParentBindingV1:
+            raise TypeError("parent_binding must be exactly DirectedEffectParentBindingV1")
+        if self.execution_attempt.workspace != canonical_workspace:
+            raise ValueError("execution_attempt workspace must match workspace")
+        if self.parent_binding.workspace != canonical_workspace:
+            raise ValueError("parent_binding workspace must match workspace")
+        if self.execution_attempt.task_id != self.task_id:
+            raise ValueError("execution_attempt task_id must match task_id")
+        if self.parent_binding.task_id != self.task_id:
+            raise ValueError("parent_binding task_id must match task_id")
+        expected_registry_identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(
+            self.execution_attempt
+        )
+        if self.parent_binding.registry_identity != expected_registry_identity:
+            raise ValueError("parent_binding registry identity must match execution_attempt")
+
+        if not isinstance(self.intents, tuple):
+            raise TypeError("intents must be a tuple")
+        if not 1 <= len(self.intents) <= 64:
+            raise ValueError("intents must contain between 1 and 64 items")
+        detached_intents = tuple(intent for intent in self.intents)
+        seen_tool_call_ids: set[str] = set()
+        for expected_ordinal, intent in enumerate(detached_intents):
+            if type(intent) is not DirectedEffectInventoryIntentV1:
+                raise TypeError("each intent must be exactly DirectedEffectInventoryIntentV1")
+            if intent.ordinal != expected_ordinal:
+                raise ValueError("intent ordinals must be contiguous and ordered from zero")
+            if intent.tool_call_id in seen_tool_call_ids:
+                raise ValueError("intent tool_call_id values must be unique")
+            seen_tool_call_ids.add(intent.tool_call_id)
+        object.__setattr__(self, "intents", detached_intents)
+
+        _directed_effect_positive_int("expected_registry_version", self.expected_registry_version)
+        if (
+            isinstance(self.expected_registry_seq, bool)
+            or not isinstance(self.expected_registry_seq, int)
+            or self.expected_registry_seq < 2
+        ):
+            raise ValueError("expected_registry_seq must be an int >= 2")
+        if self.expected_registry_seq != self.expected_registry_version + 1:
+            raise ValueError("expected_registry_seq must equal expected_registry_version + 1")
+        if (
+            isinstance(self.expected_operation_head_seq, bool)
+            or not isinstance(self.expected_operation_head_seq, int)
+            or self.expected_operation_head_seq != 0
+        ):
+            raise ValueError("expected_operation_head_seq must be exactly 0")
+        object.__setattr__(self, "actor", _directed_effect_inventory_token("actor", self.actor))
+
+
+def _directed_effect_inventory_identity(
+    *,
+    workspace: str,
+    task_id: int,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+    parent_binding: DirectedEffectParentBindingV1,
+) -> str:
+    """Validate and return one exact canonical inventory parent identity."""
+
+    if not isinstance(workspace, str):
+        raise TypeError("workspace must be a string")
+    workspace_token = workspace.strip()
+    if not workspace_token:
+        raise ValueError("workspace must be a non-empty string")
+    if workspace != workspace_token:
+        raise ValueError("workspace must not contain surrounding whitespace")
+    canonical_workspace = str(Path(workspace_token).resolve())
+    if workspace_token != canonical_workspace:
+        raise ValueError("workspace must be canonical")
+    _directed_effect_positive_int("task_id", task_id)
+    if type(execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1:
+        raise TypeError("execution_attempt must be exactly TaskRuntimeExecutionAttemptIdentityV1")
+    if type(parent_binding) is not DirectedEffectParentBindingV1:
+        raise TypeError("parent_binding must be exactly DirectedEffectParentBindingV1")
+    if execution_attempt.workspace != canonical_workspace:
+        raise ValueError("execution_attempt workspace must match workspace")
+    if parent_binding.workspace != canonical_workspace:
+        raise ValueError("parent_binding workspace must match workspace")
+    if execution_attempt.task_id != task_id:
+        raise ValueError("execution_attempt task_id must match task_id")
+    if parent_binding.task_id != task_id:
+        raise ValueError("parent_binding task_id must match task_id")
+    expected_registry_identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(execution_attempt)
+    if parent_binding.registry_identity != expected_registry_identity:
+        raise ValueError("parent_binding registry identity must match execution_attempt")
+    return canonical_workspace
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizeDirectedEffectInventoryAdmissionCommandV1:
+    """Request exact sealed/admitted inventory equality before effect claims."""
+
+    workspace: str
+    task_id: int
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    parent_binding: DirectedEffectParentBindingV1
+    inventory_hash: str
+    expected_registry_version: int
+    expected_registry_seq: int
+    expected_operation_head_seq: int
+    actor: str = "roles.kernel"
+
+    def __post_init__(self) -> None:
+        canonical_workspace = _directed_effect_inventory_identity(
+            workspace=self.workspace,
+            task_id=self.task_id,
+            execution_attempt=self.execution_attempt,
+            parent_binding=self.parent_binding,
+        )
+        object.__setattr__(self, "workspace", canonical_workspace)
+        object.__setattr__(
+            self,
+            "inventory_hash",
+            _directed_effect_inventory_digest("inventory_hash", self.inventory_hash),
+        )
+        if (
+            isinstance(self.expected_registry_version, bool)
+            or not isinstance(self.expected_registry_version, int)
+            or self.expected_registry_version < 2
+        ):
+            raise ValueError("expected_registry_version must be an int >= 2")
+        if isinstance(self.expected_registry_seq, bool) or not isinstance(self.expected_registry_seq, int):
+            raise ValueError("expected_registry_seq must be an int")
+        if self.expected_registry_seq != self.expected_registry_version + 1:
+            raise ValueError("expected_registry_seq must equal expected_registry_version + 1")
+        _directed_effect_positive_int("expected_operation_head_seq", self.expected_operation_head_seq)
+        if not isinstance(self.actor, str):
+            raise TypeError("actor must be a string")
+        if self.actor != "roles.kernel":
+            raise ValueError("actor must be exactly 'roles.kernel'")
+
+
+@dataclass(frozen=True, slots=True)
+class GetDirectedEffectInventoryQueryV1:
+    """Read the inventory bound to one exact attempt and parent admission."""
+
+    workspace: str
+    task_id: int
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    parent_binding: DirectedEffectParentBindingV1
+
+    def __post_init__(self) -> None:
+        canonical_workspace = _directed_effect_inventory_identity(
+            workspace=self.workspace,
+            task_id=self.task_id,
+            execution_attempt=self.execution_attempt,
+            parent_binding=self.parent_binding,
+        )
+        object.__setattr__(self, "workspace", canonical_workspace)
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectInventoryProjectionV1:
+    """Immutable diagnostic projection of one sealed parent inventory."""
+
+    schema_version: str
+    workspace: str
+    task_id: int
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    parent_binding_id: str
+    members: tuple[DirectedEffectInventoryMemberV1, ...]
+    inventory_hash: str
+    sealed_event_id: str
+    sealed_event_seq: int
+    parent_registry_source_head_seq: int
+    operation_source_head_seq: int
+    inventory_ready: bool
+    ready_event_id: str | None
+    ready_event_seq: int | None
+    admitted_count: int
+    missing_operation_ids: tuple[str, ...]
+    unexpected_operation_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.schema_version, str):
+            raise TypeError("schema_version must be a string")
+        if self.schema_version != DIRECTED_EFFECT_INVENTORY_PROJECTION_SCHEMA_V1:
+            raise ValueError("unsupported directed effect inventory projection schema")
+
+        if not isinstance(self.workspace, str):
+            raise TypeError("workspace must be a string")
+        workspace = self.workspace.strip()
+        if not workspace:
+            raise ValueError("workspace must be a non-empty string")
+        if self.workspace != workspace:
+            raise ValueError("workspace must not contain surrounding whitespace")
+        canonical_workspace = str(Path(workspace).resolve())
+        if workspace != canonical_workspace:
+            raise ValueError("workspace must be canonical")
+        object.__setattr__(self, "workspace", canonical_workspace)
+        _directed_effect_positive_int("task_id", self.task_id)
+        if type(self.execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1:
+            raise TypeError("execution_attempt must be exactly TaskRuntimeExecutionAttemptIdentityV1")
+        if self.execution_attempt.workspace != canonical_workspace:
+            raise ValueError("execution_attempt workspace must match workspace")
+        if self.execution_attempt.task_id != self.task_id:
+            raise ValueError("execution_attempt task_id must match task_id")
+        object.__setattr__(
+            self,
+            "parent_binding_id",
+            _directed_effect_inventory_token("parent_binding_id", self.parent_binding_id),
+        )
+
+        if not isinstance(self.members, tuple):
+            raise TypeError("members must be a tuple")
+        if not 1 <= len(self.members) <= 64:
+            raise ValueError("members must contain between 1 and 64 items")
+        members = tuple(member for member in self.members)
+        tool_call_ids: set[str] = set()
+        effect_ids: set[str] = set()
+        operation_ids: set[str] = set()
+        for expected_ordinal, member in enumerate(members):
+            if type(member) is not DirectedEffectInventoryMemberV1:
+                raise TypeError("each member must be exactly DirectedEffectInventoryMemberV1")
+            if member.ordinal != expected_ordinal:
+                raise ValueError("member ordinals must be contiguous and ordered from zero")
+            for field_name, seen_values in (
+                ("tool_call_id", tool_call_ids),
+                ("effect_id", effect_ids),
+                ("operation_id", operation_ids),
+            ):
+                value = getattr(member, field_name)
+                if value in seen_values:
+                    raise ValueError(f"member {field_name} values must be unique")
+                seen_values.add(value)
+        object.__setattr__(self, "members", members)
+        object.__setattr__(
+            self,
+            "inventory_hash",
+            _directed_effect_inventory_digest("inventory_hash", self.inventory_hash),
+        )
+        object.__setattr__(
+            self,
+            "sealed_event_id",
+            _directed_effect_inventory_token("sealed_event_id", self.sealed_event_id),
+        )
+        _directed_effect_positive_int("sealed_event_seq", self.sealed_event_seq)
+        _directed_effect_non_negative_int(
+            "parent_registry_source_head_seq",
+            self.parent_registry_source_head_seq,
+        )
+        _directed_effect_non_negative_int(
+            "operation_source_head_seq",
+            self.operation_source_head_seq,
+        )
+        if self.sealed_event_seq > self.parent_registry_source_head_seq:
+            raise ValueError("sealed_event_seq must not exceed parent_registry_source_head_seq")
+        if type(self.inventory_ready) is not bool:
+            raise TypeError("inventory_ready must be exactly bool")
+
+        if self.inventory_ready:
+            if self.ready_event_id is None or self.ready_event_seq is None:
+                raise ValueError("ready inventory requires ready event id and sequence")
+            object.__setattr__(
+                self,
+                "ready_event_id",
+                _directed_effect_inventory_token("ready_event_id", self.ready_event_id),
+            )
+            _directed_effect_positive_int("ready_event_seq", self.ready_event_seq)
+            if self.ready_event_seq <= self.sealed_event_seq:
+                raise ValueError("ready_event_seq must follow sealed_event_seq")
+            if self.ready_event_seq > self.parent_registry_source_head_seq:
+                raise ValueError("ready_event_seq must not exceed parent_registry_source_head_seq")
+        elif self.ready_event_id is not None or self.ready_event_seq is not None:
+            raise ValueError("non-ready inventory must not carry a ready event")
+
+        _directed_effect_non_negative_int("admitted_count", self.admitted_count)
+        missing_operation_ids = self._validated_operation_ids(
+            "missing_operation_ids",
+            self.missing_operation_ids,
+        )
+        unexpected_operation_ids = self._validated_operation_ids(
+            "unexpected_operation_ids",
+            self.unexpected_operation_ids,
+        )
+        member_operation_ids = tuple(member.operation_id for member in members)
+        member_operation_id_set = set(member_operation_ids)
+        missing_set = set(missing_operation_ids)
+        unexpected_set = set(unexpected_operation_ids)
+        if not missing_set.issubset(member_operation_id_set):
+            raise ValueError("missing_operation_ids must be a subset of member operation ids")
+        expected_missing_order = tuple(
+            operation_id for operation_id in member_operation_ids if operation_id in missing_set
+        )
+        if missing_operation_ids != expected_missing_order:
+            raise ValueError("missing_operation_ids must be unique and follow member order")
+        if len(unexpected_set) != len(unexpected_operation_ids):
+            raise ValueError("unexpected_operation_ids must be unique")
+        if unexpected_set & member_operation_id_set:
+            raise ValueError("unexpected_operation_ids must be disjoint from member operation ids")
+        expected_admitted_count = len(members) - len(missing_operation_ids)
+        if self.admitted_count != expected_admitted_count:
+            raise ValueError("admitted_count must equal members minus missing operations")
+        if self.inventory_ready and (missing_operation_ids or unexpected_operation_ids):
+            raise ValueError("ready inventory must have exact complete admission")
+        minimum_operation_head_seq = self.admitted_count + len(unexpected_operation_ids)
+        if self.operation_source_head_seq < minimum_operation_head_seq:
+            raise ValueError("operation_source_head_seq must cover admitted and unexpected operations")
+        object.__setattr__(self, "missing_operation_ids", missing_operation_ids)
+        object.__setattr__(self, "unexpected_operation_ids", unexpected_operation_ids)
+
+    @staticmethod
+    def _validated_operation_ids(name: str, values: tuple[str, ...]) -> tuple[str, ...]:
+        if not isinstance(values, tuple):
+            raise TypeError(f"{name} must be a tuple")
+        return tuple(_directed_effect_inventory_token(name, value) for value in values)
+
+
+_DIRECTED_EFFECT_INVENTORY_SUCCESS_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "inventory_sealed",
+        "inventory_seal_idempotent_replay",
+        "inventory_ready",
+        "inventory_ready_idempotent_replay",
+        "inventory_observed",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectInventoryResultV1:
+    """Typed inventory command/query result with immutable diagnostic evidence."""
+
+    ok: bool
+    code: DirectedEffectInventoryCodeV1
+    projection: DirectedEffectInventoryProjectionV1 | None = None
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if type(self.ok) is not bool:
+            raise TypeError("ok must be exactly bool")
+        if not isinstance(self.code, str):
+            raise TypeError("code must be a string")
+        success = self.code in _DIRECTED_EFFECT_INVENTORY_SUCCESS_CODES
+        failure = self.code in _DIRECTED_EFFECT_AUTHORITY_FAILURE_CODES
+        if not success and not failure:
+            raise ValueError("code must be an inventory success or directed effect authority failure")
+        if self.ok != success:
+            raise ValueError("ok must match inventory success code")
+        if self.ok != (self.projection is not None):
+            raise ValueError("successful inventory result requires exactly one projection")
+        if self.projection is not None and type(self.projection) is not DirectedEffectInventoryProjectionV1:
+            raise TypeError("projection must be exactly DirectedEffectInventoryProjectionV1 or None")
+        if not isinstance(self.evidence, Mapping):
+            raise TypeError("evidence must be a mapping")
+        object.__setattr__(self, "evidence", _to_immutable_evidence(self.evidence))
+
+
+@dataclass(frozen=True, slots=True)
 class DirectedEffectOperationIdentityV1:
     """Canonical TaskRuntime identity for one child directed effect."""
 
@@ -1669,6 +2445,128 @@ class DirectedEffectOperationIdentityV1:
             "operation_id": self.operation_id,
             "operation_stream_token": self.operation_stream_token,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectClaimGrantV1:
+    """One hash-bound claim capability returned only by the original claim."""
+
+    schema_version: str
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    parent_binding: DirectedEffectParentBindingV1
+    operation: DirectedEffectOperationIdentityV1
+    member: DirectedEffectInventoryMemberV1
+    inventory_hash: str
+    operation_version: int
+    claim_event_id: str
+    claim_event_seq: int
+    operation_source_head_seq: int
+    parent_registry_source_head_seq: int
+    grant_hash: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.schema_version, str):
+            raise TypeError("schema_version must be a string")
+        if self.schema_version != DIRECTED_EFFECT_CLAIM_GRANT_SCHEMA_V1:
+            raise ValueError("unsupported directed effect claim grant schema")
+        if type(self.execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1:
+            raise TypeError("execution_attempt must be exactly TaskRuntimeExecutionAttemptIdentityV1")
+        if type(self.parent_binding) is not DirectedEffectParentBindingV1:
+            raise TypeError("parent_binding must be exactly DirectedEffectParentBindingV1")
+        if type(self.operation) is not DirectedEffectOperationIdentityV1:
+            raise TypeError("operation must be exactly DirectedEffectOperationIdentityV1")
+        if type(self.member) is not DirectedEffectInventoryMemberV1:
+            raise TypeError("member must be exactly DirectedEffectInventoryMemberV1")
+
+        expected_registry_identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(
+            self.execution_attempt
+        )
+        if self.parent_binding.registry_identity != expected_registry_identity:
+            raise ValueError("parent_binding registry identity must match execution_attempt")
+        if self.operation.workspace != self.execution_attempt.workspace:
+            raise ValueError("operation workspace must match execution_attempt")
+        if self.operation.task_id != self.execution_attempt.task_id:
+            raise ValueError("operation task_id must match execution_attempt")
+        if self.operation.execution_attempt_id != expected_registry_identity.execution_attempt_id:
+            raise ValueError("operation execution_attempt_id must match execution_attempt")
+        if self.operation.parent_binding_id != self.parent_binding.binding_id:
+            raise ValueError("operation parent_binding_id must match parent_binding")
+        if self.operation.parent_sequence != self.parent_binding.parent_sequence:
+            raise ValueError("operation parent_sequence must match parent_binding")
+        if self.operation.operation_stream_token != self.parent_binding.operation_stream_token:
+            raise ValueError("operation stream must match parent_binding")
+        if self.operation.tool_call_id != self.member.tool_call_id:
+            raise ValueError("operation tool_call_id must match inventory member")
+        if self.operation.effect_id != self.member.effect_id:
+            raise ValueError("operation effect_id must match inventory member")
+        if self.operation.operation_id != self.member.operation_id:
+            raise ValueError("operation operation_id must match inventory member")
+
+        object.__setattr__(
+            self,
+            "inventory_hash",
+            _directed_effect_inventory_digest("inventory_hash", self.inventory_hash),
+        )
+        if (
+            isinstance(self.operation_version, bool)
+            or not isinstance(self.operation_version, int)
+            or self.operation_version < 2
+        ):
+            raise ValueError("operation_version must be an int >= 2")
+        object.__setattr__(
+            self,
+            "claim_event_id",
+            _directed_effect_inventory_token("claim_event_id", self.claim_event_id),
+        )
+        _directed_effect_positive_int("claim_event_seq", self.claim_event_seq)
+        _directed_effect_positive_int("operation_source_head_seq", self.operation_source_head_seq)
+        if self.claim_event_seq != self.operation_source_head_seq:
+            raise ValueError("claim_event_seq must equal operation_source_head_seq")
+        if self.operation_source_head_seq < self.operation_version:
+            raise ValueError("operation_source_head_seq must be >= operation_version")
+        _directed_effect_positive_int(
+            "parent_registry_source_head_seq",
+            self.parent_registry_source_head_seq,
+        )
+        minimum_parent_registry_head_seq = self.parent_binding.source_event_seq + 2
+        if self.parent_registry_source_head_seq < minimum_parent_registry_head_seq:
+            raise ValueError("parent registry head must cover parent binding, inventory seal, and inventory ready")
+        object.__setattr__(
+            self,
+            "grant_hash",
+            _directed_effect_inventory_digest("grant_hash", self.grant_hash),
+        )
+        if self.grant_hash != self._canonical_grant_hash():
+            raise ValueError("grant_hash must match the canonical unsigned grant record")
+
+    def _unsigned_record(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "execution_attempt": self.execution_attempt.to_record(),
+            "parent_binding": self.parent_binding.to_record(),
+            "operation": self.operation.to_record(),
+            "member": self.member.to_record(),
+            "inventory_hash": self.inventory_hash,
+            "operation_version": self.operation_version,
+            "claim_event_id": self.claim_event_id,
+            "claim_event_seq": self.claim_event_seq,
+            "operation_source_head_seq": self.operation_source_head_seq,
+            "parent_registry_source_head_seq": self.parent_registry_source_head_seq,
+        }
+
+    def _canonical_grant_hash(self) -> str:
+        encoded = json.dumps(
+            self._unsigned_record(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def to_record(self) -> dict[str, object]:
+        """Return the canonical signed grant record."""
+
+        return {**self._unsigned_record(), "grant_hash": self.grant_hash}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1990,6 +2888,115 @@ class GetDirectedEffectOperationQueryV1:
 
 
 @dataclass(frozen=True, slots=True)
+class GetDirectedEffectParentReadinessQueryV1:
+    """Read one parent-bound operation-stream diagnostic without authority effects."""
+
+    workspace: str
+    task_id: int
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    parent_binding: DirectedEffectParentBindingV1
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _directed_effect_token("workspace", self.workspace))
+        _directed_effect_positive_int("task_id", self.task_id)
+        if not isinstance(self.execution_attempt, TaskRuntimeExecutionAttemptIdentityV1):
+            raise TypeError("execution_attempt must be TaskRuntimeExecutionAttemptIdentityV1")
+        if not isinstance(self.parent_binding, DirectedEffectParentBindingV1):
+            raise TypeError("parent_binding must be DirectedEffectParentBindingV1")
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectParentReadinessStateCountV1:
+    """One immutable final-state count from a strict parent operation scan."""
+
+    state: DirectedEffectOperationStateV1
+    count: int
+
+    def __post_init__(self) -> None:
+        if self.state not in _DIRECTED_EFFECT_OPERATION_STATES:
+            raise ValueError("state must be an existing directed effect operation state")
+        _directed_effect_non_negative_int("count", self.count)
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectParentReadinessProjectionV1:
+    """Immutable, non-authoritative diagnostic aggregate for one parent."""
+
+    schema_version: str
+    workspace: str
+    task_id: int
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    parent_binding_id: str
+    parent_registry_stream_token: str
+    parent_registry_source_head_seq: int
+    operation_stream_token: str
+    operation_source_head_seq: int
+    operation_count: int
+    state_counts: tuple[DirectedEffectParentReadinessStateCountV1, ...]
+    enforcement: Literal["not_enabled"] = "not_enabled"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != DIRECTED_EFFECT_PARENT_READINESS_PROJECTION_SCHEMA_V1:
+            raise ValueError("unsupported directed effect parent readiness projection schema")
+        object.__setattr__(self, "workspace", _directed_effect_token("workspace", self.workspace))
+        _directed_effect_positive_int("task_id", self.task_id)
+        if not isinstance(self.execution_attempt, TaskRuntimeExecutionAttemptIdentityV1):
+            raise TypeError("execution_attempt must be TaskRuntimeExecutionAttemptIdentityV1")
+        if self.workspace != self.execution_attempt.workspace or self.task_id != self.execution_attempt.task_id:
+            raise ValueError("readiness projection workspace and task must match execution_attempt")
+        for field_name in (
+            "parent_binding_id",
+            "parent_registry_stream_token",
+            "operation_stream_token",
+        ):
+            object.__setattr__(self, field_name, _directed_effect_token(field_name, getattr(self, field_name)))
+        _directed_effect_non_negative_int("parent_registry_source_head_seq", self.parent_registry_source_head_seq)
+        _directed_effect_non_negative_int("operation_source_head_seq", self.operation_source_head_seq)
+        _directed_effect_non_negative_int("operation_count", self.operation_count)
+        if self.enforcement != "not_enabled":
+            raise ValueError("enforcement must be not_enabled")
+        if not isinstance(self.state_counts, tuple):
+            raise TypeError("state_counts must be a tuple")
+        if any(not isinstance(item, DirectedEffectParentReadinessStateCountV1) for item in self.state_counts):
+            raise TypeError("state_counts must contain DirectedEffectParentReadinessStateCountV1")
+        if tuple(item.state for item in self.state_counts) != _DIRECTED_EFFECT_OPERATION_STATES:
+            raise ValueError("state_counts must contain each directed effect state in canonical order")
+        if sum(item.count for item in self.state_counts) != self.operation_count:
+            raise ValueError("state_counts must sum to operation_count")
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectParentReadinessResultV1:
+    """Typed outcome for the read-only parent operation-stream diagnostic."""
+
+    ok: bool
+    code: DirectedEffectParentReadinessCodeV1
+    projection: DirectedEffectParentReadinessProjectionV1 | None = None
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.ok != (self.code == "readiness_observed"):
+            raise ValueError("ok must match readiness_observed")
+        if self.ok != (self.projection is not None):
+            raise ValueError("successful readiness result requires a projection")
+        if self.projection is not None and not isinstance(self.projection, DirectedEffectParentReadinessProjectionV1):
+            raise TypeError("projection must be DirectedEffectParentReadinessProjectionV1 or None")
+        evidence = _to_immutable_evidence(self.evidence)
+        if self.ok:
+            projection = cast(DirectedEffectParentReadinessProjectionV1, self.projection)
+            expected_source_heads = {
+                "parent_registry_source_head_seq": projection.parent_registry_source_head_seq,
+                "operation_source_head_seq": projection.operation_source_head_seq,
+            }
+            if set(evidence) != _SUCCESS_READINESS_EVIDENCE_KEYS or any(
+                isinstance(evidence[key], bool) or not isinstance(evidence[key], int) or evidence[key] != expected_value
+                for key, expected_value in expected_source_heads.items()
+            ):
+                raise ValueError("successful readiness evidence must match diagnostic schema")
+        object.__setattr__(self, "evidence", evidence)
+
+
+@dataclass(frozen=True, slots=True)
 class DirectedEffectOperationResultV1:
     ok: bool
     code: DirectedEffectOperationCodeV1
@@ -2001,6 +3008,7 @@ class DirectedEffectOperationResultV1:
     snapshot: DirectedEffectOperationSnapshotV1 | None = None
     idempotent: bool = False
     evidence: Mapping[str, Any] = field(default_factory=dict)
+    claim_grant: DirectedEffectClaimGrantV1 | None = None
 
     def __post_init__(self) -> None:
         success_codes = {
@@ -2024,6 +3032,10 @@ class DirectedEffectOperationResultV1:
             self.parent_registry, DirectedEffectParentRegistryProjectionV1
         ):
             raise TypeError("parent_registry must be DirectedEffectParentRegistryProjectionV1 or None")
+        if self.claim_grant is not None and type(self.claim_grant) is not DirectedEffectClaimGrantV1:
+            raise TypeError("claim_grant must be exactly DirectedEffectClaimGrantV1 or None")
+        if (self.code == "effect_claimed") != (self.claim_grant is not None):
+            raise ValueError("effect_claimed requires exactly one claim_grant")
         parent_success = self.code in {"parent_admitted", "parent_idempotent_replay"}
         if self.ok and parent_success != (self.parent_binding is not None and self.operation is None):
             raise ValueError("parent admission success requires exactly one parent binding")
@@ -2031,6 +3043,17 @@ class DirectedEffectOperationResultV1:
             raise ValueError("successful directed effect operation result requires aggregate state")
         if self.idempotent != (self.code in {"idempotent_replay", "parent_idempotent_replay"}):
             raise ValueError("idempotent must match an idempotent replay code")
+        if self.claim_grant is not None:
+            if self.code != "effect_claimed":
+                raise ValueError("only effect_claimed may carry a claim_grant")
+            if self.operation != self.claim_grant.operation:
+                raise ValueError("operation must match claim_grant operation")
+            if self.state != "EFFECT_STARTED":
+                raise ValueError("claim_grant requires EFFECT_STARTED state")
+            if self.version != self.claim_grant.operation_version:
+                raise ValueError("version must match claim_grant operation_version")
+            if self.parent_binding is not None and self.parent_binding != self.claim_grant.parent_binding:
+                raise ValueError("parent_binding must match claim_grant parent_binding")
         object.__setattr__(self, "evidence", _to_detached_dict(self.evidence))
 
 
@@ -2052,11 +3075,16 @@ class DirectedEffectParentRegistryResultV1:
 
 
 __all__ = [
+    "DIRECTED_EFFECT_CLAIM_GRANT_SCHEMA_V1",
+    "DIRECTED_EFFECT_INVENTORY_INTENT_SCHEMA_V1",
+    "DIRECTED_EFFECT_INVENTORY_MEMBER_SCHEMA_V1",
+    "DIRECTED_EFFECT_INVENTORY_PROJECTION_SCHEMA_V1",
     "DIRECTED_EFFECT_OPERATION_SCHEMA_V1",
     "DIRECTED_EFFECT_OPERATION_SCHEMA_V2",
     "DIRECTED_EFFECT_OPERATION_SNAPSHOT_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_BINDING_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_CORRELATION_SCHEMA_V1",
+    "DIRECTED_EFFECT_PARENT_READINESS_PROJECTION_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_REGISTRY_IDENTITY_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_REGISTRY_PROJECTION_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1",
@@ -2071,12 +3099,26 @@ __all__ = [
     "BindRuntimeTaskToFactoryRunCommandV1",
     "ClaimDirectedEffectCommandV1",
     "CreateRuntimeTaskCommandV1",
+    "DirectedEffectAuthorityFailureCodeV1",
+    "DirectedEffectClaimGrantV1",
+    "DirectedEffectInventoryCodeV1",
+    "DirectedEffectInventoryContingencyKindV1",
+    "DirectedEffectInventoryEffectTypeV1",
+    "DirectedEffectInventoryExecutionModeV1",
+    "DirectedEffectInventoryIntentV1",
+    "DirectedEffectInventoryMemberV1",
+    "DirectedEffectInventoryProjectionV1",
+    "DirectedEffectInventoryResultV1",
     "DirectedEffectOperationCodeV1",
     "DirectedEffectOperationIdentityV1",
     "DirectedEffectOperationResultV1",
     "DirectedEffectOperationSnapshotV1",
     "DirectedEffectOperationStateV1",
     "DirectedEffectParentBindingV1",
+    "DirectedEffectParentReadinessCodeV1",
+    "DirectedEffectParentReadinessProjectionV1",
+    "DirectedEffectParentReadinessResultV1",
+    "DirectedEffectParentReadinessStateCountV1",
     "DirectedEffectParentRegistryIdentityV1",
     "DirectedEffectParentRegistryProjectionV1",
     "DirectedEffectParentRegistryResultV1",
@@ -2087,7 +3129,10 @@ __all__ = [
     "ExpiredFactoryRunSessionFenceCodeV1",
     "ExpiredFactoryRunSessionFenceResultV1",
     "FenceExpiredFactoryRunSessionsCommandV1",
+    "FinalizeDirectedEffectInventoryAdmissionCommandV1",
+    "GetDirectedEffectInventoryQueryV1",
     "GetDirectedEffectOperationQueryV1",
+    "GetDirectedEffectParentReadinessQueryV1",
     "GetDirectedEffectParentRegistryQueryV1",
     "GetRuntimeTaskQueryV1",
     "HeartbeatTaskRuntimeExecutionAttemptCommandV1",
@@ -2105,6 +3150,7 @@ __all__ = [
     "RuntimeTaskLifecycleEventV1",
     "RuntimeTaskResultV1",
     "RuntimeTaskRuntimeError",
+    "SealDirectedEffectInventoryCommandV1",
     "SettleTaskRuntimeExecutionAttemptCommandV1",
     "TaskRuntimeExecutionAttemptAuthorityHeartbeatCodeV1",
     "TaskRuntimeExecutionAttemptAuthorityHeartbeatVerdictV1",

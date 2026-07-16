@@ -6,7 +6,9 @@ stateful: true
 owner: runtime
 purpose: 'Provide the single task lifecycle runtime for PM/Director/QA collaboration,
   including canonical taskboard rows, execution-attempt authority, and the finalized
-  DEO-1B guarded aggregate, explicit stream enrollment, and inactive-write pre-barrier.
+  DEO-1 durable fact foundation: guarded aggregate, explicit stream enrollment,
+  inactive-write pre-barrier, and read-only parent-operation readiness observation
+  with enforcement not_enabled.
 
   '
 current_modules:
@@ -43,6 +45,7 @@ public_contracts:
   - ValidateTaskRuntimeExecutionAttemptQueryV1
   - GetDirectedEffectParentRegistryQueryV1
   - GetDirectedEffectOperationQueryV1
+  - GetDirectedEffectParentReadinessQueryV1
   events:
   - RuntimeTaskLifecycleEventV1
   - TaskRuntimeExecutionFactV1
@@ -58,6 +61,9 @@ public_contracts:
   - DirectedEffectStreamEnrollmentResultV1
   - DirectedEffectOperationResultV1
   - DirectedEffectParentRegistryResultV1
+  - DirectedEffectParentReadinessStateCountV1
+  - DirectedEffectParentReadinessProjectionV1
+  - DirectedEffectParentReadinessResultV1
   - ObservableTaskRowsProjectionV1
   errors:
   - RuntimeTaskRuntimeError
@@ -85,8 +91,6 @@ verification:
   - polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py
   - polaris/tests/test_runtime_projection_snapshot_tasks.py
   gaps:
-  - DEO-1C read-only readiness query and fence is pending; it must not authorize
-    settlement or parent close.
   - DEO-2, DEO-3, and DEO-4 remain unschedulable; DEO-3 still owns receipt
     closure, recovery, and outcome-bound terminal admission.
   smoke_commands: []

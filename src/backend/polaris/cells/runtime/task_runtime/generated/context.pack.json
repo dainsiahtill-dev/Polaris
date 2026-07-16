@@ -29,7 +29,8 @@
       "GetRuntimeTaskQueryV1",
       "ValidateTaskRuntimeExecutionAttemptQueryV1",
       "GetDirectedEffectParentRegistryQueryV1",
-      "GetDirectedEffectOperationQueryV1"
+      "GetDirectedEffectOperationQueryV1",
+      "GetDirectedEffectParentReadinessQueryV1"
     ],
     "events": [
       "RuntimeTaskLifecycleEventV1",
@@ -47,6 +48,9 @@
       "DirectedEffectStreamEnrollmentResultV1",
       "DirectedEffectOperationResultV1",
       "DirectedEffectParentRegistryResultV1",
+      "DirectedEffectParentReadinessStateCountV1",
+      "DirectedEffectParentReadinessProjectionV1",
+      "DirectedEffectParentReadinessResultV1",
       "ObservableTaskRowsProjectionV1"
     ],
     "errors": [

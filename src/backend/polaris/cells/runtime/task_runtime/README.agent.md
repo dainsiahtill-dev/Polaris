@@ -3,7 +3,8 @@
 ## Purpose
 
 Own task lifecycle transitions for runtime taskboard state, execution-attempt
-authority, and the DEO-1B guarded operation aggregate.
+authority, and the closed DEO-1 durable fact foundation: the guarded operation
+aggregate plus read-only parent-operation readiness observation.
 
 ## Implementation
 
@@ -21,9 +22,10 @@ authority, and the DEO-1B guarded operation aggregate.
 - commands: `CreateRuntimeTaskCommandV1`, `UpdateRuntimeTaskCommandV1`, `ReopenRuntimeTaskCommandV1`, `BindRuntimeTaskToFactoryRunCommandV1`, `FenceExpiredFactoryRunSessionsCommandV1`, `PrepareOwnerReworkExecutionCommandV1`
 - execution commands: `OpenTaskRuntimeExecutionAttemptAuthorityCommandV1`, `HeartbeatTaskRuntimeExecutionAttemptCommandV1`, `SettleTaskRuntimeExecutionAttemptCommandV1`
 - DEO-1B commands: `EnrollDirectedEffectParentRegistryStreamCommandV1`, `EnrollDirectedEffectOperationStreamCommandV1`, `AdmitDirectedEffectParentCommandV1`, `AdmitDirectedEffectOperationCommandV1`, `ClaimDirectedEffectCommandV1`, `AbortDirectedEffectOperationCommandV1`
-- queries: `ListRuntimeTasksQueryV1`, `GetRuntimeTaskQueryV1`, `ValidateTaskRuntimeExecutionAttemptQueryV1`, `GetDirectedEffectParentRegistryQueryV1`, `GetDirectedEffectOperationQueryV1`
+- queries: `ListRuntimeTasksQueryV1`, `GetRuntimeTaskQueryV1`, `ValidateTaskRuntimeExecutionAttemptQueryV1`, `GetDirectedEffectParentRegistryQueryV1`, `GetDirectedEffectOperationQueryV1`, `GetDirectedEffectParentReadinessQueryV1`
+- DEO-1C read service: `get_directed_effect_parent_readiness`
 - events: `RuntimeTaskLifecycleEventV1`, `TaskRuntimeExecutionFactV1`
-- results: `RuntimeTaskResultV1`, `RuntimeTaskFactoryRunBindingResultV1`, `ExpiredFactoryRunSessionFenceResultV1`, `OwnerReworkExecutionPreparationResultV1`, `TaskRuntimeExecutionAttemptValidationVerdictV1`, `TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1`, `TaskRuntimeExecutionAttemptHeartbeatVerdictV1`, `TaskRuntimeExecutionAttemptSettlementVerdictV1`, `DirectedEffectStreamEnrollmentResultV1`, `DirectedEffectOperationResultV1`, `DirectedEffectParentRegistryResultV1`, `ObservableTaskRowsProjectionV1`
+- results: `RuntimeTaskResultV1`, `RuntimeTaskFactoryRunBindingResultV1`, `ExpiredFactoryRunSessionFenceResultV1`, `OwnerReworkExecutionPreparationResultV1`, `TaskRuntimeExecutionAttemptValidationVerdictV1`, `TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1`, `TaskRuntimeExecutionAttemptHeartbeatVerdictV1`, `TaskRuntimeExecutionAttemptSettlementVerdictV1`, `DirectedEffectStreamEnrollmentResultV1`, `DirectedEffectOperationResultV1`, `DirectedEffectParentRegistryResultV1`, `DirectedEffectParentReadinessStateCountV1`, `DirectedEffectParentReadinessProjectionV1`, `DirectedEffectParentReadinessResultV1`, `ObservableTaskRowsProjectionV1`
 - errors: `RuntimeTaskRuntimeError`
 
 ## Depends On
@@ -56,6 +58,14 @@ authority, and the DEO-1B guarded operation aggregate.
   admits a parent or authorizes a child operation
 - active-to-inactive writes fail closed while a durable parent registry is OPEN;
   DEO-1B does not close a parent or admit a terminal outcome
+- DEO-1C readiness is a read-only strict observation of one parent operation
+  stream, including historical `CLOSED` parents; it reuses the shared reducer
+  and preserves exact typed fail-closed diagnostics
+- readiness evidence is deeply immutable and cycle-safe; successful evidence
+  uses the exact source-head schema and always reports
+  `enforcement="not_enabled"`
+- the readiness query has no mutation, settlement, receipt, terminal-admission,
+  Run Ledger, or UI path and grants no close or terminal authority
 
 ## Verification
 
@@ -68,7 +78,17 @@ authority, and the DEO-1B guarded operation aggregate.
 
 ## Current Governance Status
 
-DEO-1B is closed. The main TaskRuntime rerun recorded `457 passed`, `0`
-failures, and one `nats-py` environment warning; the independent A-L audit
-passed. DEO-1C is pending as a read-only readiness/fence bucket. DEO-2,
-DEO-3, and DEO-4 remain unschedulable; no end-to-end bench is authorized.
+DEO-1A, DEO-1B, and DEO-1C are closed, so the DEO-1 durable fact foundation is
+closed. DEO-1C closure evidence records `72 passed` in the final focused
+two-file suite and `482 passed in 64.02s` in the final full TaskRuntime suite.
+Root gates record Ruff check passed, Ruff format check `6 files formatted`,
+mypy over four production files with `0 issues`, compileall passed, and
+`git diff --check` passed. Independent specification review was `CLEAR` after
+all High findings closed; independent code-quality review was `APPROVED` after
+two Important findings closed. Canonical state sequence duplication remains a
+non-blocking Minor.
+
+Directed Effect Operation v1 remains `p0_open`. DEO-2 is next but has not
+started and remains `not_schedulable`; DEO-3 remains the highest-risk P0
+child/terminal close, receipt, and recovery path; DEO-4 remains pending and
+`not_schedulable`. Bench remains `not_schedulable`, and no Bench was run.

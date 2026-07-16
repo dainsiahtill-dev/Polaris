@@ -1,14 +1,17 @@
 # Directed Effect Operation v1 Blueprint
 
-**Task:** `DEO-1B-GOVERNANCE-CLOSE`
-**Status:** DEO-1A and DEO-1B are closed by the 2026-07-15 closure records in
-Sections 10.1 and 10.2. DEO-1C is pending as a read-only readiness/fence
-bucket. DEO-2/3/4 remain unschedulable, and Bench remains
-`not_schedulable`. In particular, the child-versus-terminal settlement fence
-is a DEO-3 P0 dependency. DEO-1B made only the limited settlement semantic
-change defined below: every active-to-inactive writer passes a fail-closed
-parent-registry pre-barrier, but 1B does not write `parent_closed` or implement
-DEO-3 receipt eligibility or recovery.
+**Task:** `DEO-1C-CLOSURE-SYNC`
+**Status:** DEO-1A, DEO-1B, and DEO-1C are closed by the 2026-07-15 closure
+records in Sections 10.1, 10.2, and 10.4. The DEO-1 durable fact foundation is
+therefore closed. Directed Effect Operation v1 remains `p0_open`: DEO-2 design
+is locked by
+`DIRECTED_EFFECT_OPERATION_DEO2_BLUEPRINT_20260716.md`, implementation is
+pending, DEO-2/3/4 remain `not_schedulable`, and DEO-3 remains the highest-risk
+P0 child/terminal close, receipt, and recovery path.
+Bench remains `not_schedulable`; no Bench was run. DEO-1B made only the limited
+settlement semantic change defined below: every active-to-inactive writer
+passes a fail-closed parent-registry pre-barrier, but 1B does not write
+`parent_closed` or implement DEO-3 receipt eligibility or recovery.
 **Scope:** durable mutation authority and effect-receipt closure only. This is
 not a child transaction, a new batch model, a new commit point, or a new SSoT.
 
@@ -552,6 +555,14 @@ independent of this read-only readiness projection and can only block.
 
 ### DEO-2: Kernel-Owned Batch Admission and Director Adapter
 
+**Detailed design:**
+`DIRECTED_EFFECT_OPERATION_DEO2_BLUEPRINT_20260716.md` is the controlling DEO-2
+specification. It locks durable inventory seal/readiness, per-call
+`EFFECT_STARTED` claim grants, two-phase pure Director policy validation,
+deferred synthetic repair effects, the single-round repair barrier, and the
+DEO-2/DEO-3 ownership boundary. This summary must not be used to weaken those
+requirements.
+
 **Entry gate:** DEO-1A, DEO-1B, and DEO-1C exit evidence exists and
 `roles.kernel` has an approved public DEO service dependency.
 
@@ -927,3 +938,232 @@ read-only `enforcement="not_enabled"` boundary unchanged. DEO-2, DEO-3, and
 DEO-4 remain unschedulable. Bench remains `not_schedulable` until their exit
 evidence, the 38-surface closure, crash/cancel evidence, targeted gates, and
 independent audit are complete.
+
+### 10.3 DEO-1C Blueprint Materialization (2026-07-15)
+
+**Status:** `implementing`. This record is the audited minimal design before
+implementation. It preserves the 1A/1B closure evidence above and changes no
+DEO-2, DEO-3, DEO-4, or Bench scheduling state.
+
+#### Public Contract
+
+The public surface adds exactly one read-only query and one result family:
+
+```text
+GetDirectedEffectParentReadinessQueryV1(
+  workspace,
+  task_id,
+  execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+  parent_binding: DirectedEffectParentBindingV1,
+) -> get_directed_effect_parent_readiness
+
+DirectedEffectParentReadinessProjectionV1(
+  schema_version,
+  workspace,
+  task_id,
+  execution_attempt,
+  parent_binding_id,
+  parent_registry_stream_token,
+  parent_registry_source_head_seq,
+  operation_stream_token,
+  operation_source_head_seq,
+  operation_count,
+  state_counts: tuple[DirectedEffectParentReadinessStateCountV1, ...],
+  enforcement: Literal["not_enabled"],
+)
+
+DirectedEffectParentReadinessResultV1(
+  ok,
+  code: "readiness_observed" | DirectedEffectOperationCodeV1,
+  projection: DirectedEffectParentReadinessProjectionV1 | None,
+  evidence,
+)
+```
+
+`GetDirectedEffectParentReadinessQueryV1` carries the complete execution
+attempt and the complete parent binding. It uses the existing token, positive
+integer, and runtime-identity validation conventions. The public service first
+performs the existing attempt validation and then delegates to the repository;
+it does not construct `TaskRuntimeService`, take a session lock, enroll a
+stream, or invoke any maintenance path.
+
+`DirectedEffectParentReadinessStateCountV1` is a frozen pair of an existing
+`DirectedEffectOperationStateV1` and a non-negative count. The projection is
+frozen and its `state_counts` is a deterministically ordered tuple, containing
+one entry for every existing DEO state, including zero counts. `evidence` is a
+deep detached mapping. The identities, stream tokens, source heads, operation
+count, state counts, schema version, and enforcement literal are immutable
+observations from this query. The result succeeds only when
+`code="readiness_observed"` and a projection is present; every other code
+requires `ok=false` and no projection.
+
+The sole policy literal is `enforcement="not_enabled"`. Neither the query,
+projection, result, evidence, nor public export may carry a ready, eligible,
+authorized, receipt, close, or terminal verdict. In particular, no field may
+encode a boolean or derived label that a caller can reinterpret as such a
+verdict. The public operation result remains unchanged; this is a new parent
+batch observation contract, not an overload of child-operation results.
+
+#### Repository Read Algorithm
+
+The repository adds one `get_parent_readiness(query)` method and reuses the
+existing read path in this exact order:
+
+1. Reuse `_validated_parent_binding(query, require_open=False)` to validate
+   the complete attempt, rebuild the parent registry strictly, locate the
+   durable binding, and compare every canonical binding field. A historical
+   parent is observable; this does not alter a parent state.
+2. Reuse `_read_stream(workspace, binding.operation_stream_token,
+   max_events=_MAX_OPERATION_EVENTS, stream_kind="operation")`. It remains
+   the only FactStream operation read, with `strict_integrity=True`, the
+   existing bounded page/head checks, and existing typed FactStream failures.
+3. Refactor the existing `_reduce_operation` into one shared operation-stream
+   reducer. Both the current single-operation query/mutation flows and the new
+   parent observation call that reducer. It parses each transition once,
+   preserves the current schema, transition, version, identity, and semantic
+   drift checks, and returns immutable per-operation aggregate facts plus the
+   operation stream head. No second parser, partial scan, cached snapshot, or
+   workspace-wide history scan is permitted.
+4. Derive the ordered state counts and immutable projection in memory. The
+   method performs no append, enrollment, persistence, lock acquisition,
+   snapshot write, or callback.
+
+The scan is `O(N)` time and `O(N)` transient memory for `N` strictly read
+operation events, bounded by `_MAX_OPERATION_EVENTS`. Projection construction
+is `O(S)` time and space for the fixed existing state set `S`; no retry loop is
+introduced. This is bounded by the existing strict reader and adds no disk I/O
+other than the existing FactStream query.
+
+#### Error and Fail-Closed Matrix
+
+| Condition | Result | Side effect |
+| --- | --- | --- |
+| Wrong public query type | `TypeError` at the public boundary | none |
+| Invalid query field or identity object | existing constructor `TypeError` or `ValueError` | none |
+| Attempt validation failure | exact existing `DirectedEffectOperationCodeV1`, no projection | none |
+| Missing, mismatched, or inconsistent parent binding | exact existing parent-binding code, no projection | none |
+| Strict FactStream failure, overload, corruption, or unknown schema | exact existing strict-stream code and evidence, no projection | none |
+| Illegal transition, version discontinuity, operation identity conflict, or semantic drift during shared reduction | exact existing reducer code and evidence, no projection | none |
+| Empty enrolled operation stream | `readiness_observed` with zero operation count and fixed zero state counts | none |
+| Unrecognized programming or storage exception | propagate with its causal chain; do not map to success or a generic fallback | none |
+
+There is no recovery, inference, implicit enrollment, stale-cache fallback,
+best-effort result, mutation, or authority grant in this bucket.
+
+#### Exact Six-File Write Set
+
+Only these six implementation/test files are authorized after this blueprint:
+
+1. `src/backend/polaris/cells/runtime/task_runtime/public/contracts.py`
+2. `src/backend/polaris/cells/runtime/task_runtime/public/service.py`
+3. `src/backend/polaris/cells/runtime/task_runtime/public/__init__.py`
+4. `src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py`
+5. `src/backend/polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_operation.py`
+6. `src/backend/polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py`
+
+`src/backend/polaris/cells/runtime/task_runtime/internal/service.py` is
+explicitly forbidden. No other source, test, Cell metadata, generated pack,
+KernelOne, FactStream, Factory, roles, delivery, UI, or Run Ledger file is in
+scope.
+
+#### Mechanical Boundary Fence
+
+The paired fence test must statically inspect imports, calls, exported names,
+and result/projection field names. It must prove that the new public service
+uses only attempt validation and the repository query, and that the repository
+read method reaches only `_validated_parent_binding`, `_read_stream`, the one
+shared reducer, and in-memory projection construction.
+
+It must reject a direct or indirect call/import/data path from the new query,
+projection, result, or export to settlement, terminal admission, mutation,
+Factory, roles, delivery, UI, or Run Ledger. The forbidden call set includes
+settle methods, terminal-transition methods, all DEO admit/claim/abort methods,
+append/enrollment methods, parent admission, and the active-to-inactive
+pre-barrier. The data fence rejects result/projection fields and evidence keys
+that introduce authority or settlement semantics. Existing 1B pre-barriers may
+continue to block independently, but the 1C observation may not feed them.
+
+#### Stop Conditions and Gates
+
+Stop immediately and retain `implementing` if the required result cannot be
+expressed without a new state transition, a parent registry write, a receipt or
+outcome dependency, a terminal admission dependency, a service-lock change, or
+a seventh implementation/test file. Stop as well if strict reconstruction
+cannot reuse `_validated_parent_binding`, `_read_stream`, and the one shared
+reducer, or if any mechanical fence finds a prohibited connection. Those are
+DEO-3 or later design questions, not a 1C exception path.
+
+Implementation may be marked complete only after all of these exact gates pass
+from `src/backend` with UTF-8 text handling:
+
+```bash
+python -m pytest polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_operation.py polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py
+python -m ruff check polaris/cells/runtime/task_runtime/public/contracts.py polaris/cells/runtime/task_runtime/public/service.py polaris/cells/runtime/task_runtime/public/__init__.py polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_operation.py polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py
+python -m mypy polaris/cells/runtime/task_runtime/public/contracts.py polaris/cells/runtime/task_runtime/public/service.py polaris/cells/runtime/task_runtime/public/__init__.py polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py
+python -m compileall -q polaris/cells/runtime/task_runtime/public polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py
+git diff --check
+```
+
+The focused tests must cover valid empty and populated operation streams,
+historical-parent observation, every strict-stream and reducer failure mapping,
+deep immutability, fixed `not_enabled`, and the full mechanical no-path fence.
+They must also prove that no operation fact, parent fact, session row, receipt,
+or projection persistence is written. Completion must not reclassify DEO-2,
+DEO-3, DEO-4, or Bench.
+
+### 10.4 DEO-1C Closure Record (2026-07-15)
+
+**Status:** `closed`. The Section 10.3 design was implemented and reviewed
+without widening its six-file implementation/test scope. With DEO-1A and
+DEO-1B already closed, this closes the DEO-1 durable fact foundation only.
+Directed Effect Operation v1 remains `p0_open` because DEO-2, DEO-3, and DEO-4
+remain pending and `not_schedulable`.
+
+#### Final Public Surface
+
+The finalized public contracts are:
+
+- `GetDirectedEffectParentReadinessQueryV1`
+- `DirectedEffectParentReadinessStateCountV1`
+- `DirectedEffectParentReadinessProjectionV1`
+- `DirectedEffectParentReadinessResultV1`
+- `get_directed_effect_parent_readiness`
+
+The service is a read-only strict observation of one parent operation stream.
+It supports historical `CLOSED` parents, reuses the shared operation reducer,
+preserves exact typed fail-closed diagnostics, and returns deeply immutable,
+cycle-safe evidence. Successful evidence uses the exact source-head schema.
+The only enforcement value is `enforcement="not_enabled"`. The query has no
+mutation, settlement, receipt, terminal-admission, Run Ledger, or UI path and
+does not grant readiness or close authority.
+
+#### Fresh Closure Evidence
+
+- Final focused two-file suite: `72 passed`.
+- Final full TaskRuntime suite: `482 passed in 64.02s`.
+- Root Ruff check: passed.
+- Root Ruff format check: `6 files formatted`.
+- Mypy over the four production files: `0 issues`.
+- Compileall: passed.
+- `git diff --check`: passed.
+- Independent specification review: `CLEAR` after all High findings were
+  closed.
+- Independent code-quality review: `APPROVED` after two Important findings
+  were closed.
+
+The only remaining code-quality finding is non-blocking Minor canonical state
+sequence duplication. It does not change the shared-reducer, typed-failure, or
+read-only fence evidence and is not a reason to reopen DEO-1C.
+
+#### Limits and Next Bucket
+
+DEO-2 is next, remains `p0_open` and `not_schedulable`, and was not started by
+this closure. DEO-3 remains the highest-risk P0 child/terminal close, receipt,
+and recovery bucket; DEO-4 also remains pending and `not_schedulable`. Bench
+remains `not_schedulable`, and no Bench evidence is claimed because no Bench
+was run.
+
+The targeted Cell manifest, README, context pack, and global catalog are
+synchronized by the closure task. `generated/descriptor.pack.json` is not
+regenerated because its generator exposes only global generation; descriptor
+freshness is therefore not claimed by this closure record.

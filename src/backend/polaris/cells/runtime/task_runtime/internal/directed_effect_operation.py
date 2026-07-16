@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -35,31 +36,48 @@ from polaris.cells.events.fact_stream.public import (
 )
 
 from ..public.contracts import (
+    DIRECTED_EFFECT_CLAIM_GRANT_SCHEMA_V1,
+    DIRECTED_EFFECT_INVENTORY_MEMBER_SCHEMA_V1,
+    DIRECTED_EFFECT_INVENTORY_PROJECTION_SCHEMA_V1,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V1,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V2,
     DIRECTED_EFFECT_OPERATION_SNAPSHOT_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_BINDING_SCHEMA_V1,
+    DIRECTED_EFFECT_PARENT_READINESS_PROJECTION_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_REGISTRY_PROJECTION_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
     AbortDirectedEffectOperationCommandV1,
     AdmitDirectedEffectOperationCommandV1,
     AdmitDirectedEffectParentCommandV1,
     ClaimDirectedEffectCommandV1,
+    DirectedEffectClaimGrantV1,
+    DirectedEffectInventoryCodeV1,
+    DirectedEffectInventoryIntentV1,
+    DirectedEffectInventoryMemberV1,
+    DirectedEffectInventoryProjectionV1,
+    DirectedEffectInventoryResultV1,
     DirectedEffectOperationCodeV1,
     DirectedEffectOperationIdentityV1,
     DirectedEffectOperationResultV1,
     DirectedEffectOperationSnapshotV1,
     DirectedEffectOperationStateV1,
     DirectedEffectParentBindingV1,
+    DirectedEffectParentReadinessProjectionV1,
+    DirectedEffectParentReadinessResultV1,
+    DirectedEffectParentReadinessStateCountV1,
     DirectedEffectParentRegistryIdentityV1,
     DirectedEffectParentRegistryProjectionV1,
     DirectedEffectParentRegistryResultV1,
     DirectedEffectStreamEnrollmentResultV1,
     EnrollDirectedEffectOperationStreamCommandV1,
     EnrollDirectedEffectParentRegistryStreamCommandV1,
+    FinalizeDirectedEffectInventoryAdmissionCommandV1,
+    GetDirectedEffectInventoryQueryV1,
     GetDirectedEffectOperationQueryV1,
+    GetDirectedEffectParentReadinessQueryV1,
     GetDirectedEffectParentRegistryQueryV1,
     ParentCorrelationV1,
+    SealDirectedEffectInventoryCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
     TaskRuntimeExecutionAttemptValidationCodeV1,
     TaskRuntimeExecutionAttemptValidationVerdictV1,
@@ -70,16 +88,31 @@ _MAX_REGISTRY_EVENTS = 512
 _MAX_OPERATION_EVENTS = 512
 _PARENT_ADMITTED_EVENT_TYPE = "task_runtime.directed_effect_parent_registry.v1.parent_admitted"
 _PARENT_CLOSED_EVENT_TYPE = "task_runtime.deo_parent_registry.v1.closed"
+_PARENT_INVENTORY_SEALED_EVENT_TYPE = "task_runtime.directed_effect_parent_registry.v1.parent_inventory_sealed"
+_PARENT_INVENTORY_READY_EVENT_TYPE = "task_runtime.directed_effect_parent_registry.v1.parent_inventory_ready"
+_DIRECTED_EFFECT_INVENTORY_HASH_SCHEMA_V1 = "task-runtime.directed-effect-inventory/1"
+_DIRECTED_EFFECT_ADMISSION_SET_HASH_SCHEMA_V1 = "task-runtime.directed-effect-inventory-admission-set/1"
 _OPERATION_EVENT_PREFIX = "task_runtime.directed_effect_operation.v1"
 _TERMINAL_STATES = frozenset({"CLOSED_BY_PARENT", "ABORTED", "DEAD_LETTER"})
 
 _Command: TypeAlias = (
     AdmitDirectedEffectOperationCommandV1 | ClaimDirectedEffectCommandV1 | AbortDirectedEffectOperationCommandV1
 )
+_ReadyGatedCommand: TypeAlias = ClaimDirectedEffectCommandV1 | AbortDirectedEffectOperationCommandV1
+_InventoryGuardedCommand: TypeAlias = (
+    SealDirectedEffectInventoryCommandV1
+    | FinalizeDirectedEffectInventoryAdmissionCommandV1
+    | GetDirectedEffectInventoryQueryV1
+)
+_AuthorityCommand: TypeAlias = (
+    _Command | SealDirectedEffectInventoryCommandV1 | FinalizeDirectedEffectInventoryAdmissionCommandV1
+)
 _ReadCommand: TypeAlias = _Command | GetDirectedEffectOperationQueryV1
+_ParentRegistryBoundCommand: TypeAlias = _ReadCommand | _InventoryGuardedCommand
+_ParentBindingReadCommand: TypeAlias = _ReadCommand | GetDirectedEffectParentReadinessQueryV1
 _CommandKind = Literal["admit", "claim", "abort"]
 _FactOperation = Literal["read", "append"]
-_StreamKind = Literal["parent_registry", "operation"]
+_StreamKind = Literal["parent_registry", "operation", "inventory_guarded_pair"]
 
 _EXECUTION_ATTEMPT_FAILURE_CODES: dict[TaskRuntimeExecutionAttemptValidationCodeV1, DirectedEffectOperationCodeV1] = {
     "valid": "execution_attempt_validation_unknown",
@@ -155,6 +188,51 @@ class _RegistryAdmission:
 
 
 @dataclass(frozen=True, slots=True)
+class _SealedDirectedEffectInventory:
+    """One immutable inventory seal reconstructed from registry facts."""
+
+    binding_id: str
+    members: tuple[DirectedEffectInventoryMemberV1, ...]
+    inventory_hash: str
+    actor: str
+    event_id: str
+    seq: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ReadyDirectedEffectInventory:
+    """One immutable readiness fact reserved for the admission-finalize slice."""
+
+    binding_id: str
+    inventory_hash: str
+    ordered_operation_ids: tuple[str, ...]
+    admission_set_hash: str
+    operation_source_head_seq: int
+    event_id: str
+    seq: int
+
+
+@dataclass(frozen=True, slots=True)
+class _InventoryOperationProjection:
+    """Strict operation-stream classification relative to one sealed inventory."""
+
+    source_head_seq: int
+    admitted_count: int
+    missing_operation_ids: tuple[str, ...]
+    unexpected_operation_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _StrictInventoryConfirmation:
+    """Strict registry seal plus operation classification from one dual snapshot."""
+
+    binding: DirectedEffectParentBindingV1
+    registry: _ParentRegistry
+    sealed: _SealedDirectedEffectInventory
+    operations: _InventoryOperationProjection
+
+
+@dataclass(frozen=True, slots=True)
 class _ParentRegistry:
     identity: DirectedEffectParentRegistryIdentityV1
     stream_token: str
@@ -165,6 +243,8 @@ class _ParentRegistry:
     open_binding: DirectedEffectParentBindingV1 | None
     admissions_by_idempotency_key: Mapping[str, _RegistryAdmission]
     bindings_by_id: Mapping[str, DirectedEffectParentBindingV1]
+    sealed_inventories_by_binding_id: Mapping[str, _SealedDirectedEffectInventory]
+    ready_inventories_by_binding_id: Mapping[str, _ReadyDirectedEffectInventory]
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,12 +312,31 @@ class _Aggregate:
 
 
 @dataclass(frozen=True, slots=True)
+class _OperationStreamReduction:
+    """Immutable facts reconstructed from one bounded strict operation stream."""
+
+    source_head_seq: int
+    aggregates: tuple[_Aggregate, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _StrictOperationProjection:
     """One strict durable binding and child-stream reconstruction."""
 
     binding: DirectedEffectParentBindingV1
     registry: _ParentRegistry
     aggregate: _Aggregate
+    operation_records: tuple[dict[str, Any], ...]
+    ready_context: _ReadyOperationContext | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ReadyOperationContext:
+    """Registry-owned readiness and sealed member used by claim or abort."""
+
+    sealed: _SealedDirectedEffectInventory
+    ready: _ReadyDirectedEffectInventory
+    member: DirectedEffectInventoryMemberV1
 
 
 _SettlementPreBarrierCode: TypeAlias = Literal[
@@ -269,6 +368,10 @@ def _canonical_json(value: object) -> str:
 
 def _hash_token(value: object) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _new_append_attempt_nonce() -> str:
+    return secrets.token_hex(16)
 
 
 def _is_canonical_sha256(value: object) -> bool:
@@ -333,6 +436,82 @@ def _operation_id(*, binding_id: str, tool_call_id: str, effect_id: str) -> str:
     return f"deo_v1_{digest[:48]}"
 
 
+def _inventory_effect_id(
+    *,
+    binding_id: str,
+    tool_call_id: str,
+    intended_effect_fingerprint: str,
+) -> str:
+    digest = _hash_token(
+        {
+            "schema_version": DIRECTED_EFFECT_INVENTORY_MEMBER_SCHEMA_V1,
+            "parent_binding_id": binding_id,
+            "tool_call_id": tool_call_id,
+            "intended_effect_fingerprint": intended_effect_fingerprint,
+        }
+    )
+    return f"deo_effect_v1_{digest[:48]}"
+
+
+def _inventory_member(
+    binding: DirectedEffectParentBindingV1,
+    intent: DirectedEffectInventoryIntentV1,
+) -> DirectedEffectInventoryMemberV1:
+    effect_id = _inventory_effect_id(
+        binding_id=binding.binding_id,
+        tool_call_id=intent.tool_call_id,
+        intended_effect_fingerprint=intent.intended_effect_fingerprint,
+    )
+    return DirectedEffectInventoryMemberV1(
+        ordinal=intent.ordinal,
+        tool_call_id=intent.tool_call_id,
+        effect_id=effect_id,
+        operation_id=_operation_id(
+            binding_id=binding.binding_id,
+            tool_call_id=intent.tool_call_id,
+            effect_id=effect_id,
+        ),
+        normalized_tool_name=intent.normalized_tool_name,
+        effect_type=intent.effect_type,
+        execution_mode=intent.execution_mode,
+        intended_effect_fingerprint=intent.intended_effect_fingerprint,
+        policy_verdict_hash=intent.policy_verdict_hash,
+        expected_receipt_binding_hash=intent.expected_receipt_binding_hash,
+        contingency_kind=intent.contingency_kind,
+    )
+
+
+def _inventory_hash(
+    binding_id: str,
+    members: tuple[DirectedEffectInventoryMemberV1, ...],
+) -> str:
+    return _hash_token(
+        {
+            "schema_version": _DIRECTED_EFFECT_INVENTORY_HASH_SCHEMA_V1,
+            "parent_binding_id": binding_id,
+            "members": [member.to_record() for member in members],
+        }
+    )
+
+
+def _admission_set_hash(
+    *,
+    binding_id: str,
+    inventory_hash: str,
+    ordered_operation_ids: tuple[str, ...],
+    operation_source_head_seq: int,
+) -> str:
+    return _hash_token(
+        {
+            "schema_version": _DIRECTED_EFFECT_ADMISSION_SET_HASH_SCHEMA_V1,
+            "binding_id": binding_id,
+            "inventory_hash": inventory_hash,
+            "ordered_operation_ids": list(ordered_operation_ids),
+            "operation_source_head_seq": operation_source_head_seq,
+        }
+    )
+
+
 def _operation_event_type(state: DirectedEffectOperationStateV1) -> str:
     return f"{_OPERATION_EVENT_PREFIX}.{state.lower()}"
 
@@ -376,7 +555,7 @@ class DirectedEffectOperationRepository:
 
     def _guarded_attempt_failure(
         self,
-        command: _Command,
+        command: _AuthorityCommand,
         *,
         attempt_number: int,
         phase: Literal["prepare", "commit", "replay", "reprepare"],
@@ -488,7 +667,7 @@ class DirectedEffectOperationRepository:
 
     def _validated_parent_binding_from_registry(
         self,
-        command: _ReadCommand,
+        command: _ParentRegistryBoundCommand,
         *,
         expected_identity: DirectedEffectParentRegistryIdentityV1,
         registry_read: _StreamRead,
@@ -785,6 +964,525 @@ class DirectedEffectOperationRepository:
             evidence={"source_head_seq": registry.source_head_seq},
         )
 
+    def seal_inventory(
+        self,
+        command: SealDirectedEffectInventoryCommandV1,
+    ) -> DirectedEffectInventoryResultV1:
+        """Persist one registry-owned inventory under an empty operation-stream guard."""
+
+        append_attempt_nonce = _new_append_attempt_nonce()
+        identity_failure = self._command_identity_failure(
+            workspace=command.workspace,
+            task_id=command.task_id,
+            execution_attempt=command.execution_attempt,
+        )
+        if identity_failure is not None:
+            return self._inventory_failure_from_operation(identity_failure)
+        expected_identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(command.execution_attempt)
+        drift_codes: list[str] = []
+        last_snapshot: GuardedFactSnapshotV1 | None = None
+        for attempt_number in range(1, _MAX_GUARDED_ATTEMPTS + 1):
+            attempt_failure = self._guarded_attempt_failure(
+                command,
+                attempt_number=attempt_number,
+                phase="prepare",
+                drift_codes=drift_codes,
+            )
+            if attempt_failure is not None:
+                return self._inventory_failure_from_operation(attempt_failure)
+            prepared = self._prepare_inventory_guarded_snapshot(command, expected_identity)
+            if isinstance(prepared, DirectedEffectOperationResultV1):
+                return self._inventory_failure_from_operation(prepared)
+            last_snapshot = prepared
+            validated = self._validated_parent_binding_from_registry(
+                command,
+                expected_identity=expected_identity,
+                registry_read=_StreamRead(prepared.target_records(), prepared.proof.target_head_seq),
+                require_open=False,
+            )
+            if isinstance(validated, DirectedEffectOperationResultV1):
+                return self._inventory_failure_from_operation(validated)
+            binding, registry = validated
+            requested_members = tuple(_inventory_member(binding, intent) for intent in command.intents)
+            requested_inventory_hash = _inventory_hash(binding.binding_id, requested_members)
+            existing = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+            if existing is not None:
+                replay_authority_failure = self._guarded_attempt_failure(
+                    command,
+                    attempt_number=attempt_number,
+                    phase="replay",
+                    drift_codes=drift_codes,
+                )
+                if replay_authority_failure is not None:
+                    return self._inventory_failure_from_operation(replay_authority_failure)
+                if (
+                    existing.members != requested_members
+                    or existing.inventory_hash != requested_inventory_hash
+                    or existing.actor != command.actor
+                ):
+                    return self._inventory_failure(
+                        "inventory_seal_conflict",
+                        {
+                            "binding_id": binding.binding_id,
+                            "sealed_inventory_hash": existing.inventory_hash,
+                            "requested_inventory_hash": requested_inventory_hash,
+                        },
+                    )
+                operation_projection = self._inventory_operation_projection(
+                    binding=binding,
+                    sealed=existing,
+                    operation_read=_StreamRead(prepared.guard_records(), prepared.proof.guard_head_seq),
+                )
+                if isinstance(operation_projection, DirectedEffectOperationResultV1):
+                    return self._inventory_failure_from_operation(operation_projection)
+                return self._inventory_success(
+                    command,
+                    registry,
+                    existing,
+                    operation_projection=operation_projection,
+                    code="inventory_seal_idempotent_replay",
+                    evidence={
+                        "event_id": existing.event_id,
+                        "event_seq": existing.seq,
+                        "authoritative_append": False,
+                        "idempotent_replay": True,
+                    },
+                )
+            if registry.open_binding is None or registry.open_binding.binding_id != binding.binding_id:
+                return self._inventory_failure_from_operation(
+                    self._parent_registry_conflict(
+                        "parent_closed",
+                        registry,
+                        {
+                            "requested_binding_id": binding.binding_id,
+                            "reason": "binding_is_closed_historical_parent",
+                        },
+                        binding=binding,
+                    )
+                )
+            if prepared.proof.guard_head_seq != command.expected_operation_head_seq:
+                return self._inventory_failure(
+                    "inventory_requires_empty_operation_stream",
+                    {
+                        "expected_operation_head_seq": command.expected_operation_head_seq,
+                        "fresh_operation_head_seq": prepared.proof.guard_head_seq,
+                        "binding_id": binding.binding_id,
+                    },
+                )
+            if command.expected_registry_version != registry.registry_version:
+                return self._inventory_failure_from_operation(
+                    self._parent_registry_conflict(
+                        "parent_registry_version_conflict",
+                        registry,
+                        {
+                            "expected_version": command.expected_registry_version,
+                            "fresh_registry_version": registry.registry_version,
+                        },
+                        binding=binding,
+                    )
+                )
+            if command.expected_registry_seq != registry.next_expected_seq:
+                return self._inventory_failure_from_operation(
+                    self._parent_registry_conflict(
+                        "parent_registry_expected_seq_conflict",
+                        registry,
+                        {
+                            "expected_seq": command.expected_registry_seq,
+                            "fresh_next_expected_seq": registry.next_expected_seq,
+                        },
+                        binding=binding,
+                    )
+                )
+
+            payload = self._inventory_seal_payload(
+                registry=registry,
+                binding=binding,
+                members=requested_members,
+                inventory_hash=requested_inventory_hash,
+                actor=command.actor,
+            )
+            fact_idempotency_key = (
+                "deo_inventory_seal_v1_"
+                + _hash_token(
+                    {
+                        "payload": payload,
+                        "append_attempt_nonce": append_attempt_nonce,
+                    }
+                )[:48]
+            )
+            guarded_command = AppendIfGuardedSnapshotCommandV1(
+                snapshot_proof=prepared.proof,
+                event=GuardedFactEventV1(
+                    event_type=_PARENT_INVENTORY_SEALED_EVENT_TYPE,
+                    source="runtime.task_runtime",
+                    payload=payload,
+                    aggregate_id=str(command.task_id),
+                    correlation_id=fact_idempotency_key,
+                ),
+                idempotency_key=fact_idempotency_key,
+            )
+            appended: GuardedFactAppendedV1 | None = None
+            try:
+                self._after_guarded_prepare(prepared)
+                commit_authority_failure = self._guarded_attempt_failure(
+                    command,
+                    attempt_number=attempt_number,
+                    phase="commit",
+                    drift_codes=drift_codes,
+                )
+                if commit_authority_failure is not None:
+                    return self._inventory_failure_from_operation(commit_authority_failure)
+                appended = append_if_guarded_snapshot(guarded_command)
+                seam_receipt = self._after_guarded_commit(appended)
+                if seam_receipt is not None:
+                    appended = seam_receipt
+            except FactStreamError as exc:
+                if exc.code in _GUARDED_REPREPARE_DRIFT_CODES:
+                    drift_codes.append(exc.code)
+                    self._after_guarded_drift(exc, attempt_number)
+                    reprepare_authority_failure = self._guarded_attempt_failure(
+                        command,
+                        attempt_number=attempt_number,
+                        phase="reprepare",
+                        drift_codes=drift_codes,
+                    )
+                    if reprepare_authority_failure is not None:
+                        return self._inventory_failure_from_operation(reprepare_authority_failure)
+                    continue
+                return self._reconcile_inventory_append(
+                    command=command,
+                    expected_identity=expected_identity,
+                    members=requested_members,
+                    inventory_hash=requested_inventory_hash,
+                    guarded_attempt=attempt_number,
+                    exc=exc,
+                    receipt=appended,
+                    guarded_command=guarded_command,
+                )
+            if appended is None:
+                return self._inventory_failure(
+                    "guarded_receipt_mismatch",
+                    {
+                        "reason": "guarded_commit_returned_without_receipt",
+                        "guarded_attempt": attempt_number,
+                        "binding_id": binding.binding_id,
+                    },
+                )
+            return self._confirm_inventory_append(
+                command=command,
+                expected_identity=expected_identity,
+                members=requested_members,
+                inventory_hash=requested_inventory_hash,
+                guarded_attempt=attempt_number,
+                receipt=appended,
+                guarded_command=guarded_command,
+            )
+        assert last_snapshot is not None
+        return self._inventory_failure(
+            "guarded_reprepare_exhausted",
+            {
+                "attempts_total": _MAX_GUARDED_ATTEMPTS,
+                "reprepare_count": _MAX_GUARDED_ATTEMPTS - 1,
+                "drift_codes": tuple(drift_codes),
+                "registry_head_seq": last_snapshot.proof.target_head_seq,
+                "operation_head_seq": last_snapshot.proof.guard_head_seq,
+                "binding_id": command.parent_binding.binding_id,
+            },
+        )
+
+    def finalize_inventory(
+        self,
+        command: FinalizeDirectedEffectInventoryAdmissionCommandV1,
+    ) -> DirectedEffectInventoryResultV1:
+        """Persist readiness only for an exact sealed version-one intent set."""
+
+        append_attempt_nonce = _new_append_attempt_nonce()
+        identity_failure = self._command_identity_failure(
+            workspace=command.workspace,
+            task_id=command.task_id,
+            execution_attempt=command.execution_attempt,
+        )
+        if identity_failure is not None:
+            return self._inventory_failure_from_operation(identity_failure)
+        expected_identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(command.execution_attempt)
+        drift_codes: list[str] = []
+        last_snapshot: GuardedFactSnapshotV1 | None = None
+        for attempt_number in range(1, _MAX_GUARDED_ATTEMPTS + 1):
+            attempt_failure = self._guarded_attempt_failure(
+                command,
+                attempt_number=attempt_number,
+                phase="prepare",
+                drift_codes=drift_codes,
+            )
+            if attempt_failure is not None:
+                return self._inventory_failure_from_operation(attempt_failure)
+            prepared = self._prepare_inventory_guarded_snapshot(command, expected_identity)
+            if isinstance(prepared, DirectedEffectOperationResultV1):
+                return self._inventory_failure_from_operation(prepared)
+            last_snapshot = prepared
+            validated = self._validated_parent_binding_from_registry(
+                command,
+                expected_identity=expected_identity,
+                registry_read=_StreamRead(prepared.target_records(), prepared.proof.target_head_seq),
+                require_open=False,
+            )
+            if isinstance(validated, DirectedEffectOperationResultV1):
+                return self._inventory_failure_from_operation(validated)
+            binding, registry = validated
+            sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+            if sealed is None:
+                return self._inventory_failure("inventory_not_sealed", {"binding_id": binding.binding_id})
+            if command.inventory_hash != sealed.inventory_hash:
+                return self._inventory_failure(
+                    "inventory_seal_conflict",
+                    {
+                        "binding_id": binding.binding_id,
+                        "sealed_inventory_hash": sealed.inventory_hash,
+                        "requested_inventory_hash": command.inventory_hash,
+                    },
+                )
+            ready = registry.ready_inventories_by_binding_id.get(binding.binding_id)
+            if ready is not None:
+                replay_projection = self._validate_ready_inventory_prefix(
+                    binding=binding,
+                    sealed=sealed,
+                    ready=ready,
+                    operation_events=prepared.guard_records(),
+                )
+                if isinstance(replay_projection, DirectedEffectOperationResultV1):
+                    return self._inventory_failure_from_operation(replay_projection)
+                current_projection = self._inventory_operation_projection(
+                    binding=binding,
+                    sealed=sealed,
+                    operation_read=_StreamRead(prepared.guard_records(), prepared.proof.guard_head_seq),
+                )
+                if isinstance(current_projection, DirectedEffectOperationResultV1):
+                    return self._inventory_failure_from_operation(current_projection)
+                ready_current_failure = self._ready_current_inventory_failure(current_projection)
+                if ready_current_failure is not None:
+                    return self._inventory_failure_from_operation(ready_current_failure)
+                replay_authority_failure = self._guarded_attempt_failure(
+                    command,
+                    attempt_number=attempt_number,
+                    phase="replay",
+                    drift_codes=drift_codes,
+                )
+                if replay_authority_failure is not None:
+                    return self._inventory_failure_from_operation(replay_authority_failure)
+                return self._inventory_success(
+                    command,
+                    registry,
+                    sealed,
+                    operation_projection=current_projection,
+                    code="inventory_ready_idempotent_replay",
+                    evidence={
+                        "event_id": ready.event_id,
+                        "event_seq": ready.seq,
+                        "admission_set_hash": ready.admission_set_hash,
+                        "authoritative_append": False,
+                        "idempotent_replay": True,
+                    },
+                )
+            if registry.open_binding is None or registry.open_binding.binding_id != binding.binding_id:
+                return self._inventory_failure_from_operation(
+                    self._parent_registry_conflict(
+                        "parent_closed",
+                        registry,
+                        {"requested_binding_id": binding.binding_id},
+                        binding=binding,
+                    )
+                )
+            operation_read = _StreamRead(prepared.guard_records(), prepared.proof.guard_head_seq)
+            admission = self._validate_exact_inventory_admission(
+                binding=binding,
+                sealed=sealed,
+                operation_read=operation_read,
+            )
+            if isinstance(admission, DirectedEffectOperationResultV1):
+                return self._inventory_failure_from_operation(admission)
+            if command.expected_operation_head_seq != prepared.proof.guard_head_seq:
+                return self._inventory_failure(
+                    "stream_expected_seq_conflict",
+                    {
+                        "expected_operation_head_seq": command.expected_operation_head_seq,
+                        "fresh_operation_head_seq": prepared.proof.guard_head_seq,
+                    },
+                )
+            if command.expected_registry_version != registry.registry_version:
+                return self._inventory_failure_from_operation(
+                    self._parent_registry_conflict(
+                        "parent_registry_version_conflict",
+                        registry,
+                        {
+                            "expected_version": command.expected_registry_version,
+                            "fresh_registry_version": registry.registry_version,
+                        },
+                        binding=binding,
+                    )
+                )
+            if command.expected_registry_seq != registry.next_expected_seq:
+                return self._inventory_failure_from_operation(
+                    self._parent_registry_conflict(
+                        "parent_registry_expected_seq_conflict",
+                        registry,
+                        {
+                            "expected_seq": command.expected_registry_seq,
+                            "fresh_next_expected_seq": registry.next_expected_seq,
+                        },
+                        binding=binding,
+                    )
+                )
+            ordered_operation_ids = tuple(member.operation_id for member in sealed.members)
+            admission_hash = _admission_set_hash(
+                binding_id=binding.binding_id,
+                inventory_hash=sealed.inventory_hash,
+                ordered_operation_ids=ordered_operation_ids,
+                operation_source_head_seq=prepared.proof.guard_head_seq,
+            )
+            payload = self._inventory_ready_payload(
+                registry=registry,
+                binding=binding,
+                sealed=sealed,
+                ordered_operation_ids=ordered_operation_ids,
+                admission_set_hash=admission_hash,
+                operation_source_head_seq=prepared.proof.guard_head_seq,
+                actor=command.actor,
+            )
+            fact_idempotency_key = (
+                "deo_inventory_ready_v1_"
+                + _hash_token(
+                    {
+                        "payload": payload,
+                        "append_attempt_nonce": append_attempt_nonce,
+                    }
+                )[:48]
+            )
+            guarded_command = AppendIfGuardedSnapshotCommandV1(
+                snapshot_proof=prepared.proof,
+                event=GuardedFactEventV1(
+                    event_type=_PARENT_INVENTORY_READY_EVENT_TYPE,
+                    source="runtime.task_runtime",
+                    payload=payload,
+                    aggregate_id=str(command.task_id),
+                    correlation_id=fact_idempotency_key,
+                ),
+                idempotency_key=fact_idempotency_key,
+            )
+            appended: GuardedFactAppendedV1 | None = None
+            try:
+                self._after_guarded_prepare(prepared)
+                commit_failure = self._guarded_attempt_failure(
+                    command,
+                    attempt_number=attempt_number,
+                    phase="commit",
+                    drift_codes=drift_codes,
+                )
+                if commit_failure is not None:
+                    return self._inventory_failure_from_operation(commit_failure)
+                appended = append_if_guarded_snapshot(guarded_command)
+                seam_receipt = self._after_guarded_commit(appended)
+                if seam_receipt is not None:
+                    appended = seam_receipt
+            except FactStreamError as exc:
+                if exc.code in _GUARDED_REPREPARE_DRIFT_CODES:
+                    drift_codes.append(exc.code)
+                    self._after_guarded_drift(exc, attempt_number)
+                    reprepare_failure = self._guarded_attempt_failure(
+                        command,
+                        attempt_number=attempt_number,
+                        phase="reprepare",
+                        drift_codes=drift_codes,
+                    )
+                    if reprepare_failure is not None:
+                        return self._inventory_failure_from_operation(reprepare_failure)
+                    continue
+                return self._confirm_inventory_ready_append(
+                    command=command,
+                    expected_identity=expected_identity,
+                    receipt=appended,
+                    guarded_command=guarded_command,
+                    guarded_attempt=attempt_number,
+                    reconciliation_error=exc,
+                )
+            return self._confirm_inventory_ready_append(
+                command=command,
+                expected_identity=expected_identity,
+                receipt=appended,
+                guarded_command=guarded_command,
+                guarded_attempt=attempt_number,
+            )
+        assert last_snapshot is not None
+        return self._inventory_failure(
+            "guarded_reprepare_exhausted",
+            {
+                "attempts_total": _MAX_GUARDED_ATTEMPTS,
+                "drift_codes": tuple(drift_codes),
+                "registry_head_seq": last_snapshot.proof.target_head_seq,
+                "operation_head_seq": last_snapshot.proof.guard_head_seq,
+            },
+        )
+
+    def get_inventory(
+        self,
+        query: GetDirectedEffectInventoryQueryV1,
+    ) -> DirectedEffectInventoryResultV1:
+        """Return one strict current inventory projection without mutation."""
+
+        identity_failure = self._command_identity_failure(
+            workspace=query.workspace,
+            task_id=query.task_id,
+            execution_attempt=query.execution_attempt,
+        )
+        if identity_failure is not None:
+            return self._inventory_failure_from_operation(identity_failure)
+        expected_identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(query.execution_attempt)
+        prepared = self._prepare_inventory_guarded_snapshot(query, expected_identity)
+        if isinstance(prepared, DirectedEffectOperationResultV1):
+            return self._inventory_failure_from_operation(prepared)
+        validated = self._validated_parent_binding_from_registry(
+            query,
+            expected_identity=expected_identity,
+            registry_read=_StreamRead(prepared.target_records(), prepared.proof.target_head_seq),
+            require_open=False,
+        )
+        if isinstance(validated, DirectedEffectOperationResultV1):
+            return self._inventory_failure_from_operation(validated)
+        binding, registry = validated
+        sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+        if sealed is None:
+            return self._inventory_failure("inventory_not_sealed", {"binding_id": binding.binding_id})
+        ready = registry.ready_inventories_by_binding_id.get(binding.binding_id)
+        if ready is not None:
+            prefix = self._validate_ready_inventory_prefix(
+                binding=binding,
+                sealed=sealed,
+                ready=ready,
+                operation_events=prepared.guard_records(),
+            )
+            if isinstance(prefix, DirectedEffectOperationResultV1):
+                return self._inventory_failure_from_operation(prefix)
+        current = self._inventory_operation_projection(
+            binding=binding,
+            sealed=sealed,
+            operation_read=_StreamRead(prepared.guard_records(), prepared.proof.guard_head_seq),
+        )
+        if isinstance(current, DirectedEffectOperationResultV1):
+            return self._inventory_failure_from_operation(current)
+        ready_current_failure = self._ready_current_inventory_failure(current) if ready is not None else None
+        if ready_current_failure is not None:
+            return self._inventory_failure_from_operation(ready_current_failure)
+        return self._inventory_success(
+            query,
+            registry,
+            sealed,
+            operation_projection=current,
+            code="inventory_observed",
+            evidence={
+                "parent_registry_source_head_seq": registry.source_head_seq,
+                "operation_source_head_seq": current.source_head_seq,
+            },
+        )
+
     def admit(self, command: AdmitDirectedEffectOperationCommandV1) -> DirectedEffectOperationResultV1:
         return self._mutate(command, kind="admit", target="INTENT_COMMITTED", allowed_from=frozenset({None}))
 
@@ -839,6 +1537,78 @@ class DirectedEffectOperationRepository:
             evidence={"source_head_seq": aggregate.source_head_seq},
         )
 
+    def get_parent_readiness(
+        self,
+        query: GetDirectedEffectParentReadinessQueryV1,
+    ) -> DirectedEffectParentReadinessResultV1:
+        """Rebuild one parent operation stream as a non-authoritative diagnostic."""
+
+        validated = self._validated_parent_binding(query, require_open=False)
+        if isinstance(validated, DirectedEffectOperationResultV1):
+            return DirectedEffectParentReadinessResultV1(
+                ok=False,
+                code=validated.code,
+                evidence=validated.evidence,
+            )
+        binding, registry = validated
+        read = self._read_stream(
+            query.workspace,
+            binding.operation_stream_token,
+            max_events=_MAX_OPERATION_EVENTS,
+            stream_kind="operation",
+        )
+        if isinstance(read, DirectedEffectOperationResultV1):
+            return DirectedEffectParentReadinessResultV1(
+                ok=False,
+                code=read.code,
+                evidence=read.evidence,
+            )
+        reduced = self._reduce_operation_stream(read, binding, target=None)
+        if isinstance(reduced, DirectedEffectOperationResultV1):
+            return DirectedEffectParentReadinessResultV1(
+                ok=False,
+                code=reduced.code,
+                evidence=reduced.evidence,
+            )
+        ordered_states: tuple[DirectedEffectOperationStateV1, ...] = (
+            "INTENT_COMMITTED",
+            "EFFECT_STARTED",
+            "RECOVERY_PENDING",
+            "RECEIPT_COMMITTED",
+            "CLOSED_BY_PARENT",
+            "ABORTED",
+            "DEAD_LETTER",
+        )
+        counts = dict.fromkeys(ordered_states, 0)
+        for aggregate in reduced.aggregates:
+            if aggregate.state is None:
+                continue
+            counts[aggregate.state] += 1
+        projection = DirectedEffectParentReadinessProjectionV1(
+            schema_version=DIRECTED_EFFECT_PARENT_READINESS_PROJECTION_SCHEMA_V1,
+            workspace=query.workspace,
+            task_id=query.task_id,
+            execution_attempt=query.execution_attempt,
+            parent_binding_id=binding.binding_id,
+            parent_registry_stream_token=binding.registry_stream_token,
+            parent_registry_source_head_seq=registry.source_head_seq,
+            operation_stream_token=binding.operation_stream_token,
+            operation_source_head_seq=reduced.source_head_seq,
+            operation_count=len(reduced.aggregates),
+            state_counts=tuple(
+                DirectedEffectParentReadinessStateCountV1(state=state, count=counts[state]) for state in ordered_states
+            ),
+        )
+        return DirectedEffectParentReadinessResultV1(
+            ok=True,
+            code="readiness_observed",
+            projection=projection,
+            evidence={
+                "parent_registry_source_head_seq": registry.source_head_seq,
+                "operation_source_head_seq": reduced.source_head_seq,
+            },
+        )
+
     def _mutate(
         self,
         command: _Command,
@@ -855,6 +1625,7 @@ class DirectedEffectOperationRepository:
         if identity_failure is not None:
             return identity_failure
         expected_identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(command.execution_attempt)
+        claim_append_ownership_nonce = _new_append_attempt_nonce() if kind == "claim" else None
         drift_codes: list[str] = []
         last_snapshot: GuardedFactSnapshotV1 | None = None
         for attempt_number in range(1, _MAX_GUARDED_ATTEMPTS + 1):
@@ -880,6 +1651,17 @@ class DirectedEffectOperationRepository:
                 return validated
             binding, registry = validated
             operation = self._derive_operation(command, binding)
+            if kind in {"claim", "abort"}:
+                ready_context = self._ready_operation_context(
+                    command=cast(_ReadyGatedCommand, command),
+                    operation=operation,
+                    binding=binding,
+                    registry=registry,
+                    operation_events=prepared.target_records(),
+                    operation_head_seq=prepared.proof.target_head_seq,
+                )
+                if isinstance(ready_context, DirectedEffectOperationResultV1):
+                    return ready_context
             aggregate = self._reduce_operation(
                 _StreamRead(prepared.target_records(), prepared.proof.target_head_seq),
                 operation,
@@ -887,6 +1669,16 @@ class DirectedEffectOperationRepository:
             )
             if isinstance(aggregate, DirectedEffectOperationResultV1):
                 return aggregate
+            if kind == "admit":
+                inventory_failure = self._admit_inventory_member_failure(
+                    command=cast(AdmitDirectedEffectOperationCommandV1, command),
+                    operation=operation,
+                    aggregate=aggregate,
+                    binding=binding,
+                    registry=registry,
+                )
+                if inventory_failure is not None:
+                    return inventory_failure
             descriptor = self._operation_descriptor(command, kind=kind)
             committed = self._transition_for_kind(aggregate, kind)
             if committed is not None:
@@ -945,7 +1737,16 @@ class DirectedEffectOperationRepository:
                 state=target,
                 descriptor=descriptor,
             )
-            fact_idempotency_key = _hash_token(normalized.to_record())
+            fact_idempotency_key = (
+                _hash_token(
+                    {
+                        "normalized_transition": normalized.to_record(),
+                        "claim_append_ownership_nonce": claim_append_ownership_nonce,
+                    }
+                )
+                if kind == "claim"
+                else _hash_token(normalized.to_record())
+            )
             guarded_command = AppendIfGuardedSnapshotCommandV1(
                 snapshot_proof=prepared.proof,
                 event=GuardedFactEventV1(
@@ -1039,6 +1840,880 @@ class DirectedEffectOperationRepository:
             },
         )
 
+    def _admit_inventory_member_failure(
+        self,
+        *,
+        command: AdmitDirectedEffectOperationCommandV1,
+        operation: DirectedEffectOperationIdentityV1,
+        aggregate: _Aggregate,
+        binding: DirectedEffectParentBindingV1,
+        registry: _ParentRegistry,
+    ) -> DirectedEffectOperationResultV1 | None:
+        sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+        if sealed is None:
+            return self._operation_failure(
+                "inventory_not_sealed",
+                operation,
+                aggregate,
+                {"binding_id": binding.binding_id},
+            )
+        member = next(
+            (
+                candidate
+                for candidate in sealed.members
+                if candidate.tool_call_id == command.tool_call_id
+                and candidate.effect_id == command.effect_id
+                and candidate.operation_id == operation.operation_id
+            ),
+            None,
+        )
+        if member is None:
+            return self._operation_failure(
+                "inventory_member_not_found",
+                operation,
+                aggregate,
+                {
+                    "binding_id": binding.binding_id,
+                    "tool_call_id": command.tool_call_id,
+                    "effect_id": command.effect_id,
+                    "operation_id": operation.operation_id,
+                },
+            )
+        expected_semantic = (
+            member.intended_effect_fingerprint,
+            member.policy_verdict_hash,
+            member.expected_receipt_binding_hash,
+        )
+        requested_semantic = (
+            command.intended_effect_fingerprint,
+            command.policy_verdict_hash,
+            command.expected_receipt_binding_hash,
+        )
+        if requested_semantic != expected_semantic:
+            return self._operation_failure(
+                "inventory_member_conflict",
+                operation,
+                aggregate,
+                {
+                    "binding_id": binding.binding_id,
+                    "operation_id": operation.operation_id,
+                    "expected_semantic": expected_semantic,
+                    "requested_semantic": requested_semantic,
+                },
+            )
+        return None
+
+    @staticmethod
+    def _operation_gate_failure(
+        code: DirectedEffectOperationCodeV1,
+        operation: DirectedEffectOperationIdentityV1,
+        evidence: Mapping[str, object],
+    ) -> DirectedEffectOperationResultV1:
+        return DirectedEffectOperationResultV1(
+            ok=False,
+            code=code,
+            operation=operation,
+            evidence=dict(evidence),
+        )
+
+    def _ready_operation_context(
+        self,
+        *,
+        command: _ReadyGatedCommand,
+        operation: DirectedEffectOperationIdentityV1,
+        binding: DirectedEffectParentBindingV1,
+        registry: _ParentRegistry,
+        operation_events: tuple[dict[str, Any], ...],
+        operation_head_seq: int,
+    ) -> _ReadyOperationContext | DirectedEffectOperationResultV1:
+        """Authorize claim or abort only from the exact durable ready prefix."""
+
+        sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+        if sealed is None:
+            return self._operation_gate_failure(
+                "inventory_not_sealed",
+                operation,
+                {"binding_id": binding.binding_id},
+            )
+        ready = registry.ready_inventories_by_binding_id.get(binding.binding_id)
+        if ready is None:
+            return self._operation_gate_failure(
+                "inventory_not_ready",
+                operation,
+                {"binding_id": binding.binding_id},
+            )
+        member = next(
+            (
+                candidate
+                for candidate in sealed.members
+                if candidate.tool_call_id == command.tool_call_id
+                and candidate.effect_id == command.effect_id
+                and candidate.operation_id == operation.operation_id
+            ),
+            None,
+        )
+        if member is None:
+            return self._operation_gate_failure(
+                "inventory_member_not_found",
+                operation,
+                {
+                    "binding_id": binding.binding_id,
+                    "tool_call_id": command.tool_call_id,
+                    "effect_id": command.effect_id,
+                    "operation_id": operation.operation_id,
+                },
+            )
+        expected_semantic = (
+            member.intended_effect_fingerprint,
+            member.policy_verdict_hash,
+            member.expected_receipt_binding_hash,
+        )
+        requested_semantic = (
+            command.intended_effect_fingerprint,
+            command.policy_verdict_hash,
+            command.expected_receipt_binding_hash,
+        )
+        if requested_semantic != expected_semantic:
+            return self._operation_gate_failure(
+                "inventory_member_conflict",
+                operation,
+                {
+                    "binding_id": binding.binding_id,
+                    "operation_id": operation.operation_id,
+                    "expected_semantic": expected_semantic,
+                    "requested_semantic": requested_semantic,
+                },
+            )
+        prefix = self._validate_ready_inventory_prefix(
+            binding=binding,
+            sealed=sealed,
+            ready=ready,
+            operation_events=operation_events,
+        )
+        if isinstance(prefix, DirectedEffectOperationResultV1):
+            return prefix
+        current = self._inventory_operation_projection(
+            binding=binding,
+            sealed=sealed,
+            operation_read=_StreamRead(operation_events, operation_head_seq),
+        )
+        if isinstance(current, DirectedEffectOperationResultV1):
+            return current
+        current_failure = self._ready_current_inventory_failure(current)
+        if current_failure is not None:
+            return current_failure
+        return _ReadyOperationContext(sealed=sealed, ready=ready, member=member)
+
+    def _prepare_inventory_guarded_snapshot(
+        self,
+        command: _InventoryGuardedCommand,
+        identity: DirectedEffectParentRegistryIdentityV1,
+    ) -> GuardedFactSnapshotV1 | DirectedEffectOperationResultV1:
+        """Prepare registry target facts guarded by the exact operation stream."""
+
+        try:
+            return read_guarded_fact_snapshot(
+                ReadGuardedFactSnapshotCommandV1(
+                    workspace=command.workspace,
+                    target_stream=_registry_stream_token(identity),
+                    guard_stream=command.parent_binding.operation_stream_token,
+                )
+            )
+        except FactStreamError as exc:
+            failure = self._fact_failure_result(
+                exc,
+                operation="read",
+                stream_kind="inventory_guarded_pair",
+            )
+            evidence = dict(failure.evidence)
+            evidence.update(
+                {
+                    "target_stream_kind": "parent_registry",
+                    "target_stream_token": _registry_stream_token(identity),
+                    "guard_stream_kind": "operation",
+                    "guard_stream_token": command.parent_binding.operation_stream_token,
+                }
+            )
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code=failure.code,
+                evidence=evidence,
+            )
+
+    @staticmethod
+    def _inventory_seal_payload(
+        *,
+        registry: _ParentRegistry,
+        binding: DirectedEffectParentBindingV1,
+        members: tuple[DirectedEffectInventoryMemberV1, ...],
+        inventory_hash: str,
+        actor: str,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
+            "stable_registry_identity": registry.identity.to_record(),
+            "previous_version": registry.registry_version,
+            "version": registry.registry_version + 1,
+            "parent_sequence": binding.parent_sequence,
+            "binding_id": binding.binding_id,
+            "members": [member.to_record() for member in members],
+            "member_count": len(members),
+            "inventory_hash": inventory_hash,
+            "actor": actor,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @staticmethod
+    def _inventory_ready_payload(
+        *,
+        registry: _ParentRegistry,
+        binding: DirectedEffectParentBindingV1,
+        sealed: _SealedDirectedEffectInventory,
+        ordered_operation_ids: tuple[str, ...],
+        admission_set_hash: str,
+        operation_source_head_seq: int,
+        actor: str,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
+            "stable_registry_identity": registry.identity.to_record(),
+            "previous_version": registry.registry_version,
+            "version": registry.registry_version + 1,
+            "parent_sequence": binding.parent_sequence,
+            "binding_id": binding.binding_id,
+            "inventory_hash": sealed.inventory_hash,
+            "ordered_operation_ids": list(ordered_operation_ids),
+            "admission_set_hash": admission_set_hash,
+            "operation_source_head_seq": operation_source_head_seq,
+            "actor": actor,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _confirm_inventory_append(
+        self,
+        *,
+        command: SealDirectedEffectInventoryCommandV1,
+        expected_identity: DirectedEffectParentRegistryIdentityV1,
+        members: tuple[DirectedEffectInventoryMemberV1, ...],
+        inventory_hash: str,
+        guarded_attempt: int,
+        receipt: GuardedFactAppendedV1,
+        guarded_command: AppendIfGuardedSnapshotCommandV1,
+    ) -> DirectedEffectInventoryResultV1:
+        confirmation = self._strict_inventory_confirmation(
+            command,
+            expected_identity=expected_identity,
+            members=members,
+            inventory_hash=inventory_hash,
+        )
+        if isinstance(confirmation, DirectedEffectInventoryResultV1):
+            return confirmation
+        try:
+            canonical_receipt = append_if_guarded_snapshot(guarded_command)
+        except FactStreamError as exc:
+            return self._inventory_failure(
+                "guarded_receipt_mismatch",
+                {
+                    "reason": "public_exact_replay_receipt_failed",
+                    "guarded_attempt": guarded_attempt,
+                    "fact_stream_code": exc.code,
+                    "fact_stream_details": dict(exc.details),
+                    "sealed_event_id": confirmation.sealed.event_id,
+                    "sealed_event_seq": confirmation.sealed.seq,
+                },
+            )
+        return self._confirmed_inventory_result(
+            command,
+            confirmation=confirmation,
+            guarded_attempt=guarded_attempt,
+            receipt=receipt,
+            canonical_receipt=canonical_receipt,
+        )
+
+    def _reconcile_inventory_append(
+        self,
+        *,
+        command: SealDirectedEffectInventoryCommandV1,
+        expected_identity: DirectedEffectParentRegistryIdentityV1,
+        members: tuple[DirectedEffectInventoryMemberV1, ...],
+        inventory_hash: str,
+        guarded_attempt: int,
+        exc: FactStreamError,
+        receipt: GuardedFactAppendedV1 | None,
+        guarded_command: AppendIfGuardedSnapshotCommandV1,
+    ) -> DirectedEffectInventoryResultV1:
+        """Resolve an ambiguous append only from a fresh strict two-stream snapshot."""
+
+        confirmation = self._strict_inventory_confirmation(
+            command,
+            expected_identity=expected_identity,
+            members=members,
+            inventory_hash=inventory_hash,
+        )
+        if isinstance(confirmation, DirectedEffectInventoryResultV1):
+            return self._with_inventory_reconciliation_evidence(confirmation, exc)
+        try:
+            canonical_receipt = append_if_guarded_snapshot(guarded_command)
+        except FactStreamError as replay_exc:
+            return self._inventory_failure(
+                "guarded_receipt_mismatch",
+                {
+                    "reason": "public_exact_replay_receipt_failed",
+                    "guarded_attempt": guarded_attempt,
+                    "fact_stream_code": replay_exc.code,
+                    "fact_stream_details": dict(replay_exc.details),
+                    "reconciled_after_guarded_error": True,
+                    "original_fact_stream_code": exc.code,
+                    "original_fact_stream_details": dict(exc.details),
+                    "sealed_event_id": confirmation.sealed.event_id,
+                    "sealed_event_seq": confirmation.sealed.seq,
+                },
+            )
+        return self._confirmed_inventory_result(
+            command,
+            confirmation=confirmation,
+            guarded_attempt=guarded_attempt,
+            receipt=receipt,
+            canonical_receipt=canonical_receipt,
+            reconciliation_error=exc,
+        )
+
+    def _strict_inventory_confirmation(
+        self,
+        command: SealDirectedEffectInventoryCommandV1,
+        *,
+        expected_identity: DirectedEffectParentRegistryIdentityV1,
+        members: tuple[DirectedEffectInventoryMemberV1, ...],
+        inventory_hash: str,
+    ) -> _StrictInventoryConfirmation | DirectedEffectInventoryResultV1:
+        """Rebuild both streams and bind one exact seal to its operation facts."""
+
+        prepared = self._prepare_inventory_guarded_snapshot(command, expected_identity)
+        if isinstance(prepared, DirectedEffectOperationResultV1):
+            return self._inventory_failure_from_operation(prepared)
+        validated = self._validated_parent_binding_from_registry(
+            command,
+            expected_identity=expected_identity,
+            registry_read=_StreamRead(prepared.target_records(), prepared.proof.target_head_seq),
+            require_open=False,
+        )
+        if isinstance(validated, DirectedEffectOperationResultV1):
+            return self._inventory_failure_from_operation(validated)
+        binding, registry = validated
+        sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+        if sealed is None:
+            return self._inventory_failure(
+                "guarded_receipt_mismatch",
+                {"reason": "sealed_inventory_not_found", "binding_id": binding.binding_id},
+            )
+        if sealed.members != members or sealed.inventory_hash != inventory_hash or sealed.actor != command.actor:
+            return self._inventory_failure(
+                "guarded_receipt_mismatch",
+                {
+                    "reason": "sealed_inventory_semantics_mismatch",
+                    "binding_id": binding.binding_id,
+                    "sealed_inventory_hash": sealed.inventory_hash,
+                    "requested_inventory_hash": inventory_hash,
+                },
+            )
+        operations = self._inventory_operation_projection(
+            binding=binding,
+            sealed=sealed,
+            operation_read=_StreamRead(prepared.guard_records(), prepared.proof.guard_head_seq),
+        )
+        if isinstance(operations, DirectedEffectOperationResultV1):
+            return self._inventory_failure_from_operation(operations)
+        return _StrictInventoryConfirmation(
+            binding=binding,
+            registry=registry,
+            sealed=sealed,
+            operations=operations,
+        )
+
+    def _inventory_operation_projection(
+        self,
+        *,
+        binding: DirectedEffectParentBindingV1,
+        sealed: _SealedDirectedEffectInventory,
+        operation_read: _StreamRead,
+    ) -> _InventoryOperationProjection | DirectedEffectOperationResultV1:
+        reduced = self._reduce_operation_stream(operation_read, binding, target=None)
+        if isinstance(reduced, DirectedEffectOperationResultV1):
+            if reduced.code in {"operation_identity_conflict", "deo_semantic_drift"}:
+                return DirectedEffectOperationResultV1(
+                    ok=False,
+                    code="inventory_member_conflict",
+                    evidence={"operation_stream_failure": dict(reduced.evidence)},
+                )
+            return reduced
+        members_by_operation_id = {member.operation_id: member for member in sealed.members}
+        admitted_operation_ids: set[str] = set()
+        unexpected_operation_ids: list[str] = []
+        for aggregate in reduced.aggregates:
+            member = members_by_operation_id.get(aggregate.operation.operation_id)
+            if member is None:
+                unexpected_operation_ids.append(aggregate.operation.operation_id)
+                continue
+            expected_operation = DirectedEffectOperationIdentityV1(
+                workspace=binding.workspace,
+                task_id=binding.task_id,
+                execution_attempt_id=binding.registry_identity.execution_attempt_id,
+                parent_binding_id=binding.binding_id,
+                parent_sequence=binding.parent_sequence,
+                tool_call_id=member.tool_call_id,
+                effect_id=member.effect_id,
+                operation_id=member.operation_id,
+                operation_stream_token=binding.operation_stream_token,
+            )
+            expected_semantic = (
+                member.intended_effect_fingerprint,
+                member.policy_verdict_hash,
+                member.expected_receipt_binding_hash,
+            )
+            observed_semantic = (
+                aggregate.intended_effect_fingerprint,
+                aggregate.policy_verdict_hash,
+                aggregate.expected_receipt_binding_hash,
+            )
+            if aggregate.operation != expected_operation or observed_semantic != expected_semantic:
+                return DirectedEffectOperationResultV1(
+                    ok=False,
+                    code="inventory_member_conflict",
+                    evidence={
+                        "operation_id": member.operation_id,
+                        "expected_operation": expected_operation.to_record(),
+                        "observed_operation": aggregate.operation.to_record(),
+                        "expected_semantic": expected_semantic,
+                        "observed_semantic": observed_semantic,
+                    },
+                )
+            admitted_operation_ids.add(member.operation_id)
+        missing_operation_ids = tuple(
+            member.operation_id for member in sealed.members if member.operation_id not in admitted_operation_ids
+        )
+        return _InventoryOperationProjection(
+            source_head_seq=reduced.source_head_seq,
+            admitted_count=len(sealed.members) - len(missing_operation_ids),
+            missing_operation_ids=missing_operation_ids,
+            unexpected_operation_ids=tuple(unexpected_operation_ids),
+        )
+
+    def _validate_exact_inventory_admission(
+        self,
+        *,
+        binding: DirectedEffectParentBindingV1,
+        sealed: _SealedDirectedEffectInventory,
+        operation_read: _StreamRead,
+    ) -> _InventoryOperationProjection | DirectedEffectOperationResultV1:
+        projection = self._inventory_operation_projection(
+            binding=binding,
+            sealed=sealed,
+            operation_read=operation_read,
+        )
+        if isinstance(projection, DirectedEffectOperationResultV1):
+            return projection
+        if projection.unexpected_operation_ids:
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="inventory_admission_unexpected",
+                evidence={
+                    "unexpected_operation_ids": projection.unexpected_operation_ids,
+                    "operation_source_head_seq": projection.source_head_seq,
+                },
+            )
+        if projection.missing_operation_ids:
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="inventory_admission_incomplete",
+                evidence={
+                    "missing_operation_ids": projection.missing_operation_ids,
+                    "operation_source_head_seq": projection.source_head_seq,
+                },
+            )
+        reduced = self._reduce_operation_stream(operation_read, binding, target=None)
+        if isinstance(reduced, DirectedEffectOperationResultV1):
+            return reduced
+        if any(
+            aggregate.state != "INTENT_COMMITTED"
+            or aggregate.version != 1
+            or len(aggregate.transitions) != 1
+            or aggregate.transitions[0].state != "INTENT_COMMITTED"
+            or aggregate.transitions[0].previous_version != 0
+            or aggregate.transitions[0].version != 1
+            for aggregate in reduced.aggregates
+        ):
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="inventory_admission_incomplete",
+                evidence={
+                    "reason": "inventory_members_not_exact_version_one_intents",
+                    "operation_source_head_seq": reduced.source_head_seq,
+                },
+            )
+        return projection
+
+    @staticmethod
+    def _ready_current_inventory_failure(
+        projection: _InventoryOperationProjection,
+    ) -> DirectedEffectOperationResultV1 | None:
+        if not projection.unexpected_operation_ids:
+            return None
+        return DirectedEffectOperationResultV1(
+            ok=False,
+            code="inventory_admission_unexpected",
+            evidence={
+                "reason": "unexpected_operation_after_inventory_ready",
+                "unexpected_operation_ids": projection.unexpected_operation_ids,
+                "operation_source_head_seq": projection.source_head_seq,
+            },
+        )
+
+    def _validate_ready_inventory_prefix(
+        self,
+        *,
+        binding: DirectedEffectParentBindingV1,
+        sealed: _SealedDirectedEffectInventory,
+        ready: _ReadyDirectedEffectInventory,
+        operation_events: tuple[dict[str, Any], ...],
+    ) -> _InventoryOperationProjection | DirectedEffectOperationResultV1:
+        if ready.operation_source_head_seq > len(operation_events):
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="strict_stream_corruption",
+                evidence={"reason": "ready_operation_prefix_exceeds_current_stream"},
+            )
+        prefix = _StreamRead(
+            operation_events[: ready.operation_source_head_seq],
+            ready.operation_source_head_seq,
+        )
+        admission = self._validate_exact_inventory_admission(
+            binding=binding,
+            sealed=sealed,
+            operation_read=prefix,
+        )
+        if isinstance(admission, DirectedEffectOperationResultV1):
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="strict_stream_corruption",
+                evidence={
+                    "reason": "ready_operation_prefix_invalid",
+                    "ready_event_id": ready.event_id,
+                    "ready_event_seq": ready.seq,
+                    "prefix_failure_code": admission.code,
+                    "prefix_failure_evidence": dict(admission.evidence),
+                },
+            )
+        if (
+            ready.ordered_operation_ids != tuple(member.operation_id for member in sealed.members)
+            or ready.inventory_hash != sealed.inventory_hash
+            or ready.admission_set_hash
+            != _admission_set_hash(
+                binding_id=binding.binding_id,
+                inventory_hash=sealed.inventory_hash,
+                ordered_operation_ids=ready.ordered_operation_ids,
+                operation_source_head_seq=ready.operation_source_head_seq,
+            )
+        ):
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="strict_stream_corruption",
+                evidence={"reason": "ready_prefix_identity_or_hash_invalid"},
+            )
+        return admission
+
+    def _confirm_inventory_ready_append(
+        self,
+        *,
+        command: FinalizeDirectedEffectInventoryAdmissionCommandV1,
+        expected_identity: DirectedEffectParentRegistryIdentityV1,
+        receipt: GuardedFactAppendedV1 | None,
+        guarded_command: AppendIfGuardedSnapshotCommandV1,
+        guarded_attempt: int,
+        reconciliation_error: FactStreamError | None = None,
+    ) -> DirectedEffectInventoryResultV1:
+        prepared = self._prepare_inventory_guarded_snapshot(command, expected_identity)
+        if isinstance(prepared, DirectedEffectOperationResultV1):
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure_from_operation(prepared),
+                reconciliation_error,
+            )
+        validated = self._validated_parent_binding_from_registry(
+            command,
+            expected_identity=expected_identity,
+            registry_read=_StreamRead(prepared.target_records(), prepared.proof.target_head_seq),
+            require_open=False,
+        )
+        if isinstance(validated, DirectedEffectOperationResultV1):
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure_from_operation(validated),
+                reconciliation_error,
+            )
+        binding, registry = validated
+        sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+        ready = registry.ready_inventories_by_binding_id.get(binding.binding_id)
+        if sealed is None or sealed.inventory_hash != command.inventory_hash:
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure(
+                    "guarded_receipt_mismatch",
+                    {"reason": "ready_fact_not_confirmed_by_strict_registry_reread"},
+                ),
+                reconciliation_error,
+            )
+        if ready is None:
+            if reconciliation_error is not None and receipt is None:
+                return self._inventory_failure_from_operation(
+                    self._fact_failure_result(
+                        reconciliation_error,
+                        operation="append",
+                        stream_kind="inventory_guarded_pair",
+                    )
+                )
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure(
+                    "guarded_receipt_mismatch",
+                    {"reason": "ready_fact_not_confirmed_by_strict_registry_reread"},
+                ),
+                reconciliation_error,
+            )
+        if ready.inventory_hash != command.inventory_hash:
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure(
+                    "guarded_receipt_mismatch",
+                    {"reason": "ready_fact_not_confirmed_by_strict_registry_reread"},
+                ),
+                reconciliation_error,
+            )
+        prefix = self._validate_ready_inventory_prefix(
+            binding=binding,
+            sealed=sealed,
+            ready=ready,
+            operation_events=prepared.guard_records(),
+        )
+        if isinstance(prefix, DirectedEffectOperationResultV1):
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure_from_operation(prefix),
+                reconciliation_error,
+            )
+        current = self._inventory_operation_projection(
+            binding=binding,
+            sealed=sealed,
+            operation_read=_StreamRead(prepared.guard_records(), prepared.proof.guard_head_seq),
+        )
+        if isinstance(current, DirectedEffectOperationResultV1):
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure_from_operation(current),
+                reconciliation_error,
+            )
+        ready_current_failure = self._ready_current_inventory_failure(current)
+        if ready_current_failure is not None:
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure_from_operation(ready_current_failure),
+                reconciliation_error,
+            )
+        try:
+            canonical_receipt = append_if_guarded_snapshot(guarded_command)
+        except FactStreamError as exc:
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure(
+                    "guarded_receipt_mismatch",
+                    {
+                        "reason": "public_exact_replay_receipt_failed",
+                        "fact_stream_code": exc.code,
+                        "fact_stream_details": dict(exc.details),
+                    },
+                ),
+                reconciliation_error,
+            )
+        receipt_drift_fields = self._guarded_receipt_proof_drift(receipt, canonical_receipt)
+        canonical_mismatch = (
+            canonical_receipt.workspace != command.workspace
+            or canonical_receipt.stream != registry.stream_token
+            or canonical_receipt.event_id != ready.event_id
+            or canonical_receipt.appended_seq != ready.seq
+        )
+        if receipt_drift_fields or canonical_mismatch:
+            evidence: dict[str, object] = {
+                "reason": (
+                    "receipt_identity_mismatch" if receipt_drift_fields else "canonical_receipt_identity_mismatch"
+                ),
+                "receipt_drift_fields": receipt_drift_fields,
+                "canonical_receipt": self._guarded_receipt_record(canonical_receipt),
+                "ready_event_id": ready.event_id,
+                "ready_event_seq": ready.seq,
+            }
+            if receipt is not None:
+                evidence["observed_receipt"] = self._guarded_receipt_record(receipt)
+            return self._with_inventory_reconciliation_evidence(
+                self._inventory_failure("guarded_receipt_mismatch", evidence),
+                reconciliation_error,
+            )
+        evidence = {
+            **self._guarded_receipt_event_evidence(canonical_receipt),
+            "admission_set_hash": ready.admission_set_hash,
+            "authoritative_append": False,
+            "authoritative_effect_receipt": True,
+            "append_disposition": "committed_or_exact_replay",
+            "guarded_attempt": guarded_attempt,
+            "guarded_receipt": self._guarded_receipt_record(canonical_receipt),
+        }
+        if reconciliation_error is not None:
+            evidence.update(
+                {
+                    "reconciled_after_guarded_error": True,
+                    "fact_stream_code": reconciliation_error.code,
+                    "fact_stream_details": dict(reconciliation_error.details),
+                }
+            )
+        return self._inventory_success(
+            command,
+            registry,
+            sealed,
+            operation_projection=current,
+            code="inventory_ready",
+            evidence=evidence,
+        )
+
+    def _confirmed_inventory_result(
+        self,
+        command: SealDirectedEffectInventoryCommandV1,
+        *,
+        confirmation: _StrictInventoryConfirmation,
+        guarded_attempt: int,
+        receipt: GuardedFactAppendedV1 | None,
+        canonical_receipt: GuardedFactAppendedV1,
+        reconciliation_error: FactStreamError | None = None,
+    ) -> DirectedEffectInventoryResultV1:
+        receipt_drift_fields = self._guarded_receipt_proof_drift(receipt, canonical_receipt)
+        canonical_receipt_mismatch = (
+            canonical_receipt.workspace != command.workspace
+            or canonical_receipt.stream != confirmation.registry.stream_token
+            or canonical_receipt.event_id != confirmation.sealed.event_id
+            or canonical_receipt.appended_seq != confirmation.sealed.seq
+        )
+        if receipt_drift_fields or canonical_receipt_mismatch:
+            evidence: dict[str, object] = {
+                "reason": (
+                    "receipt_identity_mismatch" if receipt_drift_fields else "canonical_receipt_identity_mismatch"
+                ),
+                "receipt_drift_fields": receipt_drift_fields,
+                "canonical_receipt": self._guarded_receipt_record(canonical_receipt),
+                "sealed_event_id": confirmation.sealed.event_id,
+                "sealed_event_seq": confirmation.sealed.seq,
+                "binding_id": confirmation.binding.binding_id,
+            }
+            if receipt is not None:
+                evidence["observed_receipt"] = self._guarded_receipt_record(receipt)
+            if reconciliation_error is not None:
+                evidence.update(
+                    {
+                        "reconciled_after_guarded_error": True,
+                        "fact_stream_code": reconciliation_error.code,
+                        "fact_stream_details": dict(reconciliation_error.details),
+                    }
+                )
+            return self._inventory_failure("guarded_receipt_mismatch", evidence)
+        evidence = {
+            **self._guarded_receipt_event_evidence(canonical_receipt),
+            "inventory_hash": confirmation.sealed.inventory_hash,
+            "authoritative_append": False,
+            "authoritative_effect_receipt": True,
+            "append_disposition": "committed_or_exact_replay",
+            "guarded_attempt": guarded_attempt,
+            "guarded_receipt": self._guarded_receipt_record(canonical_receipt),
+            "guarded_semantic_digest": canonical_receipt.semantic_digest,
+        }
+        if reconciliation_error is not None:
+            evidence.update(
+                {
+                    "reconciled_after_guarded_error": True,
+                    "fact_stream_code": reconciliation_error.code,
+                    "fact_stream_details": dict(reconciliation_error.details),
+                }
+            )
+        return self._inventory_success(
+            command,
+            confirmation.registry,
+            confirmation.sealed,
+            operation_projection=confirmation.operations,
+            code="inventory_sealed",
+            evidence=evidence,
+        )
+
+    @staticmethod
+    def _with_inventory_reconciliation_evidence(
+        result: DirectedEffectInventoryResultV1,
+        exc: FactStreamError | None,
+    ) -> DirectedEffectInventoryResultV1:
+        if exc is None:
+            return result
+        evidence = dict(result.evidence)
+        evidence["reconciled_after_guarded_error"] = True
+        if "fact_stream_code" in evidence:
+            evidence["original_fact_stream_code"] = exc.code
+            evidence["original_fact_stream_details"] = dict(exc.details)
+        else:
+            evidence["fact_stream_code"] = exc.code
+            evidence["fact_stream_details"] = dict(exc.details)
+        return DirectedEffectInventoryResultV1(ok=False, code=result.code, evidence=evidence)
+
+    @staticmethod
+    def _inventory_success(
+        command: _InventoryGuardedCommand,
+        registry: _ParentRegistry,
+        sealed: _SealedDirectedEffectInventory,
+        *,
+        operation_projection: _InventoryOperationProjection,
+        code: DirectedEffectInventoryCodeV1,
+        evidence: Mapping[str, object],
+    ) -> DirectedEffectInventoryResultV1:
+        ready = registry.ready_inventories_by_binding_id.get(sealed.binding_id)
+        projection = DirectedEffectInventoryProjectionV1(
+            schema_version=DIRECTED_EFFECT_INVENTORY_PROJECTION_SCHEMA_V1,
+            workspace=command.workspace,
+            task_id=command.task_id,
+            execution_attempt=command.execution_attempt,
+            parent_binding_id=sealed.binding_id,
+            members=sealed.members,
+            inventory_hash=sealed.inventory_hash,
+            sealed_event_id=sealed.event_id,
+            sealed_event_seq=sealed.seq,
+            parent_registry_source_head_seq=registry.source_head_seq,
+            operation_source_head_seq=operation_projection.source_head_seq,
+            inventory_ready=ready is not None,
+            ready_event_id=ready.event_id if ready is not None else None,
+            ready_event_seq=ready.seq if ready is not None else None,
+            admitted_count=operation_projection.admitted_count,
+            missing_operation_ids=operation_projection.missing_operation_ids,
+            unexpected_operation_ids=operation_projection.unexpected_operation_ids,
+        )
+        return DirectedEffectInventoryResultV1(
+            ok=True,
+            code=code,
+            projection=projection,
+            evidence={
+                "parent_registry_source_head_seq": registry.source_head_seq,
+                "operation_source_head_seq": operation_projection.source_head_seq,
+                **dict(evidence),
+            },
+        )
+
+    @staticmethod
+    def _inventory_failure(
+        code: DirectedEffectInventoryCodeV1,
+        evidence: Mapping[str, object],
+    ) -> DirectedEffectInventoryResultV1:
+        return DirectedEffectInventoryResultV1(ok=False, code=code, evidence=dict(evidence))
+
+    @staticmethod
+    def _inventory_failure_from_operation(
+        failure: DirectedEffectOperationResultV1,
+    ) -> DirectedEffectInventoryResultV1:
+        return DirectedEffectInventoryResultV1(
+            ok=False,
+            code=cast(DirectedEffectInventoryCodeV1, failure.code),
+            evidence=failure.evidence,
+        )
+
     def _load_registry(
         self,
         workspace: str,
@@ -1073,6 +2748,8 @@ class DirectedEffectOperationRepository:
             open_binding=None,
             admissions_by_idempotency_key={},
             bindings_by_id={},
+            sealed_inventories_by_binding_id={},
+            ready_inventories_by_binding_id={},
         )
         for record in read.events:
             applied = self._apply_registry_event(registry, record)
@@ -1101,6 +2778,10 @@ class DirectedEffectOperationRepository:
             return self._apply_parent_admitted(registry, record)
         if event_type == _PARENT_CLOSED_EVENT_TYPE:
             return self._apply_parent_closed(registry, record)
+        if event_type == _PARENT_INVENTORY_SEALED_EVENT_TYPE:
+            return self._apply_parent_inventory_sealed(registry, record)
+        if event_type == _PARENT_INVENTORY_READY_EVENT_TYPE:
+            return self._apply_parent_inventory_ready(registry, record)
         return self._parent_registry_failure(
             "strict_stream_unknown_schema",
             registry,
@@ -1304,6 +2985,8 @@ class DirectedEffectOperationRepository:
             open_binding=binding,
             admissions_by_idempotency_key=admissions,
             bindings_by_id=bindings,
+            sealed_inventories_by_binding_id=registry.sealed_inventories_by_binding_id,
+            ready_inventories_by_binding_id=registry.ready_inventories_by_binding_id,
         )
 
     def _apply_parent_closed(
@@ -1450,6 +3133,456 @@ class DirectedEffectOperationRepository:
             open_binding=None,
             admissions_by_idempotency_key=registry.admissions_by_idempotency_key,
             bindings_by_id=registry.bindings_by_id,
+            sealed_inventories_by_binding_id=registry.sealed_inventories_by_binding_id,
+            ready_inventories_by_binding_id=registry.ready_inventories_by_binding_id,
+        )
+
+    def _apply_parent_inventory_sealed(
+        self,
+        registry: _ParentRegistry,
+        record: Mapping[str, Any],
+    ) -> _ParentRegistry | DirectedEffectOperationResultV1:
+        """Strictly reduce one immutable parent inventory seal fact."""
+
+        payload = record.get("payload")
+        expected_payload_fields = {
+            "schema_version",
+            "stable_registry_identity",
+            "previous_version",
+            "version",
+            "parent_sequence",
+            "binding_id",
+            "members",
+            "member_count",
+            "inventory_hash",
+            "actor",
+            "recorded_at",
+        }
+        if not isinstance(payload, dict) or set(payload) != expected_payload_fields:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_payload_fields_invalid"},
+            )
+        if payload.get("schema_version") != DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1:
+            return self._parent_registry_failure(
+                "strict_stream_unknown_schema",
+                registry,
+                {"observed_schema_version": payload.get("schema_version")},
+            )
+        raw_identity = payload.get("stable_registry_identity")
+        if not isinstance(raw_identity, Mapping):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_registry_identity_invalid"},
+            )
+        try:
+            identity = DirectedEffectParentRegistryIdentityV1.from_record(raw_identity)
+        except (TypeError, ValueError) as exc:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {
+                    "reason": "parent_inventory_sealed_registry_identity_invalid",
+                    "error_type": type(exc).__name__,
+                },
+            )
+        if identity != registry.identity:
+            return self._parent_registry_failure(
+                self._registry_identity_mismatch_code(registry.identity, identity),
+                registry,
+                {"observed_registry_identity": identity.to_record()},
+            )
+
+        previous_version = payload.get("previous_version")
+        version = payload.get("version")
+        parent_sequence = payload.get("parent_sequence")
+        member_count = payload.get("member_count")
+        seq = record.get("seq")
+        integer_values = (previous_version, version, parent_sequence, member_count, seq)
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_values):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_integer_fields_invalid"},
+            )
+        previous_version = cast(int, previous_version)
+        version = cast(int, version)
+        parent_sequence = cast(int, parent_sequence)
+        member_count = cast(int, member_count)
+        seq = cast(int, seq)
+        if previous_version != registry.registry_version or version != previous_version + 1 or seq != version:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {
+                    "reason": "parent_registry_version_not_monotonic",
+                    "previous_version": previous_version,
+                    "version": version,
+                    "seq": seq,
+                },
+            )
+
+        binding_id = payload.get("binding_id")
+        actor = payload.get("actor")
+        if any(
+            not isinstance(value, str) or not value.strip() or value != value.strip() for value in (binding_id, actor)
+        ):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_string_fields_invalid"},
+            )
+        if not _is_timezone_aware_timestamp(payload.get("recorded_at")):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_recorded_at_invalid"},
+            )
+        if not _is_canonical_sha256(payload.get("inventory_hash")):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_hash_invalid"},
+            )
+        event_id = record.get("event_id")
+        if not isinstance(event_id, str) or not event_id.strip() or event_id != event_id.strip():
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_event_id_invalid"},
+            )
+
+        binding_id = cast(str, binding_id)
+        actor = cast(str, actor)
+        open_binding = registry.open_binding
+        if open_binding is None:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_without_open_binding"},
+            )
+        if open_binding.binding_id != binding_id or open_binding.parent_sequence != parent_sequence:
+            return self._parent_registry_failure(
+                "parent_binding_conflict",
+                registry,
+                {
+                    "reason": "parent_inventory_sealed_binding_mismatch",
+                    "expected_binding_id": open_binding.binding_id,
+                    "observed_binding_id": binding_id,
+                    "expected_parent_sequence": open_binding.parent_sequence,
+                    "observed_parent_sequence": parent_sequence,
+                },
+            )
+        if binding_id in registry.sealed_inventories_by_binding_id:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "duplicate_parent_inventory_seal", "binding_id": binding_id},
+            )
+
+        raw_members = payload.get("members")
+        if not isinstance(raw_members, list) or not 1 <= member_count <= 64 or len(raw_members) != member_count:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_member_count_invalid"},
+            )
+        members: list[DirectedEffectInventoryMemberV1] = []
+        seen_tool_call_ids: set[str] = set()
+        seen_effect_ids: set[str] = set()
+        seen_operation_ids: set[str] = set()
+        for expected_ordinal, raw_member in enumerate(raw_members):
+            if not isinstance(raw_member, Mapping):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_inventory_sealed_member_invalid", "ordinal": expected_ordinal},
+                )
+            try:
+                member = DirectedEffectInventoryMemberV1.from_record(raw_member)
+            except (TypeError, ValueError) as exc:
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {
+                        "reason": "parent_inventory_sealed_member_invalid",
+                        "ordinal": expected_ordinal,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+            expected_effect_id = _inventory_effect_id(
+                binding_id=binding_id,
+                tool_call_id=member.tool_call_id,
+                intended_effect_fingerprint=member.intended_effect_fingerprint,
+            )
+            expected_operation_id = _operation_id(
+                binding_id=binding_id,
+                tool_call_id=member.tool_call_id,
+                effect_id=expected_effect_id,
+            )
+            if (
+                member.ordinal != expected_ordinal
+                or member.effect_id != expected_effect_id
+                or member.operation_id != expected_operation_id
+                or member.tool_call_id in seen_tool_call_ids
+                or member.effect_id in seen_effect_ids
+                or member.operation_id in seen_operation_ids
+            ):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {
+                        "reason": "parent_inventory_sealed_member_identity_invalid",
+                        "ordinal": expected_ordinal,
+                    },
+                )
+            seen_tool_call_ids.add(member.tool_call_id)
+            seen_effect_ids.add(member.effect_id)
+            seen_operation_ids.add(member.operation_id)
+            members.append(member)
+        frozen_members = tuple(members)
+        inventory_hash = cast(str, payload["inventory_hash"])
+        if inventory_hash != _inventory_hash(binding_id, frozen_members):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_sealed_hash_mismatch"},
+            )
+
+        seals = dict(registry.sealed_inventories_by_binding_id)
+        seals[binding_id] = _SealedDirectedEffectInventory(
+            binding_id=binding_id,
+            members=frozen_members,
+            inventory_hash=inventory_hash,
+            actor=actor,
+            event_id=event_id,
+            seq=seq,
+        )
+        return _ParentRegistry(
+            identity=registry.identity,
+            stream_token=registry.stream_token,
+            registry_version=version,
+            source_head_seq=seq,
+            next_expected_seq=seq + 1,
+            next_parent_sequence=registry.next_parent_sequence,
+            open_binding=open_binding,
+            admissions_by_idempotency_key=registry.admissions_by_idempotency_key,
+            bindings_by_id=registry.bindings_by_id,
+            sealed_inventories_by_binding_id=seals,
+            ready_inventories_by_binding_id=registry.ready_inventories_by_binding_id,
+        )
+
+    def _apply_parent_inventory_ready(
+        self,
+        registry: _ParentRegistry,
+        record: Mapping[str, Any],
+    ) -> _ParentRegistry | DirectedEffectOperationResultV1:
+        """Strictly reduce one registry-owned admission-readiness proof."""
+
+        payload = record.get("payload")
+        expected_fields = {
+            "schema_version",
+            "stable_registry_identity",
+            "previous_version",
+            "version",
+            "parent_sequence",
+            "binding_id",
+            "inventory_hash",
+            "ordered_operation_ids",
+            "admission_set_hash",
+            "operation_source_head_seq",
+            "actor",
+            "recorded_at",
+        }
+        if not isinstance(payload, dict) or set(payload) != expected_fields:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_payload_fields_invalid"},
+            )
+        if payload.get("schema_version") != DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1:
+            return self._parent_registry_failure(
+                "strict_stream_unknown_schema",
+                registry,
+                {"observed_schema_version": payload.get("schema_version")},
+            )
+        raw_identity = payload.get("stable_registry_identity")
+        if not isinstance(raw_identity, Mapping):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_registry_identity_invalid"},
+            )
+        try:
+            identity = DirectedEffectParentRegistryIdentityV1.from_record(raw_identity)
+        except (TypeError, ValueError) as exc:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {
+                    "reason": "parent_inventory_ready_registry_identity_invalid",
+                    "error_type": type(exc).__name__,
+                },
+            )
+        if identity != registry.identity:
+            return self._parent_registry_failure(
+                self._registry_identity_mismatch_code(registry.identity, identity),
+                registry,
+                {"observed_registry_identity": identity.to_record()},
+            )
+        previous_version = payload.get("previous_version")
+        version = payload.get("version")
+        parent_sequence = payload.get("parent_sequence")
+        operation_head = payload.get("operation_source_head_seq")
+        seq = record.get("seq")
+        integer_values = (previous_version, version, parent_sequence, operation_head, seq)
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_values):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_integer_fields_invalid"},
+            )
+        previous_version = cast(int, previous_version)
+        version = cast(int, version)
+        parent_sequence = cast(int, parent_sequence)
+        operation_head = cast(int, operation_head)
+        seq = cast(int, seq)
+        if previous_version != registry.registry_version or version != previous_version + 1 or seq != version:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_registry_version_not_monotonic"},
+            )
+        if operation_head < 1:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_operation_head_invalid"},
+            )
+        binding_id = payload.get("binding_id")
+        actor = payload.get("actor")
+        if any(
+            not isinstance(value, str) or not value.strip() or value != value.strip() for value in (binding_id, actor)
+        ):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_string_fields_invalid"},
+            )
+        if actor != "roles.kernel":
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_actor_invalid"},
+            )
+        if not _is_canonical_sha256(payload.get("inventory_hash")) or not _is_canonical_sha256(
+            payload.get("admission_set_hash")
+        ):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_hash_invalid"},
+            )
+        if not _is_timezone_aware_timestamp(payload.get("recorded_at")):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_recorded_at_invalid"},
+            )
+        event_id = record.get("event_id")
+        if not isinstance(event_id, str) or not event_id.strip() or event_id != event_id.strip():
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_event_id_invalid"},
+            )
+        binding_id = cast(str, binding_id)
+        open_binding = registry.open_binding
+        if (
+            open_binding is None
+            or open_binding.binding_id != binding_id
+            or open_binding.parent_sequence != parent_sequence
+        ):
+            return self._parent_registry_failure(
+                "parent_binding_conflict",
+                registry,
+                {"reason": "parent_inventory_ready_binding_mismatch"},
+            )
+        sealed = registry.sealed_inventories_by_binding_id.get(binding_id)
+        if sealed is None:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_without_seal"},
+            )
+        if binding_id in registry.ready_inventories_by_binding_id:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "duplicate_parent_inventory_ready"},
+            )
+        inventory_hash = cast(str, payload["inventory_hash"])
+        if inventory_hash != sealed.inventory_hash:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_inventory_hash_mismatch"},
+            )
+        raw_operation_ids = payload.get("ordered_operation_ids")
+        expected_operation_ids = tuple(member.operation_id for member in sealed.members)
+        if (
+            not isinstance(raw_operation_ids, list)
+            or any(not isinstance(value, str) or not value.strip() for value in raw_operation_ids)
+            or tuple(raw_operation_ids) != expected_operation_ids
+            or len(set(raw_operation_ids)) != len(raw_operation_ids)
+        ):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_operation_ids_invalid"},
+            )
+        if operation_head != len(expected_operation_ids):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_operation_head_not_exact_admission_set"},
+            )
+        admission_set_hash = cast(str, payload["admission_set_hash"])
+        if admission_set_hash != _admission_set_hash(
+            binding_id=binding_id,
+            inventory_hash=inventory_hash,
+            ordered_operation_ids=expected_operation_ids,
+            operation_source_head_seq=operation_head,
+        ):
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_inventory_ready_admission_set_hash_mismatch"},
+            )
+        ready_facts = dict(registry.ready_inventories_by_binding_id)
+        ready_facts[binding_id] = _ReadyDirectedEffectInventory(
+            binding_id=binding_id,
+            inventory_hash=inventory_hash,
+            ordered_operation_ids=expected_operation_ids,
+            admission_set_hash=admission_set_hash,
+            operation_source_head_seq=operation_head,
+            event_id=event_id,
+            seq=seq,
+        )
+        return _ParentRegistry(
+            identity=registry.identity,
+            stream_token=registry.stream_token,
+            registry_version=version,
+            source_head_seq=seq,
+            next_expected_seq=seq + 1,
+            next_parent_sequence=registry.next_parent_sequence,
+            open_binding=open_binding,
+            admissions_by_idempotency_key=registry.admissions_by_idempotency_key,
+            bindings_by_id=registry.bindings_by_id,
+            sealed_inventories_by_binding_id=registry.sealed_inventories_by_binding_id,
+            ready_inventories_by_binding_id=ready_facts,
         )
 
     def _parent_event_canonical(
@@ -1651,7 +3784,7 @@ class DirectedEffectOperationRepository:
 
     def _validated_parent_binding(
         self,
-        command: _ReadCommand,
+        command: _ParentBindingReadCommand,
         *,
         require_open: bool,
     ) -> tuple[DirectedEffectParentBindingV1, _ParentRegistry] | DirectedEffectOperationResultV1:
@@ -1748,66 +3881,121 @@ class DirectedEffectOperationRepository:
         target: DirectedEffectOperationIdentityV1,
         binding: DirectedEffectParentBindingV1,
     ) -> _Aggregate | DirectedEffectOperationResultV1:
+        reduced = self._reduce_operation_stream(read, binding, target=target)
+        if isinstance(reduced, DirectedEffectOperationResultV1):
+            return reduced
+        for aggregate in reduced.aggregates:
+            if aggregate.operation.operation_id == target.operation_id:
+                return aggregate
+        return _Aggregate(
+            operation=target,
+            state=None,
+            version=0,
+            intended_effect_fingerprint="",
+            policy_verdict_hash="",
+            expected_receipt_binding_hash="",
+            source_head_seq=reduced.source_head_seq,
+            last_event_id="",
+            transitions=(),
+        )
+
+    def _reduce_operation_stream(
+        self,
+        read: _StreamRead,
+        binding: DirectedEffectParentBindingV1,
+        *,
+        target: DirectedEffectOperationIdentityV1 | None,
+    ) -> _OperationStreamReduction | DirectedEffectOperationResultV1:
+        """Parse each durable transition once into immutable per-operation facts."""
+
         states: dict[str, DirectedEffectOperationStateV1] = {}
         versions: dict[str, int] = {}
         semantics: dict[str, tuple[str, str, str]] = {}
-        target_transitions: list[_CommittedTransition] = []
-        last_event_id = ""
+        operations: dict[str, DirectedEffectOperationIdentityV1] = {}
+        transitions: dict[str, list[_CommittedTransition]] = {}
+        last_event_ids: dict[str, str] = {}
+        operation_order: list[str] = []
         for record in read.events:
             parsed = self._parse_operation_transition(record, binding)
             if isinstance(parsed, DirectedEffectOperationResultV1):
                 return parsed
             operation_id = parsed.operation.operation_id
+            prior_operation = operations.get(operation_id)
+            if target is not None and operation_id == target.operation_id and parsed.operation != target:
+                return self._operation_stream_failure(
+                    self._operation_identity_mismatch_code(target, parsed.operation),
+                    target,
+                    {"event_operation": parsed.operation.to_record()},
+                )
+            if prior_operation is not None and prior_operation != parsed.operation:
+                return self._operation_stream_failure(
+                    "operation_identity_conflict",
+                    target,
+                    {
+                        "reason": "ambiguous_operation_identity",
+                        "event_id": parsed.event_id,
+                        "observed": parsed.operation.to_record(),
+                        "expected": prior_operation.to_record(),
+                    },
+                )
             prior_state = states.get(operation_id)
             prior_version = versions.get(operation_id, 0)
             if parsed.previous_version != prior_version or parsed.version != prior_version + 1:
-                return self._operation_failure(
+                return self._operation_stream_failure(
                     "strict_stream_corruption",
                     target,
-                    None,
                     {"reason": "non_monotonic_operation_version", "event_id": parsed.event_id},
                 )
             if not self._legal_transition(prior_state, parsed.state):
-                return self._operation_failure(
+                return self._operation_stream_failure(
                     "strict_stream_corruption",
                     target,
-                    None,
                     {"reason": "illegal_persisted_transition", "event_id": parsed.event_id},
                 )
             descriptor_semantic = self._descriptor_semantic(parsed.descriptor)
             prior_semantic = semantics.get(operation_id)
             if prior_semantic is not None and prior_semantic != descriptor_semantic:
-                return self._operation_failure(
+                return self._operation_stream_failure(
                     "deo_semantic_drift",
                     target,
-                    None,
                     {"event_id": parsed.event_id, "observed": descriptor_semantic, "expected": prior_semantic},
                 )
+            if prior_operation is None:
+                operations[operation_id] = parsed.operation
+                transitions[operation_id] = []
+                operation_order.append(operation_id)
             states[operation_id] = parsed.state
             versions[operation_id] = parsed.version
             semantics[operation_id] = descriptor_semantic
-            if operation_id == target.operation_id:
-                if parsed.operation != target:
-                    return self._operation_failure(
-                        self._operation_identity_mismatch_code(target, parsed.operation),
-                        target,
-                        None,
-                        {"event_operation": parsed.operation.to_record()},
-                    )
-                target_transitions.append(parsed)
-                last_event_id = parsed.event_id
-        semantic = semantics.get(target.operation_id, ("", "", ""))
-        return _Aggregate(
-            operation=target,
-            state=states.get(target.operation_id),
-            version=versions.get(target.operation_id, 0),
-            intended_effect_fingerprint=semantic[0],
-            policy_verdict_hash=semantic[1],
-            expected_receipt_binding_hash=semantic[2],
+            transitions[operation_id].append(parsed)
+            last_event_ids[operation_id] = parsed.event_id
+        return _OperationStreamReduction(
             source_head_seq=read.head_seq,
-            last_event_id=last_event_id,
-            transitions=tuple(target_transitions),
+            aggregates=tuple(
+                _Aggregate(
+                    operation=operations[operation_id],
+                    state=states[operation_id],
+                    version=versions[operation_id],
+                    intended_effect_fingerprint=semantics[operation_id][0],
+                    policy_verdict_hash=semantics[operation_id][1],
+                    expected_receipt_binding_hash=semantics[operation_id][2],
+                    source_head_seq=read.head_seq,
+                    last_event_id=last_event_ids[operation_id],
+                    transitions=tuple(transitions[operation_id]),
+                )
+                for operation_id in operation_order
+            ),
         )
+
+    @staticmethod
+    def _operation_stream_failure(
+        code: DirectedEffectOperationCodeV1,
+        target: DirectedEffectOperationIdentityV1 | None,
+        evidence: Mapping[str, object],
+    ) -> DirectedEffectOperationResultV1:
+        if target is None:
+            return DirectedEffectOperationResultV1(ok=False, code=code, evidence=dict(evidence))
+        return DirectedEffectOperationRepository._operation_failure(code, target, None, evidence)
 
     def _parse_operation_transition(
         self,
@@ -2042,25 +4230,55 @@ class DirectedEffectOperationRepository:
         *,
         command: _Command,
         operation: DirectedEffectOperationIdentityV1,
+        kind: _CommandKind,
     ) -> _StrictOperationProjection | DirectedEffectOperationResultV1:
-        """Strictly rebuild the durable binding and complete child partition."""
+        """Atomically rebuild the durable registry guard and child partition."""
 
-        validated = self._validated_parent_binding(command, require_open=False)
+        identity_failure = self._command_identity_failure(
+            workspace=command.workspace,
+            task_id=command.task_id,
+            execution_attempt=command.execution_attempt,
+        )
+        if identity_failure is not None:
+            return identity_failure
+        expected_identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(command.execution_attempt)
+        prepared = self._prepare_guarded_snapshot(command, expected_identity)
+        if isinstance(prepared, DirectedEffectOperationResultV1):
+            return prepared
+        validated = self._validated_parent_binding_from_registry(
+            command,
+            expected_identity=expected_identity,
+            registry_read=_StreamRead(prepared.guard_records(), prepared.proof.guard_head_seq),
+            require_open=False,
+        )
         if isinstance(validated, DirectedEffectOperationResultV1):
             return validated
         binding, registry = validated
-        read = self._read_stream(
-            command.workspace,
-            binding.operation_stream_token,
-            max_events=_MAX_OPERATION_EVENTS,
-            stream_kind="operation",
-        )
-        if isinstance(read, DirectedEffectOperationResultV1):
-            return read
+        operation_records = prepared.target_records()
+        ready_context: _ReadyOperationContext | None = None
+        if kind in {"claim", "abort"}:
+            observed_ready_context = self._ready_operation_context(
+                command=cast(_ReadyGatedCommand, command),
+                operation=operation,
+                binding=binding,
+                registry=registry,
+                operation_events=operation_records,
+                operation_head_seq=prepared.proof.target_head_seq,
+            )
+            if isinstance(observed_ready_context, DirectedEffectOperationResultV1):
+                return observed_ready_context
+            ready_context = observed_ready_context
+        read = _StreamRead(operation_records, prepared.proof.target_head_seq)
         aggregate = self._reduce_operation(read, operation, binding)
         if isinstance(aggregate, DirectedEffectOperationResultV1):
             return aggregate
-        return _StrictOperationProjection(binding=binding, registry=registry, aggregate=aggregate)
+        return _StrictOperationProjection(
+            binding=binding,
+            registry=registry,
+            aggregate=aggregate,
+            operation_records=operation_records,
+            ready_context=ready_context,
+        )
 
     @staticmethod
     def _matching_transitions(
@@ -2075,6 +4293,45 @@ class DirectedEffectOperationRepository:
             transition
             for transition in aggregate.transitions
             if transition.normalized == normalized and dict(transition.canonical_event) == dict(canonical_event)
+        )
+
+    @staticmethod
+    def _claim_grant(
+        *,
+        command: _Command,
+        operation: DirectedEffectOperationIdentityV1,
+        projection: _StrictOperationProjection,
+        transition: _CommittedTransition,
+    ) -> DirectedEffectClaimGrantV1:
+        ready_context = projection.ready_context
+        if ready_context is None:
+            raise ValueError("confirmed claim requires durable inventory readiness")
+        unsigned_record = {
+            "schema_version": DIRECTED_EFFECT_CLAIM_GRANT_SCHEMA_V1,
+            "execution_attempt": command.execution_attempt.to_record(),
+            "parent_binding": projection.binding.to_record(),
+            "operation": operation.to_record(),
+            "member": ready_context.member.to_record(),
+            "inventory_hash": ready_context.sealed.inventory_hash,
+            "operation_version": transition.version,
+            "claim_event_id": transition.event_id,
+            "claim_event_seq": transition.seq,
+            "operation_source_head_seq": transition.seq,
+            "parent_registry_source_head_seq": projection.registry.source_head_seq,
+        }
+        return DirectedEffectClaimGrantV1(
+            schema_version=DIRECTED_EFFECT_CLAIM_GRANT_SCHEMA_V1,
+            execution_attempt=command.execution_attempt,
+            parent_binding=projection.binding,
+            operation=operation,
+            member=ready_context.member,
+            inventory_hash=ready_context.sealed.inventory_hash,
+            operation_version=transition.version,
+            claim_event_id=transition.event_id,
+            claim_event_seq=transition.seq,
+            operation_source_head_seq=transition.seq,
+            parent_registry_source_head_seq=projection.registry.source_head_seq,
+            grant_hash=_hash_token(unsigned_record),
         )
 
     def _confirmed_mutation_result(
@@ -2094,20 +4351,7 @@ class DirectedEffectOperationRepository:
     ) -> DirectedEffectOperationResultV1:
         """Return success only after all receipt and strict projection proofs agree."""
 
-        receipt_fields = (
-            "event_id",
-            "workspace",
-            "stream",
-            "storage_path",
-            "appended_at",
-            "appended_seq",
-            "semantic_digest",
-        )
-        receipt_drift_fields = (
-            tuple(field for field in receipt_fields if getattr(receipt, field) != getattr(canonical_receipt, field))
-            if receipt is not None
-            else ()
-        )
+        receipt_drift_fields = self._guarded_receipt_proof_drift(receipt, canonical_receipt)
         canonical_receipt_mismatch = (
             canonical_receipt.workspace != command.workspace
             or canonical_receipt.stream != projection.binding.operation_stream_token
@@ -2166,8 +4410,7 @@ class DirectedEffectOperationRepository:
             )
 
         evidence = {
-            "event_id": transition.event_id,
-            "appended_seq": transition.seq,
+            **self._guarded_receipt_event_evidence(canonical_receipt),
             "authoritative_append": False,
             "authoritative_effect_receipt": True,
             "append_disposition": "committed_or_exact_replay",
@@ -2185,6 +4428,14 @@ class DirectedEffectOperationRepository:
                     "fact_stream_details": dict(reconciliation_error.details),
                 }
             )
+        claim_grant = None
+        if kind == "claim":
+            claim_grant = self._claim_grant(
+                command=command,
+                operation=operation,
+                projection=projection,
+                transition=transition,
+            )
         return DirectedEffectOperationResultV1(
             ok=True,
             code=cast(
@@ -2196,7 +4447,39 @@ class DirectedEffectOperationRepository:
             version=transition.version,
             snapshot=snapshot,
             evidence=evidence,
+            claim_grant=claim_grant,
         )
+
+    @staticmethod
+    def _guarded_receipt_event_evidence(
+        receipt: GuardedFactAppendedV1,
+    ) -> dict[str, object]:
+        """Project the canonical event identity used by success evidence."""
+
+        return {
+            "event_id": receipt.event_id,
+            "appended_seq": receipt.appended_seq,
+        }
+
+    @staticmethod
+    def _guarded_receipt_proof_drift(
+        receipt: GuardedFactAppendedV1 | None,
+        canonical_receipt: GuardedFactAppendedV1,
+    ) -> tuple[str, ...]:
+        """Return every public receipt field that differs from exact replay proof."""
+
+        receipt_fields = (
+            "event_id",
+            "workspace",
+            "stream",
+            "storage_path",
+            "appended_at",
+            "appended_seq",
+            "semantic_digest",
+        )
+        if receipt is None:
+            return ()
+        return tuple(field for field in receipt_fields if getattr(receipt, field) != getattr(canonical_receipt, field))
 
     @staticmethod
     def _guarded_receipt_record(
@@ -2245,7 +4528,7 @@ class DirectedEffectOperationRepository:
     ) -> DirectedEffectOperationResultV1:
         """Strictly confirm one ambiguous guarded commit or exact replay receipt."""
 
-        projection = self._strict_operation_projection(command=command, operation=operation)
+        projection = self._strict_operation_projection(command=command, operation=operation, kind=kind)
         if isinstance(projection, DirectedEffectOperationResultV1):
             return projection
         matches = self._matching_transitions(
@@ -2310,7 +4593,7 @@ class DirectedEffectOperationRepository:
     ) -> DirectedEffectOperationResultV1:
         """Reconcile a non-drift error that may have crossed durability."""
 
-        projection = self._strict_operation_projection(command=command, operation=operation)
+        projection = self._strict_operation_projection(command=command, operation=operation, kind=kind)
         if isinstance(projection, DirectedEffectOperationResultV1):
             return self._with_guarded_reconciliation_evidence(projection, exc)
         matches = self._matching_transitions(

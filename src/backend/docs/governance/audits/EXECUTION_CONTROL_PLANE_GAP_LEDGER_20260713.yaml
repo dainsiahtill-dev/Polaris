@@ -311,11 +311,13 @@ items:
           Directed Effect Operation v1 is a distinct pre-terminal effect-receipt
           recovery protocol; it must not duplicate Factory Phase-B settlement replay.
     next_action: >-
-      DEO-1B is closed while preserving WS2-B1's TaskRuntime authority contract.
-      DEO-1C is the next pending read-only readiness/fence bucket. The audited
-      38 DirectorToolExecutor construction/injection surfaces still make DEO-2
-      p0_open. Do not run a bench until DEO-1 through DEO-4 exit gates are
-      evidenced.
+      DEO-1A, DEO-1B, and DEO-1C are closed, so the DEO-1 durable fact
+      foundation is closed while preserving WS2-B1's TaskRuntime authority
+      contract. Directed Effect Operation v1 remains p0_open. DEO-2 is next but
+      has not started and remains p0_open/not_schedulable; DEO-3 remains the
+      highest-risk P0 child/terminal close, receipt, and recovery path. DEO-4 is
+      also pending/not_schedulable. Bench remains not_schedulable and was not
+      run.
 
 directed_effect_operation_v1:
   status: p0_open
@@ -513,8 +515,24 @@ directed_effect_operation_v1:
         baselines; the KFS-bypass residual remains open outside DEO-1A closure.
   migration_buckets:
     - id: DEO-1
-      status: pending
+      status: closed
+      completion_status: completed
       title: durable fact foundation
+      closure_evidence:
+        status: closed_2026-07-15
+        completed_sub_buckets:
+          - DEO-1A
+          - DEO-1B
+          - DEO-1C
+        boundary: >-
+          This closes the durable fact foundation only. Directed Effect
+          Operation v1 remains p0_open because DEO-2, DEO-3, and DEO-4 remain
+          pending/not_schedulable; no Bench was run.
+        next_bucket:
+          id: DEO-2
+          status: p0_open
+          scheduling_status: not_schedulable
+          started: false
       entry_evidence:
         - WS2-B1 TaskRuntime public authority suite: 373 passed
         - independent review: zero findings
@@ -837,8 +855,9 @@ directed_effect_operation_v1:
               outcome-bound receipt eligibility, close recovery, DEO-2/3/4, or
               an end-to-end Bench.
           next_bucket: >-
-            DEO-1B is closed. DEO-1C is pending as the next read-only
-            readiness/fence bucket; its enforcement remains not_enabled.
+            At DEO-1B closure, DEO-1C became the pending read-only
+            readiness/fence bucket with enforcement not_enabled. The DEO-1C
+            record below now supersedes that scheduling state with completed.
           separate_governance_item: >-
             After behavior stabilizes, TaskRuntime cell manifest, README,
             context-pack, and global catalog reconciliation are required governance
@@ -902,23 +921,95 @@ directed_effect_operation_v1:
               status: completed
               title: exact seven-field guarded receipt validation, durable-event-first reconciliation, and append_write_failed mapping
         - id: DEO-1C
-          status: pending
+          status: completed
           title: readiness query and fence
+          blueprint_materialization: >-
+            2026-07-15 audited minimal design is recorded in
+            src/backend/docs/blueprints/DIRECTED_EFFECT_OPERATION_V1_BLUEPRINT_20260714.md
+            Section 10.3. It adds only a typed parent-batch observation query,
+            immutable projection, and result with enforcement="not_enabled".
+            The exact authorized implementation/test write set is six files;
+            task_runtime/internal/service.py is explicitly forbidden.
           write_scope:
-            - TaskRuntime public read-only readiness contracts/query
-            - minimal TaskRuntime projection/fence implementation and paired tests
+            - src/backend/polaris/cells/runtime/task_runtime/public/contracts.py
+            - src/backend/polaris/cells/runtime/task_runtime/public/service.py
+            - src/backend/polaris/cells/runtime/task_runtime/public/__init__.py
+            - src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation.py
+            - src/backend/polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_operation.py
+            - src/backend/polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py
+          forbidden_write_scope:
+            - src/backend/polaris/cells/runtime/task_runtime/internal/service.py
+            - settlement, terminal admission, and all DEO mutation paths
+            - Factory, roles, delivery, UI, and Run Ledger
+            - KernelOne, FactStream, Cell metadata, generated packs, and any seventh implementation/test file
           contract: >-
             Readiness is scoped to one workspace and parent stream token and is
-            diagnostic only with enforcement="not_enabled".
+            diagnostic only with enforcement="not_enabled". It reuses
+            _validated_parent_binding, strict _read_stream, and one shared
+            operation reducer; it has no ready, eligible, authorized, receipt,
+            close, or terminal verdict.
           forbidden_connections:
             - settle
             - terminal admission
+            - mutation
+            - Factory
+            - roles
+            - delivery
             - UI
             - Run Ledger
           exit_criteria:
             - readiness query fails closed on strict-stream ambiguity
-            - mechanical fence proves no forbidden connection
+            - immutable projection/result fields and the fixed not_enabled literal are covered
+            - mechanical import/call/data-path fence proves no forbidden connection
+            - focused public read-query and architecture fence gates, ruff, mypy, compileall, and git diff --check pass
             - DEO-3 is the first bucket that may enable readiness for outcome-bound successful terminal admission; DEO-1B direct pre-barrier remains blocker-only
+          closure_evidence:
+            status: closed_2026-07-15
+            public_contracts:
+              query: GetDirectedEffectParentReadinessQueryV1
+              state_count: DirectedEffectParentReadinessStateCountV1
+              projection: DirectedEffectParentReadinessProjectionV1
+              result: DirectedEffectParentReadinessResultV1
+              service: get_directed_effect_parent_readiness
+            semantics:
+              - read-only strict parent operation observation with historical CLOSED support
+              - shared operation reducer and exact typed fail-closed diagnostics
+              - deep immutable cycle-safe evidence and exact source-head success schema
+              - enforcement is not_enabled
+              - no mutation, settlement, receipt, terminal, Run Ledger, or UI path
+            focused_two_file_suite:
+              passed: 72
+              failed: 0
+            full_task_runtime_suite:
+              passed: 482
+              failed: 0
+              duration_seconds: 64.02
+            root_gates:
+              ruff_check: passed
+              ruff_format_check: 6 files formatted
+              mypy:
+                production_files: 4
+                issues: 0
+              compileall: passed
+              git_diff_check: passed
+            independent_reviews:
+              specification:
+                verdict: CLEAR
+                high_findings: closed
+              code_quality:
+                verdict: APPROVED
+                important_findings_closed: 2
+                non_blocking_minor: canonical state sequence duplication
+            next_bucket:
+              id: DEO-2
+              status: p0_open
+              scheduling_status: not_schedulable
+              started: false
+            boundary: >-
+              This closes DEO-1C and therefore DEO-1 only. DEO-2/3/4 remain
+              pending/not_schedulable, DEO-3 remains the highest-risk P0
+              child/terminal close, receipt, and recovery path, and no Bench
+              was run.
     - id: DEO-2
       status: p0_open
       scheduling_status: not_schedulable

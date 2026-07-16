@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import replace
+import operator
+from collections import UserDict
+from collections.abc import Callable, Mapping
+from dataclasses import FrozenInstanceError, fields, replace
 from pathlib import Path
+from typing import Literal, cast
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
@@ -9,6 +13,7 @@ from polaris.cells.events.fact_stream.public import (
     AppendIfGuardedSnapshotCommandV1,
     BootstrapFactStreamWorkspaceCommandV1,
     FactStreamError,
+    FactStreamQueryResultV1,
     GuardedFactAppendedV1,
     GuardedFactEventV1,
     GuardedFactSnapshotV1,
@@ -25,22 +30,38 @@ from polaris.cells.runtime.task_runtime.public import (
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
     AdmitDirectedEffectOperationCommandV1,
     AdmitDirectedEffectParentCommandV1,
+    ClaimDirectedEffectCommandV1,
+    DirectedEffectInventoryIntentV1,
+    DirectedEffectOperationResultV1,
+    DirectedEffectOperationStateV1,
     DirectedEffectParentBindingV1,
+    DirectedEffectParentReadinessProjectionV1,
+    DirectedEffectParentReadinessResultV1,
+    DirectedEffectParentReadinessStateCountV1,
     EnrollDirectedEffectOperationStreamCommandV1,
     EnrollDirectedEffectParentRegistryStreamCommandV1,
+    FinalizeDirectedEffectInventoryAdmissionCommandV1,
+    GetDirectedEffectInventoryQueryV1,
     GetDirectedEffectOperationQueryV1,
+    GetDirectedEffectParentReadinessQueryV1,
     GetDirectedEffectParentRegistryQueryV1,
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     ParentCorrelationV1,
+    SealDirectedEffectInventoryCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
     TaskRuntimeService,
     admit_directed_effect_operation,
     admit_directed_effect_parent,
+    claim_directed_effect,
     enroll_directed_effect_operation_stream,
     enroll_directed_effect_parent_registry_stream,
+    finalize_directed_effect_inventory_admission,
+    get_directed_effect_inventory,
     get_directed_effect_operation,
+    get_directed_effect_parent_readiness,
     get_directed_effect_parent_registry,
     heartbeat_task_runtime_execution_attempt,
+    seal_directed_effect_inventory,
 )
 from polaris.kernelone.storage import resolve_storage_roots
 
@@ -107,6 +128,112 @@ def _operation_command(
     )
 
 
+def _seal_operation_commands(
+    identity: TaskRuntimeExecutionAttemptIdentityV1,
+    binding: DirectedEffectParentBindingV1,
+    *commands: AdmitDirectedEffectOperationCommandV1,
+) -> tuple[AdmitDirectedEffectOperationCommandV1, ...]:
+    intents = tuple(
+        DirectedEffectInventoryIntentV1(
+            ordinal=ordinal,
+            tool_call_id=command.tool_call_id,
+            normalized_tool_name="test_write",
+            effect_type="write",
+            execution_mode="write_serial",
+            intended_effect_fingerprint=deo_internal._hash_token(
+                {
+                    "fingerprint": command.intended_effect_fingerprint,
+                    "requested_effect_id": command.effect_id,
+                }
+            ),
+            policy_verdict_hash=deo_internal._hash_token({"policy_verdict": command.policy_verdict_hash}),
+            expected_receipt_binding_hash=deo_internal._hash_token(
+                {"receipt_binding": command.expected_receipt_binding_hash}
+            ),
+        )
+        for ordinal, command in enumerate(commands)
+    )
+    sealed = seal_directed_effect_inventory(
+        SealDirectedEffectInventoryCommandV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+            intents=intents,
+            expected_registry_version=1,
+            expected_registry_seq=2,
+        )
+    )
+    assert sealed.code == "inventory_sealed"
+    assert sealed.projection is not None
+    return tuple(
+        replace(
+            command,
+            effect_id=member.effect_id,
+            intended_effect_fingerprint=member.intended_effect_fingerprint,
+            policy_verdict_hash=member.policy_verdict_hash,
+            expected_receipt_binding_hash=member.expected_receipt_binding_hash,
+        )
+        for command, member in zip(commands, sealed.projection.members, strict=True)
+    )
+
+
+def _finalize_operation_inventory(
+    identity: TaskRuntimeExecutionAttemptIdentityV1,
+    binding: DirectedEffectParentBindingV1,
+) -> None:
+    observed = get_directed_effect_inventory(
+        GetDirectedEffectInventoryQueryV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+        )
+    )
+    assert observed.ok is True
+    assert observed.projection is not None
+    projection = observed.projection
+    finalized = finalize_directed_effect_inventory_admission(
+        FinalizeDirectedEffectInventoryAdmissionCommandV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+            inventory_hash=projection.inventory_hash,
+            expected_registry_version=projection.parent_registry_source_head_seq,
+            expected_registry_seq=projection.parent_registry_source_head_seq + 1,
+            expected_operation_head_seq=projection.operation_source_head_seq,
+        )
+    )
+    assert finalized.code == "inventory_ready"
+
+
+def _claim_command(
+    identity: TaskRuntimeExecutionAttemptIdentityV1,
+    binding: DirectedEffectParentBindingV1,
+    *,
+    tool_call_id: str = "tool-1",
+    effect_id: str = "effect-1",
+    fingerprint: str = "fingerprint-1",
+    expected_version: int = 1,
+    expected_seq: int = 2,
+) -> ClaimDirectedEffectCommandV1:
+    return ClaimDirectedEffectCommandV1(
+        workspace=identity.workspace,
+        task_id=identity.task_id,
+        execution_attempt=identity,
+        parent_binding=binding,
+        tool_call_id=tool_call_id,
+        effect_id=effect_id,
+        expected_version=expected_version,
+        expected_seq=expected_seq,
+        actor="test-child",
+        intended_effect_fingerprint=fingerprint,
+        policy_verdict_hash="policy-1",
+        expected_receipt_binding_hash="receipt-1",
+    )
+
+
 def _enroll_parent(identity: TaskRuntimeExecutionAttemptIdentityV1) -> None:
     result = enroll_directed_effect_parent_registry_stream(
         EnrollDirectedEffectParentRegistryStreamCommandV1(execution_attempt=identity)
@@ -136,7 +263,68 @@ def _enroll_operation(identity: TaskRuntimeExecutionAttemptIdentityV1, binding: 
     assert result.evidence["receipt_authoritative"] is False
 
 
+def _readiness_query(
+    identity: TaskRuntimeExecutionAttemptIdentityV1,
+    binding: DirectedEffectParentBindingV1,
+) -> GetDirectedEffectParentReadinessQueryV1:
+    return GetDirectedEffectParentReadinessQueryV1(
+        workspace=identity.workspace,
+        task_id=identity.task_id,
+        execution_attempt=identity,
+        parent_binding=binding,
+    )
+
+
+def _append_operation_fact(
+    command: AdmitDirectedEffectOperationCommandV1 | ClaimDirectedEffectCommandV1,
+    binding: DirectedEffectParentBindingV1,
+    *,
+    kind: Literal["admit", "claim"],
+    state: DirectedEffectOperationStateV1,
+    previous_version: int,
+    idempotency_key: str,
+) -> str:
+    repository = deo_internal.DirectedEffectOperationRepository
+    operation = repository._derive_operation(command, binding)
+    descriptor = repository._operation_descriptor(command, kind=kind)
+    payload = repository._operation_event_canonical(
+        operation=operation,
+        state=state,
+        previous_version=previous_version,
+        descriptor=descriptor,
+    )
+    appended = append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=command.workspace,
+            stream=binding.operation_stream_token,
+            event_type=deo_internal._operation_event_type(state),
+            payload=payload,
+            source="test",
+            idempotency_key=idempotency_key,
+            expected_seq=command.expected_seq,
+            durability="fsync",
+            strict_integrity=True,
+        )
+    )
+    return appended.event_id
+
+
+def _file_bytes_snapshot(root: Path) -> dict[str, bytes]:
+    if not root.exists():
+        return {}
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()}
+
+
 def _close_parent(binding: DirectedEffectParentBindingV1) -> None:
+    registry_head = len(
+        query_fact_events(
+            QueryFactEventsV1(
+                workspace=binding.workspace,
+                stream=binding.registry_stream_token,
+                strict_integrity=True,
+            )
+        ).events
+    )
     append_fact_event(
         AppendFactEventCommandV1(
             workspace=binding.workspace,
@@ -145,8 +333,8 @@ def _close_parent(binding: DirectedEffectParentBindingV1) -> None:
             payload={
                 "schema_version": DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
                 "stable_registry_identity": binding.registry_identity.to_record(),
-                "previous_version": binding.registry_version,
-                "version": binding.registry_version + 1,
+                "previous_version": registry_head,
+                "version": registry_head + 1,
                 "parent_sequence": binding.parent_sequence,
                 "binding_id": binding.binding_id,
                 "close_evidence_ref": "fact://test/close",
@@ -156,7 +344,7 @@ def _close_parent(binding: DirectedEffectParentBindingV1) -> None:
             },
             source="test",
             idempotency_key=f"close-{binding.binding_id}",
-            expected_seq=binding.registry_version + 1,
+            expected_seq=registry_head + 1,
             durability="fsync",
             strict_integrity=True,
         )
@@ -178,7 +366,8 @@ def test_explicit_enrollment_order_fails_closed_without_implicit_maintenance(tmp
     rejected = admit_directed_effect_operation(_operation_command(identity, binding))
     assert rejected.code == "stream_lock_missing"
     _enroll_operation(identity, binding)
-    assert admit_directed_effect_operation(_operation_command(identity, binding)).code == "admitted"
+    (command,) = _seal_operation_commands(identity, binding, _operation_command(identity, binding))
+    assert admit_directed_effect_operation(command).code == "admitted"
 
 
 _BINDING_MISMATCH_CASES = (
@@ -266,6 +455,14 @@ def test_v2_writer_and_historical_v1_exact_replay_are_schema_neutral(tmp_path: P
     binding = _admit_parent(identity)
     _enroll_operation(identity, binding)
     command = _operation_command(identity, binding)
+    second = _operation_command(
+        identity,
+        binding,
+        tool_call_id="tool-v1",
+        effect_id="effect-v1",
+        expected_seq=2,
+    )
+    command, second = _seal_operation_commands(identity, binding, command, second)
     written = admit_directed_effect_operation(command)
     assert written.code == "admitted"
     assert written.evidence["authoritative_append"] is False
@@ -284,13 +481,6 @@ def test_v2_writer_and_historical_v1_exact_replay_are_schema_neutral(tmp_path: P
         == "idempotent_replay"
     )
 
-    second = _operation_command(
-        identity,
-        binding,
-        tool_call_id="tool-v1",
-        effect_id="effect-v1",
-        expected_seq=2,
-    )
     operation = deo_internal.DirectedEffectOperationRepository._derive_operation(second, binding)
     descriptor = deo_internal.DirectedEffectOperationRepository._operation_descriptor(second, kind="admit")
     historical = deo_internal.DirectedEffectOperationRepository._operation_event_canonical(
@@ -326,19 +516,16 @@ def test_semantic_conflict_and_replay_after_parent_close(tmp_path: Path) -> None
     binding = _admit_parent(identity)
     _enroll_operation(identity, binding)
     command = _operation_command(identity, binding)
+    new_command = _operation_command(identity, binding, tool_call_id="new-tool", effect_id="new-effect")
+    command, new_command = _seal_operation_commands(identity, binding, command, new_command)
     assert admit_directed_effect_operation(command).code == "admitted"
     assert (
         admit_directed_effect_operation(replace(command, intended_effect_fingerprint="changed")).code
-        == "idempotency_semantic_conflict"
+        == "inventory_member_conflict"
     )
     _close_parent(binding)
     assert admit_directed_effect_operation(command).code == "idempotent_replay"
-    assert (
-        admit_directed_effect_operation(
-            _operation_command(identity, binding, tool_call_id="new-tool", effect_id="new-effect")
-        ).code
-        == "parent_closed"
-    )
+    assert admit_directed_effect_operation(new_command).code == "parent_closed"
 
 
 @pytest.mark.parametrize(
@@ -405,12 +592,76 @@ def test_operation_parser_fails_closed_for_exact_v1_v2_shapes(
     assert result.code == expected_code
 
 
+def test_targeted_reducer_preserves_precise_identity_mismatch_after_prior_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    command = _operation_command(identity, binding)
+    repository = deo_internal.DirectedEffectOperationRepository()
+    target = repository._derive_operation(command, binding)
+    forged = replace(target, workspace=f"{target.workspace}-forged")
+    admit_descriptor = repository._operation_descriptor(command, kind="admit")
+    claim_descriptor = repository._operation_descriptor(_claim_command(identity, binding), kind="claim")
+    transitions = {
+        1: deo_internal._CommittedTransition(
+            operation=target,
+            state="INTENT_COMMITTED",
+            previous_version=0,
+            version=1,
+            descriptor=admit_descriptor,
+            normalized=repository._normalized_transition(
+                operation=target,
+                state="INTENT_COMMITTED",
+                descriptor=admit_descriptor,
+            ),
+            canonical_event={},
+            event_id="event-1",
+            seq=1,
+        ),
+        2: deo_internal._CommittedTransition(
+            operation=forged,
+            state="EFFECT_STARTED",
+            previous_version=1,
+            version=2,
+            descriptor=claim_descriptor,
+            normalized=repository._normalized_transition(
+                operation=forged,
+                state="EFFECT_STARTED",
+                descriptor=claim_descriptor,
+            ),
+            canonical_event={},
+            event_id="event-2",
+            seq=2,
+        ),
+    }
+
+    def parse_transition(
+        record: Mapping[str, object],
+        observed_binding: DirectedEffectParentBindingV1,
+    ) -> deo_internal._CommittedTransition:
+        assert observed_binding == binding
+        return transitions[cast(int, record["seq"])]
+
+    monkeypatch.setattr(repository, "_parse_operation_transition", parse_transition)
+    result = repository._reduce_operation(
+        deo_internal._StreamRead(events=({"seq": 1}, {"seq": 2}), head_seq=2),
+        target,
+        binding,
+    )
+
+    assert isinstance(result, DirectedEffectOperationResultV1)
+    assert result.code == "workspace_mismatch"
+
+
 def test_snapshot_projection_is_in_memory_only(tmp_path: Path) -> None:
     identity = _attempt(tmp_path)
     _enroll_parent(identity)
     binding = _admit_parent(identity)
     _enroll_operation(identity, binding)
-    command = _operation_command(identity, binding)
+    (command,) = _seal_operation_commands(identity, binding, _operation_command(identity, binding))
     admitted = admit_directed_effect_operation(command)
     assert admitted.snapshot is not None
     assert admitted.snapshot.state == "INTENT_COMMITTED"
@@ -435,6 +686,7 @@ def test_non_drift_error_after_real_commit_reconciles_strict_durable_event(
     _enroll_parent(identity)
     binding = _admit_parent(identity)
     _enroll_operation(identity, binding)
+    (command,) = _seal_operation_commands(identity, binding, _operation_command(identity, binding))
 
     def fail_after_real_commit(receipt: object) -> None:
         del receipt
@@ -459,7 +711,7 @@ def test_non_drift_error_after_real_commit_reconciles_strict_durable_event(
         "_after_guarded_commit",
         staticmethod(fail_after_real_commit),
     )
-    result = admit_directed_effect_operation(_operation_command(identity, binding))
+    result = admit_directed_effect_operation(command)
 
     assert result.code == "admitted"
     assert result.evidence["reconciled_after_guarded_error"] is True
@@ -487,6 +739,7 @@ def test_non_drift_error_without_durable_event_returns_typed_failure(
     _enroll_parent(identity)
     binding = _admit_parent(identity)
     _enroll_operation(identity, binding)
+    (command,) = _seal_operation_commands(identity, binding, _operation_command(identity, binding))
 
     def fail_before_commit(snapshot: object) -> None:
         del snapshot
@@ -501,7 +754,7 @@ def test_non_drift_error_without_durable_event_returns_typed_failure(
         "_after_guarded_prepare",
         staticmethod(fail_before_commit),
     )
-    result = admit_directed_effect_operation(_operation_command(identity, binding))
+    result = admit_directed_effect_operation(command)
 
     assert result.code == "stream_append_failed"
     assert result.evidence["reconciled_after_guarded_error"] is True
@@ -524,7 +777,7 @@ def test_guarded_confirmation_fails_closed_on_receipt_or_semantic_mismatch(
     _enroll_parent(identity)
     binding = _admit_parent(identity)
     _enroll_operation(identity, binding)
-    command = _operation_command(identity, binding)
+    (command,) = _seal_operation_commands(identity, binding, _operation_command(identity, binding))
     captured: list[GuardedFactAppendedV1] = []
 
     def capture_receipt(receipt: GuardedFactAppendedV1) -> None:
@@ -618,25 +871,31 @@ def test_public_guarded_confirmation_rejects_each_tampered_receipt_field(
     _enroll_parent(identity)
     binding = _admit_parent(identity)
     _enroll_operation(identity, binding)
+    (command,) = _seal_operation_commands(identity, binding, _operation_command(identity, binding))
 
     def tamper(receipt: GuardedFactAppendedV1) -> GuardedFactAppendedV1:
-        replacements: dict[str, object] = {
-            "event_id": "forged-event-id",
-            "workspace": str((tmp_path / "forged-workspace").resolve()),
-            "stream": "forged-stream",
-            "storage_path": "/forged/storage/path.jsonl",
-            "appended_at": "2099-01-01T00:00:00+00:00",
-            "appended_seq": receipt.appended_seq + 1,
-            "semantic_digest": "b" * 64,
-        }
-        return replace(receipt, **{tampered_field: replacements[tampered_field]})
+        if tampered_field == "event_id":
+            return replace(receipt, event_id="forged-event-id")
+        if tampered_field == "workspace":
+            return replace(receipt, workspace=str((tmp_path / "forged-workspace").resolve()))
+        if tampered_field == "stream":
+            return replace(receipt, stream="forged-stream")
+        if tampered_field == "storage_path":
+            return replace(receipt, storage_path="/forged/storage/path.jsonl")
+        if tampered_field == "appended_at":
+            return replace(receipt, appended_at="2099-01-01T00:00:00+00:00")
+        if tampered_field == "appended_seq":
+            return replace(receipt, appended_seq=receipt.appended_seq + 1)
+        if tampered_field == "semantic_digest":
+            return replace(receipt, semantic_digest="b" * 64)
+        raise AssertionError(f"unsupported tampered field: {tampered_field}")
 
     monkeypatch.setattr(
         deo_internal.DirectedEffectOperationRepository,
         "_after_guarded_commit",
         staticmethod(tamper),
     )
-    result = admit_directed_effect_operation(_operation_command(identity, binding))
+    result = admit_directed_effect_operation(command)
 
     assert result.code == "guarded_receipt_mismatch"
     assert result.evidence["reason"] == "receipt_identity_mismatch"
@@ -650,3 +909,635 @@ def test_public_guarded_confirmation_rejects_each_tampered_receipt_field(
         )
     ).events
     assert len(events) == 1
+
+
+def test_parent_readiness_observes_empty_enrolled_stream_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    service = TaskRuntimeService(identity.workspace)
+    session_before = service._read_session(identity.task_id)
+    assert session_before is not None
+    before_registry = query_fact_events(
+        QueryFactEventsV1(workspace=identity.workspace, stream=binding.registry_stream_token, strict_integrity=True)
+    ).events
+    before_operations = query_fact_events(
+        QueryFactEventsV1(workspace=identity.workspace, stream=binding.operation_stream_token, strict_integrity=True)
+    ).events
+    workspace_root = Path(identity.workspace)
+    runtime_root = Path(resolve_storage_roots(identity.workspace).runtime_root)
+    workspace_files_before = _file_bytes_snapshot(workspace_root)
+    runtime_files_before = _file_bytes_snapshot(runtime_root)
+    receipts_before = {path: content for path, content in runtime_files_before.items() if "receipt" in path.lower()}
+    projections_before = {
+        path: content for path, content in runtime_files_before.items() if "projection" in path.lower()
+    }
+    mutation_calls: list[str] = []
+
+    def forbidden_mutation(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        mutation_calls.append("called")
+        raise AssertionError("readiness observation reached a mutation port")
+
+    monkeypatch.setattr(deo_internal, "append_fact_event", forbidden_mutation)
+    monkeypatch.setattr(deo_internal, "append_if_guarded_snapshot", forbidden_mutation)
+    monkeypatch.setattr(deo_internal, "enroll_fact_stream_streams", forbidden_mutation)
+    monkeypatch.setattr(TaskRuntimeService, "_write_session", forbidden_mutation)
+    monkeypatch.setattr(TaskRuntimeService, "_write_session_locked", forbidden_mutation)
+    monkeypatch.setattr(TaskRuntimeService, "_record_session_write_receipt", forbidden_mutation)
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is True
+    assert result.code == "readiness_observed"
+    assert result.projection is not None
+    assert result.projection.enforcement == "not_enabled"
+    assert result.projection.operation_count == 0
+    assert result.projection.operation_source_head_seq == 0
+    assert tuple((item.state, item.count) for item in result.projection.state_counts) == (
+        ("INTENT_COMMITTED", 0),
+        ("EFFECT_STARTED", 0),
+        ("RECOVERY_PENDING", 0),
+        ("RECEIPT_COMMITTED", 0),
+        ("CLOSED_BY_PARENT", 0),
+        ("ABORTED", 0),
+        ("DEAD_LETTER", 0),
+    )
+    assert mutation_calls == []
+    assert (
+        query_fact_events(
+            QueryFactEventsV1(workspace=identity.workspace, stream=binding.registry_stream_token, strict_integrity=True)
+        ).events
+        == before_registry
+    )
+    assert (
+        query_fact_events(
+            QueryFactEventsV1(
+                workspace=identity.workspace, stream=binding.operation_stream_token, strict_integrity=True
+            )
+        ).events
+        == before_operations
+    )
+    session_after = service._read_session(identity.task_id)
+    assert session_after is not None
+    assert session_after.to_dict() == session_before.to_dict()
+    workspace_files_after = _file_bytes_snapshot(workspace_root)
+    runtime_files_after = _file_bytes_snapshot(runtime_root)
+    assert workspace_files_after == workspace_files_before
+    assert runtime_files_after == runtime_files_before
+    assert {path: content for path, content in runtime_files_after.items() if "receipt" in path.lower()} == (
+        receipts_before
+    )
+    assert {path: content for path, content in runtime_files_after.items() if "projection" in path.lower()} == (
+        projections_before
+    )
+    assert not (runtime_root / "task_runtime" / "directed_effect_operation_v1").exists()
+
+
+def test_parent_readiness_rejects_wrong_query_type() -> None:
+    wrong_query = cast(GetDirectedEffectParentReadinessQueryV1, object())
+
+    with pytest.raises(TypeError, match="query must be GetDirectedEffectParentReadinessQueryV1"):
+        get_directed_effect_parent_readiness(wrong_query)
+
+
+def test_parent_readiness_reduces_multiple_operations_with_fixed_state_counts(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    first = _operation_command(identity, binding)
+    second = _operation_command(
+        identity,
+        binding,
+        tool_call_id="tool-2",
+        effect_id="effect-2",
+        expected_seq=2,
+    )
+    first, second = _seal_operation_commands(identity, binding, first, second)
+    assert admit_directed_effect_operation(first).code == "admitted"
+    assert admit_directed_effect_operation(second).code == "admitted"
+    _finalize_operation_inventory(identity, binding)
+    assert (
+        claim_directed_effect(
+            ClaimDirectedEffectCommandV1(
+                workspace=identity.workspace,
+                task_id=identity.task_id,
+                execution_attempt=identity,
+                parent_binding=binding,
+                tool_call_id=second.tool_call_id,
+                effect_id=second.effect_id,
+                expected_version=1,
+                expected_seq=3,
+                actor="test-child",
+                intended_effect_fingerprint=second.intended_effect_fingerprint,
+                policy_verdict_hash=second.policy_verdict_hash,
+                expected_receipt_binding_hash=second.expected_receipt_binding_hash,
+            )
+        ).code
+        == "effect_claimed"
+    )
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is True
+    assert result.projection is not None
+    assert result.projection.operation_count == 2
+    assert result.projection.operation_source_head_seq == 3
+    assert {item.state: item.count for item in result.projection.state_counts} == {
+        "INTENT_COMMITTED": 1,
+        "EFFECT_STARTED": 1,
+        "RECOVERY_PENDING": 0,
+        "RECEIPT_COMMITTED": 0,
+        "CLOSED_BY_PARENT": 0,
+        "ABORTED": 0,
+        "DEAD_LETTER": 0,
+    }
+
+
+def test_parent_readiness_observes_closed_historical_parent_while_attempt_remains_active(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    _close_parent(binding)
+    service = TaskRuntimeService(identity.workspace)
+    session_before = service._read_session(identity.task_id)
+    assert session_before is not None
+    assert session_before.status == "active"
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is True
+    assert result.code == "readiness_observed"
+    assert result.projection is not None
+    assert result.projection.enforcement == "not_enabled"
+    assert result.projection.parent_binding_id == binding.binding_id
+    assert result.projection.parent_registry_source_head_seq == 2
+    assert result.projection.operation_count == 0
+    session_after = service._read_session(identity.task_id)
+    assert session_after is not None
+    assert session_after.status == "active"
+    assert session_after.to_dict() == session_before.to_dict()
+
+
+@pytest.mark.parametrize(
+    ("query_factory", "expected_code"),
+    (
+        (
+            lambda identity, binding: _readiness_query(identity, replace(binding, binding_id="missing-binding")),
+            "parent_binding_not_found",
+        ),
+        (
+            lambda identity, binding: _readiness_query(
+                identity, replace(binding, operation_stream_token="mismatched-stream")
+            ),
+            "parent_binding_conflict",
+        ),
+    ),
+)
+def test_parent_readiness_fails_closed_for_stale_or_invalid_bindings(
+    tmp_path: Path,
+    query_factory: Callable[
+        [TaskRuntimeExecutionAttemptIdentityV1, DirectedEffectParentBindingV1],
+        GetDirectedEffectParentReadinessQueryV1,
+    ],
+    expected_code: str,
+) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+
+    result = get_directed_effect_parent_readiness(query_factory(identity, binding))
+
+    assert result.ok is False
+    assert result.code == expected_code
+    assert result.projection is None
+
+
+def test_parent_readiness_fails_closed_for_stale_attempt(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    renewed = heartbeat_task_runtime_execution_attempt(
+        HeartbeatTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            lease_ttl_seconds=120,
+            context_summary="make readiness query identity stale",
+            lock_timeout_seconds=5.0,
+        )
+    )
+    assert renewed.success is True
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is False
+    assert result.code == "lease_version_mismatch"
+    assert result.projection is None
+
+
+def test_parent_readiness_fails_closed_when_operation_stream_is_unenrolled(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is False
+    assert result.code == "stream_lock_missing"
+    assert result.projection is None
+
+
+def test_parent_readiness_fails_closed_for_persisted_illegal_transition(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    event_id = _append_operation_fact(
+        _claim_command(identity, binding, expected_version=0, expected_seq=1),
+        binding,
+        kind="claim",
+        state="EFFECT_STARTED",
+        previous_version=0,
+        idempotency_key="illegal-initial-claim",
+    )
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is False
+    assert result.code == "strict_stream_corruption"
+    assert result.evidence == {
+        "reason": "illegal_persisted_transition",
+        "event_id": event_id,
+    }
+    assert result.projection is None
+
+
+def test_parent_readiness_fails_closed_for_persisted_version_discontinuity(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    command = replace(_operation_command(identity, binding), expected_version=1)
+    event_id = _append_operation_fact(
+        command,
+        binding,
+        kind="admit",
+        state="INTENT_COMMITTED",
+        previous_version=1,
+        idempotency_key="non-monotonic-initial-version",
+    )
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is False
+    assert result.code == "strict_stream_corruption"
+    assert result.evidence == {
+        "reason": "non_monotonic_operation_version",
+        "event_id": event_id,
+    }
+    assert result.projection is None
+
+
+def test_parent_readiness_fails_closed_for_persisted_semantic_drift(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    admission = _operation_command(identity, binding)
+    _append_operation_fact(
+        admission,
+        binding,
+        kind="admit",
+        state="INTENT_COMMITTED",
+        previous_version=0,
+        idempotency_key="semantic-baseline",
+    )
+    drifted_claim = _claim_command(identity, binding, fingerprint="fingerprint-drifted")
+    drift_event_id = _append_operation_fact(
+        drifted_claim,
+        binding,
+        kind="claim",
+        state="EFFECT_STARTED",
+        previous_version=1,
+        idempotency_key="semantic-drift",
+    )
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is False
+    assert result.code == "deo_semantic_drift"
+    assert result.evidence == {
+        "event_id": drift_event_id,
+        "observed": ("fingerprint-drifted", "policy-1", "receipt-1"),
+        "expected": ("fingerprint-1", "policy-1", "receipt-1"),
+    }
+    assert result.projection is None
+
+
+def test_parent_readiness_fails_closed_for_corrupt_or_ambiguous_operation_facts(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    (first,) = _seal_operation_commands(identity, binding, _operation_command(identity, binding))
+    assert admit_directed_effect_operation(first).code == "admitted"
+    first_operation = deo_internal.DirectedEffectOperationRepository._derive_operation(first, binding)
+    claim = ClaimDirectedEffectCommandV1(
+        workspace=identity.workspace,
+        task_id=identity.task_id,
+        execution_attempt=identity,
+        parent_binding=binding,
+        tool_call_id=first.tool_call_id,
+        effect_id=first.effect_id,
+        expected_version=1,
+        expected_seq=2,
+        actor="test-child",
+        intended_effect_fingerprint=first.intended_effect_fingerprint,
+        policy_verdict_hash=first.policy_verdict_hash,
+        expected_receipt_binding_hash=first.expected_receipt_binding_hash,
+    )
+    forged_operation = replace(first_operation, tool_call_id="other-tool", effect_id="other-effect")
+    expected_operation = replace(
+        forged_operation,
+        operation_id=deo_internal._operation_id(
+            binding_id=binding.binding_id,
+            tool_call_id=forged_operation.tool_call_id,
+            effect_id=forged_operation.effect_id,
+        ),
+    )
+    descriptor = deo_internal.DirectedEffectOperationRepository._operation_descriptor(claim, kind="claim")
+    payload = deo_internal.DirectedEffectOperationRepository._operation_event_canonical(
+        operation=forged_operation,
+        state="EFFECT_STARTED",
+        previous_version=1,
+        descriptor=descriptor,
+    )
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=identity.workspace,
+            stream=binding.operation_stream_token,
+            event_type="task_runtime.directed_effect_operation.v1.effect_started",
+            payload=payload,
+            source="test",
+            idempotency_key="ambiguous-operation",
+            expected_seq=2,
+            durability="fsync",
+            strict_integrity=True,
+        )
+    )
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is False
+    assert result.code == "operation_identity_conflict"
+    assert result.evidence == {
+        "reason": "persisted_operation_identity_not_canonical",
+        "expected_operation": expected_operation.to_record(),
+        "observed_operation": forged_operation.to_record(),
+    }
+    assert result.projection is None
+
+
+def test_parent_readiness_contract_is_immutable_and_has_no_authority_fields() -> None:
+    values = ["original"]
+    evidence: dict[str, object] = {"nested": {"values": values}}
+    result = DirectedEffectParentReadinessResultV1(
+        ok=False,
+        code="session_not_active",
+        evidence=evidence,
+    )
+    values.append("mutated")
+
+    assert result.evidence == {"nested": {"values": ("original",)}}
+    with pytest.raises(TypeError):
+        operator.setitem(result.evidence, "new", True)
+    nested = result.evidence["nested"]
+    assert isinstance(nested, Mapping)
+    with pytest.raises(TypeError):
+        operator.setitem(nested, "new", True)
+    nested_values = nested["values"]
+    assert isinstance(nested_values, tuple)
+    with pytest.raises(TypeError):
+        operator.setitem(nested_values, 0, "mutated")
+    with pytest.raises(FrozenInstanceError):
+        result.ok = True  # type: ignore[misc]
+    forbidden = ("ready", "eligible", "authorized", "receipt", "close", "terminal")
+    for contract in (
+        DirectedEffectParentReadinessProjectionV1,
+        DirectedEffectParentReadinessResultV1,
+        DirectedEffectParentReadinessStateCountV1,
+    ):
+        assert not any(token in field.name.lower() for field in fields(contract) for token in forbidden)
+
+
+def test_parent_readiness_evidence_rejects_cycles_with_stable_boundary_error() -> None:
+    cyclic: dict[str, object] = {}
+    cyclic["self"] = cyclic
+    custom_cyclic: UserDict[str, object] = UserDict()
+    custom_cyclic["self"] = custom_cyclic
+
+    for evidence in (cyclic, custom_cyclic):
+        with pytest.raises(ValueError, match="readiness evidence must not contain cycles"):
+            DirectedEffectParentReadinessResultV1(
+                ok=False,
+                code="strict_stream_corruption",
+                evidence=evidence,
+            )
+
+    frozen_set = DirectedEffectParentReadinessResultV1(
+        ok=False,
+        code="strict_stream_corruption",
+        evidence={"diagnostic_labels": {"registry", "stream"}},
+    )
+    assert frozen_set.evidence["diagnostic_labels"] == frozenset({"registry", "stream"})
+
+
+def test_parent_readiness_failure_preserves_nested_diagnostic_evidence() -> None:
+    result = DirectedEffectParentReadinessResultV1(
+        ok=False,
+        code="strict_stream_corruption",
+        evidence={
+            "receipt_error": {
+                "terminal_reason": "strict stream diagnostic only",
+                "details": ["torn-tail", "no-projection"],
+            }
+        },
+    )
+
+    assert result.ok is False
+    assert result.projection is None
+    assert result.evidence == {
+        "receipt_error": {
+            "terminal_reason": "strict stream diagnostic only",
+            "details": ("torn-tail", "no-projection"),
+        }
+    }
+
+
+def test_parent_readiness_success_rejects_non_diagnostic_evidence_schema(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    observed = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+    assert observed.projection is not None
+    assert set(observed.evidence) == {
+        "parent_registry_source_head_seq",
+        "operation_source_head_seq",
+    }
+
+    forbidden_success_keys = (
+        "readiness_verdict",
+        "permission_granted",
+        "authority_granted",
+        "authorization_status",
+        "authoritative_verdict",
+        "settle_allowed",
+        "settling_status",
+        "settlement_status",
+    )
+    for forbidden_key in forbidden_success_keys:
+        with pytest.raises(ValueError, match="successful readiness evidence must match diagnostic schema"):
+            DirectedEffectParentReadinessResultV1(
+                ok=True,
+                code="readiness_observed",
+                projection=observed.projection,
+                evidence={forbidden_key: True},
+            )
+
+
+def test_parent_readiness_maps_corrupt_operation_stream_without_projection(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    command = _operation_command(identity, binding)
+    operation = deo_internal.DirectedEffectOperationRepository._derive_operation(command, binding)
+    descriptor = deo_internal.DirectedEffectOperationRepository._operation_descriptor(command, kind="admit")
+    payload = deo_internal.DirectedEffectOperationRepository._operation_event_canonical(
+        operation=operation,
+        state="INTENT_COMMITTED",
+        previous_version=0,
+        descriptor=descriptor,
+    )
+    payload["schema_version"] = "task-runtime.directed-effect-operation/invalid"
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=identity.workspace,
+            stream=binding.operation_stream_token,
+            event_type="task_runtime.directed_effect_operation.v1.intent_committed",
+            payload=payload,
+            source="test",
+            idempotency_key="corrupt-readiness-operation",
+            expected_seq=1,
+            durability="fsync",
+            strict_integrity=True,
+        )
+    )
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is False
+    assert result.code == "strict_stream_unknown_schema"
+    assert result.evidence == {"observed_schema_version": "task-runtime.directed-effect-operation/invalid"}
+    assert result.projection is None
+
+
+def test_parent_readiness_propagates_unknown_storage_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+
+    def unexpected_storage_failure(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
+        del query
+        raise RuntimeError("unexpected storage failure")
+
+    monkeypatch.setattr(deo_internal, "query_fact_events", unexpected_storage_failure)
+
+    with pytest.raises(RuntimeError, match="unexpected storage failure"):
+        get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+
+def test_parent_readiness_fails_closed_for_paginated_head_ambiguity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    _append_operation_fact(
+        _operation_command(identity, binding),
+        binding,
+        kind="admit",
+        state="INTENT_COMMITTED",
+        previous_version=0,
+        idempotency_key="pagination-baseline",
+    )
+    real_query = deo_internal.query_fact_events
+
+    def ambiguous_page(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
+        observed = real_query(query)
+        if query.stream == binding.operation_stream_token:
+            return replace(observed, total=observed.total + 1)
+        return observed
+
+    monkeypatch.setattr(deo_internal, "query_fact_events", ambiguous_page)
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is False
+    assert result.code == "strict_stream_corruption"
+    assert result.evidence == {
+        "stream_kind": "operation",
+        "reason": "strict_stream_page_or_head_mismatch",
+        "event_total": 2,
+        "event_count": 1,
+        "head_seq": 1,
+    }
+    assert result.projection is None
+
+
+def test_parent_readiness_fails_closed_above_bounded_operation_stream(tmp_path: Path) -> None:
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    for sequence in range(1, deo_internal._MAX_OPERATION_EVENTS + 2):
+        _append_operation_fact(
+            _operation_command(
+                identity,
+                binding,
+                tool_call_id=f"tool-overload-{sequence}",
+                effect_id=f"effect-overload-{sequence}",
+                expected_seq=sequence,
+            ),
+            binding,
+            kind="admit",
+            state="INTENT_COMMITTED",
+            previous_version=0,
+            idempotency_key=f"overload-{sequence}",
+        )
+
+    result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
+
+    assert result.ok is False
+    assert result.code == "strict_stream_overload"
+    assert result.evidence == {
+        "stream_kind": "operation",
+        "event_total": deo_internal._MAX_OPERATION_EVENTS + 1,
+        "max_events": deo_internal._MAX_OPERATION_EVENTS,
+    }
+    assert result.projection is None
