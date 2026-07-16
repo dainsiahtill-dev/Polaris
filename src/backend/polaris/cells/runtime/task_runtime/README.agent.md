@@ -3,8 +3,10 @@
 ## Purpose
 
 Own task lifecycle transitions for runtime taskboard state, execution-attempt
-authority, and the closed DEO-1 durable fact foundation: the guarded operation
-aggregate plus read-only parent-operation readiness observation.
+authority, the closed DEO-1 durable fact foundation, and DEO-2A's immutable
+directed-effect inventory. DEO-2A records strict inventory seal/ready facts,
+exact member admission, ready-gated claim/abort, and fresh claim-only grants;
+it does not own receipt closure, recovery, or terminal admission.
 
 ## Implementation
 
@@ -22,10 +24,13 @@ aggregate plus read-only parent-operation readiness observation.
 - commands: `CreateRuntimeTaskCommandV1`, `UpdateRuntimeTaskCommandV1`, `ReopenRuntimeTaskCommandV1`, `BindRuntimeTaskToFactoryRunCommandV1`, `FenceExpiredFactoryRunSessionsCommandV1`, `PrepareOwnerReworkExecutionCommandV1`
 - execution commands: `OpenTaskRuntimeExecutionAttemptAuthorityCommandV1`, `HeartbeatTaskRuntimeExecutionAttemptCommandV1`, `SettleTaskRuntimeExecutionAttemptCommandV1`
 - DEO-1B commands: `EnrollDirectedEffectParentRegistryStreamCommandV1`, `EnrollDirectedEffectOperationStreamCommandV1`, `AdmitDirectedEffectParentCommandV1`, `AdmitDirectedEffectOperationCommandV1`, `ClaimDirectedEffectCommandV1`, `AbortDirectedEffectOperationCommandV1`
-- queries: `ListRuntimeTasksQueryV1`, `GetRuntimeTaskQueryV1`, `ValidateTaskRuntimeExecutionAttemptQueryV1`, `GetDirectedEffectParentRegistryQueryV1`, `GetDirectedEffectOperationQueryV1`, `GetDirectedEffectParentReadinessQueryV1`
+- DEO-2A inventory commands: `SealDirectedEffectInventoryCommandV1`, `FinalizeDirectedEffectInventoryAdmissionCommandV1`
+- DEO-2A inventory contracts: `DirectedEffectInventoryIntentV1`, `DirectedEffectInventoryMemberV1`, `DirectedEffectInventoryProjectionV1`, `DirectedEffectInventoryResultV1`, `DirectedEffectClaimGrantV1`
+- queries: `ListRuntimeTasksQueryV1`, `GetRuntimeTaskQueryV1`, `ValidateTaskRuntimeExecutionAttemptQueryV1`, `GetDirectedEffectParentRegistryQueryV1`, `GetDirectedEffectOperationQueryV1`, `GetDirectedEffectInventoryQueryV1`, `GetDirectedEffectParentReadinessQueryV1`
+- DEO-2A public services: `seal_directed_effect_inventory`, `finalize_directed_effect_inventory_admission`, `get_directed_effect_inventory`
 - DEO-1C read service: `get_directed_effect_parent_readiness`
 - events: `RuntimeTaskLifecycleEventV1`, `TaskRuntimeExecutionFactV1`
-- results: `RuntimeTaskResultV1`, `RuntimeTaskFactoryRunBindingResultV1`, `ExpiredFactoryRunSessionFenceResultV1`, `OwnerReworkExecutionPreparationResultV1`, `TaskRuntimeExecutionAttemptValidationVerdictV1`, `TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1`, `TaskRuntimeExecutionAttemptHeartbeatVerdictV1`, `TaskRuntimeExecutionAttemptSettlementVerdictV1`, `DirectedEffectStreamEnrollmentResultV1`, `DirectedEffectOperationResultV1`, `DirectedEffectParentRegistryResultV1`, `DirectedEffectParentReadinessStateCountV1`, `DirectedEffectParentReadinessProjectionV1`, `DirectedEffectParentReadinessResultV1`, `ObservableTaskRowsProjectionV1`
+- results: `RuntimeTaskResultV1`, `RuntimeTaskFactoryRunBindingResultV1`, `ExpiredFactoryRunSessionFenceResultV1`, `OwnerReworkExecutionPreparationResultV1`, `TaskRuntimeExecutionAttemptValidationVerdictV1`, `TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1`, `TaskRuntimeExecutionAttemptHeartbeatVerdictV1`, `TaskRuntimeExecutionAttemptSettlementVerdictV1`, `DirectedEffectStreamEnrollmentResultV1`, `DirectedEffectOperationResultV1`, `DirectedEffectClaimGrantV1`, `DirectedEffectInventoryProjectionV1`, `DirectedEffectInventoryResultV1`, `DirectedEffectParentRegistryResultV1`, `DirectedEffectParentReadinessStateCountV1`, `DirectedEffectParentReadinessProjectionV1`, `DirectedEffectParentReadinessResultV1`, `ObservableTaskRowsProjectionV1`
 - errors: `RuntimeTaskRuntimeError`
 
 ## Depends On
@@ -66,6 +71,14 @@ aggregate plus read-only parent-operation readiness observation.
   `enforcement="not_enabled"`
 - the readiness query has no mutation, settlement, receipt, terminal-admission,
   Run Ledger, or UI path and grants no close or terminal authority
+- DEO-2A persists only the immutable `parent_inventory_sealed` and
+  `parent_inventory_ready` parent facts; strict identity, version, hash, ordered
+  membership, and guarded CAS checks reject drift before an authority transition
+- only the sealed inventory's exact `INTENT_COMMITTED` set can produce the ready
+  fact; claim and abort require that durable ready prefix
+- a confirmed fresh claim returns exactly one `DirectedEffectClaimGrantV1`;
+  same-command reconciliation may return that grant, but idempotent replay never
+  reissues it and never appends a new claim fact
 
 ## Verification
 
@@ -88,7 +101,16 @@ all High findings closed; independent code-quality review was `APPROVED` after
 two Important findings closed. Canonical state sequence duplication remains a
 non-blocking Minor.
 
-Directed Effect Operation v1 remains `p0_open`. DEO-2 is next but has not
-started and remains `not_schedulable`; DEO-3 remains the highest-risk P0
-child/terminal close, receipt, and recovery path; DEO-4 remains pending and
-`not_schedulable`. Bench remains `not_schedulable`, and no Bench was run.
+Directed Effect Operation v1 remains `p0_open`. DEO-2A Phase A records Tasks
+1-6 and Task 7 Steps 1-3 as complete with frozen evidence: Task 6 fence and
+concurrency coverage `82 passed in 68.92s` with independent review `YES/YES`;
+Task 7 focused inventory/operation/fence/concurrency coverage `443 passed in
+113.31s`; and complete TaskRuntime coverage `841 passed in 141.02s`. Ruff
+check/format, mypy with no issues in four production files, compileall, and
+`git diff --check` are green in that evidence set.
+
+Task 7 Step 4, DEO-2A overall closure, and DEO-2B schedulability remain
+`verification_pending`, so DEO-2B is not yet schedulable. DEO-2C, DEO-2D,
+DEO-3, DEO-4, pre-bench, and Bench remain `not_schedulable`. DEO-3 remains the
+highest-risk P0 child/terminal close, receipt, and recovery path. No Bench was
+run.

@@ -5,10 +5,11 @@ visibility: public
 stateful: true
 owner: runtime
 purpose: 'Provide the single task lifecycle runtime for PM/Director/QA collaboration,
-  including canonical taskboard rows, execution-attempt authority, and the finalized
-  DEO-1 durable fact foundation: guarded aggregate, explicit stream enrollment,
-  inactive-write pre-barrier, and read-only parent-operation readiness observation
-  with enforcement not_enabled.
+  including canonical taskboard rows, execution-attempt authority, the finalized
+  DEO-1 durable fact foundation, and the DEO-2A immutable directed-effect inventory:
+  strict sealed/ready parent facts, exact member admission, ready-gated claim/abort,
+  and a fresh claim-only hash-bound grant. DEO-2A remains verification_pending;
+  receipt closure, recovery, and terminal admission remain outside this Cell scope.
 
   '
 current_modules:
@@ -36,7 +37,9 @@ public_contracts:
   - EnrollDirectedEffectParentRegistryStreamCommandV1
   - EnrollDirectedEffectOperationStreamCommandV1
   - AdmitDirectedEffectParentCommandV1
+  - SealDirectedEffectInventoryCommandV1
   - AdmitDirectedEffectOperationCommandV1
+  - FinalizeDirectedEffectInventoryAdmissionCommandV1
   - ClaimDirectedEffectCommandV1
   - AbortDirectedEffectOperationCommandV1
   queries:
@@ -45,6 +48,7 @@ public_contracts:
   - ValidateTaskRuntimeExecutionAttemptQueryV1
   - GetDirectedEffectParentRegistryQueryV1
   - GetDirectedEffectOperationQueryV1
+  - GetDirectedEffectInventoryQueryV1
   - GetDirectedEffectParentReadinessQueryV1
   events:
   - RuntimeTaskLifecycleEventV1
@@ -60,6 +64,9 @@ public_contracts:
   - TaskRuntimeExecutionAttemptSettlementVerdictV1
   - DirectedEffectStreamEnrollmentResultV1
   - DirectedEffectOperationResultV1
+  - DirectedEffectClaimGrantV1
+  - DirectedEffectInventoryProjectionV1
+  - DirectedEffectInventoryResultV1
   - DirectedEffectParentRegistryResultV1
   - DirectedEffectParentReadinessStateCountV1
   - DirectedEffectParentReadinessProjectionV1
@@ -91,8 +98,11 @@ verification:
   - polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py
   - polaris/tests/test_runtime_projection_snapshot_tasks.py
   gaps:
-  - DEO-2, DEO-3, and DEO-4 remain unschedulable; DEO-3 still owns receipt
-    closure, recovery, and outcome-bound terminal admission.
+  - DEO-2A Task 7 Step 4 and overall closure remain verification_pending; the
+    recorded Phase A evidence does not make DEO-2A closed or DEO-2B schedulable.
+  - DEO-2B, DEO-2C, DEO-2D, DEO-3, DEO-4, pre-bench, and Bench remain
+    not_schedulable. DEO-3 still owns receipt closure, recovery, and
+    outcome-bound terminal admission.
   smoke_commands: []
 generated_artifacts:
   - generated/context.pack.json

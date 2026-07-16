@@ -5,9 +5,11 @@
 records in Sections 10.1, 10.2, and 10.4. The DEO-1 durable fact foundation is
 therefore closed. Directed Effect Operation v1 remains `p0_open`: DEO-2 design
 is locked by
-`DIRECTED_EFFECT_OPERATION_DEO2_BLUEPRINT_20260716.md`, implementation is
-pending, DEO-2/3/4 remain `not_schedulable`, and DEO-3 remains the highest-risk
-P0 child/terminal close, receipt, and recovery path.
+`DIRECTED_EFFECT_OPERATION_DEO2_BLUEPRINT_20260716.md`, and its status is
+recorded: DEO-2A is `closed` and `complete`; DEO-2B is the only next
+`pending` and `schedulable` bucket and has not started. DEO-2 overall is not
+complete; DEO-2C/2D and DEO-3/4 remain `not_schedulable`, and DEO-3 remains the
+highest-risk P0 child/terminal close, receipt, and recovery path.
 Bench remains `not_schedulable`; no Bench was run. DEO-1B made only the limited
 settlement semantic change defined below: every active-to-inactive writer
 passes a fail-closed parent-registry pre-barrier, but 1B does not write
@@ -1157,11 +1159,12 @@ read-only fence evidence and is not a reason to reopen DEO-1C.
 
 #### Limits and Next Bucket
 
-DEO-2 is next, remains `p0_open` and `not_schedulable`, and was not started by
-this closure. DEO-3 remains the highest-risk P0 child/terminal close, receipt,
-and recovery bucket; DEO-4 also remains pending and `not_schedulable`. Bench
-remains `not_schedulable`, and no Bench evidence is claimed because no Bench
-was run.
+DEO-2A is `closed` and `complete`. DEO-2B is the only next `pending` and
+`schedulable` bucket, but it has not started; DEO-2 overall remains `p0_open`
+and incomplete. DEO-2C/2D remain `not_schedulable`. DEO-3 remains the
+highest-risk P0 child/terminal close, receipt, and recovery bucket; DEO-4 also
+remains pending and `not_schedulable`. Bench remains `not_schedulable`, and no
+Bench evidence is claimed because no Bench was run.
 
 The targeted Cell manifest, README, context pack, and global catalog are
 synchronized by the closure task. `generated/descriptor.pack.json` is not

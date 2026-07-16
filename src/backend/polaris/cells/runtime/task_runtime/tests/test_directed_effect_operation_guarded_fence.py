@@ -40,6 +40,14 @@ _FACT_STREAM_WRITER_TARGETS = {
     f"{_FACT_STREAM_PUBLIC}.GuardedFactEventV1",
     f"{_FACT_STREAM_PUBLIC}.contracts.GuardedFactEventV1",
 }
+_ATTRIBUTE_ACCESS_CALL_TARGETS = {
+    "builtins.getattr",
+    "builtins.object.__getattribute__",
+    "getattr",
+    "object.__getattribute__",
+}
+_NAMESPACE_MAPPING_CALL_TARGETS = {"builtins.vars", "vars"}
+_NAMESPACE_MAPPING_ATTRIBUTE = "__dict__"
 _REPOSITORY_FORBIDDEN_CALL_TARGETS = {
     f"{_FACT_STREAM_PUBLIC}.append_fact_event",
     f"{_FACT_STREAM_PUBLIC}.service.append_fact_event",
@@ -62,6 +70,45 @@ class _QualifiedReference:
     kind: str
     node_id: int = field(default=0, compare=False, repr=False)
     owner_node_id: int = field(default=0, compare=False, repr=False)
+
+
+_MAX_EXACT_EXPRESSION_TARGETS = 16
+
+
+@dataclass(frozen=True, slots=True)
+class _ExpressionResolution:
+    """Bounded static expression result plus fail-closed namespace provenance."""
+
+    exact_targets: frozenset[str] = frozenset()
+    protected_namespace_taint: bool = False
+    unknown_protected_provenance: bool = False
+    ambiguous_provenance: bool = False
+    protected_namespace_targets: frozenset[str] = frozenset()
+
+    @property
+    def is_precise(self) -> bool:
+        return (
+            len(self.exact_targets) == 1
+            and not self.protected_namespace_taint
+            and not self.unknown_protected_provenance
+            and not self.ambiguous_provenance
+        )
+
+    @classmethod
+    def merge(cls, *resolutions: _ExpressionResolution) -> _ExpressionResolution:
+        targets = {target for resolution in resolutions for target in resolution.exact_targets}
+        overflow = len(targets) > _MAX_EXACT_EXPRESSION_TARGETS
+        return cls(
+            exact_targets=frozenset(sorted(targets)[:_MAX_EXACT_EXPRESSION_TARGETS]),
+            protected_namespace_taint=any(resolution.protected_namespace_taint for resolution in resolutions),
+            unknown_protected_provenance=any(resolution.unknown_protected_provenance for resolution in resolutions),
+            ambiguous_provenance=overflow
+            or any(resolution.ambiguous_provenance for resolution in resolutions)
+            or len(targets) > 1,
+            protected_namespace_targets=frozenset(
+                target for resolution in resolutions for target in resolution.protected_namespace_targets
+            ),
+        )
 
 
 def _method_tree(name: str) -> ast.Module:
@@ -212,10 +259,10 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
             for member in node.body
             if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
-        self.scopes: list[dict[str, str | frozenset[str] | None]] = [{}]
+        self.scopes: list[dict[str, _ExpressionResolution | None]] = [{}]
         self.scopes[0].update(
             {
-                node.name: f"{current_module}.{node.name}"
+                node.name: _ExpressionResolution(exact_targets=frozenset({f"{current_module}.{node.name}"}))
                 for node in tree.body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             }
@@ -223,7 +270,7 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
         self.direct_call_nodes = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
 
     @property
-    def aliases(self) -> dict[str, str | frozenset[str] | None]:
+    def aliases(self) -> dict[str, _ExpressionResolution | None]:
         return self.scopes[-1]
 
     @property
@@ -246,49 +293,253 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
         return f"{parent_owner}{separator}{name}"
 
     def _resolve(self, node: ast.AST | None) -> str | None:
-        if isinstance(node, (ast.IfExp, ast.BoolOp, ast.NamedExpr)):
-            possible = self._possible_resolutions(node)
-            return next(iter(possible)) if len(possible) == 1 else None
-        if isinstance(node, ast.Name):
-            bound = self.aliases.get(node.id, node.id)
-            if isinstance(bound, frozenset):
-                return next(iter(bound)) if len(bound) == 1 else None
-            return bound
-        if isinstance(node, ast.Attribute):
-            prefix = self._resolve(node.value)
-            return f"{prefix}.{node.attr}" if prefix else None
-        if isinstance(node, ast.Call):
-            function = self._resolve(node.func)
-            if function in {"getattr", "builtins.getattr"} and len(node.args) >= 2:
-                object_name = self._resolve(node.args[0])
-                attribute = node.args[1]
-                if object_name and isinstance(attribute, ast.Constant) and isinstance(attribute.value, str):
-                    return f"{object_name}.{attribute.value}"
-                return None
-            if function and function.rsplit(".", maxsplit=1)[-1][:1].isupper():
-                return function
-            return None
+        resolution = self._resolve_expression(node)
+        return next(iter(resolution.exact_targets)) if resolution.is_precise else None
+
+    @staticmethod
+    def _constant_string(node: ast.AST | None) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
         return None
 
-    def _possible_resolutions(self, node: ast.AST | None) -> set[str]:
+    def _namespace_object_resolutions(
+        self,
+        node: ast.AST | None,
+        *,
+        shadowed: set[str] | frozenset[str] = frozenset(),
+    ) -> set[str]:
+        suffix = f".{_NAMESPACE_MAPPING_ATTRIBUTE}"
+        return {
+            resolution[: -len(suffix)]
+            for resolution in self._resolve_expression(node, shadowed=shadowed).exact_targets
+            if resolution.endswith(suffix)
+        }
+
+    def _namespace_projection(
+        self,
+        resolution: _ExpressionResolution,
+    ) -> set[str]:
+        suffix = f".{_NAMESPACE_MAPPING_ATTRIBUTE}"
+        return {target.split(suffix, maxsplit=1)[0] for target in resolution.exact_targets if suffix in target}
+
+    def _protected_namespace_targets(self, targets: set[str]) -> frozenset[str]:
+        return frozenset(
+            target
+            for target in targets
+            if target in self.protected_objects
+            or (self._is_protected(target) and not target.rsplit(".", maxsplit=1)[-1][:1].isupper())
+        )
+
+    @staticmethod
+    def _bound_target_names(node: ast.AST) -> set[str]:
         if isinstance(node, ast.Name):
+            return {node.id}
+        if isinstance(node, ast.Starred):
+            return _QualifiedReferenceResolver._bound_target_names(node.value)
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return {name for element in node.elts for name in _QualifiedReferenceResolver._bound_target_names(element)}
+        return set()
+
+    def _resolve_comprehension_expression(
+        self,
+        generators: list[ast.comprehension],
+        results: tuple[ast.AST, ...],
+        *,
+        shadowed: set[str] | frozenset[str],
+    ) -> _ExpressionResolution:
+        scoped_shadowed = set(shadowed)
+        resolutions: list[_ExpressionResolution] = []
+        for generator in generators:
+            resolutions.append(self._resolve_expression(generator.iter, shadowed=scoped_shadowed))
+            scoped_shadowed.update(self._bound_target_names(generator.target))
+            resolutions.extend(
+                self._resolve_expression(condition, shadowed=scoped_shadowed) for condition in generator.ifs
+            )
+        resolutions.extend(self._resolve_expression(result, shadowed=scoped_shadowed) for result in results)
+        merged = _ExpressionResolution.merge(*resolutions)
+        return _ExpressionResolution(
+            exact_targets=merged.exact_targets,
+            protected_namespace_taint=merged.protected_namespace_taint,
+            unknown_protected_provenance=merged.unknown_protected_provenance,
+            ambiguous_provenance=merged.ambiguous_provenance or bool(merged.exact_targets),
+            protected_namespace_targets=merged.protected_namespace_targets,
+        )
+
+    def _resolve_expression(
+        self,
+        node: ast.AST | None,
+        *,
+        shadowed: set[str] | frozenset[str] = frozenset(),
+    ) -> _ExpressionResolution:
+        if isinstance(node, ast.Name):
+            if node.id in shadowed:
+                return _ExpressionResolution()
             bound = self.aliases.get(node.id, node.id)
-            if isinstance(bound, frozenset):
-                return set(bound)
-            return {bound} if bound is not None else set()
+            if isinstance(bound, _ExpressionResolution):
+                return bound
+            return (
+                _ExpressionResolution(exact_targets=frozenset({bound}))
+                if bound is not None
+                else _ExpressionResolution()
+            )
         if isinstance(node, ast.Attribute):
-            return {f"{prefix}.{node.attr}" for prefix in self._possible_resolutions(node.value)}
+            value = self._resolve_expression(node.value, shadowed=shadowed)
+            targets = {f"{prefix}.{node.attr}" for prefix in value.exact_targets}
+            namespace_targets = value.protected_namespace_targets
+            namespace_taint = value.protected_namespace_taint
+            if node.attr == _NAMESPACE_MAPPING_ATTRIBUTE:
+                projected = self._protected_namespace_targets(set(value.exact_targets))
+                namespace_targets = namespace_targets | projected
+                namespace_taint = namespace_taint or bool(projected)
+            return _ExpressionResolution(
+                exact_targets=frozenset(sorted(targets)[:_MAX_EXACT_EXPRESSION_TARGETS]),
+                protected_namespace_taint=namespace_taint,
+                unknown_protected_provenance=value.unknown_protected_provenance,
+                ambiguous_provenance=value.ambiguous_provenance or len(targets) > _MAX_EXACT_EXPRESSION_TARGETS,
+                protected_namespace_targets=namespace_targets,
+            )
         if isinstance(node, ast.IfExp):
-            return self._possible_resolutions(node.body) | self._possible_resolutions(node.orelse)
+            return _ExpressionResolution.merge(
+                self._resolve_expression(node.body, shadowed=shadowed),
+                self._resolve_expression(node.orelse, shadowed=shadowed),
+            )
         if isinstance(node, ast.BoolOp):
-            return {resolution for value in node.values for resolution in self._possible_resolutions(value)}
+            return _ExpressionResolution.merge(
+                *(self._resolve_expression(value, shadowed=shadowed) for value in node.values)
+            )
         if isinstance(node, ast.NamedExpr):
-            return self._possible_resolutions(node.value)
+            return self._resolve_expression(node.value, shadowed=shadowed)
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            merged = _ExpressionResolution.merge(
+                *(self._resolve_expression(element, shadowed=shadowed) for element in node.elts)
+            )
+            return _ExpressionResolution(
+                exact_targets=merged.exact_targets,
+                protected_namespace_taint=merged.protected_namespace_taint,
+                unknown_protected_provenance=merged.unknown_protected_provenance,
+                ambiguous_provenance=merged.ambiguous_provenance or bool(merged.exact_targets),
+                protected_namespace_targets=merged.protected_namespace_targets,
+            )
+        if isinstance(node, ast.Dict):
+            merged = _ExpressionResolution.merge(
+                *(
+                    self._resolve_expression(item, shadowed=shadowed)
+                    for item in (*node.keys, *node.values)
+                    if item is not None
+                )
+            )
+            return _ExpressionResolution(
+                exact_targets=merged.exact_targets,
+                protected_namespace_taint=merged.protected_namespace_taint,
+                unknown_protected_provenance=merged.unknown_protected_provenance,
+                ambiguous_provenance=merged.ambiguous_provenance or bool(merged.exact_targets),
+                protected_namespace_targets=merged.protected_namespace_targets,
+            )
+        if isinstance(node, ast.ListComp):
+            return self._resolve_comprehension_expression(node.generators, (node.elt,), shadowed=shadowed)
+        if isinstance(node, ast.SetComp):
+            return self._resolve_comprehension_expression(node.generators, (node.elt,), shadowed=shadowed)
+        if isinstance(node, ast.DictComp):
+            return self._resolve_comprehension_expression(node.generators, (node.key, node.value), shadowed=shadowed)
+        if isinstance(node, ast.GeneratorExp):
+            return self._resolve_comprehension_expression(node.generators, (node.elt,), shadowed=shadowed)
+        if isinstance(node, ast.Subscript):
+            attribute = self._constant_string(node.slice)
+            namespace = self._resolve_expression(node.value, shadowed=shadowed)
+            objects = self._namespace_projection(namespace)
+            if attribute is not None and objects:
+                return _ExpressionResolution(
+                    exact_targets=frozenset(f"{object_name}.{attribute}" for object_name in objects),
+                    ambiguous_provenance=len(objects) > 1,
+                )
+            if namespace.protected_namespace_taint or namespace.protected_namespace_targets:
+                return _ExpressionResolution(
+                    protected_namespace_taint=True,
+                    unknown_protected_provenance=True,
+                    ambiguous_provenance=namespace.ambiguous_provenance,
+                    protected_namespace_targets=namespace.protected_namespace_targets
+                    or self._protected_namespace_targets(objects),
+                )
+            return _ExpressionResolution()
         if isinstance(node, ast.Call):
-            resolved = self._resolve(node)
-            return {resolved} if resolved is not None else set()
-        resolved = self._resolve(node)
-        return {resolved} if resolved is not None else set()
+            functions = self._resolve_expression(node.func, shadowed=shadowed)
+            arguments = tuple(self._resolve_expression(argument, shadowed=shadowed) for argument in node.args)
+            function_targets = functions.exact_targets
+            if function_targets & _ATTRIBUTE_ACCESS_CALL_TARGETS and len(node.args) >= 2:
+                attribute = self._constant_string(node.args[1])
+                object_resolution = arguments[0]
+                if attribute is None:
+                    return _ExpressionResolution(
+                        protected_namespace_taint=bool(
+                            self._protected_namespace_targets(set(object_resolution.exact_targets))
+                        ),
+                        unknown_protected_provenance=bool(
+                            self._protected_namespace_targets(set(object_resolution.exact_targets))
+                        ),
+                        protected_namespace_targets=self._protected_namespace_targets(
+                            set(object_resolution.exact_targets)
+                        ),
+                    )
+                return _ExpressionResolution(
+                    exact_targets=frozenset(
+                        f"{object_name}.{attribute}" for object_name in object_resolution.exact_targets
+                    ),
+                    ambiguous_provenance=len(object_resolution.exact_targets) > 1,
+                )
+            if function_targets & _NAMESPACE_MAPPING_CALL_TARGETS and arguments:
+                object_resolution = arguments[0]
+                objects = set(object_resolution.exact_targets)
+                protected = self._protected_namespace_targets(objects)
+                return _ExpressionResolution(
+                    exact_targets=frozenset(f"{object_name}.{_NAMESPACE_MAPPING_ATTRIBUTE}" for object_name in objects),
+                    protected_namespace_taint=bool(protected),
+                    ambiguous_provenance=len(objects) > 1 or object_resolution.ambiguous_provenance,
+                    protected_namespace_targets=protected,
+                )
+            namespace_objects = self._namespace_projection(functions)
+            if namespace_objects:
+                key = self._constant_string(node.args[0]) if node.args else None
+                if key is not None:
+                    return _ExpressionResolution(
+                        exact_targets=frozenset(f"{object_name}.{key}" for object_name in namespace_objects),
+                        ambiguous_provenance=len(namespace_objects) > 1,
+                    )
+                protected = functions.protected_namespace_targets or self._protected_namespace_targets(
+                    namespace_objects
+                )
+                return _ExpressionResolution(
+                    protected_namespace_taint=bool(protected),
+                    unknown_protected_provenance=bool(protected),
+                    ambiguous_provenance=functions.ambiguous_provenance,
+                    protected_namespace_targets=protected,
+                )
+            tainted_arguments = tuple(
+                argument
+                for argument in arguments
+                if argument.protected_namespace_taint
+                or argument.unknown_protected_provenance
+                or argument.protected_namespace_targets
+            )
+            if functions.protected_namespace_taint or tainted_arguments:
+                return _ExpressionResolution(
+                    protected_namespace_taint=True,
+                    unknown_protected_provenance=True,
+                    ambiguous_provenance=functions.ambiguous_provenance
+                    or any(argument.ambiguous_provenance for argument in tainted_arguments),
+                    protected_namespace_targets=frozenset(
+                        target
+                        for resolution in (functions, *tainted_arguments)
+                        for target in resolution.protected_namespace_targets
+                    ),
+                )
+            constructors = {
+                function for function in function_targets if function.rsplit(".", maxsplit=1)[-1][:1].isupper()
+            }
+            return _ExpressionResolution(
+                exact_targets=frozenset(constructors),
+                ambiguous_provenance=len(constructors) > 1,
+            )
+        return _ExpressionResolution()
 
     def _record(self, node: ast.AST, target: str, kind: str) -> None:
         if target in self.targets:
@@ -466,18 +717,25 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
 
     def _bind_assignment(self, target: ast.AST, value: ast.AST) -> bool:
         if isinstance(target, ast.Name):
-            possible = self._possible_resolutions(value)
+            resolution = self._resolve_expression(value)
             self.aliases[target.id] = (
-                next(iter(possible)) if len(possible) == 1 else frozenset(possible) if possible else None
+                resolution
+                if resolution.exact_targets
+                or any(
+                    (
+                        resolution.protected_namespace_taint,
+                        resolution.unknown_protected_provenance,
+                        resolution.ambiguous_provenance,
+                    )
+                )
+                else None
             )
-            return len(possible) == 1
+            return resolution.is_precise
         if isinstance(target, ast.Starred):
             if isinstance(value, (ast.Tuple, ast.List)) and isinstance(target.value, ast.Name):
-                possible = {resolution for element in value.elts for resolution in self._possible_resolutions(element)}
-                self.aliases[target.value.id] = (
-                    next(iter(possible)) if len(possible) == 1 else frozenset(possible) if possible else None
-                )
-                return len(possible) == 1
+                resolution = _ExpressionResolution.merge(*(self._resolve_expression(element) for element in value.elts))
+                self.aliases[target.value.id] = resolution if resolution.exact_targets else None
+                return resolution.is_precise
             return self._bind_assignment(target.value, value)
         if isinstance(target, (ast.Tuple, ast.List)):
             if not isinstance(value, (ast.Tuple, ast.List)):
@@ -530,10 +788,10 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
             and (reference.target in self.targets or self._is_protected(reference.target))
         ]
         value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) else None
-        protected_callable_targets = self._protected_callable_load_targets(value) if value is not None else set()
-        if protected_references or protected_callable_targets:
+        resolution = self._resolve_expression(value) if value is not None else _ExpressionResolution()
+        if protected_references or self._requires_protected_sentinel(resolution):
             sentinel_target = (
-                protected_references[0].target if protected_references else sorted(protected_callable_targets)[0]
+                protected_references[0].target if protected_references else self._protected_sentinel_target(resolution)
             )
             self.references.append(
                 _QualifiedReference(
@@ -545,98 +803,46 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
                 )
             )
 
-    def _protected_callable_load_targets(self, tree: ast.AST) -> set[str]:
-        resolved_targets_by_call_id: dict[int, set[str]] = {}
-        for reference in self.resolved_calls:
-            resolved_targets_by_call_id.setdefault(reference.node_id, set()).add(reference.target)
+    def _requires_protected_sentinel(self, resolution: _ExpressionResolution) -> bool:
+        return bool(
+            resolution.protected_namespace_taint
+            or resolution.unknown_protected_provenance
+            or resolution.protected_namespace_targets
+            or any(
+                target in self.targets or target in self.known_callable_targets
+                for target in resolution.exact_targets
+                if self._is_protected(target)
+            )
+        )
 
-        protected_targets: set[str] = set()
+    def _protected_sentinel_target(self, resolution: _ExpressionResolution) -> str:
+        protected_exact = sorted(target for target in resolution.exact_targets if self._is_protected(target))
+        if protected_exact:
+            return protected_exact[0]
+        if resolution.protected_namespace_targets:
+            return sorted(resolution.protected_namespace_targets)[0]
+        return sorted(self.protected_objects)[0]
 
-        def bound_names(node: ast.AST) -> set[str]:
-            if isinstance(node, ast.Name):
-                return {node.id}
-            if isinstance(node, ast.Starred):
-                return bound_names(node.value)
-            if isinstance(node, (ast.Tuple, ast.List)):
-                return {name for element in node.elts for name in bound_names(element)}
-            return set()
-
-        def possible_resolutions(node: ast.AST | None, shadowed: set[str]) -> set[str]:
-            if isinstance(node, ast.Name):
-                if node.id in shadowed:
-                    return set()
-                bound = self.aliases.get(node.id, node.id)
-                if isinstance(bound, frozenset):
-                    return set(bound)
-                return {bound} if bound is not None else set()
-            if isinstance(node, ast.Attribute):
-                return {f"{prefix}.{node.attr}" for prefix in possible_resolutions(node.value, shadowed)}
-            if isinstance(node, ast.IfExp):
-                return possible_resolutions(node.body, shadowed) | possible_resolutions(node.orelse, shadowed)
-            if isinstance(node, ast.BoolOp):
-                return {resolution for value in node.values for resolution in possible_resolutions(value, shadowed)}
-            if isinstance(node, ast.NamedExpr):
-                return possible_resolutions(node.value, shadowed)
-            if (
-                isinstance(node, ast.Call)
-                and resolved_targets_by_call_id.get(id(node), set()) & {"getattr", "builtins.getattr"}
-                and len(node.args) >= 2
-                and isinstance(node.args[1], ast.Constant)
-                and isinstance(node.args[1].value, str)
-            ):
-                return {
-                    f"{object_name}.{node.args[1].value}"
-                    for object_name in possible_resolutions(node.args[0], shadowed)
-                }
-            return set()
-
-        def record(node: ast.AST, shadowed: set[str]) -> None:
-            for resolution in possible_resolutions(node, shadowed):
-                if self._is_protected(resolution) and (
-                    resolution in self.known_callable_targets or resolution in self.targets
-                ):
-                    protected_targets.add(resolution)
-
-        def visit_comprehension(
-            generators: list[ast.comprehension],
-            results: tuple[ast.AST, ...],
-            shadowed: set[str],
-        ) -> None:
-            comprehension_shadowed = set(shadowed)
-            for generator in generators:
-                visit(generator.iter, comprehension_shadowed)
-                comprehension_shadowed.update(bound_names(generator.target))
-                for condition in generator.ifs:
-                    visit(condition, comprehension_shadowed)
-            for result in results:
-                visit(result, comprehension_shadowed)
-
-        def visit(node: ast.AST, shadowed: set[str]) -> None:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-                return
-            if isinstance(node, ast.ListComp):
-                visit_comprehension(node.generators, (node.elt,), shadowed)
-                return
-            if isinstance(node, ast.SetComp):
-                visit_comprehension(node.generators, (node.elt,), shadowed)
-                return
-            if isinstance(node, ast.DictComp):
-                visit_comprehension(node.generators, (node.key, node.value), shadowed)
-                return
-            if isinstance(node, ast.GeneratorExp):
-                visit_comprehension(node.generators, (node.elt,), shadowed)
-                return
-            if (
-                isinstance(node, (ast.Name, ast.Attribute))
-                and isinstance(node.ctx, ast.Load)
-                and id(node) not in self.direct_call_nodes
-            ) or isinstance(node, ast.Call):
-                record(node, shadowed)
-            for child in ast.iter_child_nodes(node):
-                visit(child, shadowed)
-
-        visit(tree, set())
-        return protected_targets
+    def _record_protected_taint_escape(
+        self,
+        node: ast.AST,
+        resolution: _ExpressionResolution,
+        *,
+        include_exact_protected_target: bool = False,
+    ) -> None:
+        escaped = resolution.unknown_protected_provenance or (
+            include_exact_protected_target and self._requires_protected_sentinel(resolution)
+        )
+        if escaped:
+            self.references.append(
+                _QualifiedReference(
+                    self.owner,
+                    self._protected_sentinel_target(resolution),
+                    "protected_taint_escape",
+                    id(node),
+                    self.owner_node_id,
+                )
+            )
 
     def visit_Assign(self, node: ast.Assign) -> None:
         references_before = len(self.references)
@@ -663,6 +869,31 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
         if not self._bind_assignment(node.target, node.value):
             self._record_unresolved_protected_assignment(node, references_before)
 
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        merged = _ExpressionResolution.merge(
+            self._resolve_expression(node.target),
+            self._resolve_expression(node.value),
+        )
+        self.visit(node.target)
+        self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            self.aliases[node.target.id] = merged
+        else:
+            self._record_protected_taint_escape(
+                node,
+                merged,
+                include_exact_protected_target=True,
+            )
+
+    def visit_Return(self, node: ast.Return) -> None:
+        if node.value is not None:
+            self._record_protected_taint_escape(
+                node,
+                self._resolve_expression(node.value),
+                include_exact_protected_target=True,
+            )
+        self.generic_visit(node)
+
     def visit_Name(self, node: ast.Name) -> None:
         if isinstance(node.ctx, ast.Load):
             resolved = self._resolve(node)
@@ -676,9 +907,29 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
                 self._record(node, resolved, "attribute_load")
         self.visit(node.value)
 
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        if isinstance(node.ctx, ast.Load):
+            resolution = self._resolve_expression(node)
+            if id(node) not in self.direct_call_nodes:
+                for target in resolution.exact_targets:
+                    self._record(node, target, "constant_getattr")
+            if not resolution.exact_targets and resolution.protected_namespace_targets:
+                self.references.append(
+                    _QualifiedReference(
+                        self.owner,
+                        self._protected_sentinel_target(resolution),
+                        "dynamic_getattr",
+                        id(node),
+                        self.owner_node_id,
+                    )
+                )
+        self.visit(node.value)
+        self.visit(node.slice)
+
     def visit_Call(self, node: ast.Call) -> None:
-        functions = self._possible_resolutions(node.func)
-        for function in functions:
+        functions = self._resolve_expression(node.func)
+        resolution = self._resolve_expression(node)
+        for function in functions.exact_targets:
             self.resolved_calls.append(
                 _QualifiedReference(
                     self.owner,
@@ -689,21 +940,24 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
                 )
             )
             self._record(node, function, "call")
-        if functions & {"getattr", "builtins.getattr"} and len(node.args) >= 2:
-            object_name = self._resolve(node.args[0])
-            attribute = node.args[1]
-            if object_name and isinstance(attribute, ast.Constant) and isinstance(attribute.value, str):
-                self._record(node, f"{object_name}.{attribute.value}", "constant_getattr")
-            elif object_name and object_name in self.protected_objects:
+        is_projection_call = bool(
+            functions.exact_targets & _ATTRIBUTE_ACCESS_CALL_TARGETS or self._namespace_projection(functions)
+        )
+        if is_projection_call:
+            if resolution.exact_targets:
+                for target in resolution.exact_targets:
+                    self._record(node, target, "constant_getattr")
+            elif resolution.protected_namespace_targets:
                 self.references.append(
                     _QualifiedReference(
                         self.owner,
-                        object_name,
+                        self._protected_sentinel_target(resolution),
                         "dynamic_getattr",
                         id(node),
                         self.owner_node_id,
                     )
                 )
+        self._record_protected_taint_escape(node, resolution)
         self.generic_visit(node)
 
 
@@ -1318,6 +1572,375 @@ def test_qualified_resolver_catches_factstream_from_import_module_alias_and_geta
     )
     assert _QualifiedReference("write", f"{_FACT_STREAM_PUBLIC}.append_if_guarded_snapshot", "call") in references
     assert _QualifiedReference("write", _FACT_STREAM_PUBLIC, "dynamic_getattr") in references
+
+
+@pytest.mark.parametrize(
+    "writer_expression",
+    (
+        'fact_stream.service.__dict__["append_if_guarded_snapshot"]',
+        'vars(fact_stream.service)["append_if_guarded_snapshot"]',
+        'object.__getattribute__(fact_stream.service, "__dict__")["append_if_guarded_snapshot"]',
+    ),
+)
+def test_qualified_resolver_catches_protected_namespace_subscript_writers(
+    writer_expression: str,
+) -> None:
+    tree = ast.parse(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def write():
+                writer = {writer_expression}
+                writer(None)
+                return {writer_expression}
+
+            def collect():
+                return [{writer_expression} for _ in ()]
+
+            def shadowed(fact_stream):
+                return {writer_expression}
+            """
+        )
+    )
+
+    references = set(
+        _qualified_references(
+            tree,
+            targets=_FACT_STREAM_WRITER_TARGETS,
+            protected_objects={_FACT_STREAM_PUBLIC},
+            current_module="fixture.fact_stream_namespace_consumer",
+        )
+    )
+    writer_target = f"{_FACT_STREAM_PUBLIC}.service.append_if_guarded_snapshot"
+
+    assert _QualifiedReference("write", writer_target, "constant_getattr") in references
+    assert _QualifiedReference("write", writer_target, "call") in references
+    assert _QualifiedReference("collect", writer_target, "constant_getattr") in references
+    assert not any(reference.owner == "shadowed" for reference in references)
+
+
+def test_qualified_resolver_fails_closed_for_dynamic_protected_namespace_subscript() -> None:
+    tree = ast.parse(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def write(field):
+                writer = vars(fact_stream.service)[field]
+                writer(None)
+            """
+        )
+    )
+
+    references = set(
+        _qualified_references(
+            tree,
+            targets=_FACT_STREAM_WRITER_TARGETS,
+            protected_objects={_FACT_STREAM_PUBLIC},
+            current_module="fixture.fact_stream_dynamic_namespace_consumer",
+        )
+    )
+
+    assert (
+        _QualifiedReference(
+            "write",
+            f"{_FACT_STREAM_PUBLIC}.service",
+            "dynamic_getattr",
+        )
+        in references
+    )
+    assert (
+        _QualifiedReference(
+            "write",
+            f"{_FACT_STREAM_PUBLIC}.service",
+            "unresolved_protected_assignment",
+        )
+        in references
+    )
+
+
+def test_source_analysis_blocks_augmented_namespace_mapping_writer_bypass() -> None:
+    analysis = _analyze_source(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def write():
+                writers = {{}}
+                writers |= vars(fact_stream.service)
+                writers["append_if_guarded_snapshot"](None)
+            """
+        ),
+        current_module="fixture.namespace_augassign_bypass",
+        targets=_FACT_STREAM_WRITER_TARGETS,
+        protected_objects={_FACT_STREAM_PUBLIC},
+    )
+
+    writer_target = f"{_FACT_STREAM_PUBLIC}.service.append_if_guarded_snapshot"
+    assert _QualifiedReference("write", writer_target, "call") in analysis.references
+
+
+def test_source_analysis_augassign_keeps_existing_protected_taint() -> None:
+    analysis = _analyze_source(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def write():
+                writers = vars(fact_stream.service)
+                writers |= {{}}
+                return writers
+            """
+        ),
+        current_module="fixture.namespace_augassign_taint",
+        targets=_FACT_STREAM_WRITER_TARGETS,
+        protected_objects={_FACT_STREAM_PUBLIC},
+    )
+
+    assert any(
+        reference.owner == "write" and reference.kind == "protected_taint_escape" for reference in analysis.references
+    )
+
+
+def test_source_analysis_keeps_benign_augassignments_unflagged() -> None:
+    analysis = _analyze_source(
+        dedent(
+            """
+            def write():
+                mapping = {}
+                mapping |= {"writer": None}
+                values = []
+                values += [1]
+                count = 0
+                count += 1
+                return mapping, values, count
+            """
+        ),
+        current_module="fixture.benign_augassignments",
+        targets=_FACT_STREAM_WRITER_TARGETS,
+        protected_objects={_FACT_STREAM_PUBLIC},
+    )
+
+    assert not any(
+        reference.kind
+        in {
+            "dynamic_getattr",
+            "protected_taint_escape",
+            "unresolved_protected_assignment",
+        }
+        for reference in analysis.references
+    )
+
+
+def test_source_analysis_fails_closed_for_protected_subscript_augassign_target() -> None:
+    analysis = _analyze_source(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def write():
+                containers = {{}}
+                containers["writers"] |= vars(fact_stream.service)
+            """
+        ),
+        current_module="fixture.namespace_subscript_augassign",
+        targets=_FACT_STREAM_WRITER_TARGETS,
+        protected_objects={_FACT_STREAM_PUBLIC},
+    )
+
+    assert any(
+        reference.owner == "write" and reference.kind == "protected_taint_escape" for reference in analysis.references
+    )
+
+
+@pytest.mark.parametrize("accessor", ("get", "setdefault"))
+def test_qualified_resolver_rejects_constant_namespace_mapping_accessor_escape(accessor: str) -> None:
+    tree = ast.parse(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def write():
+                writer = vars(fact_stream.service).{accessor}("append_if_guarded_snapshot")
+                writer(None)
+            """
+        )
+    )
+
+    references = set(
+        _qualified_references(
+            tree,
+            targets=_FACT_STREAM_WRITER_TARGETS,
+            protected_objects={_FACT_STREAM_PUBLIC},
+            current_module="fixture.fact_stream_namespace_mapping_accessor",
+        )
+    )
+
+    assert (
+        _QualifiedReference(
+            "write",
+            f"{_FACT_STREAM_PUBLIC}.service.append_if_guarded_snapshot",
+            "constant_getattr",
+        )
+        in references
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        'vars(fact_stream.service).get("append_if_guarded_snapshot")',
+        'vars(fact_stream.service).setdefault("append_if_guarded_snapshot")',
+        'vars(fact_stream.service).get("append_if_guarded_snapshot") if enabled else vars(fact_stream.service).setdefault("append_if_guarded_snapshot")',
+        'vars(fact_stream.service).get("append_if_guarded_snapshot") or vars(fact_stream.service).setdefault("append_if_guarded_snapshot")',
+        '(candidate := vars(fact_stream.service).get("append_if_guarded_snapshot"))',
+    ),
+    ids=("get", "setdefault", "if-expression", "bool-expression", "named-expression"),
+)
+def test_source_analysis_resolves_protected_namespace_constant_projection_compositions(
+    expression: str,
+) -> None:
+    analysis = _analyze_source(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def write(enabled):
+                writer = {expression}
+                writer(None)
+            """
+        ),
+        current_module="fixture.namespace_projection_compositions",
+        targets=_FACT_STREAM_WRITER_TARGETS,
+        protected_objects={_FACT_STREAM_PUBLIC},
+    )
+
+    writer_target = f"{_FACT_STREAM_PUBLIC}.service.append_if_guarded_snapshot"
+    assert _QualifiedReference("write", writer_target, "constant_getattr") in analysis.references
+    assert _QualifiedReference("write", writer_target, "call") in analysis.references
+    assert not any(reference.kind.endswith("sentinel") for reference in analysis.references)
+
+
+def test_source_analysis_rejects_dynamic_namespace_key_and_return_escape() -> None:
+    analysis = _analyze_source(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def write(field):
+                writer = vars(fact_stream.service)[field]
+                return writer
+            """
+        ),
+        current_module="fixture.namespace_dynamic_key",
+        targets=_FACT_STREAM_WRITER_TARGETS,
+        protected_objects={_FACT_STREAM_PUBLIC},
+    )
+
+    sentinels = {
+        (reference.target, reference.kind)
+        for reference in analysis.references
+        if reference.kind in {"unresolved_protected_assignment", "protected_taint_escape"}
+    }
+    assert (f"{_FACT_STREAM_PUBLIC}.service", "unresolved_protected_assignment") in sentinels
+    assert (f"{_FACT_STREAM_PUBLIC}.service", "protected_taint_escape") in sentinels
+
+
+def test_source_analysis_binds_namespace_projection_destructuring_and_rejects_comprehension_escape() -> None:
+    analysis = _analyze_source(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def write():
+                ignored, writer = (None, vars(fact_stream.service).get("append_if_guarded_snapshot"))
+                writer(None)
+                listed = [vars(fact_stream.service).get("append_if_guarded_snapshot") for _ in ()]
+                collected = {{vars(fact_stream.service).get("append_if_guarded_snapshot") for _ in ()}}
+                keyed = {{_: vars(fact_stream.service).get("append_if_guarded_snapshot") for _ in ()}}
+                generated = (vars(fact_stream.service).get("append_if_guarded_snapshot") for _ in ())
+                return listed, collected, keyed, generated
+            """
+        ),
+        current_module="fixture.namespace_destructuring",
+        targets=_FACT_STREAM_WRITER_TARGETS,
+        protected_objects={_FACT_STREAM_PUBLIC},
+    )
+
+    writer_target = f"{_FACT_STREAM_PUBLIC}.service.append_if_guarded_snapshot"
+    assert _QualifiedReference("write", writer_target, "call") in analysis.references
+    assert any(
+        reference.owner == "write" and reference.kind == "unresolved_protected_assignment"
+        for reference in analysis.references
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        "copy.copy(vars(fact_stream.service))",
+        "dict(vars(fact_stream.service))",
+        "identity(vars(fact_stream.service))",
+    ),
+    ids=("copy-wrapper", "dict-wrapper", "local-wrapper"),
+)
+def test_source_analysis_rejects_unknown_wrapper_of_protected_namespace(expression: str) -> None:
+    analysis = _analyze_source(
+        dedent(
+            f"""
+            import copy
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def identity(value):
+                return value
+
+            def write():
+                writer = {expression}
+                writer(None)
+            """
+        ),
+        current_module="fixture.namespace_wrapper",
+        targets=_FACT_STREAM_WRITER_TARGETS,
+        protected_objects={_FACT_STREAM_PUBLIC},
+    )
+
+    assert any(
+        reference.owner == "write" and reference.kind == "unresolved_protected_assignment"
+        for reference in analysis.references
+    )
+    assert any(
+        reference.owner == "write" and reference.kind == "protected_taint_escape" for reference in analysis.references
+    )
+
+
+def test_source_analysis_honors_shadowed_namespace_helpers_and_benign_mappings() -> None:
+    analysis = _analyze_source(
+        dedent(
+            f"""
+            import {_FACT_STREAM_PUBLIC} as fact_stream
+
+            def shadowed(fact_stream, vars, object):
+                return vars(fact_stream.service).get("append_if_guarded_snapshot")
+
+            def comprehended(items):
+                return [vars(fact_stream.service).get("append_if_guarded_snapshot") for fact_stream in items]
+
+            def benign(mapping):
+                writer = mapping.get("append_if_guarded_snapshot")
+                return writer
+            """
+        ),
+        current_module="fixture.namespace_shadowing",
+        targets=_FACT_STREAM_WRITER_TARGETS,
+        protected_objects={_FACT_STREAM_PUBLIC},
+    )
+
+    assert not any(
+        reference.owner in {"shadowed", "comprehended", "benign"}
+        and reference.kind in {"unresolved_protected_assignment", "protected_taint_escape", "dynamic_getattr"}
+        for reference in analysis.references
+    )
 
 
 def test_import_detector_expands_from_import_module_path() -> None:
@@ -2480,6 +3103,7 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
             if reference.kind in {
                 "protected_star_import",
                 "unresolved_protected_assignment",
+                "protected_taint_escape",
             }:
                 protected_sentinels.append((relative_path, reference.owner, reference.kind))
                 continue

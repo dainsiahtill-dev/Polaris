@@ -518,7 +518,7 @@ Expected: all selected tests pass and executor code is not imported or called.
 - Modify:
   `src/backend/polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_concurrency.py`
 
-- [ ] **Step 1: Add call/import fences**
+- [x] **Step 1: Add call/import fences**
 
 Assert only TaskRuntime public service calls `seal_inventory` and
 `finalize_inventory`; no roles, adapters, KernelOne, Run Ledger, QA, or Bench
@@ -526,14 +526,14 @@ imports exist in TaskRuntime production files. Assert the repository does not
 enroll streams implicitly and the new facts use only FactStream public guarded
 or strict APIs.
 
-- [ ] **Step 2: Add state-transition fences**
+- [x] **Step 2: Add state-transition fences**
 
 AST/source assertions reject new writers for `RECEIPT_COMMITTED`,
 `RECOVERY_PENDING`, `CLOSED_BY_PARENT`, `DEAD_LETTER`, parent close, terminal
 settlement, receipt persistence, or readiness enforcement outside the two new
 inventory facts and existing admit/claim/abort transitions.
 
-- [ ] **Step 3: Run the fence suite**
+- [x] **Step 3: Run the fence suite**
 
 Run:
 
@@ -543,7 +543,7 @@ rtk proxy python -m pytest -q polaris/cells/runtime/task_runtime/tests/test_dire
 
 Expected: all fences pass with no exemption list.
 
-- [ ] **Step 4: Run real CAS interleavings**
+- [x] **Step 4: Run real CAS interleavings**
 
 Add and run real-thread tests for two exact/different seal attempts, the final
 admission racing readiness finalize, and claim racing abort. Valid outcomes are
@@ -571,7 +571,7 @@ Expected: all concurrency tests pass with one durable winner per transition.
 - Modify:
   `src/backend/docs/blueprints/DIRECTED_EFFECT_OPERATION_DEO2_BLUEPRINT_20260716.md`
 
-- [ ] **Step 1: Run focused and full TaskRuntime tests**
+- [x] **Step 1: Run focused and full TaskRuntime tests**
 
 Run:
 
@@ -582,7 +582,7 @@ rtk proxy python -m pytest -q polaris/cells/runtime/task_runtime
 
 Expected: zero failures. Record exact pass counts; do not reuse earlier counts.
 
-- [ ] **Step 2: Run static gates**
+- [x] **Step 2: Run static gates**
 
 Run:
 
@@ -596,26 +596,38 @@ rtk proxy git diff --check
 
 Expected: every command exits zero.
 
-- [ ] **Step 3: Synchronize metadata after green code**
+- [x] **Step 3: Synchronize metadata after green code**
 
 Add the exact new contracts/services/facts and `events.fact_stream`-only
 dependency to TaskRuntime metadata. Record that claim grant replay is forbidden,
 readiness now gates claim/abort only, DEO-3 remains absent, DEO-2B is next, and
 Bench remains `not_schedulable`. Preserve UTF-8 and valid JSON/YAML.
 
-- [ ] **Step 4: Validate metadata and governance**
+- [x] **Step 4: Validate metadata and governance**
 
 Run:
 
 ```bash
 rtk proxy python -m json.tool polaris/cells/runtime/task_runtime/generated/context.pack.json
-rtk proxy python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace ../.. --mode hard-fail
+rtk proxy python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode hard-fail
 rtk proxy git diff --check
 rtk proxy git status --short
 ```
 
 Expected: valid JSON, governance exit zero with no new issues/mismatches, and no
 files outside the authorized list plus pre-existing shared changes.
+
+**Phase A closure:** Tasks 1-6 and Task 7 Steps 1-4 are recorded complete using
+frozen evidence: Task 6 fence/concurrency `82 passed in 68.92s` and independent
+review `YES/YES`; Task 7 focused inventory/operation/fence/concurrency `443
+passed in 113.31s`; complete TaskRuntime `841 passed in 141.02s`; Ruff
+check/format, mypy with no issues in four production files, compileall, and
+`git diff --check` green. The main-thread closure gate also has green JSON/YAML
+parse, catalog hard-fail exit `0` with `issue_count=0` and `mismatch_count=0`,
+and a clean diff check. DEO-2A is `closed` and `complete`. DEO-2B is the sole
+next `pending` and `schedulable` bucket; it has not started. DEO-2 overall is
+not complete. DEO-2C, DEO-2D, DEO-3, DEO-4, pre-bench, and Bench remain
+`not_schedulable`.
 
 ## 2A exit evidence
 

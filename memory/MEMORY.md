@@ -1258,9 +1258,11 @@ Runs:
 
 ## 2026-07-15 - DEO-1A closure record
 
-- DEO-1A is `closed`; DEO-1B is the next `pending` bucket, DEO-1C remains
-  `blocked_by_deo_1b`, DEO-1 remains pending, and DEO-2/3/4 remain unfinished.
-  Bench is still `not_schedulable`.
+- DEO-1A is `closed`; DEO-1B and DEO-1C subsequently closed, so DEO-1 is
+  closed. DEO-2A is `closed` and `complete`; DEO-2B is the only next `pending`
+  and `schedulable` bucket and has not started. DEO-2 overall is incomplete;
+  DEO-2C/2D and DEO-3/4 remain `not_schedulable`. Bench is still
+  `not_schedulable`.
 - The same-day pending/singleton/`328`/`611`/`35` statements above are retained
   as historical audit facts and are superseded by this closure record. Stateless
   `bootstrap_fact_stream_workspace` has no process singleton or completion cache;
@@ -1368,3 +1370,14 @@ Runs:
 - Only DEO-1B closed. DEO-1C is pending and read-only; DEO-2/3/4 and Bench
   remain not schedulable. DEO-3 still owns parent close, receipt eligibility,
   recovery, and terminal admission.
+
+## 2026-07-16 - DEO-2A TaskRuntime closure
+
+- DEO-2A is `closed` and `complete`; Task 7 Step 4 closed after JSON/YAML parse,
+  catalog hard-fail exit `0` with zero issues/mismatches, and diff check.
+  DEO-2B is the only next `pending` and `schedulable` bucket; it has not started.
+  DEO-2C/2D, DEO-3/4, pre-bench, and Bench remain `not_schedulable`; DEO-2 is
+  not complete.
+- Keep Cell metadata updates after green code and freeze them with two independent
+  reviews. Catalog `0` issues is a closure gate. Ordinary AST fences are auxiliary
+  audit evidence, never runtime authorization.

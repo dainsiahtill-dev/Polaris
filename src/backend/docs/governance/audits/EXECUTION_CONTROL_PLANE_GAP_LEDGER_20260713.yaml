@@ -1014,7 +1014,91 @@ directed_effect_operation_v1:
       status: p0_open
       scheduling_status: not_schedulable
       title: kernel-owned batch admission and Director adapter
-      expected_operation_inventory: pending
+      expected_operation_inventory: phase_a_taskruntime_recorded
+      phase_a:
+        id: DEO-2A
+        status: closed
+        closure_status: complete
+        title: TaskRuntime immutable inventory and fresh claim-only grant
+        completed_scope:
+          - Tasks 1-6
+          - Task 7 Steps 1-4
+        public_contracts:
+          commands:
+            - SealDirectedEffectInventoryCommandV1
+            - FinalizeDirectedEffectInventoryAdmissionCommandV1
+          query: GetDirectedEffectInventoryQueryV1
+          inventory_types:
+            - DirectedEffectInventoryIntentV1
+            - DirectedEffectInventoryMemberV1
+            - DirectedEffectInventoryProjectionV1
+            - DirectedEffectInventoryResultV1
+          claim_grant: DirectedEffectClaimGrantV1
+          services:
+            - seal_directed_effect_inventory
+            - finalize_directed_effect_inventory_admission
+            - get_directed_effect_inventory
+        durable_facts:
+          sealed: task_runtime.directed_effect_parent_registry.v1.parent_inventory_sealed
+          ready: task_runtime.directed_effect_parent_registry.v1.parent_inventory_ready
+        semantics:
+          - immutable bounded ordered inventory with server-derived effect and operation identity
+          - strict identity, version, hash, order, and guarded CAS validation
+          - ready fact proves the exact sealed INTENT_COMMITTED set before claim or abort
+          - confirmed fresh claim returns one hash-bound grant; exact replay has no grant and no append
+          - DEO-3 receipt, recovery, parent-close, and terminal-admission facts are absent
+        dependency_boundary:
+          - events.fact_stream only
+        frozen_evidence:
+          task_6_fence_and_concurrency:
+            passed: 82
+            duration_seconds: 68.92
+            independent_reviews: YES/YES
+          task_7_focused_inventory_operation_fence_concurrency:
+            passed: 443
+            duration_seconds: 113.31
+          complete_task_runtime:
+            passed: 841
+            duration_seconds: 141.02
+          static_gates:
+            ruff_check: green
+            ruff_format: green
+            mypy:
+              production_files: 4
+              issues: 0
+            compileall: green
+            git_diff_check: green
+        closure_evidence:
+          json_yaml_parse: green
+          catalog_hard_fail:
+            exit_code: 0
+            issue_count: 0
+            mismatch_count: 0
+          git_diff_check: green
+        main_thread_closure_gate:
+          task_7_step_4: closed
+          DEO-2A_overall_closure: complete
+          DEO-2B_schedulability: schedulable
+        only_next_schedulable_bucket: DEO-2B
+        downstream:
+          DEO-2B:
+            status: pending
+            scheduling_status: schedulable
+            started: false
+          DEO-2C:
+            status: not_started
+            scheduling_status: not_schedulable
+          DEO-2D:
+            status: not_started
+            scheduling_status: not_schedulable
+          DEO-3:
+            status: pending
+            scheduling_status: not_schedulable
+          DEO-4:
+            status: pending
+            scheduling_status: not_schedulable
+          pre_bench: not_schedulable
+          bench: not_schedulable
     - id: DEO-3
       status: pending
       scheduling_status: not_schedulable

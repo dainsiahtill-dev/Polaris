@@ -1,11 +1,33 @@
 # Directed Effect Operation DEO-2 Blueprint
 
-**Task:** `DEO-2-KERNEL-BATCH-ADMISSION`  
-**Status:** design locked; implementation pending  
-**Date:** 2026-07-16  
-**Scheduling:** DEO-2, DEO-3, DEO-4, pre-bench, and Bench remain
-`not_schedulable`. This blueprint authorizes no Bench run and no target-project
-change.
+**Task:** `DEO-2-KERNEL-BATCH-ADMISSION`
+**Status:** design locked; DEO-2A is `closed` and `complete`; DEO-2B is the
+only next `pending` and `schedulable` bucket and has not started
+**Date:** 2026-07-16
+**Scheduling:** DEO-2 overall remains incomplete and `not_schedulable`; only
+DEO-2B is schedulable. DEO-2C, DEO-2D, DEO-3, DEO-4, pre-bench, and Bench
+remain `not_schedulable`. This blueprint authorizes no Bench run and no
+target-project change.
+
+**Phase A boundary:** TaskRuntime now records only the DEO-2A durable inventory
+primitives: immutable `parent_inventory_sealed` and `parent_inventory_ready`
+facts, exact ordered inventory membership, strict identity/version/hash/order/CAS
+validation, ready-gated claim/abort, and fresh-claim-only
+`DirectedEffectClaimGrantV1`. An exact claim replay returns evidence without a
+new grant or append. This does not implement DEO-2B, DEO-2C, DEO-2D, DEO-3, or
+DEO-4, and it does not authorize pre-bench or Bench work.
+
+**Frozen Phase A evidence:** Task 6 fence/concurrency `82 passed in 68.92s`
+with two independent `YES/YES` reviews; Task 7 focused
+inventory/operation/fence/concurrency `443 passed in 113.31s`; complete
+TaskRuntime `841 passed in 141.02s`; Ruff check/format, mypy with no issues in
+four production files, compileall, and `git diff --check` green. Main-thread
+closure also confirmed green JSON/YAML parse and catalog hard-fail exit `0`
+with `issue_count=0` and `mismatch_count=0`. These records complete Tasks 1-6
+and Task 7 Steps 1-4. DEO-2A is `closed` and `complete`; DEO-2B is the only
+next `pending` and `schedulable` bucket and has not started. DEO-2 overall is
+not complete. DEO-2C, DEO-2D, DEO-3, DEO-4, pre-bench, and Bench remain
+`not_schedulable`.
 
 ## 1. Decision
 

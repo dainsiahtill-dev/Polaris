@@ -954,5 +954,7 @@ hard-fail exited 0 with `issue_count=0`, `blocker_count=0`, `high_count=0`,
 
 The broad failures are only `FS-BASELINE-001..003`, retained as external/open
 filesystem baselines in the ledger. This is not a claim that the whole repository
-is green. DEO-1B is the next pending bucket; DEO-1C remains blocked by DEO-1B;
-DEO-1 remains pending; DEO-2/3/4 remain unfinished; no bench is admitted.
+is green. DEO-1 is closed. DEO-2A is `closed` and `complete`; DEO-2B is the
+only next `pending` and `schedulable` bucket and has not started. DEO-2 overall
+is incomplete; DEO-2C/2D and DEO-3/4 remain `not_schedulable`; no bench is
+admitted.
