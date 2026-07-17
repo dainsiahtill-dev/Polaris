@@ -8,10 +8,12 @@ mapping 风格兼容接口，避免在迁移期强制重写所有调用点。
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, NewType
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from polaris.kernelone.tool_execution.contracts import CapturedToolSpecSnapshotV1
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 # ============ 基础类型 ============
 ToolCallId = NewType("ToolCallId", str)
@@ -22,7 +24,7 @@ BatchId = NewType("BatchId", str)
 class _FrozenMappingModel(BaseModel):
     """Frozen Pydantic model with dict-like compatibility helpers."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
@@ -103,13 +105,34 @@ class DataPlaneEvent(str, Enum):
     PROMPT_PROJECTION = "prompt_projection"
 
 
-# ============ 工具分类真相源 ============
-# 以下集合是 Transaction Kernel 协议层对工具分类的唯一工程级真相源。
-# 业务模块（如 constants.py）应从此处导入，禁止重复定义。
+@dataclass(frozen=True, slots=True)
+class ToolClassificationV1:
+    """One immutable ToolSpecRegistry classification capture for a tool call."""
 
+    raw_tool_name: str
+    canonical_tool_name: str
+    registered: bool
+    effect_type: ToolEffectType
+    execution_mode: ToolExecutionMode
+    snapshot: Any | None
+    normalization_required: bool
+    error_code: Literal["deo_tool_normalization_failed"] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _CapturedEffectiveSpecSemanticsV1:
+    """Pure semantic verdict derived from one captured effective ToolSpec."""
+
+    effect_type: ToolEffectType
+    execution_mode: ToolExecutionMode
+    normalization_required: bool
+    error_code: Literal["deo_tool_normalization_failed"] | None
+
+
+# Compatibility projections for legacy transaction constants. They are not read
+# by the canonical classifier, decoder, gateway, or directed-effect guard.
 _READONLY_TOOLS: frozenset[str] = frozenset(
     {
-        # 通用文件系统/搜索只读工具 (15个)
         "read_file",
         "list_directory",
         "grep",
@@ -125,7 +148,6 @@ _READONLY_TOOLS: frozenset[str] = frozenset(
         "exists",
         "get_file_info",
         "search_files",
-        # Polaris canonical read tools (7个)
         "repo_tree",
         "repo_rg",
         "repo_read_head",
@@ -135,8 +157,8 @@ _READONLY_TOOLS: frozenset[str] = frozenset(
         "treesitter_find_symbol",
     }
 )
-"""只读工具集合 — 可并行执行。这是工程级分类真相源。"""
-
+# Compatibility projection for legacy transaction constants. The canonical
+# classifier never reads this set; unregistered names are conservative writes.
 _ASYNC_TOOLS: frozenset[str] = frozenset(
     {
         "create_pull_request",
@@ -149,35 +171,200 @@ _ASYNC_TOOLS: frozenset[str] = frozenset(
         "long_running_task",
     }
 )
-"""异步工具集合 — 返回 pending receipt，不等待完成。这是工程级分类真相源。"""
+
+
+def classify_tool_invocation(raw_tool_name: str) -> ToolClassificationV1:
+    """Capture one authoritative ToolSpec view and classify it conservatively.
+
+    Registry inconsistency and unknown names remain mutation candidates but carry
+    no normalizable snapshot, so callers must deny before authorization/effect.
+    """
+    from polaris.kernelone.tool_execution.tool_spec_registry import (
+        ToolSpecRegistry,
+        ToolSpecRegistryConsistencyError,
+    )
+
+    raw = str(raw_tool_name)
+    if raw.strip().startswith("__"):
+        raise ValueError("synthetic_tool_invocation_forbidden")
+    try:
+        snapshot = ToolSpecRegistry.capture_effective_spec(raw)
+    except ToolSpecRegistryConsistencyError:
+        return ToolClassificationV1(
+            raw_tool_name=raw,
+            canonical_tool_name=raw,
+            registered=False,
+            effect_type=ToolEffectType.WRITE,
+            execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            snapshot=None,
+            normalization_required=True,
+            error_code="deo_tool_normalization_failed",
+        )
+
+    return _classify_captured_snapshot(raw, snapshot)
+
+
+def _classify_captured_snapshot(
+    raw_tool_name: str,
+    snapshot: CapturedToolSpecSnapshotV1,
+) -> ToolClassificationV1:
+    """Derive classification from one already-captured registry snapshot only."""
+    if not snapshot.registered:
+        return ToolClassificationV1(
+            raw_tool_name=raw_tool_name,
+            canonical_tool_name=snapshot.canonical_tool_name,
+            registered=False,
+            effect_type=ToolEffectType.WRITE,
+            execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            snapshot=snapshot,
+            normalization_required=False,
+        )
+
+    semantics = _validate_captured_effective_spec_semantics(snapshot)
+
+    return ToolClassificationV1(
+        raw_tool_name=raw_tool_name,
+        canonical_tool_name=snapshot.canonical_tool_name,
+        registered=True,
+        effect_type=semantics.effect_type,
+        execution_mode=semantics.execution_mode,
+        snapshot=snapshot,
+        normalization_required=semantics.normalization_required,
+        error_code=semantics.error_code,
+    )
+
+
+def _validate_captured_effective_spec_semantics(
+    snapshot: CapturedToolSpecSnapshotV1,
+) -> _CapturedEffectiveSpecSemanticsV1:
+    """Classify category fields together, rejecting ambiguous captured semantics."""
+    from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
+
+    effective_spec = frozen_node_to_value(snapshot.canonical_effective_spec)
+    if not isinstance(effective_spec, dict):
+        return _invalid_captured_effective_spec_semantics()
+
+    semantic_values: set[str] = set()
+    category = effective_spec.get("category")
+    if category is not None:
+        if not isinstance(category, str):
+            return _invalid_captured_effective_spec_semantics()
+        semantic_values.add(category.strip().lower())
+
+    categories = effective_spec.get("categories")
+    if categories is not None:
+        if not isinstance(categories, list) or not all(isinstance(value, str) for value in categories):
+            return _invalid_captured_effective_spec_semantics()
+        semantic_values.update(value.strip().lower() for value in categories)
+
+    effect_type = effective_spec.get("effect_type")
+    if effect_type is not None:
+        if not isinstance(effect_type, str):
+            return _invalid_captured_effective_spec_semantics()
+        semantic_values.add(effect_type.strip().lower())
+
+    semantic_effects = {
+        "read": ToolEffectType.READ,
+        "write": ToolEffectType.WRITE,
+        "async": ToolEffectType.ASYNC,
+        "exec": ToolEffectType.WRITE,
+        "execute": ToolEffectType.WRITE,
+        "delete": ToolEffectType.WRITE,
+        "mutation": ToolEffectType.WRITE,
+        "mutate": ToolEffectType.WRITE,
+    }
+    if not semantic_values or any(value not in semantic_effects for value in semantic_values):
+        return _invalid_captured_effective_spec_semantics()
+
+    effects = {semantic_effects[value] for value in semantic_values}
+    if len(effects) != 1:
+        return _invalid_captured_effective_spec_semantics()
+
+    resolved_effect = effects.pop()
+    if resolved_effect is ToolEffectType.READ:
+        return _CapturedEffectiveSpecSemanticsV1(
+            effect_type=ToolEffectType.READ,
+            execution_mode=ToolExecutionMode.READONLY_PARALLEL,
+            normalization_required=False,
+            error_code=None,
+        )
+    if resolved_effect is ToolEffectType.ASYNC:
+        return _CapturedEffectiveSpecSemanticsV1(
+            effect_type=ToolEffectType.ASYNC,
+            execution_mode=ToolExecutionMode.ASYNC_RECEIPT,
+            normalization_required=True,
+            error_code=None,
+        )
+    return _CapturedEffectiveSpecSemanticsV1(
+        effect_type=ToolEffectType.WRITE,
+        execution_mode=ToolExecutionMode.WRITE_SERIAL,
+        normalization_required=True,
+        error_code=None,
+    )
+
+
+def _invalid_captured_effective_spec_semantics() -> _CapturedEffectiveSpecSemanticsV1:
+    """Keep invalid or ambiguous semantics on the fail-closed mutation path."""
+    return _CapturedEffectiveSpecSemanticsV1(
+        effect_type=ToolEffectType.WRITE,
+        execution_mode=ToolExecutionMode.WRITE_SERIAL,
+        normalization_required=True,
+        error_code="deo_tool_normalization_failed",
+    )
+
+
+def tool_classification_matches_snapshot(classification: ToolClassificationV1) -> bool:
+    """Verify classification identity against its captured snapshot without rereads."""
+    snapshot = classification.snapshot
+    if classification.error_code is not None or snapshot is None or not snapshot.registered:
+        return False
+    return _classification_matches_captured_snapshot(classification)
+
+
+def _classification_matches_captured_snapshot(classification: ToolClassificationV1) -> bool:
+    """Purely rederive a supplied captured classification without an authorization verdict."""
+    snapshot = classification.snapshot
+    if not isinstance(snapshot, CapturedToolSpecSnapshotV1):
+        return False
+    try:
+        from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
+
+        if classification.raw_tool_name != snapshot.raw_tool_name:
+            return False
+        canonical_snapshot = CapturedToolSpecSnapshotV1(
+            raw_tool_name=snapshot.raw_tool_name,
+            canonical_tool_name=snapshot.canonical_tool_name,
+            registered=snapshot.registered,
+            canonical_effective_spec=snapshot.canonical_effective_spec,
+            canonical_name_view=snapshot.canonical_name_view,
+            alias_binding_view=snapshot.alias_binding_view,
+        )
+        if canonical_snapshot != snapshot:
+            return False
+        if snapshot.registered:
+            canonical_names = frozen_node_to_value(snapshot.canonical_name_view)
+            alias_bindings = frozen_node_to_value(snapshot.alias_binding_view)
+            if (
+                not isinstance(canonical_names, list)
+                or not all(isinstance(name, str) for name in canonical_names)
+                or snapshot.canonical_tool_name not in canonical_names
+                or not isinstance(alias_bindings, dict)
+                or alias_bindings.get(snapshot.raw_tool_name) != snapshot.canonical_tool_name
+            ):
+                return False
+        return classification == _classify_captured_snapshot(classification.raw_tool_name, snapshot)
+    except (AttributeError, TypeError, ValueError):
+        return False
 
 
 def _infer_execution_mode(tool_name: str) -> ToolExecutionMode:
-    """根据工具名推断执行模式 — 工程级分类入口。
-
-    这是 Transaction Kernel 对工具执行模式分类的唯一权威函数。
-    业务模块不应自行实现分类逻辑。
-    """
-    normalized = tool_name.lower().replace("-", "_")
-    if normalized in _READONLY_TOOLS:
-        return ToolExecutionMode.READONLY_PARALLEL
-    if normalized in _ASYNC_TOOLS:
-        return ToolExecutionMode.ASYNC_RECEIPT
-    return ToolExecutionMode.WRITE_SERIAL
+    """Compatibility delegate to the public canonical classifier."""
+    return classify_tool_invocation(tool_name).execution_mode
 
 
-def _infer_effect_type(tool_name: str, execution_mode: ToolExecutionMode | None) -> ToolEffectType:
-    """根据工具名和执行模式推断副作用类型。"""
-    if execution_mode in {ToolExecutionMode.READONLY_PARALLEL, ToolExecutionMode.READONLY_SERIAL}:
-        return ToolEffectType.READ
-    if execution_mode == ToolExecutionMode.ASYNC_RECEIPT:
-        return ToolEffectType.ASYNC
-    normalized = tool_name.lower().replace("-", "_")
-    if normalized in _READONLY_TOOLS:
-        return ToolEffectType.READ
-    if normalized in _ASYNC_TOOLS:
-        return ToolEffectType.ASYNC
-    return ToolEffectType.WRITE
+def _infer_effect_type(tool_name: str, execution_mode: ToolExecutionMode | None = None) -> ToolEffectType:
+    """Compatibility delegate to the public canonical classifier."""
+    return classify_tool_invocation(tool_name).effect_type
 
 
 # ============ 核心数据结构 ============
@@ -186,17 +373,82 @@ class ToolInvocation(_FrozenMappingModel):
 
     call_id: ToolCallId
     tool_name: str
+    raw_tool_name: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
-    effect_type: ToolEffectType
-    execution_mode: ToolExecutionMode
+    effect_type: ToolEffectType | None = None
+    execution_mode: ToolExecutionMode | None = None
+    classification: ToolClassificationV1 | None = None
+
+    @classmethod
+    def _from_captured_classification(
+        cls,
+        *,
+        call_id: ToolCallId,
+        raw_tool_name: str,
+        arguments: dict[str, object],
+        classification: ToolClassificationV1,
+    ) -> ToolInvocation:
+        """Internal decoder factory preserving its single captured classification."""
+        return cls.model_validate(
+            {
+                "call_id": call_id,
+                "raw_tool_name": raw_tool_name,
+                "tool_name": classification.canonical_tool_name,
+                "arguments": arguments,
+                "classification": classification,
+            },
+            context={"tool_invocation_factory_capability": _TOOL_INVOCATION_FACTORY_CAPABILITY},
+        )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _isolate_public_classification_injection(cls, value: object, info: ValidationInfo) -> object:
+        """Keep captured classifications confined to the internal decoder factory."""
+        if isinstance(value, cls):
+            return value
+        if (
+            isinstance(value, dict)
+            and "classification" in value
+            and (
+                info.context is None
+                or info.context.get("tool_invocation_factory_capability") is not _TOOL_INVOCATION_FACTORY_CAPABILITY
+            )
+        ):
+            return {key: item for key, item in value.items() if key != "classification"}
+        return value
 
     @model_validator(mode="after")
-    def _normalize(self) -> ToolInvocation:
-        execution_mode = self.execution_mode or _infer_execution_mode(self.tool_name)
-        effect_type = self.effect_type or _infer_effect_type(self.tool_name, execution_mode)
-        object.__setattr__(self, "execution_mode", execution_mode)
-        object.__setattr__(self, "effect_type", effect_type)
+    def _normalize(self, info: ValidationInfo) -> ToolInvocation:
+        raw_tool_name = self.raw_tool_name if self.raw_tool_name is not None else self.tool_name
+        raw_tool_name = str(raw_tool_name)
+        if not raw_tool_name.strip():
+            raise ValueError("raw_tool_name must be non-empty")
+        if raw_tool_name.strip().startswith("__"):
+            raise ValueError("synthetic_tool_invocation_forbidden")
+        internal_factory = (
+            info.context is not None
+            and info.context.get("tool_invocation_factory_capability") is _TOOL_INVOCATION_FACTORY_CAPABILITY
+        )
+        classification = self.classification if internal_factory else classify_tool_invocation(raw_tool_name)
+        if classification is None or (
+            internal_factory and not _classification_matches_captured_snapshot(classification)
+        ):
+            raise ValueError("deo_tool_classification_mismatch: missing classification")
+        if classification.raw_tool_name != raw_tool_name:
+            raise ValueError("deo_tool_classification_mismatch: raw tool name differs from classifier")
+        if self.effect_type is not None and self.effect_type is not classification.effect_type:
+            raise ValueError("deo_tool_classification_mismatch: effect_type")
+        if self.execution_mode is not None and self.execution_mode is not classification.execution_mode:
+            raise ValueError("deo_tool_classification_mismatch: execution_mode")
+        object.__setattr__(self, "raw_tool_name", raw_tool_name)
+        object.__setattr__(self, "tool_name", classification.canonical_tool_name)
+        object.__setattr__(self, "effect_type", classification.effect_type)
+        object.__setattr__(self, "execution_mode", classification.execution_mode)
+        object.__setattr__(self, "classification", classification)
         return self
+
+
+_TOOL_INVOCATION_FACTORY_CAPABILITY = object()
 
 
 class ToolBatch(_FrozenMappingModel):

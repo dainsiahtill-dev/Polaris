@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import math
 import re
 from collections.abc import Iterable
-from typing import Any
+from dataclasses import dataclass, field
+from hashlib import sha256
+from typing import Any, Literal, TypeAlias, cast
 
-from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 from polaris.kernelone.tool_execution.validators import (
     ERROR_ARRAY_TOO_LONG,
     ERROR_ARRAY_TOO_SHORT,
@@ -19,6 +22,152 @@ from polaris.kernelone.tool_execution.validators import (
     ToolArgValidationResult,
     get_validator,
 )
+
+
+def _tool_spec_registry() -> Any:
+    """Import the registry lazily to keep snapshot contracts dependency-free."""
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    return ToolSpecRegistry
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenNullV1:
+    kind: Literal["null"] = field(init=False, default="null")
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenScalarV1:
+    scalar_type: Literal["string", "integer", "float", "boolean"]
+    value: str | int | float | bool
+    kind: Literal["scalar"] = field(init=False, default="scalar")
+
+    def __post_init__(self) -> None:
+        expected = {"string": str, "integer": int, "float": float, "boolean": bool}[self.scalar_type]
+        if type(self.value) is not expected:
+            raise ValueError(f"scalar value does not match {self.scalar_type}")
+        if self.scalar_type == "float" and not math.isfinite(cast(float, self.value)):
+            raise ValueError("float scalar must be finite")
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenMapEntryV1:
+    key: str
+    value: FrozenToolSpecNodeV1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str):
+            raise ValueError("map key must be a string")
+        _validate_frozen_node(self.value)
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenMapV1:
+    entries: tuple[FrozenMapEntryV1, ...]
+    kind: Literal["map"] = field(init=False, default="map")
+
+    def __post_init__(self) -> None:
+        keys = tuple(entry.key for entry in self.entries)
+        if keys != tuple(sorted(keys, key=lambda key: key.encode("utf-8"))) or len(keys) != len(set(keys)):
+            raise ValueError("map entries must be unique and sorted by UTF-8 key bytes")
+        for entry in self.entries:
+            _validate_frozen_node(entry.value)
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenSequenceV1:
+    items: tuple[FrozenToolSpecNodeV1, ...]
+    kind: Literal["sequence"] = field(init=False, default="sequence")
+
+    def __post_init__(self) -> None:
+        for item in self.items:
+            _validate_frozen_node(item)
+
+
+FrozenToolSpecNodeV1: TypeAlias = FrozenNullV1 | FrozenScalarV1 | FrozenMapV1 | FrozenSequenceV1
+
+
+def _validate_frozen_node(node: FrozenToolSpecNodeV1) -> None:
+    if isinstance(node, FrozenNullV1):
+        return
+    if isinstance(node, FrozenScalarV1):
+        node.__post_init__()
+        return
+    if isinstance(node, FrozenMapV1):
+        node.__post_init__()
+        return
+    if isinstance(node, FrozenSequenceV1):
+        node.__post_init__()
+        return
+    raise ValueError("invalid frozen tool spec node")
+
+
+def frozen_node_to_value(node: FrozenToolSpecNodeV1) -> object:
+    """Return an owned mutable value from a tagged immutable node."""
+    _validate_frozen_node(node)
+    if isinstance(node, FrozenNullV1):
+        return None
+    if isinstance(node, FrozenScalarV1):
+        return node.value
+    if isinstance(node, FrozenSequenceV1):
+        return [frozen_node_to_value(item) for item in node.items]
+    return {entry.key: frozen_node_to_value(entry.value) for entry in node.entries}
+
+
+def _canonical_node_payload(node: FrozenToolSpecNodeV1) -> object:
+    _validate_frozen_node(node)
+    if isinstance(node, FrozenNullV1):
+        return {"kind": "null"}
+    if isinstance(node, FrozenScalarV1):
+        value: object = cast(float, node.value).hex() if node.scalar_type == "float" else node.value
+        return {"kind": "scalar", "scalar_type": node.scalar_type, "value": value}
+    if isinstance(node, FrozenSequenceV1):
+        return {"kind": "sequence", "items": [_canonical_node_payload(item) for item in node.items]}
+    return {
+        "kind": "map",
+        "entries": [{"key": entry.key, "value": _canonical_node_payload(entry.value)} for entry in node.entries],
+    }
+
+
+def _hash_node(domain: str, node: FrozenToolSpecNodeV1) -> str:
+    encoded = json.dumps(_canonical_node_payload(node), ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    return sha256(domain.encode("ascii") + b":" + encoded).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class CapturedToolSpecSnapshotV1:
+    raw_tool_name: str
+    canonical_tool_name: str
+    registered: bool
+    canonical_effective_spec: FrozenMapV1
+    canonical_name_view: FrozenSequenceV1
+    alias_binding_view: FrozenMapV1
+    tool_spec_hash: str = field(init=False)
+    canonical_name_view_hash: str = field(init=False)
+    alias_binding_hash: str = field(init=False)
+    snapshot_hash: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        for node in (self.canonical_effective_spec, self.canonical_name_view, self.alias_binding_view):
+            _validate_frozen_node(node)
+        tool_hash = _hash_node("tool-spec", self.canonical_effective_spec)
+        names_hash = _hash_node("canonical-names", self.canonical_name_view)
+        aliases_hash = _hash_node("alias-bindings", self.alias_binding_view)
+        snapshot_payload = FrozenMapV1(
+            (
+                FrozenMapEntryV1("aliases", FrozenScalarV1("string", aliases_hash)),
+                FrozenMapEntryV1("canonical", FrozenScalarV1("string", self.canonical_tool_name)),
+                FrozenMapEntryV1("names", FrozenScalarV1("string", names_hash)),
+                FrozenMapEntryV1("raw", FrozenScalarV1("string", self.raw_tool_name)),
+                FrozenMapEntryV1("registered", FrozenScalarV1("boolean", self.registered)),
+                FrozenMapEntryV1("tool", FrozenScalarV1("string", tool_hash)),
+            )
+        )
+        object.__setattr__(self, "tool_spec_hash", tool_hash)
+        object.__setattr__(self, "canonical_name_view_hash", names_hash)
+        object.__setattr__(self, "alias_binding_hash", aliases_hash)
+        object.__setattr__(self, "snapshot_hash", _hash_node("tool-spec-snapshot", snapshot_payload))
+
 
 # Alias for internal use
 _get_validator = get_validator
@@ -74,10 +223,11 @@ def canonicalize_tool_name(name: str, *, keep_unknown: bool = True) -> str:
     cleaned = str(name or "").strip()
     if not cleaned:
         return ""
-    canonical = ToolSpecRegistry.get_canonical(cleaned)
+    registry = _tool_spec_registry()
+    canonical = registry.get_canonical(cleaned)
     if keep_unknown:
         return canonical
-    return canonical if ToolSpecRegistry.is_registered(canonical) else ""
+    return canonical if registry.is_registered(canonical) else ""
 
 
 def _format_error(tool_name: str, description: str) -> str:
@@ -134,7 +284,7 @@ def validate_tool_step(tool: str, args: dict[str, Any] | None) -> tuple[bool, st
         - error_message: Human-readable error description in format
           "{tool_name}: {error_description}", or empty string if valid.
     """
-    registry = ToolSpecRegistry._get_registry()
+    registry = _tool_spec_registry().get_all_specs()
     canonical_tool = canonicalize_tool_name(tool)
     if not registry.get(canonical_tool):
         allowed_tools = ", ".join(sorted(supported_tool_names()))
@@ -147,7 +297,7 @@ def validate_tool_step(tool: str, args: dict[str, Any] | None) -> tuple[bool, st
     from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 
     normalized = normalize_tool_arguments(canonical_tool, args if isinstance(args, dict) else {})
-    spec = ToolSpecRegistry.get_all_specs().get(canonical_tool, {})
+    spec = _tool_spec_registry().get_all_specs().get(canonical_tool, {})
 
     # Validate required arguments
     required_any = spec.get("required_any", [])
@@ -214,7 +364,7 @@ def read_tool_names() -> list[str]:
     Returns:
         Alphabetically sorted list of read-category tool names.
     """
-    return sorted([spec.canonical_name for spec in ToolSpecRegistry.get_read_tools()])
+    return sorted([spec.canonical_name for spec in _tool_spec_registry().get_read_tools()])
 
 
 def write_tool_names() -> list[str]:
@@ -223,7 +373,7 @@ def write_tool_names() -> list[str]:
     Returns:
         Alphabetically sorted list of write-category tool names.
     """
-    return sorted([spec.canonical_name for spec in ToolSpecRegistry.get_write_tools()])
+    return sorted([spec.canonical_name for spec in _tool_spec_registry().get_write_tools()])
 
 
 def supported_tool_names() -> list[str]:
@@ -232,7 +382,7 @@ def supported_tool_names() -> list[str]:
     Returns:
         Alphabetically sorted list of all tool names (read, write, and exec).
     """
-    return ToolSpecRegistry.get_all_canonical_names()
+    return _tool_spec_registry().get_all_canonical_names()
 
 
 def list_tool_contracts(categories: Iterable[str] | None = None) -> list[dict[str, Any]]:
@@ -251,7 +401,7 @@ def list_tool_contracts(categories: Iterable[str] | None = None) -> list[dict[st
     else:
         allowed = {str(item).strip().lower() for item in categories if str(item or "").strip()}
     contracts: list[dict[str, Any]] = []
-    tool_specs = ToolSpecRegistry.get_all_specs()
+    tool_specs = _tool_spec_registry().get_all_specs()
     for name in sorted(tool_specs.keys()):
         spec = tool_specs[name]
         category = str(spec.get("category") or "").strip().lower()

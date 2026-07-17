@@ -11,7 +11,6 @@ Tests for Turn Decision Decoder.
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.turn_decision_decoder import (
     DecodeConfig,
@@ -24,6 +23,27 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecisionKind,
     TurnId,
 )
+
+
+def _tool_calls_alias_response(
+    *,
+    content: str,
+    thinking: str | None,
+    tool_calls: list[dict[str, object]],
+    model: str,
+    usage: dict[str, object] | None = None,
+) -> RawLLMResponse:
+    """Build a typed provider response that exposes only the legacy alias."""
+
+    response = RawLLMResponse(
+        content=content,
+        thinking=thinking,
+        model=model,
+        usage=usage or {},
+    )
+    object.__setattr__(response, "tool_calls", tool_calls)
+    object.__delattr__(response, "native_tool_calls")
+    return response
 
 
 def _native_tool(
@@ -126,7 +146,7 @@ class TestNativeToolExecutionSource:
 
     def test_tool_calls_alias_executes_as_native_provider_calls(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code"))
-        response = SimpleNamespace(
+        response = _tool_calls_alias_response(
             content="",
             thinking=None,
             tool_calls=[
@@ -135,7 +155,7 @@ class TestNativeToolExecutionSource:
             model="compat-provider",
         )
 
-        decision = decoder.decode(response, TurnId("turn_tool_alias"))  # type: ignore[arg-type]
+        decision = decoder.decode(response, TurnId("turn_tool_alias"))
 
         assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
         assert decision["tool_batch"] is not None
@@ -337,7 +357,7 @@ class TestNativeToolExecutionSource:
 
     def test_tool_calls_alias_response_uses_shared_native_tool_normalizer(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
-        response = SimpleNamespace(
+        response = _tool_calls_alias_response(
             content="read server.py",
             thinking=None,
             tool_calls=[
@@ -587,7 +607,7 @@ class TestHandoffWorkflow:
         assert envelopes[0]["tool_name"] == "read_file"
         assert envelopes[0]["call_id"] == "call_handoff"
 
-    def test_async_tools_trigger_handoff(self) -> None:
+    def test_unregistered_async_named_tool_is_serial_tool_batch(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
 
         response = RawLLMResponse(
@@ -602,8 +622,9 @@ class TestHandoffWorkflow:
 
         decision = decoder.decode(response, TurnId("turn_14"))
 
-        assert decision["kind"] == TurnDecisionKind.HANDOFF_WORKFLOW
+        assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
         assert decision["tool_batch"] is not None
+        assert decision["tool_batch"]["serial_writes"][0]["tool_name"] == "create_pull_request"
 
     def test_many_reads_trigger_handoff(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))

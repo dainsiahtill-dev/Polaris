@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import ast
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +48,7 @@ __all__ = [
     # Patch content normalization
     "normalize_patch_like_write_content",
     "normalize_tool_arguments",
+    "normalize_tool_arguments_from_snapshot",
     "normalize_tool_name",
     "validate_tool_path_argument",
 ]
@@ -55,18 +56,28 @@ __all__ = [
 
 # CANONICAL STRATEGY: Only allow same-tool command aliases
 # Cross-tool mappings (repo_* -> read_file, etc.) are FORBIDDEN
-TOOL_NAME_ALIASES: dict[str, str] = {
-    # command execution aliases (same tool, different invocation style)
-    # All map to: execute_command
-    "run_command": "execute_command",
-    "run_shell": "execute_command",
-    "exec_cmd": "execute_command",
-    "shell_execute": "execute_command",
-    "system_call": "execute_command",
-    "command_line": "execute_command",
-    # NOTE: All other tool names are CANONICAL - do NOT add aliases here
-    # Any alias that maps to a different tool is a policy violation
-}
+class _OwnerAliasCompatibilityView(Mapping[str, str]):
+    """Read-only compatibility projection, never an alias resolver."""
+
+    @staticmethod
+    def _bindings() -> dict[str, str]:
+        from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        value = frozen_node_to_value(ToolSpecRegistry.capture_effective_spec("").alias_binding_view)
+        return value if isinstance(value, dict) else {}
+
+    def __getitem__(self, key: str) -> str:
+        return self._bindings()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._bindings())
+
+    def __len__(self) -> int:
+        return len(self._bindings())
+
+
+TOOL_NAME_ALIASES: Mapping[str, str] = _OwnerAliasCompatibilityView()
 
 
 _JSON_ARGUMENT_WRAPPER_KEYS = frozenset(
@@ -242,20 +253,33 @@ def normalize_tool_name(tool_name: str) -> str:
     2. ToolSpecRegistry canonical/alias resolution
     3. Schema-driven resolution fallback via contracts.py aliases
     """
-    raw_token = str(tool_name or "").strip()
-    token = raw_token.lower()
-    # First check explicit TOOL_NAME_ALIASES
-    if token in TOOL_NAME_ALIASES:
-        return TOOL_NAME_ALIASES[token]
     from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-    registry_name = ToolSpecRegistry.get_canonical(raw_token)
-    if registry_name != raw_token:
-        return registry_name
-    # Then resolve via schema-driven alias resolution
-    from .schema_driven_normalizer import get_schema_normalizer
+    snapshot = ToolSpecRegistry.capture_effective_spec(str(tool_name or "").strip())
+    return snapshot.canonical_tool_name if snapshot.registered else str(tool_name or "").strip().lower()
 
-    return get_schema_normalizer()._resolve_tool_alias(token)
+
+def normalize_tool_arguments_from_snapshot(
+    snapshot: object,
+    arguments: Mapping[str, object],
+) -> dict[str, object]:
+    """Normalize one mapping using only a previously captured owner snapshot."""
+    from polaris.kernelone.tool_execution.contracts import CapturedToolSpecSnapshotV1, frozen_node_to_value
+
+    if not isinstance(snapshot, CapturedToolSpecSnapshotV1) or not snapshot.registered:
+        raise ValueError("registered CapturedToolSpecSnapshotV1 required")
+    spec = frozen_node_to_value(snapshot.canonical_effective_spec)
+    if not isinstance(spec, dict):
+        raise ValueError("snapshot effective spec must be a mapping")
+    from .schema_driven_normalizer import SchemaDrivenNormalizer
+
+    normalized: dict[str, Any] = SchemaDrivenNormalizer({snapshot.canonical_tool_name: spec}).normalize(
+        snapshot.canonical_tool_name, dict(arguments)
+    )
+    normalizer = TOOL_NORMALIZERS.get(snapshot.canonical_tool_name)
+    if normalizer is not None:
+        normalized = normalizer(normalized)
+    return normalized
 
 
 def normalize_tool_arguments(
@@ -271,22 +295,17 @@ def normalize_tool_arguments(
     parameter aliases, while per-tool normalizers handle complex transformations
     that cannot be expressed as simple alias mappings.
     """
-    # First resolve tool name aliases
-    normalized_tool_name = normalize_tool_name(tool_name)
+    # Capture exactly one owner view for canonical alias resolution.
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    snapshot = ToolSpecRegistry.capture_effective_spec(tool_name)
+    normalized_tool_name = snapshot.canonical_tool_name if snapshot.registered else normalize_tool_name(tool_name)
     normalized = _unwrap_json_wrapped_arguments(normalized_tool_name, tool_args)
 
     # Stage 1: Apply schema-driven normalization (arg_aliases)
     # This handles all parameter alias mappings declared in contracts.py
-    from .schema_driven_normalizer import normalize_with_schema
-
-    normalized = normalize_with_schema(normalized_tool_name, normalized)
-
-    # Stage 2: Apply per-tool complex transformations
-    # Only for tools with special transformations (range params, clamping, etc.)
-    normalizer = TOOL_NORMALIZERS.get(normalized_tool_name)
-    if normalizer is not None:
-        normalized = normalizer(normalized)
-
+    if snapshot.registered:
+        return dict(normalize_tool_arguments_from_snapshot(snapshot, normalized))
     return normalized
 
 

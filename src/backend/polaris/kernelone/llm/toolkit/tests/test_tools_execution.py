@@ -757,7 +757,7 @@ class TestExecuteCommandGuards:
             workspace=temp_workspace,
             capability_token={
                 "token_id": "job-1",
-                "execution_envelope_hash": "env-hash",
+                "execution_envelope_hash": "a" * 64,
                 "allowed_commands": ["python --version"],
             },
         )
@@ -770,7 +770,7 @@ class TestExecuteCommandGuards:
         receipt = result.get("effect_receipt")
         assert isinstance(receipt, dict)
         assert receipt["capability_token"]["token_id"] == "job-1"
-        assert receipt["capability_token"]["execution_envelope_hash"] == "env-hash"
+        assert receipt["capability_token"]["execution_envelope_hash"] == "a" * 64
         assert receipt["capability_token"]["allowed_commands"] == ["python --version"]
 
     def test_execute_command_capability_token_allows_listed_command(self, temp_workspace) -> None:
@@ -779,7 +779,7 @@ class TestExecuteCommandGuards:
             workspace=temp_workspace,
             capability_token={
                 "token_id": "job-1",
-                "execution_envelope_hash": "env-hash",
+                "execution_envelope_hash": "a" * 64,
                 "allowed_commands": ["python --version"],
             },
         )
@@ -790,6 +790,38 @@ class TestExecuteCommandGuards:
         receipt = result["result"].get("effect_receipt")
         assert isinstance(receipt, dict)
         assert receipt["capability_token"]["allowed_commands"] == ["python --version"]
+
+    def test_execute_command_capability_token_denies_shell_prefix_extension(self, temp_workspace) -> None:
+        """Shell operators require an exact capability entry instead of a command prefix."""
+        executor = AgentAccelToolExecutor(
+            workspace=temp_workspace,
+            capability_token={
+                "token_id": "job-1",
+                "execution_envelope_hash": "a" * 64,
+                "allowed_commands": ["python"],
+            },
+        )
+
+        result = executor.execute("execute_command", {"command": "python --version | cat"})
+
+        assert result["ok"] is False
+        assert result["error_type"] == "command_capability_denied"
+        assert result["blocked"] is True
+
+    def test_execute_command_capability_token_allows_duplicate_entries(self, temp_workspace) -> None:
+        """Duplicate capability entries preserve legacy prefix authorization."""
+        executor = AgentAccelToolExecutor(
+            workspace=temp_workspace,
+            capability_token={
+                "token_id": "job-1",
+                "execution_envelope_hash": "a" * 64,
+                "allowed_commands": ("python", "python"),
+            },
+        )
+
+        result = executor.execute("execute_command", {"command": "python --version"})
+
+        assert result["ok"] is True
 
     @pytest.mark.skipif(os.name != "nt", reason="Windows-specific shell wrapping behavior")
     def test_execute_command_windows_wraps_via_cmd(self, temp_workspace, monkeypatch) -> None:

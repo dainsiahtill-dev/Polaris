@@ -24,6 +24,17 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
+from polaris.kernelone.tool_execution.contracts import (
+    CapturedToolSpecSnapshotV1,
+    FrozenMapEntryV1,
+    FrozenMapV1,
+    FrozenNullV1,
+    FrozenScalarV1,
+    FrozenSequenceV1,
+    FrozenToolSpecNodeV1,
+    frozen_node_to_value,
+)
+
 # =============================================================================
 # ToolSpec - 单一权威Tool定义
 # =============================================================================
@@ -63,13 +74,13 @@ class ToolSpec:
             "function": {
                 "name": self.canonical_name,
                 "description": self.description,
-                "parameters": self.parameters,
+                "parameters": deepcopy(self.parameters),
             },
         }
 
     def to_anthropic_tool(self) -> dict[str, Any]:
         """转换为Anthropic native tool格式"""
-        schema = self.parameters.copy()
+        schema = deepcopy(self.parameters)
         schema.pop("required", [])
         return {
             "name": self.canonical_name,
@@ -138,6 +149,95 @@ def _sort_schema_keys(value: Any) -> Any:
     return value
 
 
+class ToolSpecRegistryConsistencyError(RuntimeError):
+    """Raised when a registry state cannot prove one coherent tool view."""
+
+
+def _freeze_tool_value(value: Any) -> FrozenToolSpecNodeV1:
+    if value is None:
+        return FrozenNullV1()
+    if type(value) is bool:
+        return FrozenScalarV1("boolean", value)
+    if type(value) is int:
+        return FrozenScalarV1("integer", value)
+    if type(value) is float:
+        return FrozenScalarV1("float", value)
+    if isinstance(value, str):
+        return FrozenScalarV1("string", value)
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("ToolSpec mapping keys must be strings")
+        return FrozenMapV1(
+            tuple(
+                FrozenMapEntryV1(key, _freeze_tool_value(item))
+                for key, item in sorted(value.items(), key=lambda item: str(item[0]).encode("utf-8"))
+            )
+        )
+    if isinstance(value, (list, tuple)):
+        return FrozenSequenceV1(tuple(_freeze_tool_value(item) for item in value))
+    raise TypeError(f"unsupported ToolSpec value type: {type(value).__name__}")
+
+
+def _frozen_map_to_dict(node: FrozenMapV1) -> dict[str, Any]:
+    value = frozen_node_to_value(node)
+    if not isinstance(value, dict):
+        raise ToolSpecRegistryConsistencyError("frozen map did not materialize as a dictionary")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolSpecRegistryStateV1:
+    raw_canonical_specs: FrozenMapV1
+    canonical_names: FrozenSequenceV1
+    alias_bindings: FrozenMapV1
+
+    def __post_init__(self) -> None:
+        raw = _frozen_map_to_dict(self.raw_canonical_specs)
+        names_value = frozen_node_to_value(self.canonical_names)
+        aliases = _frozen_map_to_dict(self.alias_bindings)
+        if not isinstance(names_value, list) or any(not isinstance(name, str) for name in names_value):
+            raise ToolSpecRegistryConsistencyError("canonical names must be a string sequence")
+        if set(raw) != set(names_value) or len(names_value) != len(set(names_value)):
+            raise ToolSpecRegistryConsistencyError("raw and canonical name views disagree")
+        for name, spec in raw.items():
+            if not isinstance(spec, dict):
+                raise ToolSpecRegistryConsistencyError(f"raw specification for {name} is not a dictionary")
+            effective = _build_tool_spec_from_dict(name, spec)
+            if effective.canonical_name != name:
+                raise ToolSpecRegistryConsistencyError("raw/effective canonical mismatch")
+        for alias, canonical in aliases.items():
+            if not isinstance(alias, str) or not isinstance(canonical, str) or canonical not in raw:
+                raise ToolSpecRegistryConsistencyError("invalid alias binding")
+
+
+def _state_from_raw(
+    raw_specs: dict[str, dict[str, Any]], alias_bindings: dict[str, str] | None = None
+) -> _ToolSpecRegistryStateV1:
+    detached_raw = deepcopy(raw_specs)
+    aliases = dict(alias_bindings or {})
+    if alias_bindings is None:
+        for name, spec in detached_raw.items():
+            aliases[name] = name
+            for alias in spec.get("aliases", []):
+                if not isinstance(alias, str):
+                    raise TypeError("tool alias must be a string")
+                normalized = alias.lower()
+                existing = aliases.get(normalized)
+                if existing is not None and existing != name:
+                    raise ValueError(f"Duplicate alias '{alias}' for tool '{name}'")
+                aliases[normalized] = name
+    raw_node = _freeze_tool_value(detached_raw)
+    alias_node = _freeze_tool_value(aliases)
+    names_node = _freeze_tool_value(sorted(detached_raw))
+    if (
+        not isinstance(raw_node, FrozenMapV1)
+        or not isinstance(alias_node, FrozenMapV1)
+        or not isinstance(names_node, FrozenSequenceV1)
+    ):
+        raise ToolSpecRegistryConsistencyError("invalid registry state encoding")
+    return _ToolSpecRegistryStateV1(raw_node, names_node, alias_node)
+
+
 class ToolSpecRegistry:
     """
     单一Source of Truth for所有Tool定义
@@ -148,64 +248,48 @@ class ToolSpecRegistry:
     使用ContextVar实现线程安全和异步上下文隔离。
     """
 
-    _registry_var: ContextVar[dict[str, dict[str, Any]] | None] = ContextVar("tool_spec_registry", default=None)
-    _specs_var: ContextVar[dict[str, ToolSpec] | None] = ContextVar("tool_spec_specs", default=None)
-    _canonical_names_var: ContextVar[set[str] | None] = ContextVar("tool_spec_canonical_names", default=None)
+    _state_var: ContextVar[_ToolSpecRegistryStateV1 | None] = ContextVar("tool_spec_registry_state", default=None)
 
     @classmethod
     def _ensure_initialized(cls) -> None:
         """Lazily populate built-in tool specs for the current execution context."""
-        registry = cls._registry_var.get()
-        specs = cls._specs_var.get()
-        canonical_names = cls._canonical_names_var.get()
-        if registry is not None and specs is not None and canonical_names is not None:
+        if cls._state_var.get() is not None:
             return
+        builtin = deepcopy(_BUILTIN_REGISTRY)
+        command_spec = builtin.get("execute_command")
+        if isinstance(command_spec, dict):
+            aliases = command_spec.setdefault("aliases", [])
+            if isinstance(aliases, list):
+                for alias in ("run_command", "run_shell", "exec_cmd", "shell_execute", "system_call", "command_line"):
+                    if alias not in aliases:
+                        aliases.append(alias)
+        cls._state_var.set(_state_from_raw(builtin))
 
-        initialized_registry: dict[str, dict[str, Any]] = {}
-        initialized_specs: dict[str, ToolSpec] = {}
-        initialized_canonical_names: set[str] = set()
-
-        for tool_name, spec_dict in _BUILTIN_REGISTRY.items():
-            initialized_registry[tool_name] = dict(spec_dict)
-            spec = _build_tool_spec_from_dict(tool_name, spec_dict)
-            initialized_specs[tool_name] = spec
-            initialized_canonical_names.add(tool_name)
-
-        for tool_name in _BUILTIN_REGISTRY:
-            spec = initialized_specs[tool_name]
-            for alias in spec.aliases:
-                alias_lower = alias.lower()
-                if alias_lower in _BUILTIN_REGISTRY:
-                    continue
-                initialized_specs[alias_lower] = spec
-
-        cls._registry_var.set(initialized_registry)
-        cls._specs_var.set(initialized_specs)
-        cls._canonical_names_var.set(initialized_canonical_names)
+    @classmethod
+    def _get_state(cls) -> _ToolSpecRegistryStateV1:
+        cls._ensure_initialized()
+        state = cls._state_var.get()
+        if state is None:
+            raise ToolSpecRegistryConsistencyError("ToolSpecRegistry state failed to initialize")
+        return state
 
     @classmethod
     def _get_registry(cls) -> dict[str, dict[str, Any]]:
-        cls._ensure_initialized()
-        val = cls._registry_var.get()
-        if val is None:
-            raise RuntimeError("ToolSpecRegistry registry failed to initialize")
-        return val
+        return _frozen_map_to_dict(cls._get_state().raw_canonical_specs)
 
     @classmethod
     def _get_specs(cls) -> dict[str, ToolSpec]:
-        cls._ensure_initialized()
-        val = cls._specs_var.get()
-        if val is None:
-            raise RuntimeError("ToolSpecRegistry specs failed to initialize")
-        return val
+        raw = cls._get_registry()
+        aliases = _frozen_map_to_dict(cls._get_state().alias_bindings)
+        specs = {name: _build_tool_spec_from_dict(name, spec) for name, spec in raw.items()}
+        return {alias: specs[canonical] for alias, canonical in aliases.items()}
 
     @classmethod
     def _get_canonical_names(cls) -> set[str]:
-        cls._ensure_initialized()
-        val = cls._canonical_names_var.get()
-        if val is None:
-            raise RuntimeError("ToolSpecRegistry canonical names failed to initialize")
-        return val
+        names = frozen_node_to_value(cls._get_state().canonical_names)
+        if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+            raise ToolSpecRegistryConsistencyError("canonical names view is invalid")
+        return set(names)
 
     @classmethod
     def register(cls, arg1: str | ToolSpec, arg2: dict[str, Any] | None = None, *, strict: bool = False) -> None:
@@ -227,15 +311,29 @@ class ToolSpecRegistry:
         if isinstance(arg1, str) and arg2 is not None:
             name = arg1
             spec_dict = arg2
-            cls._get_registry()[name] = dict(spec_dict)
-            tool_spec = _build_tool_spec_from_dict(name, spec_dict)
-            cls._register_tool_spec(tool_spec, strict=strict)
+            raw = cls._get_registry()
+            candidate = deepcopy(spec_dict)
+            if name in raw:
+                if strict:
+                    raise ValueError(f"Duplicate tool: {name}")
+                if (
+                    _state_from_raw({name: raw[name]}).raw_canonical_specs
+                    != _state_from_raw({name: candidate}).raw_canonical_specs
+                ):
+                    raise ValueError(f"conflicting duplicate tool: {name}")
+                return
+            aliases = _frozen_map_to_dict(cls._get_state().alias_bindings)
+            for alias in candidate.get("aliases", []):
+                target = aliases.get(str(alias).lower())
+                if target is not None and target != name:
+                    raise ValueError(f"Duplicate alias '{alias}' for tool '{name}'")
+            raw[name] = candidate
+            cls._state_var.set(_state_from_raw(raw))
             return
 
         if isinstance(arg1, ToolSpec):
             spec = arg1
-            cls._register_tool_spec(spec, strict=strict)
-            cls._get_registry()[spec.canonical_name] = _tool_spec_to_dict(spec)
+            cls.register(spec.canonical_name, _tool_spec_to_dict(spec), strict=strict)
             return
 
         raise TypeError("register() expects either (name: str, spec: dict) or (spec: ToolSpec, *, strict=False)")
@@ -243,21 +341,7 @@ class ToolSpecRegistry:
     @classmethod
     def _register_tool_spec(cls, spec: ToolSpec, *, strict: bool = False) -> None:
         """内部方法: 注册ToolSpec到_specs和_canonical_names。"""
-        canonical_names = cls._get_canonical_names()
-        specs = cls._get_specs()
-        if spec.canonical_name in canonical_names:
-            if strict:
-                raise ValueError(f"Duplicate tool: {spec.canonical_name}")
-            return
-        specs[spec.canonical_name] = spec
-        canonical_names.add(spec.canonical_name)
-        for alias in spec.aliases:
-            if alias in specs:
-                if strict:
-                    raise ValueError(f"Duplicate alias '{alias}' for tool '{spec.canonical_name}'")
-                specs[alias] = spec
-            else:
-                specs[alias] = spec
+        cls.register(spec.canonical_name, _tool_spec_to_dict(spec), strict=strict)
 
     @classmethod
     def register_alias_only(cls, canonical_name: str, alias: str) -> None:
@@ -266,19 +350,18 @@ class ToolSpecRegistry:
         用于两遍注册模式：第一遍注册所有别名，第二遍注册规范名。
         别名注册使用 last-registered-wins 策略。
         """
-        specs = cls._get_specs()
-        if alias in specs:
-            existing = specs[alias]
-            specs[alias] = existing
-        else:
-            spec = specs.get(canonical_name)
-            if spec:
-                specs[alias] = spec
+        raw = cls._get_registry()
+        if canonical_name not in raw:
+            raise ValueError(f"unknown canonical tool: {canonical_name}")
+        bindings = _frozen_map_to_dict(cls._get_state().alias_bindings)
+        bindings[alias.lower()] = canonical_name
+        cls._state_var.set(_state_from_raw(raw, bindings))
 
     @classmethod
     def get(cls, name: str) -> ToolSpec | None:
         """获取工具规格(支持别名查找)"""
-        return cls._get_specs().get(name)
+        spec = cls._get_specs().get(name)
+        return deepcopy(spec) if spec is not None else None
 
     @classmethod
     def get_canonical(cls, name: str) -> str:
@@ -313,7 +396,33 @@ class ToolSpecRegistry:
     @classmethod
     def get_all_specs(cls) -> dict[str, dict[str, Any]]:
         """获取所有已注册工具的原始规格字典（基于_registry）。"""
-        return dict(cls._get_registry())
+        return deepcopy(cls._get_registry())
+
+    @classmethod
+    def capture_effective_spec(cls, raw_tool_name: str) -> CapturedToolSpecSnapshotV1:
+        """Capture one coherent, tagged and immutable owner-side tool view."""
+        state = cls._get_state()
+        raw = _frozen_map_to_dict(state.raw_canonical_specs)
+        bindings = _frozen_map_to_dict(state.alias_bindings)
+        canonical = ""
+        for candidate in _tool_name_candidates(raw_tool_name):
+            target = bindings.get(candidate)
+            if isinstance(target, str):
+                canonical = target
+                break
+        registered = canonical in raw
+        effective = raw.get(canonical, {}) if registered else {}
+        effective_node = _freeze_tool_value(effective)
+        if not isinstance(effective_node, FrozenMapV1):
+            raise ToolSpecRegistryConsistencyError("effective tool spec is not a map")
+        return CapturedToolSpecSnapshotV1(
+            raw_tool_name=str(raw_tool_name),
+            canonical_tool_name=canonical if registered else str(raw_tool_name),
+            registered=registered,
+            canonical_effective_spec=effective_node,
+            canonical_name_view=state.canonical_names,
+            alias_binding_view=state.alias_bindings,
+        )
 
     @classmethod
     def get_all_tools(cls, *, include_deprecated: bool = True) -> list[ToolSpec]:
@@ -507,9 +616,7 @@ class ToolSpecRegistry:
     @classmethod
     def clear(cls) -> None:
         """清空注册表(主要用于测试)"""
-        cls._get_registry().clear()
-        cls._get_specs().clear()
-        cls._get_canonical_names().clear()
+        cls._state_var.set(_state_from_raw({}))
 
     @classmethod
     def reset_for_testing(cls) -> None:
@@ -1581,18 +1688,35 @@ def _build_tool_spec_from_dict(tool_name: str, spec_dict: dict[str, Any]) -> Too
         description=description,
         parameters=parameters,
         categories=categories,
+        dangerous_patterns=tuple(spec_dict.get("dangerous_patterns", ())),
+        handler_module=str(spec_dict.get("handler_module", "")),
+        handler_function=str(spec_dict.get("handler_function", "")),
         response_format_hint=response_format_hint,
     )
 
 
 def _tool_spec_to_dict(spec: ToolSpec) -> dict[str, Any]:
     """将ToolSpec转换为原始spec字典（最佳 effort，用于同步）。"""
+    properties = spec.parameters.get("properties", {})
+    required = set(spec.parameters.get("required", []))
+    arguments: list[dict[str, Any]] = []
+    if isinstance(properties, dict):
+        for name, parameter in properties.items():
+            if not isinstance(name, str) or not isinstance(parameter, dict):
+                continue
+            argument = deepcopy(parameter)
+            argument["name"] = name
+            argument["required"] = name in required
+            arguments.append(argument)
     return {
-        "canonical_name": spec.canonical_name,
         "aliases": list(spec.aliases),
         "description": spec.description,
-        "category": next(iter(spec.categories)) if spec.categories else "read",
-        "arguments": [],
+        "category": list(spec.categories)
+        if len(spec.categories) > 1
+        else (spec.categories[0] if spec.categories else "read"),
+        "arguments": arguments,
+        "handler_module": spec.handler_module,
+        "handler_function": spec.handler_function,
         "response_format_hint": spec.response_format_hint,
     }
 
@@ -1609,25 +1733,8 @@ def migrate_from_contracts_specs() -> None:
     现在数据已内置于本模块；函数名保留给测试隔离和历史调用点，
     但不再从 contracts.py 读取工具规格。
     """
-    ToolSpecRegistry.clear()
-
-    registry = ToolSpecRegistry._get_registry()
-    specs = ToolSpecRegistry._get_specs()
-    canonical_names = ToolSpecRegistry._get_canonical_names()
-
-    for tool_name, spec_dict in _BUILTIN_REGISTRY.items():
-        registry[tool_name] = dict(spec_dict)
-        spec = _build_tool_spec_from_dict(tool_name, spec_dict)
-        specs[tool_name] = spec
-        canonical_names.add(tool_name)
-
-    for tool_name, _spec_dict in _BUILTIN_REGISTRY.items():
-        spec = specs[tool_name]
-        for alias in spec.aliases:
-            alias_lower = alias.lower()
-            if alias_lower in _BUILTIN_REGISTRY:
-                continue
-            specs[alias_lower] = spec
+    ToolSpecRegistry._state_var.set(None)
+    ToolSpecRegistry._ensure_initialized()
 
 
 # =============================================================================
@@ -1649,4 +1756,10 @@ class _RegistryProxy:
 # 便捷单例代理
 registry = _RegistryProxy()
 
-__all__ = ["ToolSpec", "ToolSpecRegistry", "migrate_from_contracts_specs", "registry"]
+__all__ = [
+    "ToolSpec",
+    "ToolSpecRegistry",
+    "ToolSpecRegistryConsistencyError",
+    "migrate_from_contracts_specs",
+    "registry",
+]

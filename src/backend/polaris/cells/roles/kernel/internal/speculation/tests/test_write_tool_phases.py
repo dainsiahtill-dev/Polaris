@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
+
+from polaris.cells.roles.kernel.internal.speculation.contracts import SyntheticShadowToolKeyV1
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
 from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolCallId,
@@ -69,12 +72,13 @@ class TestBuildPrepareInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
-        assert prepare.tool_name == "__prepare_shadow__"
-        assert prepare.tool_name != "file_exists", (
+        assert prepare.canonical_tool_name == "__prepare_shadow__"
+        assert prepare.canonical_tool_name != "file_exists", (
             "Prepare must NOT use a registered tool name; real file_exists calls would collide in the spec_key hash."
         )
-        assert prepare.effect_type == ToolEffectType.READ
-        assert prepare.execution_mode == ToolExecutionMode.READONLY_PARALLEL
+        assert isinstance(prepare, SyntheticShadowToolKeyV1)
+        assert not hasattr(prepare, "effect_type")
+        assert not hasattr(prepare, "arguments")
 
     def test_prepare_tool_name_does_not_collide_with_file_exists(self) -> None:
         """Adversarial: a model-emitted file_exists must not be mistaken for a
@@ -90,10 +94,10 @@ class TestBuildPrepareInvocation:
         )
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
         # Sentinel must be a non-registered identifier
-        assert prepare.tool_name not in {"file_exists", "read_file", "glob", "repo_rg"}
+        assert prepare.canonical_tool_name not in {"file_exists", "read_file", "glob", "repo_rg"}
         # And the sentinel must be stable (deterministic)
         prepare2 = WriteToolPhases.build_prepare_invocation(invocation)
-        assert prepare.tool_name == prepare2.tool_name
+        assert prepare == prepare2
 
     def test_prepare_id_prefix(self) -> None:
         """Prepare call_id should be prefixed with 'prepare_'."""
@@ -105,10 +109,10 @@ class TestBuildPrepareInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
-        assert prepare.call_id == ToolCallId("prepare_call_123")
+        assert prepare.source_tool_call_id == "call_123"
 
     def test_prepare_preserves_path(self) -> None:
-        """Prepare should pass through path argument."""
+        """Prepare path provenance determines a stable semantic identity."""
         invocation = ToolInvocation(
             call_id=ToolCallId("call_1"),
             tool_name="write_file",
@@ -117,19 +121,41 @@ class TestBuildPrepareInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
-        assert prepare.arguments.get("path") == "src/app.py"
+        assert WriteToolPhases.build_prepare_invocation(invocation).shadow_key_hash == prepare.shadow_key_hash
 
-    def test_prepare_adds_content_length(self) -> None:
-        """Prepare should add content_length for schema validation signal."""
+        other_path = WriteToolPhases.build_prepare_invocation(
+            ToolInvocation(
+                call_id=ToolCallId("call_1"),
+                tool_name="write_file",
+                arguments={"path": "src/other.py", "content": "code"},
+                effect_type=ToolEffectType.WRITE,
+                execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            )
+        )
+        assert other_path.shadow_key_hash != prepare.shadow_key_hash
+
+    def test_prepare_binds_full_content_identity_without_persisting_content(self) -> None:
+        """Equal-length content must not share a shadow key or leak into the key."""
         invocation = ToolInvocation(
             call_id=ToolCallId("call_1"),
             tool_name="write_file",
-            arguments={"path": "a.py", "content": "hello world"},
+            arguments={"path": "a.py", "content": "AAAA"},
             effect_type=ToolEffectType.WRITE,
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
-        assert prepare.arguments.get("content_length") == 11  # len("hello world")
+        different_content = WriteToolPhases.build_prepare_invocation(
+            ToolInvocation(
+                call_id=ToolCallId("call_1"),
+                tool_name="write_file",
+                arguments={"path": "a.py", "content": "BBBB"},
+                effect_type=ToolEffectType.WRITE,
+                execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            )
+        )
+        assert prepare.shadow_key_hash != different_content.shadow_key_hash
+        assert WriteToolPhases.build_prepare_invocation(invocation).shadow_key_hash == prepare.shadow_key_hash
+        assert "AAAA" not in repr(prepare)
 
     def test_prepare_missing_content_key(self) -> None:
         """Prepare does not add content_length when content key is absent."""
@@ -141,8 +167,16 @@ class TestBuildPrepareInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
-        # content_length is not added when content key is absent
-        assert prepare.arguments.get("content_length") is None
+        with_content = WriteToolPhases.build_prepare_invocation(
+            ToolInvocation(
+                call_id=ToolCallId("call_1"),
+                tool_name="write_file",
+                arguments={"path": "a.py", "content": ""},
+                effect_type=ToolEffectType.WRITE,
+                execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            )
+        )
+        assert prepare.shadow_key_hash != with_content.shadow_key_hash
 
     def test_prepare_handles_non_string_content(self) -> None:
         """Prepare should handle non-string content gracefully."""
@@ -154,7 +188,26 @@ class TestBuildPrepareInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
-        assert prepare.arguments.get("content_length") == 0
+        empty_string = WriteToolPhases.build_prepare_invocation(
+            ToolInvocation(
+                call_id=ToolCallId("call_1"),
+                tool_name="write_file",
+                arguments={"path": "a.py", "content": ""},
+                effect_type=ToolEffectType.WRITE,
+                execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            )
+        )
+        assert empty_string.shadow_key_hash != prepare.shadow_key_hash
+        boolean_content = WriteToolPhases.build_prepare_invocation(
+            ToolInvocation(
+                call_id=ToolCallId("call_1"),
+                tool_name="write_file",
+                arguments={"path": "a.py", "content": True},
+                effect_type=ToolEffectType.WRITE,
+                execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            )
+        )
+        assert boolean_content.shadow_key_hash != prepare.shadow_key_hash
 
 
 class TestBuildValidateInvocation:
@@ -172,15 +225,16 @@ class TestBuildValidateInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         validate = WriteToolPhases.build_validate_invocation(invocation)
-        assert validate.tool_name == "__validate_shadow__"
-        assert validate.tool_name != "__prepare_shadow__", (
+        assert validate.canonical_tool_name == "__validate_shadow__"
+        assert validate.canonical_tool_name != "__prepare_shadow__", (
             "Validate must use a distinct sentinel from Prepare to prevent cross-phase spec_key collisions."
         )
-        assert validate.tool_name != "file_exists", (
+        assert validate.canonical_tool_name != "file_exists", (
             "Validate must NOT use a registered tool name; real file_exists calls would collide in the spec_key hash."
         )
-        assert validate.effect_type == ToolEffectType.READ
-        assert validate.execution_mode == ToolExecutionMode.READONLY_PARALLEL
+        assert isinstance(validate, SyntheticShadowToolKeyV1)
+        assert not hasattr(validate, "execution_mode")
+        assert not hasattr(validate, "arguments")
 
     def test_validate_id_prefix(self) -> None:
         """Validate call_id should be prefixed with 'validate_'."""
@@ -192,7 +246,7 @@ class TestBuildValidateInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         validate = WriteToolPhases.build_validate_invocation(invocation)
-        assert validate.call_id == ToolCallId("validate_call_456")
+        assert validate.source_tool_call_id == "call_456"
 
     def test_validate_adds_validate_content_flag(self) -> None:
         """Validate should add validate_content=True signal."""
@@ -204,7 +258,31 @@ class TestBuildValidateInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         validate = WriteToolPhases.build_validate_invocation(invocation)
-        assert validate.arguments.get("validate_content") is True
+        without_content = WriteToolPhases.build_validate_invocation(
+            ToolInvocation(
+                call_id=ToolCallId("call_1"),
+                tool_name="write_file",
+                arguments={"path": "a.py"},
+                effect_type=ToolEffectType.WRITE,
+                execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            )
+        )
+        assert without_content.shadow_key_hash != validate.shadow_key_hash
+        prepare = WriteToolPhases.build_prepare_invocation(invocation)
+        assert prepare.shadow_key_hash != validate.shadow_key_hash
+
+
+def test_synthetic_builders_cannot_materialize_dispatch_types() -> None:
+    for builder in (
+        WriteToolPhases.build_prepare_invocation,
+        WriteToolPhases.build_validate_invocation,
+        WriteToolPhases.build_prepare_shadow_key,
+    ):
+        source = inspect.getsource(builder)
+        assert "ToolInvocation(" not in source
+        assert "ToolBatch(" not in source
+        assert "gateway" not in source.lower()
+        assert "dispatch" not in source.lower()
 
 
 class TestBuildCommitInvocation:
@@ -252,8 +330,8 @@ class TestBuildCommitInvocation:
             call_id=ToolCallId("call_1"),
             tool_name="apply_patch",
             arguments={"path": "a.py"},
-            effect_type=ToolEffectType.READ,
-            execution_mode=ToolExecutionMode.READONLY_PARALLEL,
+            effect_type=ToolEffectType.WRITE,
+            execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         commit = WriteToolPhases.build_commit_invocation(invocation)
         assert commit.effect_type == ToolEffectType.WRITE
@@ -265,7 +343,7 @@ class TestBuildCommitInvocation:
             tool_name="write_file",
             arguments={"path": "a.py"},
             effect_type=ToolEffectType.WRITE,
-            execution_mode=ToolExecutionMode.READONLY_PARALLEL,
+            execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         commit = WriteToolPhases.build_commit_invocation(invocation)
         assert commit.execution_mode == ToolExecutionMode.WRITE_SERIAL

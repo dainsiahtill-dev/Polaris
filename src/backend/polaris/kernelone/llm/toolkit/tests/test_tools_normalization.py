@@ -632,6 +632,45 @@ class TestToolNameNormalization:
         finally:
             tool_spec_registry.migrate_from_contracts_specs()
 
+    def test_snapshot_normalization_does_not_mix_registry_contexts(self) -> None:
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        ToolSpecRegistry.register(
+            "snapshot_probe_a",
+            {
+                "category": "write",
+                "description": "a",
+                "aliases": ["snapshot_probe"],
+                "arg_aliases": {"p": "path"},
+                "arguments": [{"name": "path", "type": "string", "required": True}],
+            },
+        )
+        snapshot = ToolSpecRegistry.capture_effective_spec("snapshot_probe")
+        ToolSpecRegistry.register(
+            "snapshot_probe_b",
+            {
+                "category": "write",
+                "description": "b",
+                "aliases": [],
+                "arg_aliases": {"p": "different_path"},
+                "arguments": [{"name": "different_path", "type": "string", "required": True}],
+            },
+        )
+        ToolSpecRegistry.register_alias_only("snapshot_probe_b", "snapshot_probe")
+
+        assert normalize_tool_arguments_from_snapshot(snapshot, {"p": "/workspace/src/a.py"}) == {"path": "src/a.py"}
+
+    def test_snapshot_normalization_preserves_escape_hatch_parity(self) -> None:
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        snapshot = ToolSpecRegistry.capture_effective_spec("run_shell")
+        assert snapshot.canonical_tool_name == "execute_command"
+        assert normalize_tool_arguments_from_snapshot(snapshot, {"argv": ["npm", "run", "build"]}) == {
+            "command": "npm run build"
+        }
+
 
 class TestRepoReadHeadNormalization:
     """Test repo_read_head weak-model file argument aliases."""

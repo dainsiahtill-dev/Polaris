@@ -140,21 +140,6 @@ class SchemaDrivenNormalizer:
         """为特定工具注册复杂转换钩子。"""
         self._escape_hatches[tool_name] = func
 
-    def _resolve_tool_alias(self, tool_name: str) -> str:
-        """Resolve tool name to its canonical tool name using aliases in specs.
-
-        tools/contracts.py defines tool aliases in the 'aliases' field of each spec.
-        For example, 'search_code' is in the aliases list of 'repo_rg'.
-        This method finds the canonical tool name when given an alias.
-        """
-        if tool_name in self.specs:
-            return tool_name
-        for canonical, spec in self.specs.items():
-            aliases = spec.get("aliases", [])
-            if tool_name in aliases:
-                return canonical
-        return tool_name
-
     def normalize(self, tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
         """根据 schema 归一化工具参数。
 
@@ -165,8 +150,8 @@ class SchemaDrivenNormalizer:
             return {}
 
         normalized = dict(tool_args)
-        # Resolve tool name aliases: search_code -> repo_rg, ripgrep -> repo_rg, etc.
-        canonical_tool = self._resolve_tool_alias(tool_name)
+        # Callers must resolve aliases through ToolSpecRegistry before this point.
+        canonical_tool = tool_name
         spec = self.specs.get(canonical_tool, {})
         arg_aliases = spec.get("arg_aliases", {})
 
@@ -267,4 +252,15 @@ def get_schema_normalizer() -> SchemaDrivenNormalizer:
 
 def normalize_with_schema(tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
     """使用 schema-driven 引擎归一化参数。"""
-    return get_schema_normalizer().normalize(tool_name, tool_args)
+    from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    snapshot = ToolSpecRegistry.capture_effective_spec(tool_name)
+    if not snapshot.registered:
+        return dict(tool_args) if isinstance(tool_args, dict) else {}
+    spec = frozen_node_to_value(snapshot.canonical_effective_spec)
+    if not isinstance(spec, dict):
+        raise ValueError("captured effective tool spec must be a dictionary")
+    return SchemaDrivenNormalizer({snapshot.canonical_tool_name: spec}).normalize(
+        snapshot.canonical_tool_name, tool_args
+    )

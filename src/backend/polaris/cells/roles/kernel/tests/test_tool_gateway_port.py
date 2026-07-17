@@ -9,9 +9,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
+from polaris.cells.roles.profile.public.service import RoleProfile, RoleToolPolicy
+
+
+@contextmanager
+def _isolated_tool_spec_registry_state() -> Iterator[None]:
+    """Restore the ContextVar-backed registry after a late-registration test."""
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    token = ToolSpecRegistry._state_var.set(ToolSpecRegistry._get_state())
+    try:
+        yield
+    finally:
+        ToolSpecRegistry._state_var.reset(token)
+
 
 # --- Mock Implementations for Testing ---
 
@@ -358,6 +374,303 @@ class TestServiceExports:
             pytest.skip(f"Cannot import from service: {e}")
 
         assert ToolGatewayPort is not None
+
+
+class TestSnapshotBoundGateway:
+    def test_bound_permission_uses_only_the_supplied_snapshot(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from polaris.cells.roles.kernel.internal import tool_gateway
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        profile = RoleProfile(
+            role_id="director",
+            display_name="Director",
+            description="test profile",
+            tool_policy=RoleToolPolicy(
+                whitelist=["read_file"],
+                blacklist=[],
+                allow_code_write=False,
+                allow_command_execution=False,
+                allow_file_delete=False,
+                max_tool_calls_per_turn=10,
+            ),
+        )
+        gateway = RoleToolGateway(profile, workspace=".")
+        snapshot = ToolSpecRegistry.capture_effective_spec("cat")
+
+        def _unexpected_registry_access(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("bound gateway must not read the active registry")
+
+        def _unexpected_normalization(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("bound gateway must not normalize arguments")
+
+        monkeypatch.setattr(ToolSpecRegistry, "capture_effective_spec", _unexpected_registry_access)
+        monkeypatch.setattr(tool_gateway, "normalize_tool_arguments_from_snapshot", _unexpected_normalization)
+
+        allowed, reason = gateway.check_tool_permission_from_snapshot(
+            raw_tool_name="cat",
+            canonical_tool_name="read_file",
+            normalized_tool_args={"path": "README.md"},
+            tool_snapshot=snapshot,
+        )
+
+        assert allowed is True
+        assert reason == "授权通过"
+
+    def test_compatibility_entry_captures_and_normalizes_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from polaris.cells.roles.kernel.internal import tool_gateway
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        profile = RoleProfile(
+            role_id="director",
+            display_name="Director",
+            description="test profile",
+            tool_policy=RoleToolPolicy(
+                whitelist=["write_file"],
+                blacklist=[],
+                allow_code_write=True,
+                allow_command_execution=False,
+                allow_file_delete=False,
+                max_tool_calls_per_turn=10,
+            ),
+        )
+        gateway = RoleToolGateway(profile, workspace=".")
+        captured = ToolSpecRegistry.capture_effective_spec("write_file")
+        captures = 0
+        normalizations = 0
+
+        def _capture_once(_raw_tool_name: str):
+            nonlocal captures
+            captures += 1
+            return captured
+
+        def _normalize_once(snapshot: object, arguments: object) -> dict[str, object]:
+            nonlocal normalizations
+            normalizations += 1
+            assert snapshot is captured
+            assert arguments == {"path": "main.py", "content": "x"}
+            return {"file": "main.py", "content": "x"}
+
+        monkeypatch.setattr(ToolSpecRegistry, "capture_effective_spec", _capture_once)
+        monkeypatch.setattr(tool_gateway, "normalize_tool_arguments_from_snapshot", _normalize_once)
+
+        allowed, reason = gateway.check_tool_permission("write_file", {"path": "main.py", "content": "x"})
+
+        assert allowed is True
+        assert reason == "授权通过"
+        assert captures == 1
+        assert normalizations == 1
+
+    def test_late_registered_exec_snapshot_respects_command_guard(self) -> None:
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        with _isolated_tool_spec_registry_state():
+            ToolSpecRegistry.register(
+                "late_gateway_exec",
+                {"category": "exec", "description": "late exec", "aliases": [], "arguments": []},
+            )
+            gateway = RoleToolGateway(
+                RoleProfile(
+                    role_id="director",
+                    display_name="Director",
+                    description="test profile",
+                    tool_policy=RoleToolPolicy(
+                        whitelist=["late_gateway_exec"],
+                        blacklist=[],
+                        allow_code_write=False,
+                        allow_command_execution=False,
+                        allow_file_delete=False,
+                        max_tool_calls_per_turn=10,
+                    ),
+                ),
+                workspace=".",
+            )
+            snapshot = ToolSpecRegistry.capture_effective_spec("late_gateway_exec")
+
+            allowed, reason = gateway.check_tool_permission_from_snapshot(
+                raw_tool_name="late_gateway_exec",
+                canonical_tool_name="late_gateway_exec",
+                normalized_tool_args={"command": "pwd"},
+                tool_snapshot=snapshot,
+            )
+
+        assert allowed is False
+        assert "角色无权执行命令" in reason
+
+    def test_late_registered_write_and_delete_snapshots_enter_their_mutation_guards(self) -> None:
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        with _isolated_tool_spec_registry_state():
+            ToolSpecRegistry.register(
+                "late_gateway_write",
+                {"category": "write", "description": "late write", "aliases": [], "arguments": []},
+            )
+            ToolSpecRegistry.register(
+                "late_gateway_delete",
+                {"category": "delete", "description": "late delete", "aliases": [], "arguments": []},
+            )
+            gateway = RoleToolGateway(
+                RoleProfile(
+                    role_id="director",
+                    display_name="Director",
+                    description="test profile",
+                    tool_policy=RoleToolPolicy(
+                        whitelist=["late_gateway_write", "late_gateway_delete"],
+                        blacklist=[],
+                        allow_code_write=False,
+                        allow_command_execution=False,
+                        allow_file_delete=False,
+                        max_tool_calls_per_turn=10,
+                    ),
+                ),
+                workspace=".",
+            )
+            write_snapshot = ToolSpecRegistry.capture_effective_spec("late_gateway_write")
+            delete_snapshot = ToolSpecRegistry.capture_effective_spec("late_gateway_delete")
+
+            write_allowed, write_reason = gateway.check_tool_permission_from_snapshot(
+                raw_tool_name="late_gateway_write",
+                canonical_tool_name="late_gateway_write",
+                normalized_tool_args={"file": "main.py", "content": "x"},
+                tool_snapshot=write_snapshot,
+            )
+            delete_allowed, delete_reason = gateway.check_tool_permission_from_snapshot(
+                raw_tool_name="late_gateway_delete",
+                canonical_tool_name="late_gateway_delete",
+                normalized_tool_args={"file": "main.py"},
+                tool_snapshot=delete_snapshot,
+            )
+
+        assert write_allowed is False
+        assert "角色无权使用代码写入工具" in write_reason
+        assert delete_allowed is False
+        assert "角色无权删除文件" in delete_reason
+
+    def test_bound_verdict_does_not_change_after_registry_state_switch(self) -> None:
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        with _isolated_tool_spec_registry_state():
+            ToolSpecRegistry.register(
+                "late_gateway_captured_exec",
+                {"category": "exec", "description": "captured exec", "aliases": [], "arguments": []},
+            )
+            gateway = RoleToolGateway(
+                RoleProfile(
+                    role_id="director",
+                    display_name="Director",
+                    description="test profile",
+                    tool_policy=RoleToolPolicy(
+                        whitelist=["late_gateway_captured_exec"],
+                        blacklist=[],
+                        allow_code_write=False,
+                        allow_command_execution=False,
+                        allow_file_delete=False,
+                        max_tool_calls_per_turn=10,
+                    ),
+                ),
+                workspace=".",
+            )
+            snapshot = ToolSpecRegistry.capture_effective_spec("late_gateway_captured_exec")
+            ToolSpecRegistry.register(
+                "late_gateway_registry_switch",
+                {"category": "read", "description": "registry switch", "aliases": [], "arguments": []},
+            )
+
+            allowed, reason = gateway.check_tool_permission_from_snapshot(
+                raw_tool_name="late_gateway_captured_exec",
+                canonical_tool_name="late_gateway_captured_exec",
+                normalized_tool_args={"command": "pwd"},
+                tool_snapshot=snapshot,
+            )
+
+        assert allowed is False
+        assert "角色无权执行命令" in reason
+
+    def test_inconsistent_snapshot_category_is_fail_closed(self) -> None:
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        with _isolated_tool_spec_registry_state():
+            ToolSpecRegistry.register(
+                "late_gateway_inconsistent",
+                {
+                    "category": "write",
+                    "effect_type": "read",
+                    "description": "inconsistent tool",
+                    "aliases": [],
+                    "arguments": [],
+                },
+            )
+            gateway = RoleToolGateway(
+                RoleProfile(
+                    role_id="director",
+                    display_name="Director",
+                    description="test profile",
+                    tool_policy=RoleToolPolicy(
+                        whitelist=["late_gateway_inconsistent"],
+                        blacklist=[],
+                        allow_code_write=True,
+                        allow_command_execution=True,
+                        allow_file_delete=True,
+                        max_tool_calls_per_turn=10,
+                    ),
+                ),
+                workspace=".",
+            )
+            snapshot = ToolSpecRegistry.capture_effective_spec("late_gateway_inconsistent")
+
+            allowed, reason = gateway.check_tool_permission_from_snapshot(
+                raw_tool_name="late_gateway_inconsistent",
+                canonical_tool_name="late_gateway_inconsistent",
+                normalized_tool_args={"file": "main.py", "content": "x"},
+                tool_snapshot=snapshot,
+            )
+
+        assert allowed is False
+        assert "工具分类不一致" in reason
+
+    @pytest.mark.parametrize("category", ["async", "unsupported"])
+    def test_unsupported_snapshot_category_is_fail_closed(self, category: str) -> None:
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        tool_name = f"late_gateway_{category}"
+        with _isolated_tool_spec_registry_state():
+            ToolSpecRegistry.register(
+                tool_name,
+                {"category": category, "description": "unsupported tool", "aliases": [], "arguments": []},
+            )
+            gateway = RoleToolGateway(
+                RoleProfile(
+                    role_id="director",
+                    display_name="Director",
+                    description="test profile",
+                    tool_policy=RoleToolPolicy(
+                        whitelist=[tool_name],
+                        blacklist=[],
+                        allow_code_write=True,
+                        allow_command_execution=True,
+                        allow_file_delete=True,
+                        max_tool_calls_per_turn=10,
+                    ),
+                ),
+                workspace=".",
+            )
+            snapshot = ToolSpecRegistry.capture_effective_spec(tool_name)
+
+            allowed, reason = gateway.check_tool_permission_from_snapshot(
+                raw_tool_name=tool_name,
+                canonical_tool_name=tool_name,
+                normalized_tool_args={},
+                tool_snapshot=snapshot,
+            )
+
+        assert allowed is False
+        assert "工具分类不支持" in reason
 
 
 # --- Default Gateway Path Tests ---

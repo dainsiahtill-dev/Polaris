@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.speculation.cancel import CancellationCoordinator
 from polaris.cells.roles.kernel.internal.speculation.chain_speculator import (
     ChainSpeculator,
@@ -25,6 +33,7 @@ from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionCo
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import (
+    BatchId,
     FinalizeMode,
     ToolBatch,
     ToolCallId,
@@ -84,6 +93,38 @@ def controller(monkeypatch: pytest.MonkeyPatch) -> TurnTransactionController:
 
 
 @pytest.fixture
+def fact_stream_authority(
+    controller: TurnTransactionController,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Iterator[Path]:
+    """Bind ledger-writing speculation tests to one isolated FactStream authority."""
+
+    workspace = tmp_path / "workspace"
+    kernelone_home = tmp_path / "kernelone-home"
+    workspace.mkdir()
+    monkeypatch.setenv("KERNELONE_HOME", str(kernelone_home))
+    receipt = bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            maintenance_reason="roles-kernel-speculation-integration-test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
+    assert tuple(proof.operation for proof in receipt.proofs) == (
+        "provision_authority",
+        "enroll_stream_lock_keys",
+    )
+    controller.config.workspace = str(workspace)
+    try:
+        yield workspace
+    finally:
+        authority_root = kernelone_home / "lock_authorities"
+        if authority_root.exists():
+            shutil.rmtree(authority_root)
+
+
+@pytest.fixture
 def shadow_engine(controller: TurnTransactionController) -> StreamShadowEngine:
     engine = cast(StreamShadowEngine, controller._build_stream_shadow_engine(workspace="."))
     assert engine is not None
@@ -99,11 +140,20 @@ def _setup_state_machine(turn_id: str) -> TurnStateMachine:
     return sm
 
 
+def _tool_runtime_mock(controller: TurnTransactionController) -> AsyncMock:
+    tool_runtime = controller.tool_runtime
+    assert isinstance(tool_runtime, AsyncMock)
+    return tool_runtime
+
+
 @pytest.mark.asyncio
 async def test_batch_adopts_completed_shadow_task(
-    controller: TurnTransactionController, shadow_engine: StreamShadowEngine
+    controller: TurnTransactionController,
+    shadow_engine: StreamShadowEngine,
+    fact_stream_authority: Path,
 ) -> None:
     """已完成的 shadow task 应被 ADOPT，省去 canonical 调用，仅保留 1 次 speculative 执行."""
+    tool_runtime = _tool_runtime_mock(controller)
     registry = shadow_engine._registry
     assert registry is not None
 
@@ -126,7 +176,7 @@ async def test_batch_adopts_completed_shadow_task(
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
         tool_batch=ToolBatch(
-            batch_id="batch_1",
+            batch_id=BatchId("batch_1"),
             invocations=[
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
@@ -147,13 +197,15 @@ async def test_batch_adopts_completed_shadow_task(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 
-    assert controller.tool_runtime.await_count == 1  # 1x speculative execution
+    assert tool_runtime.await_count == 1  # 1x speculative execution
     assert result["kind"] == "tool_batch_with_receipt"
 
 
 @pytest.mark.asyncio
 async def test_stream_write_tool_without_prepare_shadow_replays(
-    controller: TurnTransactionController, shadow_engine: StreamShadowEngine
+    controller: TurnTransactionController,
+    shadow_engine: StreamShadowEngine,
+    fact_stream_authority: Path,
 ) -> None:
     """A stream write tool with no speculative prepare-shadow must REPLAY via the
     authoritative batch, not abort the turn.
@@ -163,12 +215,13 @@ async def test_stream_write_tool_without_prepare_shadow_replays(
     get a speculative prepare. The authoritative path executes the write safely —
     identical to running with speculation disabled — so the turn must not fail closed.
     """
+    tool_runtime = _tool_runtime_mock(controller)
     decision = TurnDecision(
         turn_id=TurnId("t_write_prepare_required"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
         tool_batch=ToolBatch(
-            batch_id="batch_prepare_required",
+            batch_id=BatchId("batch_prepare_required"),
             invocations=[
                 ToolInvocation(
                     call_id=ToolCallId("call_missing_prepare"),
@@ -196,14 +249,17 @@ async def test_stream_write_tool_without_prepare_shadow_replays(
     )
 
     # The write executed exactly once via the authoritative tool_runtime (replay).
-    assert controller.tool_runtime.await_count == 1
+    assert tool_runtime.await_count == 1
 
 
 @pytest.mark.asyncio
 async def test_batch_joins_running_shadow_task(
-    controller: TurnTransactionController, shadow_engine: StreamShadowEngine
+    controller: TurnTransactionController,
+    shadow_engine: StreamShadowEngine,
+    fact_stream_authority: Path,
 ) -> None:
     """运行中的 shadow task 应被 JOIN，省去 canonical 调用，仅保留 1 次 speculative 执行."""
+    tool_runtime = _tool_runtime_mock(controller)
     registry = shadow_engine._registry
     assert registry is not None
 
@@ -235,7 +291,7 @@ async def test_batch_joins_running_shadow_task(
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
         tool_batch=ToolBatch(
-            batch_id="batch_1",
+            batch_id=BatchId("batch_1"),
             invocations=[
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
@@ -266,21 +322,24 @@ async def test_batch_joins_running_shadow_task(
     block_event.set()
     result = await batch_task
 
-    assert controller.tool_runtime.await_count == 0  # patched execute_speculative bypasses runtime
+    assert tool_runtime.await_count == 0  # patched execute_speculative bypasses runtime
     assert result["kind"] == "tool_batch_with_receipt"
 
 
 @pytest.mark.asyncio
 async def test_batch_replays_when_no_shadow_task(
-    controller: TurnTransactionController, shadow_engine: StreamShadowEngine
+    controller: TurnTransactionController,
+    shadow_engine: StreamShadowEngine,
+    fact_stream_authority: Path,
 ) -> None:
     """没有匹配 shadow task 时应回退到 REPLAY，调用 tool_runtime."""
+    tool_runtime = _tool_runtime_mock(controller)
     decision = TurnDecision(
         turn_id=TurnId("t_replay"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
         tool_batch=ToolBatch(
-            batch_id="batch_1",
+            batch_id=BatchId("batch_1"),
             invocations=[
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
@@ -301,15 +360,18 @@ async def test_batch_replays_when_no_shadow_task(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 
-    assert controller.tool_runtime.await_count == 1
+    assert tool_runtime.await_count == 1
     assert result["kind"] == "tool_batch_with_receipt"
 
 
 @pytest.mark.asyncio
 async def test_batch_mixed_adopt_and_replay(
-    controller: TurnTransactionController, shadow_engine: StreamShadowEngine
+    controller: TurnTransactionController,
+    shadow_engine: StreamShadowEngine,
+    fact_stream_authority: Path,
 ) -> None:
     """同一批次中部分 ADOPT、部分 REPLAY 应正确拆分执行."""
+    tool_runtime = _tool_runtime_mock(controller)
     registry = shadow_engine._registry
     assert registry is not None
 
@@ -332,7 +394,7 @@ async def test_batch_mixed_adopt_and_replay(
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
         tool_batch=ToolBatch(
-            batch_id="batch_1",
+            batch_id=BatchId("batch_1"),
             invocations=[
                 ToolInvocation(
                     call_id=ToolCallId("call_adopt"),
@@ -361,12 +423,15 @@ async def test_batch_mixed_adopt_and_replay(
     )
 
     # 1x speculative execution for adopt + 1x canonical replay
-    assert controller.tool_runtime.await_count == 2
+    assert tool_runtime.await_count == 2
     assert result["kind"] == "tool_batch_with_receipt"
 
 
 @pytest.mark.asyncio
-async def test_stream_shadow_engine_lifecycle_in_controller(controller: TurnTransactionController) -> None:
+async def test_stream_shadow_engine_lifecycle_in_controller(
+    controller: TurnTransactionController,
+    fact_stream_authority: Path,
+) -> None:
     """Controller 应在 execute_stream 中创建 shadow engine 并在最后 drain."""
 
     async def stream_provider(_request_payload: dict[str, Any]):
@@ -415,8 +480,13 @@ async def test_stream_shadow_engine_lifecycle_in_controller(controller: TurnTran
 
 
 @pytest.mark.asyncio
-async def test_param_drift_replay(controller: TurnTransactionController, shadow_engine: StreamShadowEngine) -> None:
+async def test_param_drift_replay(
+    controller: TurnTransactionController,
+    shadow_engine: StreamShadowEngine,
+    fact_stream_authority: Path,
+) -> None:
     """参数漂移时，旧 shadow 不应被复用，应回退到 REPLAY."""
+    tool_runtime = _tool_runtime_mock(controller)
     registry = shadow_engine._registry
     assert registry is not None
 
@@ -440,7 +510,7 @@ async def test_param_drift_replay(controller: TurnTransactionController, shadow_
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
         tool_batch=ToolBatch(
-            batch_id="batch_1",
+            batch_id=BatchId("batch_1"),
             invocations=[
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
@@ -462,7 +532,7 @@ async def test_param_drift_replay(controller: TurnTransactionController, shadow_
     )
 
     # 1 次 speculative + 1 次 REPLAY（旧 shadow 参数不同无法 ADOPT）
-    assert controller.tool_runtime.await_count == 2
+    assert tool_runtime.await_count == 2
     assert result["kind"] == "tool_batch_with_receipt"
 
 
@@ -571,9 +641,12 @@ async def test_refusal_abort(shadow_engine: StreamShadowEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_retrieval_chain_adopts_prefetch(
-    controller: TurnTransactionController, shadow_engine: StreamShadowEngine
+    controller: TurnTransactionController,
+    shadow_engine: StreamShadowEngine,
+    fact_stream_authority: Path,
 ) -> None:
     """repo_rg shadow 完成后,下游 read_file shadows 在 authoritative 阶段被正确 ADOPT."""
+    tool_runtime = _tool_runtime_mock(controller)
     registry = shadow_engine._registry
     assert registry is not None
 
@@ -606,7 +679,7 @@ async def test_retrieval_chain_adopts_prefetch(
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
         tool_batch=ToolBatch(
-            batch_id="batch_1",
+            batch_id=BatchId("batch_1"),
             invocations=[
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
@@ -623,13 +696,13 @@ async def test_retrieval_chain_adopts_prefetch(
     state_machine = _setup_state_machine("t_chain_adopt")
     ledger = TurnLedger(turn_id="t_chain_adopt")
 
-    before_count = controller.tool_runtime.await_count
+    before_count = tool_runtime.await_count
     result = await controller._tool_batch_executor.execute_tool_batch(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 
     # 下游 read_file 被 ADOPT,controller 不再走 tool_runtime replay
-    assert controller.tool_runtime.await_count == before_count
+    assert tool_runtime.await_count == before_count
     assert result["kind"] == "tool_batch_with_receipt"
 
 
@@ -683,36 +756,35 @@ async def test_cascade_cancel_abandons_downstream(
 
 @pytest.mark.asyncio
 async def test_write_tool_commit_never_speculative(
-    controller: TurnTransactionController, shadow_engine: StreamShadowEngine
+    controller: TurnTransactionController,
+    shadow_engine: StreamShadowEngine,
+    fact_stream_authority: Path,
 ) -> None:
     """write_file 的 commit 阶段不会被 shadow 执行,prepare 可被 adopt 但 commit 必须走 authoritative."""
+    tool_runtime = _tool_runtime_mock(controller)
     registry = shadow_engine._registry
     assert registry is not None
 
     # 启动 prepare shadow
-    prepare_inv = WriteToolPhases.build_prepare_invocation(
-        ToolInvocation(
-            call_id=ToolCallId("call_1"),
-            tool_name="write_file",
-            arguments={"path": "src/auth.ts", "content": "hello"},
-            effect_type=ToolEffectType.WRITE,
-            execution_mode=ToolExecutionMode.WRITE_SERIAL,
-        )
+    prepare_source_args = {"path": "src/auth.ts", "content": "hello"}
+    prepare_key = WriteToolPhases.build_prepare_shadow_key(
+        source_call_id="call_1",
+        arguments=prepare_source_args,
     )
-    prepare_spec_key = build_spec_key(
-        tool_name=prepare_inv.tool_name,
-        normalized_args=normalize_args(prepare_inv.tool_name, prepare_inv.arguments),
-        env_fingerprint=build_env_fingerprint(),
-    )
+    prepare_tool_name = WriteToolPhases.prepare_shadow_execution_tool_name()
+    prepare_normalized_args = WriteToolPhases.prepare_shadow_normalized_args(prepare_source_args)
     prepare_record = await registry.start_shadow_task(
         turn_id="t_write_commit",
         candidate_id="prepare_call_1",
-        tool_name=prepare_inv.tool_name,
-        normalized_args=normalize_args(prepare_inv.tool_name, prepare_inv.arguments),
-        spec_key=prepare_spec_key,
+        tool_name=prepare_tool_name,
+        normalized_args=prepare_normalized_args,
+        spec_key=prepare_key.shadow_key_hash,
         env_fingerprint=build_env_fingerprint(),
         policy=_make_policy(),
     )
+    assert prepare_record.spec_key == prepare_key.shadow_key_hash
+    assert prepare_record.tool_name == prepare_tool_name
+    assert prepare_record.normalized_args == prepare_normalized_args
     assert prepare_record.future is not None
     await prepare_record.future
 
@@ -721,7 +793,7 @@ async def test_write_tool_commit_never_speculative(
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
         tool_batch=ToolBatch(
-            batch_id="batch_1",
+            batch_id=BatchId("batch_1"),
             invocations=[
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
@@ -738,11 +810,11 @@ async def test_write_tool_commit_never_speculative(
     state_machine = _setup_state_machine("t_write_commit")
     ledger = TurnLedger(turn_id="t_write_commit")
 
-    before_count = controller.tool_runtime.await_count
+    before_count = tool_runtime.await_count
     result = await controller._tool_batch_executor.execute_tool_batch(
         decision, state_machine, ledger, context=[], stream=False, shadow_engine=shadow_engine
     )
 
     # prepare 被 adopt,但 commit 仍走了 authoritative tool_runtime(恰好 1 次)
-    assert controller.tool_runtime.await_count == before_count + 1
+    assert tool_runtime.await_count == before_count + 1
     assert result["kind"] == "tool_batch_with_receipt"

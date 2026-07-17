@@ -24,6 +24,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     ToolBatch,
     ToolCallId,
+    ToolEffectType,
     ToolInvocation,
     TurnId,
 )
@@ -52,21 +53,21 @@ def sample_batch():
         call_id=ToolCallId("call_1"),
         tool_name="read_file",
         arguments={"path": "a.txt"},
-        effect_type="read",
+        effect_type=ToolEffectType.READ,
         execution_mode=ToolExecutionMode.READONLY_PARALLEL,
     )
     read2 = ToolInvocation(
         call_id=ToolCallId("call_2"),
         tool_name="read_file",
         arguments={"path": "b.txt"},
-        effect_type="read",
+        effect_type=ToolEffectType.READ,
         execution_mode=ToolExecutionMode.READONLY_PARALLEL,
     )
     write1 = ToolInvocation(
         call_id=ToolCallId("call_3"),
         tool_name="write_file",
         arguments={"path": "out.txt", "content": "data"},
-        effect_type="write",
+        effect_type=ToolEffectType.WRITE,
         execution_mode=ToolExecutionMode.WRITE_SERIAL,
     )
     return ToolBatch(
@@ -99,21 +100,21 @@ class TestParallelExecution:
             call_id=ToolCallId("p1"),
             tool_name="read_file",
             arguments={"path": "a.txt"},
-            effect_type="read",
+            effect_type=ToolEffectType.READ,
             execution_mode=ToolExecutionMode.READONLY_PARALLEL,
         )
         p2 = ToolInvocation(
             call_id=ToolCallId("p2"),
             tool_name="read_file",
             arguments={"path": "b.txt"},
-            effect_type="read",
+            effect_type=ToolEffectType.READ,
             execution_mode=ToolExecutionMode.READONLY_PARALLEL,
         )
         p3 = ToolInvocation(
             call_id=ToolCallId("p3"),
             tool_name="read_file",
             arguments={"path": "c.txt"},
-            effect_type="read",
+            effect_type=ToolEffectType.READ,
             execution_mode=ToolExecutionMode.READONLY_PARALLEL,
         )
         batch = ToolBatch(
@@ -162,21 +163,21 @@ class TestSerialExecution:
             call_id=ToolCallId("w1"),
             tool_name="write_file",
             arguments={"path": "a.txt", "content": "a"},
-            effect_type="write",
+            effect_type=ToolEffectType.WRITE,
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         w2 = ToolInvocation(
             call_id=ToolCallId("w2"),
             tool_name="write_file",
             arguments={"path": "b.txt", "content": "b"},
-            effect_type="write",
+            effect_type=ToolEffectType.WRITE,
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         w3 = ToolInvocation(
             call_id=ToolCallId("w3"),
             tool_name="write_file",
             arguments={"path": "c.txt", "content": "c"},
-            effect_type="write",
+            effect_type=ToolEffectType.WRITE,
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         batch = ToolBatch(
@@ -193,37 +194,40 @@ class TestSerialExecution:
         assert execution_order == ["write_file", "write_file", "write_file"]
 
 
-# ============ Test Async Tools ============
+# ============ Test Unregistered Async-Named Tools ============
 
 
-class TestAsyncTools:
-    """测试异步工具"""
+class TestUnregisteredAsyncNamedTools:
+    """测试未注册异步命名工具的保守串行分类。"""
 
     @pytest.mark.asyncio
-    async def test_async_tool_returns_pending_receipt(self, runtime, mock_executor) -> None:
-        """异步工具返回pending receipt"""
-        async_inv = ToolInvocation(
+    async def test_unregistered_async_named_tool_executes_as_serial_write(self, runtime, mock_executor) -> None:
+        """Registry 外异步命名不得获得 async receipt 模式。"""
+        mock_executor.return_value = {
+            "success": True,
+            "result": "created",
+            "effect_receipt": {"tool": "create_pull_request"},
+        }
+        invocation = ToolInvocation(
             call_id=ToolCallId("async_1"),
             tool_name="create_pull_request",
             arguments={"title": "PR"},
-            effect_type="async",
-            execution_mode=ToolExecutionMode.ASYNC_RECEIPT,
         )
         batch = ToolBatch(
             batch_id=BatchId("async_batch"),
-            invocations=[async_inv],
+            invocations=[invocation],
             parallel_readonly=[],
-            serial_writes=[],
-            async_receipts=[async_inv],
+            serial_writes=[invocation],
+            async_receipts=[],
         )
 
         receipts = await runtime.execute_batch(batch, TurnId("turn_async"))
 
         assert len(receipts) == 1
         receipt = receipts[0]
-        assert receipt["pending_async_count"] == 1
-        assert receipt["has_pending_async"] is True
-        assert receipt["results"][0]["status"] == "pending"
+        assert receipt["success_count"] == 1
+        assert receipt["pending_async_count"] == 0
+        assert receipt["has_pending_async"] is False
 
 
 # ============ Test Error Handling ============
@@ -241,7 +245,7 @@ class TestErrorHandling:
             call_id=ToolCallId("err_1"),
             tool_name="read_file",
             arguments={"path": "missing.txt"},
-            effect_type="read",
+            effect_type=ToolEffectType.READ,
             execution_mode=ToolExecutionMode.READONLY_PARALLEL,
         )
         batch = ToolBatch(
@@ -274,7 +278,7 @@ class TestErrorHandling:
             call_id=ToolCallId("slow_1"),
             tool_name="grep",
             arguments={"pattern": "test"},
-            effect_type="read",
+            effect_type=ToolEffectType.READ,
             execution_mode=ToolExecutionMode.READONLY_PARALLEL,
         )
         batch = ToolBatch(
@@ -329,28 +333,22 @@ class TestToolClassification:
                 call_id=ToolCallId("c1"),
                 tool_name="read_file",
                 arguments={},
-                effect_type="read",
+                effect_type=ToolEffectType.READ,
                 execution_mode=ToolExecutionMode.READONLY_PARALLEL,
             ),
             ToolInvocation(
                 call_id=ToolCallId("c2"),
                 tool_name="write_file",
                 arguments={},
-                effect_type="write",
+                effect_type=ToolEffectType.WRITE,
                 execution_mode=ToolExecutionMode.WRITE_SERIAL,
             ),
-            ToolInvocation(
-                call_id=ToolCallId("c3"),
-                tool_name="create_pull_request",
-                arguments={},
-                effect_type="async",
-                execution_mode=ToolExecutionMode.ASYNC_RECEIPT,
-            ),
+            ToolInvocation(call_id=ToolCallId("c3"), tool_name="create_pull_request", arguments={}),
             ToolInvocation(
                 call_id=ToolCallId("c4"),
                 tool_name="grep",
                 arguments={},
-                effect_type="read",
+                effect_type=ToolEffectType.READ,
                 execution_mode=ToolExecutionMode.READONLY_PARALLEL,
             ),
         ]
@@ -358,8 +356,8 @@ class TestToolClassification:
         classified = ToolBatchRuntime.classify_batch(invocations)
 
         assert len(classified["parallel_readonly"]) == 2  # read_file, grep
-        assert len(classified["serial_writes"]) == 1  # write_file
-        assert len(classified["async_receipts"]) == 1  # create_pull_request
+        assert len(classified["serial_writes"]) == 2  # write_file, create_pull_request
+        assert len(classified["async_receipts"]) == 0
 
 
 # ============ Test Mixed Batch ============
@@ -383,14 +381,14 @@ class TestMixedBatch:
             call_id=ToolCallId("r1"),
             tool_name="read_file",
             arguments={"path": "a.txt"},
-            effect_type="read",
+            effect_type=ToolEffectType.READ,
             execution_mode=ToolExecutionMode.READONLY_PARALLEL,
         )
         w1 = ToolInvocation(
             call_id=ToolCallId("w1"),
             tool_name="write_file",
             arguments={"path": "out.txt", "content": "x"},
-            effect_type="write",
+            effect_type=ToolEffectType.WRITE,
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         batch = ToolBatch(
@@ -433,7 +431,7 @@ class TestMixedBatch:
             call_id=ToolCallId("w_nested"),
             tool_name="write_file",
             arguments={"path": "nested.txt", "content": "x"},
-            effect_type="write",
+            effect_type=ToolEffectType.WRITE,
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         batch = ToolBatch(
@@ -461,7 +459,7 @@ class TestMixedBatch:
             call_id=ToolCallId("w_missing_receipt"),
             tool_name="write_file",
             arguments={"path": "missing_receipt.txt", "content": "x"},
-            effect_type="write",
+            effect_type=ToolEffectType.WRITE,
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         batch = ToolBatch(
@@ -496,7 +494,7 @@ class TestMixedBatch:
             call_id=ToolCallId("r_fail"),
             tool_name="read_file",
             arguments={"path": "missing.txt"},
-            effect_type="read",
+            effect_type=ToolEffectType.READ,
             execution_mode=ToolExecutionMode.READONLY_PARALLEL,
         )
         batch = ToolBatch(

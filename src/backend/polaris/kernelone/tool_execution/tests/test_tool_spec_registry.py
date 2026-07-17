@@ -287,9 +287,7 @@ class TestToolSpecRegistry:
         )
 
         all_tool_names = {tool.canonical_name for tool in ToolSpecRegistry.get_all_tools()}
-        active_tool_names = {
-            tool.canonical_name for tool in ToolSpecRegistry.get_all_tools(include_deprecated=False)
-        }
+        active_tool_names = {tool.canonical_name for tool in ToolSpecRegistry.get_all_tools(include_deprecated=False)}
 
         assert all_tool_names == {"active_tool", "retired_tool"}
         assert active_tool_names == {"active_tool"}
@@ -680,3 +678,105 @@ class TestMigrationFromContracts:
         assert "diff" not in required
         for key in ("diff", "patch", "patch_text", "unified_diff", "diff_text"):
             assert key in parameters["properties"]
+
+
+class TestEffectiveToolSpecSnapshots:
+    """A5.1 owner state and immutable capture regressions."""
+
+    def setup_method(self) -> None:
+        ToolSpecRegistry.clear()
+
+    def teardown_method(self) -> None:
+        from polaris.kernelone.tool_execution import tool_spec_registry
+
+        tool_spec_registry.migrate_from_contracts_specs()
+
+    def test_registration_detaches_nested_caller_input_and_accessors(self) -> None:
+        aliases = ["immutable_alias"]
+        arguments: list[dict[str, object]] = [{"name": "path", "type": "string", "required": True}]
+        source = {
+            "category": "read",
+            "description": "immutable probe",
+            "aliases": aliases,
+            "arg_aliases": {"p": "path"},
+            "arguments": arguments,
+        }
+        ToolSpecRegistry.register("immutable_probe", source)
+        before = ToolSpecRegistry.capture_effective_spec("immutable_alias")
+
+        aliases.append("caller_mutation")
+        arguments[0]["name"] = "mutated"
+        returned = ToolSpecRegistry.get("immutable_probe")
+        assert returned is not None
+        returned.parameters["properties"]["path"]["type"] = "integer"
+        all_specs = ToolSpecRegistry.get_all_specs()
+        all_specs["immutable_probe"]["arg_aliases"]["p"] = "other"
+        projection = returned.to_openai_function()
+        projection["function"]["parameters"]["properties"]["path"]["type"] = "boolean"
+
+        after = ToolSpecRegistry.capture_effective_spec("immutable_alias")
+        assert after == before
+        assert ToolSpecRegistry.get_canonical("caller_mutation") == "caller_mutation"
+
+    def test_duplicate_and_alias_collisions_leave_captured_state_unchanged(self) -> None:
+        ToolSpecRegistry.register(
+            "first",
+            {"category": "read", "description": "first", "aliases": ["shared"], "arguments": []},
+        )
+        canonical_before = ToolSpecRegistry.capture_effective_spec("first")
+        alias_before = ToolSpecRegistry.capture_effective_spec("shared")
+        assert canonical_before.raw_tool_name == "first"
+        assert alias_before.raw_tool_name == "shared"
+        assert canonical_before.canonical_effective_spec == alias_before.canonical_effective_spec
+        assert canonical_before.snapshot_hash != alias_before.snapshot_hash
+        ToolSpecRegistry.register(
+            "first",
+            {"category": "read", "description": "first", "aliases": ["shared"], "arguments": []},
+        )
+        assert ToolSpecRegistry.capture_effective_spec("first") == canonical_before
+        assert ToolSpecRegistry.capture_effective_spec("shared") == alias_before
+
+        with pytest.raises(ValueError, match=r"conflicting duplicate|Duplicate alias"):
+            ToolSpecRegistry.register(
+                "second",
+                {"category": "read", "description": "second", "aliases": ["shared"], "arguments": []},
+            )
+        assert ToolSpecRegistry.capture_effective_spec("first") == canonical_before
+        assert ToolSpecRegistry.capture_effective_spec("shared") == alias_before
+
+    def test_alias_only_rebind_is_atomic_and_capture_shows_actual_target(self) -> None:
+        for name in ("first", "second"):
+            ToolSpecRegistry.register(name, {"category": "read", "description": name, "aliases": [], "arguments": []})
+        ToolSpecRegistry.register_alias_only("first", "legacy")
+        before = ToolSpecRegistry.capture_effective_spec("legacy")
+        assert before.raw_tool_name == "legacy"
+        assert before.canonical_tool_name == "first"
+        ToolSpecRegistry.register_alias_only("second", "legacy")
+        after = ToolSpecRegistry.capture_effective_spec("legacy")
+        assert after.raw_tool_name == "legacy"
+        assert after.canonical_tool_name == "second"
+        assert after.snapshot_hash != before.snapshot_hash
+
+    def test_snapshot_rejects_map_sequence_collision_and_nonfinite_scalars(self) -> None:
+        from polaris.kernelone.tool_execution.contracts import (
+            CapturedToolSpecSnapshotV1,
+            FrozenMapEntryV1,
+            FrozenMapV1,
+            FrozenScalarV1,
+            FrozenSequenceV1,
+        )
+
+        map_node = FrozenMapV1((FrozenMapEntryV1("x", FrozenScalarV1("integer", 1)),))
+        sequence_node = FrozenSequenceV1((FrozenScalarV1("integer", 1),))
+        assert map_node != sequence_node
+        with pytest.raises(ValueError, match="finite"):
+            FrozenScalarV1("float", float("nan"))
+        with pytest.raises(ValueError, match="finite"):
+            CapturedToolSpecSnapshotV1(
+                raw_tool_name="x",
+                canonical_tool_name="x",
+                registered=True,
+                canonical_effective_spec=FrozenMapV1(()),
+                canonical_name_view=FrozenSequenceV1(()),
+                alias_binding_view=FrozenMapV1((FrozenMapEntryV1("x", FrozenScalarV1("float", float("inf"))),)),
+            )

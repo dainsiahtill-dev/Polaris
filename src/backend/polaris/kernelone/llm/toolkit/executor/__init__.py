@@ -23,6 +23,13 @@ import subprocess
 
 # Public executor boundary error surfaced by AgentAccelToolExecutor.
 from polaris.kernelone.llm.exceptions import BudgetExceededError
+from polaris.kernelone.llm.toolkit.executor.command_capability import (
+    CommandCapabilityDenialReasonV1,
+    CommandCapabilityValidationInputV1,
+    CommandCapabilityValidationResultV1,
+    CommandCapabilityValidationStatusV1,
+    validate_command_capability,
+)
 
 # Public executor APIs exposed at the package root.
 from polaris.kernelone.llm.toolkit.executor.core import (
@@ -40,8 +47,13 @@ __all__ = [
     "CODE_INTELLIGENCE_AVAILABLE",
     "AgentAccelToolExecutor",
     "BudgetExceededError",
+    "CommandCapabilityDenialReasonV1",
+    "CommandCapabilityValidationInputV1",
+    "CommandCapabilityValidationResultV1",
+    "CommandCapabilityValidationStatusV1",
     "KernelToolCallingRuntime",
     "build_tool_feedback",
     "execute_tool_call",
     "execute_tool_calls",
+    "validate_command_capability",
 ]

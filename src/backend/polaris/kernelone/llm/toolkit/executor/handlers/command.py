@@ -11,6 +11,10 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.llm.toolkit.executor.command_capability import (
+    CommandCapabilityValidationInputV1,
+    validate_command_capability,
+)
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
     _attach_director_policy_evidence,
     _validate_director_policy_for_write,
@@ -195,13 +199,7 @@ def _command_matches_capability(command_text: str, allowed_commands: list[str]) 
     return False
 
 
-def _validate_command_capability(
-    self: AgentAccelToolExecutor,
-    command_text: str,
-) -> dict[str, Any] | None:
-    allowed_commands = _capability_allowed_commands(self)
-    if not allowed_commands or _command_matches_capability(command_text, allowed_commands):
-        return None
+def _command_capability_denial(command_text: str, allowed_commands: list[str]) -> dict[str, Any]:
     return {
         "ok": False,
         "error": "Command blocked by capability token: command is outside allowed_commands",
@@ -210,6 +208,28 @@ def _validate_command_capability(
         "error_type": "command_capability_denied",
         "allowed_commands": allowed_commands,
     }
+
+
+def _validate_command_capability(
+    self: AgentAccelToolExecutor,
+    command_text: str,
+) -> dict[str, Any] | None:
+    capability_token = _command_capability_token(self)
+    allowed_commands = _capability_allowed_commands(self)
+    try:
+        validation = validate_command_capability(
+            CommandCapabilityValidationInputV1(
+                capability_token_id=str(capability_token.get("token_id") or ""),
+                capability_token_hash=str(capability_token.get("execution_envelope_hash") or ""),
+                allowed_commands=tuple(allowed_commands),
+                canonical_command=_sanitize_llm_command_text(command_text),
+            )
+        )
+    except ValueError:
+        return _command_capability_denial(command_text, allowed_commands)
+    if validation.allowed:
+        return None
+    return _command_capability_denial(command_text, allowed_commands)
 
 
 def _attach_command_effect_receipt(

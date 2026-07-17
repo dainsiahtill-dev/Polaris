@@ -21,12 +21,6 @@ from polaris.cells.roles.kernel.internal.speculation.registry import (
 from polaris.cells.roles.kernel.internal.speculation.write_phases import (
     WriteToolPhases,
 )
-from polaris.cells.roles.kernel.public.turn_contracts import (
-    ToolCallId,
-    ToolEffectType,
-    ToolExecutionMode,
-    ToolInvocation,
-)
 
 
 class SpeculationResolver:
@@ -77,22 +71,11 @@ class SpeculationResolver:
         """
         # Phase 5: 写工具先查找 prepare shadow
         if WriteToolPhases.is_write_tool(tool_name):
-            prepare_inv = WriteToolPhases.build_prepare_invocation(
-                ToolInvocation(
-                    call_id=ToolCallId(call_id),
-                    tool_name=tool_name,
-                    arguments=args,
-                    effect_type=ToolEffectType.READ,
-                    execution_mode=ToolExecutionMode.READONLY_PARALLEL,
-                )
+            prepare_inv = WriteToolPhases.build_prepare_shadow_key(
+                source_call_id=call_id,
+                arguments=dict(args),
             )
-            prepare_norm = normalize_args(prepare_inv.tool_name, prepare_inv.arguments)
-            prepare_env_fp = build_env_fingerprint()
-            prepare_spec_key = build_spec_key(
-                tool_name=prepare_inv.tool_name,
-                normalized_args=prepare_norm,
-                env_fingerprint=prepare_env_fp,
-            )
+            prepare_spec_key = prepare_inv.shadow_key_hash
             prepare_task = self._registry.lookup(prepare_spec_key)
             if prepare_task is None:
                 self._metrics.record_replay(turn_id, call_id, tool_name, reason="prepare_miss")
@@ -106,7 +89,11 @@ class SpeculationResolver:
                     saved_ms = self._saved_ms(prepare_task)
                     result = await self._registry.adopt(prepare_task.task_id, call_id)
                     self._metrics.record_adopt(
-                        turn_id, call_id, prepare_inv.tool_name, prepare_spec_key, saved_ms=saved_ms
+                        turn_id,
+                        call_id,
+                        prepare_inv.canonical_tool_name,
+                        prepare_spec_key,
+                        saved_ms=saved_ms,
                     )
                     return {"action": "adopt", "result": result, "error": None}
                 except Exception as exc:
@@ -119,7 +106,7 @@ class SpeculationResolver:
             if prepare_task.state in {ShadowTaskState.STARTING, ShadowTaskState.RUNNING}:
                 try:
                     result = await self._registry.join(prepare_task.task_id, call_id)
-                    self._metrics.record_join(turn_id, call_id, prepare_inv.tool_name, prepare_spec_key)
+                    self._metrics.record_join(turn_id, call_id, prepare_inv.canonical_tool_name, prepare_spec_key)
                     return {"action": "join", "result": result, "error": None}
                 except Exception as exc:
                     self._metrics.record_replay(turn_id, call_id, tool_name, reason=f"prepare_join_failed:{exc}")

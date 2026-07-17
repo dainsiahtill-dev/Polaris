@@ -19,7 +19,6 @@ from polaris.cells.roles.kernel.internal.tool_call_envelope import (
     native_tool_call_envelopes_from_response,
     native_tool_calls_from_response,
 )
-from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
@@ -33,12 +32,10 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecision,
     TurnDecisionKind,
     TurnId,
-    _infer_effect_type as global_infer_effect_type,
-    _infer_execution_mode as global_infer_execution_mode,
+    classify_tool_invocation,
 )
 from polaris.kernelone.llm.toolkit.tool_normalization import (
-    normalize_tool_arguments,
-    normalize_tool_name,
+    normalize_tool_arguments_from_snapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,8 +111,7 @@ class TurnDecisionDecoder:
                 metadata["filtered_tool_calls_count"] = len(all_tools) or len(native_tool_call_envelopes)
             if all_tools:
                 metadata["filtered_tool_calls"] = [
-                    tool_invocation_audit_ref(tool, reason="finalization_tool_choice_none")
-                    for tool in all_tools
+                    tool_invocation_audit_ref(tool, reason="finalization_tool_choice_none") for tool in all_tools
                 ]
             if native_tool_call_envelopes:
                 metadata["filtered_native_tool_call_envelopes"] = native_tool_call_envelopes
@@ -323,16 +319,26 @@ class TurnDecisionDecoder:
         if not tool_name:
             raise TurnDecisionDecodeError("native tool payload missing tool name")
 
-        canonical_tool_name = normalize_tool_name(tool_name)
         parsed_arguments = self._parse_native_tool_arguments(arguments)
-        normalized_arguments = normalize_tool_arguments(canonical_tool_name, parsed_arguments)
+        classification = classify_tool_invocation(tool_name)
+        if classification.snapshot is None or classification.error_code is not None:
+            raise TurnDecisionDecodeError("deo_tool_normalization_failed")
+        if classification.normalization_required:
+            try:
+                normalized_arguments = normalize_tool_arguments_from_snapshot(
+                    classification.snapshot,
+                    parsed_arguments,
+                )
+            except ValueError as exc:
+                raise TurnDecisionDecodeError("deo_tool_normalization_failed") from exc
+        else:
+            normalized_arguments = parsed_arguments
 
-        return ToolInvocation(
+        return ToolInvocation._from_captured_classification(
             call_id=ToolCallId(str(call_id or self._generate_id())),
-            tool_name=canonical_tool_name,
+            raw_tool_name=tool_name,
             arguments=normalized_arguments,
-            effect_type=self._infer_effect_type(canonical_tool_name),
-            execution_mode=self._infer_execution_mode(canonical_tool_name),
+            classification=classification,
         )
 
     @staticmethod
@@ -522,72 +528,12 @@ class TurnDecisionDecoder:
         return len(tools) == 0 and bool(stripped)
 
     def _infer_execution_mode(self, tool_name: str) -> ToolExecutionMode:
-        """根据工具名推断执行模式。
-
-        优先使用 turn_contracts 全局函数，若返回 WRITE_SERIAL 且该工具
-        不在 WRITE_TOOLS 常量中，则通过 ToolSpecRegistry fallback 避免误分类。
-        """
-        normalized = tool_name.lower().replace("-", "_")
-
-        mode = global_infer_execution_mode(tool_name)
-        if mode != ToolExecutionMode.WRITE_SERIAL:
-            return mode
-
-        # 明确在写工具白名单中 -> 确认为写
-        if normalized in WRITE_TOOLS:
-            return ToolExecutionMode.WRITE_SERIAL
-
-        # Fallback: query ToolSpecRegistry for canonical classification
-        # to avoid misclassifying read tools as write (which forces NONE finalize)
-        try:
-            from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
-
-            spec = ToolSpecRegistry.get(normalized)
-            if spec is not None:
-                if spec.is_read_tool():
-                    return ToolExecutionMode.READONLY_PARALLEL
-                if spec.is_write_tool():
-                    return ToolExecutionMode.WRITE_SERIAL
-                if spec.is_exec_tool():
-                    # exec tools default to serial for safety
-                    return ToolExecutionMode.WRITE_SERIAL
-        except (ImportError, RuntimeError, KeyError, AttributeError):
-            pass
-        # 默认串行（安全优先）
-        return ToolExecutionMode.WRITE_SERIAL
+        """Compatibility delegate to the public canonical classifier."""
+        return classify_tool_invocation(tool_name).execution_mode
 
     def _infer_effect_type(self, tool_name: str) -> ToolEffectType:
-        """根据工具名推断 effect type。
-
-        优先使用 turn_contracts 全局函数，若返回 WRITE 且该工具不在
-        WRITE_TOOLS 常量中，则通过 ToolSpecRegistry fallback 避免误分类。
-        """
-        normalized = tool_name.lower().replace("-", "_")
-
-        mode = global_infer_execution_mode(tool_name)
-        effect = global_infer_effect_type(tool_name, mode)
-        if effect != ToolEffectType.WRITE:
-            return effect
-
-        # 明确在写工具白名单中 -> 确认为写
-        if normalized in WRITE_TOOLS:
-            return ToolEffectType.WRITE
-
-        # Fallback: query ToolSpecRegistry for canonical classification
-        try:
-            from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
-
-            spec = ToolSpecRegistry.get(normalized)
-            if spec is not None:
-                if spec.is_read_tool():
-                    return ToolEffectType.READ
-                if spec.is_write_tool():
-                    return ToolEffectType.WRITE
-                if "async" in (spec.categories or ()):
-                    return ToolEffectType.ASYNC
-        except (ImportError, RuntimeError, KeyError, AttributeError):
-            pass
-        return ToolEffectType.WRITE
+        """Compatibility delegate to the public canonical classifier."""
+        return classify_tool_invocation(tool_name).effect_type
 
     def _generate_id(self) -> str:
         """生成唯一ID"""

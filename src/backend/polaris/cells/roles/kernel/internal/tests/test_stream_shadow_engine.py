@@ -1,5 +1,7 @@
 """Tests for StreamShadowEngine cross-turn speculation."""
 
+import inspect
+
 import pytest
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
 
@@ -15,6 +17,9 @@ class MockSpeculativeExecutor:
             "enabled": self.enabled,
             "result": {"mock": "result"},
         }
+
+    async def execute_speculative(self, tool_name, args, *, timeout_ms, cancel_token=None):
+        return {"mock": "result"}
 
 
 class TestStreamShadowEngineCrossTurnSpeculation:
@@ -118,6 +123,11 @@ class TestStreamShadowEngineSpeculateToolCall:
         )
         assert result["enabled"] is True
         assert result["result"] == {"mock": "result"}
+
+    def test_shadow_engine_never_materializes_tool_invocations(self) -> None:
+        source = inspect.getsource(StreamShadowEngine.speculate_tool_call)
+        assert "ToolInvocation(" not in source
+        assert "tool_name=prepare_inv.canonical_tool_name" not in source
 
     @pytest.mark.asyncio
     async def test_speculate_write_tool_without_registry_fails_closed(self, engine):

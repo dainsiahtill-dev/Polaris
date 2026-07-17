@@ -15,6 +15,7 @@ import os
 import time
 import urllib.parse
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,9 +25,14 @@ from polaris.cells.control_plane.run_ledger.public.service import append_run_led
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     get_available_tools,
     normalize_tool_arguments,
+    normalize_tool_arguments_from_snapshot,
 )
 from polaris.kernelone.security.dangerous_patterns import is_path_traversal
-from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
+from polaris.kernelone.tool_execution.contracts import (
+    CapturedToolSpecSnapshotV1,
+    canonicalize_tool_name,
+    frozen_node_to_value,
+)
 from polaris.kernelone.tool_execution.tool_categories import (
     is_code_write_tool,
     is_command_execution_tool,
@@ -181,77 +187,211 @@ class RoleToolGateway:
     )
 
     def check_tool_permission(self, tool_name: str, tool_args: dict | None = None) -> tuple[bool, str]:
-        """检查工具调用权限
+        """Compatibility entry that captures and normalizes exactly one owner view."""
+        from polaris.cells.roles.kernel.public.turn_contracts import classify_tool_invocation
 
-        Args:
-            tool_name: 工具名称
-            tool_args: 工具参数（用于额外校验）
+        raw_tool_name = str(tool_name)
+        raw_arguments = dict(tool_args) if isinstance(tool_args, Mapping) else {}
+        classification = classify_tool_invocation(raw_tool_name)
+        snapshot = classification.snapshot
+        if not isinstance(snapshot, CapturedToolSpecSnapshotV1) or classification.error_code is not None:
+            return False, self._format_refusal_message("工具规范化失败", raw_tool_name)
+        if classification.normalization_required:
+            try:
+                normalized_arguments = normalize_tool_arguments_from_snapshot(snapshot, raw_arguments)
+            except ValueError:
+                return False, self._format_refusal_message("工具规范化失败", raw_tool_name)
+        else:
+            normalized_arguments = raw_arguments
+        return self.check_tool_permission_from_snapshot(
+            raw_tool_name=raw_tool_name,
+            canonical_tool_name=classification.canonical_tool_name,
+            normalized_tool_args=normalized_arguments,
+            tool_snapshot=snapshot,
+        )
 
-        Returns:
-            (是否允许, 拒绝原因)
-        """
-        requested_tool_name = tool_name
-        canonical_tool_name = self._normalize_tool_name(requested_tool_name)
+    def check_tool_permission_from_snapshot(
+        self,
+        *,
+        raw_tool_name: str,
+        canonical_tool_name: str,
+        normalized_tool_args: Mapping[str, object],
+        tool_snapshot: CapturedToolSpecSnapshotV1,
+    ) -> tuple[bool, str]:
+        """Apply gateway policy using only one previously captured tool view."""
+        if not self._snapshot_matches_bound_tool(
+            raw_tool_name=raw_tool_name,
+            canonical_tool_name=canonical_tool_name,
+            tool_snapshot=tool_snapshot,
+        ):
+            return False, self._format_refusal_message("工具快照不一致", raw_tool_name)
 
-        # 1. 检查白名单（空白名单=禁止所有）。工具别名必须先归一化，再授权。
-        whitelist = self._canonical_tool_whitelist()
+        requested_tool_name = raw_tool_name
+        normalized_args = dict(normalized_tool_args)
+
+        snapshot_category = self._snapshot_tool_category(tool_snapshot)
+
+        def deny(base_message: str) -> tuple[bool, str]:
+            return False, self._format_refusal_message_from_snapshot(
+                base_message,
+                snapshot_category,
+            )
+
+        if snapshot_category is None:
+            return deny("工具分类不一致")
+        if snapshot_category not in {"read", "write", "exec", "delete"}:
+            return deny("工具分类不支持")
+
+        whitelist = self._canonical_tool_whitelist_from_snapshot(tool_snapshot)
         if canonical_tool_name.lower() not in whitelist:
             tool_label = (
                 f"{requested_tool_name} (canonical: {canonical_tool_name})"
                 if requested_tool_name != canonical_tool_name
                 else requested_tool_name
             )
-            return False, self._format_refusal_message(f"工具 '{tool_label}' 不在角色白名单中", requested_tool_name)
+            return deny(f"工具 '{tool_label}' 不在角色白名单中")
 
-        # 2. 检查黑名单
-        blacklist_lower = [self._normalize_tool_name(b).lower() for b in self.policy.blacklist]
-        if canonical_tool_name.lower() in blacklist_lower:
-            return False, self._format_refusal_message(
-                f"工具 '{canonical_tool_name}' 在角色黑名单中", requested_tool_name
-            )
+        blacklist = self._canonical_tool_blacklist_from_snapshot(tool_snapshot)
+        if canonical_tool_name.lower() in blacklist:
+            return deny(f"工具 '{canonical_tool_name}' 在角色黑名单中")
 
-        # 3. 检查代码写入权限
-        if self._is_code_write_tool(canonical_tool_name):
+        if snapshot_category == "write":
             if not self.policy.allow_code_write:
-                return False, self._format_refusal_message(
-                    f"角色无权使用代码写入工具 '{canonical_tool_name}'", requested_tool_name
-                )
+                return deny(f"角色无权使用代码写入工具 '{canonical_tool_name}'")
+            if "scope" in normalized_args and not self._validate_scope(normalized_args["scope"]):
+                return deny("scope约束验证失败")
 
-            # 额外检查：是否有scope约束
-            if tool_args and "scope" in tool_args and not self._validate_scope(tool_args["scope"]):
-                return False, self._format_refusal_message("scope约束验证失败", requested_tool_name)
-
-        # 4. 检查命令执行权限
-        if self._is_command_execution_tool(canonical_tool_name):
+        if snapshot_category == "exec":
             if not self.policy.allow_command_execution:
-                return False, self._format_refusal_message(
-                    f"角色无权执行命令 '{canonical_tool_name}'", requested_tool_name
-                )
+                return deny(f"角色无权执行命令 '{canonical_tool_name}'")
+            if "command" in normalized_args and self._is_dangerous_command(str(normalized_args["command"])):
+                return deny("命令包含危险操作")
 
-            # 检查命令内容是否危险
-            if tool_args and "command" in tool_args and self._is_dangerous_command(tool_args["command"]):
-                return False, self._format_refusal_message("命令包含危险操作", requested_tool_name)
+        if snapshot_category == "delete" and not self.policy.allow_file_delete:
+            return deny(f"角色无权删除文件 '{canonical_tool_name}'")
 
-        # 5. 检查文件删除权限
-        if self._is_file_delete_tool(canonical_tool_name) and not self.policy.allow_file_delete:
-            return False, self._format_refusal_message(f"角色无权删除文件 '{canonical_tool_name}'", requested_tool_name)
-
-        # 6. 检查调用次数限制
         if self._execution_count >= self.policy.max_tool_calls_per_turn:
-            return False, self._format_refusal_message(
-                f"超过单次请求最大工具调用次数 ({self.policy.max_tool_calls_per_turn})", requested_tool_name
-            )
+            return deny(f"超过单次请求最大工具调用次数 ({self.policy.max_tool_calls_per_turn})")
 
-        # 7. 路径穿越检查 - 使用 canonical 名称进行参数归一化，避免别名绕过
-        if tool_args:
-            normalized_args = self._normalize_tool_args(canonical_tool_name, tool_args)
-            for key in ["path", "file", "filepath", "target", "source"]:
-                if key in normalized_args:
-                    path = str(normalized_args[key])
-                    if self._is_path_traversal(path):
-                        return False, self._format_refusal_message(f"路径 '{path}' 包含穿越序列", requested_tool_name)
+        for key in ["path", "file", "filepath", "target", "source"]:
+            if key in normalized_args:
+                path = str(normalized_args[key])
+                if self._is_path_traversal(path):
+                    return deny(f"路径 '{path}' 包含穿越序列")
 
         return True, "授权通过"
+
+    @staticmethod
+    def _snapshot_matches_bound_tool(
+        *,
+        raw_tool_name: str,
+        canonical_tool_name: str,
+        tool_snapshot: CapturedToolSpecSnapshotV1,
+    ) -> bool:
+        """Reject forged or mutated snapshots without consulting the registry."""
+        try:
+            validated = CapturedToolSpecSnapshotV1(
+                raw_tool_name=tool_snapshot.raw_tool_name,
+                canonical_tool_name=tool_snapshot.canonical_tool_name,
+                registered=tool_snapshot.registered,
+                canonical_effective_spec=tool_snapshot.canonical_effective_spec,
+                canonical_name_view=tool_snapshot.canonical_name_view,
+                alias_binding_view=tool_snapshot.alias_binding_view,
+            )
+        except (TypeError, ValueError):
+            return False
+        if not validated.registered:
+            return False
+        if raw_tool_name != validated.raw_tool_name or canonical_tool_name != validated.canonical_tool_name:
+            return False
+        if (
+            tool_snapshot.tool_spec_hash != validated.tool_spec_hash
+            or tool_snapshot.canonical_name_view_hash != validated.canonical_name_view_hash
+            or tool_snapshot.alias_binding_hash != validated.alias_binding_hash
+            or tool_snapshot.snapshot_hash != validated.snapshot_hash
+        ):
+            return False
+        names = frozen_node_to_value(validated.canonical_name_view)
+        return isinstance(names, list) and canonical_tool_name in names
+
+    @staticmethod
+    def _snapshot_tool_category(tool_snapshot: CapturedToolSpecSnapshotV1) -> str | None:
+        """Return one validated category using only immutable snapshot evidence."""
+        effective_spec = frozen_node_to_value(tool_snapshot.canonical_effective_spec)
+        if not isinstance(effective_spec, dict):
+            return None
+        raw_category = effective_spec.get("category")
+        if not isinstance(raw_category, str):
+            return None
+        category = raw_category.strip().lower()
+        if not category:
+            return None
+
+        raw_categories = effective_spec.get("categories")
+        if raw_categories is not None:
+            if not isinstance(raw_categories, list) or not raw_categories:
+                return None
+            declared_categories = {
+                value.strip().lower() for value in raw_categories if isinstance(value, str) and value.strip()
+            }
+            if len(declared_categories) != len(raw_categories) or declared_categories != {category}:
+                return None
+
+        expected_effects = {
+            "read": "read",
+            "write": "write",
+            "exec": "write",
+            "delete": "write",
+            "async": "async",
+        }
+        for field_name in ("effect_type", "effect"):
+            raw_effect = effective_spec.get(field_name)
+            if raw_effect is not None and (
+                not isinstance(raw_effect, str)
+                or category not in expected_effects
+                or raw_effect.strip().lower() != expected_effects[category]
+            ):
+                return None
+        return category
+
+    def _canonical_tool_whitelist_from_snapshot(
+        self,
+        tool_snapshot: CapturedToolSpecSnapshotV1,
+    ) -> frozenset[str]:
+        return self._canonical_policy_tools_from_snapshot(getattr(self.policy, "whitelist", None), tool_snapshot)
+
+    def _canonical_tool_blacklist_from_snapshot(
+        self,
+        tool_snapshot: CapturedToolSpecSnapshotV1,
+    ) -> frozenset[str]:
+        return self._canonical_policy_tools_from_snapshot(getattr(self.policy, "blacklist", None), tool_snapshot)
+
+    def _canonical_policy_tools_from_snapshot(
+        self,
+        policy_tools: Any,
+        tool_snapshot: CapturedToolSpecSnapshotV1,
+    ) -> frozenset[str]:
+        """Resolve role policy aliases only from the supplied frozen views."""
+        if not policy_tools:
+            return frozenset()
+        aliases = frozen_node_to_value(tool_snapshot.alias_binding_view)
+        names = frozen_node_to_value(tool_snapshot.canonical_name_view)
+        if not isinstance(aliases, dict) or not isinstance(names, list):
+            return frozenset()
+        registered = {str(name).lower() for name in names if isinstance(name, str)}
+        allowed: set[str] = set()
+        for item in policy_tools:
+            raw = str(item or "").strip()
+            if not raw:
+                continue
+            normalized = raw.lower().replace("-", "_")
+            resolved = aliases.get(normalized, normalized)
+            canonical = str(resolved).lower() if isinstance(resolved, str) else ""
+            if any(char in canonical for char in ("*", "?", "[")):
+                allowed.update(name for name in registered if self._match_wildcard(name, canonical))
+            elif canonical in registered:
+                allowed.add(canonical)
+        return frozenset(allowed)
 
     def _format_refusal_message(self, base_message: str, tool_name: str) -> str:
         """格式化拒绝消息，添加安全拒绝标记。
@@ -279,6 +419,21 @@ class RoleToolGateway:
         else:
             # 通用拒绝标记
             return f"{base_message} [拒绝: {'/'.join(markers[:3])}]"
+
+    def _format_refusal_message_from_snapshot(
+        self,
+        base_message: str,
+        snapshot_category: str | None,
+    ) -> str:
+        """Format a bound-entry denial without reading active category caches."""
+        markers = list(self.REFUSAL_MARKERS)
+        if snapshot_category == "delete":
+            return f"{base_message} [拒绝: 不能删除/禁止删除/危险操作]"
+        if snapshot_category == "exec":
+            return f"{base_message} [拒绝: 不能执行/禁止执行/危险命令]"
+        if snapshot_category == "write":
+            return f"{base_message} [拒绝: 不能写入/禁止写入/危险操作]"
+        return f"{base_message} [拒绝: {'/'.join(markers[:3])}]"
 
     def _emit_tool_event_to_journal(
         self,

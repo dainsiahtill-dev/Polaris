@@ -30,15 +30,10 @@ from polaris.cells.roles.kernel.internal.speculation.write_phases import (
     WriteToolPhases,
 )
 from polaris.cells.roles.kernel.internal.speculative_executor import (
+    ShadowExecutionError,
     SpeculativeExecutor,
 )
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime
-from polaris.cells.roles.kernel.public.turn_contracts import (
-    ToolCallId,
-    ToolEffectType,
-    ToolExecutionMode,
-    ToolInvocation,
-)
 
 
 async def _task_group_proxy(future: asyncio.Task[Any]) -> Any:
@@ -190,25 +185,16 @@ class StreamShadowEngine:
 
             if is_write_tool:
                 # 为写工具启动 Prepare shadow(只读校验)
-                prepare_inv = WriteToolPhases.build_prepare_invocation(
-                    ToolInvocation(
-                        call_id=ToolCallId(call_id),
-                        tool_name=tool_name,
-                        arguments=arguments or {},
-                        effect_type=ToolEffectType.READ,
-                        execution_mode=ToolExecutionMode.READONLY_PARALLEL,
-                    )
+                prepare_inv = WriteToolPhases.build_prepare_shadow_key(
+                    source_call_id=call_id,
+                    arguments=dict(arguments or {}),
                 )
-                prepare_args = normalize_args(prepare_inv.tool_name, prepare_inv.arguments)
+                prepare_args = WriteToolPhases.prepare_shadow_normalized_args(arguments or {})
                 env_fp = build_env_fingerprint()
-                prepare_spec_key = build_spec_key(
-                    tool_name=prepare_inv.tool_name,
-                    normalized_args=prepare_args,
-                    env_fingerprint=env_fp,
-                )
+                prepare_spec_key = prepare_inv.shadow_key_hash
                 if not self._registry.exists_active(prepare_spec_key):
                     policy = ToolSpecPolicy(
-                        tool_name=prepare_inv.tool_name,
+                        tool_name=WriteToolPhases.prepare_shadow_execution_tool_name(),
                         side_effect="readonly",
                         cost="cheap",
                         cancellability="cooperative",
@@ -218,7 +204,7 @@ class StreamShadowEngine:
                     record = await self._registry.start_shadow_task(
                         turn_id=effective_turn_id,
                         candidate_id=f"prepare_{call_id}",
-                        tool_name=prepare_inv.tool_name,
+                        tool_name=WriteToolPhases.prepare_shadow_execution_tool_name(),
                         normalized_args=prepare_args,
                         spec_key=prepare_spec_key,
                         env_fingerprint=env_fp,
@@ -266,14 +252,15 @@ class StreamShadowEngine:
 
         # Local speculation path when no registry-backed shadow task runner is configured.
         # Write tools are handled above because they require registry-backed prepare shadow.
-        invocation = ToolInvocation(
-            call_id=ToolCallId(call_id or f"spec_{normalized}"),
-            tool_name=tool_name,
-            arguments=arguments or {},
-            effect_type=ToolEffectType.READ,
-            execution_mode=ToolExecutionMode.READONLY_PARALLEL,
-        )
-        return await self._speculative_executor.speculate(invocation)
+        try:
+            result = await self._speculative_executor.execute_speculative(
+                tool_name,
+                dict(arguments or {}),
+                timeout_ms=_eval_read_shadow_timeout_ms(),
+            )
+        except ShadowExecutionError as exc:
+            return {"enabled": True, "result": None, "error": str(exc)}
+        return {"enabled": True, "result": result, "error": None}
 
     async def resolve_or_execute(
         self,
