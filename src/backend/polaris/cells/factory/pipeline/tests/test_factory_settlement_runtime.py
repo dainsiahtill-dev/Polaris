@@ -699,6 +699,138 @@ async def test_durable_wake_bridge_verifies_the_complete_server_consumer_contrac
         await bridge.stop()
 
 
+@pytest.mark.parametrize("field", ("flow_control", "headers_only"))
+@pytest.mark.parametrize(("expected_value", "actual_value"), ((False, None), (None, False)))
+def test_durable_wake_bridge_normalizes_omitted_false_boolean_fields(
+    field: str,
+    expected_value: object,
+    actual_value: object,
+) -> None:
+    subject = "hp.runtime.workspace.>"
+    durable_name = "factory-settlement-v1-workspace"
+    expected = _wake_consumer_config(durable_name, subject)
+    actual = _wake_consumer_config(durable_name, subject)
+    setattr(expected, field, expected_value)
+    setattr(actual, field, actual_value)
+    bridge = DurableJetStreamSettlementWakeBridge(
+        client=RecordingWakeClient(RecordingJetStreamContext(RecordingJetStreamSubscription())),
+        subject=subject,
+        durable_name=durable_name,
+        wake=lambda: asyncio.sleep(0, result=SettlementReplayReport(decisions=())),
+    )
+
+    bridge._assert_consumer_config_matches(expected=expected, actual=actual)
+
+
+@pytest.mark.parametrize("field", ("flow_control", "headers_only"))
+def test_durable_wake_bridge_does_not_normalize_expected_true_to_omitted(
+    field: str,
+) -> None:
+    subject = "hp.runtime.workspace.>"
+    durable_name = "factory-settlement-v1-workspace"
+    expected = _wake_consumer_config(durable_name, subject)
+    actual = _wake_consumer_config(durable_name, subject)
+    setattr(expected, field, True)
+    setattr(actual, field, None)
+    bridge = DurableJetStreamSettlementWakeBridge(
+        client=RecordingWakeClient(RecordingJetStreamContext(RecordingJetStreamSubscription())),
+        subject=subject,
+        durable_name=durable_name,
+        wake=lambda: asyncio.sleep(0, result=SettlementReplayReport(decisions=())),
+    )
+
+    with pytest.raises(FactorySettlementWakeBridgeError) as raised:
+        bridge._assert_consumer_config_matches(expected=expected, actual=actual)
+
+    assert raised.value.code == "factory_settlement_wake_consumer_config_drift"
+    assert field in raised.value.details["mismatches"]
+
+
+@pytest.mark.parametrize("field", ("flow_control", "headers_only"))
+def test_durable_wake_bridge_rejects_expected_false_actual_true(field: str) -> None:
+    """expected=False / actual=True must remain fail-closed (real drift).
+
+    The None≡False normalization is scoped to server-omitted falsy fields; it
+    must never mask a genuine False→True regression on the safety booleans.
+    """
+    subject = "hp.runtime.workspace.>"
+    durable_name = "factory-settlement-v1-workspace"
+    expected = _wake_consumer_config(durable_name, subject)
+    actual = _wake_consumer_config(durable_name, subject)
+    setattr(expected, field, False)
+    setattr(actual, field, True)
+    bridge = DurableJetStreamSettlementWakeBridge(
+        client=RecordingWakeClient(RecordingJetStreamContext(RecordingJetStreamSubscription())),
+        subject=subject,
+        durable_name=durable_name,
+        wake=lambda: asyncio.sleep(0, result=SettlementReplayReport(decisions=())),
+    )
+
+    with pytest.raises(FactorySettlementWakeBridgeError) as raised:
+        bridge._assert_consumer_config_matches(expected=expected, actual=actual)
+
+    assert raised.value.code == "factory_settlement_wake_consumer_config_drift"
+    assert field in raised.value.details["mismatches"]
+
+
+@pytest.mark.parametrize("field", ("flow_control", "headers_only"))
+def test_durable_wake_bridge_false_equivalence_scoped_to_safety_booleans(field: str) -> None:
+    """The None≡False equivalence must stay scoped to the two safety booleans.
+
+    A None on any OTHER safety field (here deliver_group) must not be
+    normalized into a pass; only flow_control/headers_only get the
+    falsy-omission treatment.
+    """
+    subject = "hp.runtime.workspace.>"
+    durable_name = "factory-settlement-v1-workspace"
+    expected = _wake_consumer_config(durable_name, subject)
+    actual = _wake_consumer_config(durable_name, subject)
+    expected.deliver_group = "settlement-workers"
+    actual.deliver_group = None
+    bridge = DurableJetStreamSettlementWakeBridge(
+        client=RecordingWakeClient(RecordingJetStreamContext(RecordingJetStreamSubscription())),
+        subject=subject,
+        durable_name=durable_name,
+        wake=lambda: asyncio.sleep(0, result=SettlementReplayReport(decisions=())),
+    )
+
+    with pytest.raises(FactorySettlementWakeBridgeError) as raised:
+        bridge._assert_consumer_config_matches(expected=expected, actual=actual)
+
+    assert raised.value.code == "factory_settlement_wake_consumer_config_drift"
+    assert "deliver_group" in raised.value.details["mismatches"]
+
+
+@pytest.mark.parametrize("field", ("flow_control", "headers_only"))
+@pytest.mark.parametrize(("expected_value", "actual_value"), ((False, 0), (True, 1)))
+def test_durable_wake_bridge_rejects_integer_boolean_lookalikes(
+    field: str,
+    expected_value: bool,
+    actual_value: int,
+) -> None:
+    subject = "hp.runtime.workspace.>"
+    durable_name = "factory-settlement-v1-workspace"
+    expected = _wake_consumer_config(durable_name, subject)
+    actual = _wake_consumer_config(durable_name, subject)
+    setattr(expected, field, expected_value)
+    setattr(actual, field, actual_value)
+    bridge = DurableJetStreamSettlementWakeBridge(
+        client=RecordingWakeClient(RecordingJetStreamContext(RecordingJetStreamSubscription())),
+        subject=subject,
+        durable_name=durable_name,
+        wake=lambda: asyncio.sleep(0, result=SettlementReplayReport(decisions=())),
+    )
+
+    with pytest.raises(FactorySettlementWakeBridgeError) as raised:
+        bridge._assert_consumer_config_matches(expected=expected, actual=actual)
+
+    assert raised.value.code == "factory_settlement_wake_consumer_config_drift"
+    assert raised.value.details["mismatches"][field] == {
+        "expected": expected_value,
+        "actual": actual_value,
+    }
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("field", "actual"),

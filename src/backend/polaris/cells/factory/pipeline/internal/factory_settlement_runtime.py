@@ -82,6 +82,7 @@ _WAKE_CONSUMER_SAFETY_FIELDS: Final[tuple[str, ...]] = (
     "flow_control",
     "headers_only",
 )
+_WAKE_FALSE_EQUIVALENT_BOOLEAN_FIELDS: Final[frozenset[str]] = frozenset({"flow_control", "headers_only"})
 _RECOVERY_REQUIRED_CODES: Final[frozenset[str]] = frozenset({"factory_workspace_run_lease_expired"})
 _FENCED_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -114,8 +115,20 @@ def _consumer_safety_evidence(config: ConsumerConfig) -> dict[str, object]:
     evidence: dict[str, object] = {}
     for field in _WAKE_CONSUMER_SAFETY_FIELDS:
         value = raw.get(field)
+        if field in _WAKE_FALSE_EQUIVALENT_BOOLEAN_FIELDS and value is None:
+            value = False
         evidence[field] = value.value if isinstance(value, Enum) else value
     return evidence
+
+
+def _consumer_safety_values_match(
+    field: str,
+    expected: object,
+    actual: object,
+) -> bool:
+    if field in _WAKE_FALSE_EQUIVALENT_BOOLEAN_FIELDS:
+        return type(expected) is bool and type(actual) is bool and expected is actual
+    return expected == actual
 
 
 class FactoryRunServicePort(Protocol):
@@ -597,7 +610,11 @@ class DurableJetStreamSettlementWakeBridge:
                 "actual": actual_evidence[field],
             }
             for field in _WAKE_CONSUMER_SAFETY_FIELDS
-            if expected_evidence[field] != actual_evidence[field]
+            if not _consumer_safety_values_match(
+                field,
+                expected_evidence[field],
+                actual_evidence[field],
+            )
         }
         if mismatches:
             raise FactorySettlementWakeBridgeError(
