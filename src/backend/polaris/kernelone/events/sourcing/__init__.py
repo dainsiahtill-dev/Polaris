@@ -20,6 +20,13 @@ from .models import (
     StrictEventRecordError,
     decode_strict_event_record,
 )
+from .segmented_file_store import (
+    SegmentedEventStoreError,
+    SegmentedJsonlEventStore,
+    SegmentedLedgerHeadV1,
+    SegmentedQueryResultV1,
+    SegmentedStoredEventV1,
+)
 
 __all__ = [
     "AppendIfGuardedSnapshotCommandV1",
@@ -34,6 +41,11 @@ __all__ = [
     "IdempotencyConflictError",
     "JsonlEventStore",
     "ReadGuardedFactSnapshotCommandV1",
+    "SegmentedEventStoreError",
+    "SegmentedJsonlEventStore",
+    "SegmentedLedgerHeadV1",
+    "SegmentedQueryResultV1",
+    "SegmentedStoredEventV1",
     "StrictEventRecordError",
     "append_if_guarded_snapshot",
     "decode_strict_event_record",

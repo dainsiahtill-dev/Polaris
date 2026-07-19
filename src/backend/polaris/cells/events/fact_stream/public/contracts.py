@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -50,6 +51,50 @@ def _detach_error_details(payload: Mapping[str, Any] | None) -> dict[str, Any]:
 
 def _optional_text(value: object) -> str | None:
     return str(value or "").strip() or None
+
+
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _require_sha256_hex(name: str, value: str) -> str:
+    normalized = _require_non_empty(name, value)
+    if _SHA256_HEX_RE.fullmatch(normalized) is None:
+        raise ValueError(f"{name} must be a lowercase 64-character SHA-256 hex digest")
+    return normalized
+
+
+def _require_int(name: str, value: object, *, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"{name} must be an int >= {minimum}")
+    return value
+
+
+def _require_exact_non_empty(name: str, value: object) -> str:
+    if type(value) is not str:
+        raise ValueError(f"{name} must be an exact non-empty string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{name} must be an exact non-empty string")
+    return normalized
+
+
+def _require_exact_sha256_hex(name: str, value: object) -> str:
+    normalized = _require_exact_non_empty(name, value)
+    if _SHA256_HEX_RE.fullmatch(normalized) is None:
+        raise ValueError(f"{name} must be a lowercase 64-character SHA-256 hex digest")
+    return normalized
+
+
+def _require_exact_int(name: str, value: object, *, minimum: int) -> int:
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{name} must be an exact int >= {minimum}")
+    return value
+
+
+def _optional_exact_text(name: str, value: object) -> str | None:
+    if value is None:
+        return None
+    return _require_exact_non_empty(name, value)
 
 
 @dataclass(frozen=True)
@@ -173,6 +218,309 @@ class QueryFactStreamHeadV1:
         object.__setattr__(self, "stream", _require_non_empty("stream", self.stream))
         if not isinstance(self.strict_integrity, bool):
             raise ValueError("strict_integrity must be a bool")
+
+
+@dataclass(frozen=True)
+class EnsureSegmentedFactLedgerCommandV1:
+    """Enroll and validate one dynamic segmented authority ledger."""
+
+    workspace: str
+    logical_stream: str
+    maintenance_reason: str
+    retention: Literal["pinned_audit_no_delete"] = "pinned_audit_no_delete"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "logical_stream",
+            _require_exact_non_empty("logical_stream", self.logical_stream),
+        )
+        object.__setattr__(
+            self,
+            "maintenance_reason",
+            _require_exact_non_empty("maintenance_reason", self.maintenance_reason),
+        )
+        if type(self.retention) is not str or self.retention != "pinned_audit_no_delete":
+            raise ValueError("segmented fact ledgers require pinned_audit_no_delete retention")
+
+
+@dataclass(frozen=True)
+class AppendSegmentedFactEventCommandV1:
+    """Append one fsync fact to a previously ensured segmented ledger."""
+
+    workspace: str
+    logical_stream: str
+    event_type: str
+    source: str
+    payload: Mapping[str, Any]
+    idempotency_key: str
+    expected_global_seq: int | None = None
+    require_idempotency_replay: bool = False
+    durability: Literal["fsync"] = "fsync"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "logical_stream",
+            _require_exact_non_empty("logical_stream", self.logical_stream),
+        )
+        object.__setattr__(self, "event_type", _require_exact_non_empty("event_type", self.event_type))
+        object.__setattr__(self, "source", _require_exact_non_empty("source", self.source))
+        object.__setattr__(
+            self,
+            "idempotency_key",
+            _require_exact_non_empty("idempotency_key", self.idempotency_key),
+        )
+        if type(self.payload) is not dict or any(type(key) is not str for key in self.payload):
+            raise ValueError("payload must be an exact dict")
+        payload = dict(self.payload)
+        if not payload:
+            raise ValueError("payload must not be empty")
+        object.__setattr__(self, "payload", payload)
+        expected = self.expected_global_seq
+        if expected is not None and (type(expected) is not int or expected < 1):
+            raise ValueError("expected_global_seq must be an int >= 1 or None")
+        if type(self.require_idempotency_replay) is not bool:
+            raise ValueError("require_idempotency_replay must be a bool")
+        if type(self.durability) is not str or self.durability != "fsync":
+            raise ValueError("segmented authority facts require fsync durability")
+
+
+@dataclass(frozen=True)
+class QuerySegmentedFactLedgerHeadV1:
+    workspace: str
+    logical_stream: str
+    strict_integrity: Literal[True] = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "logical_stream",
+            _require_exact_non_empty("logical_stream", self.logical_stream),
+        )
+        if self.strict_integrity is not True:
+            raise ValueError("segmented authority head queries require strict_integrity=true")
+
+
+@dataclass(frozen=True)
+class QuerySegmentedFactEventsV1:
+    workspace: str
+    logical_stream: str
+    limit: int = 100
+    continuation: str | None = None
+    strict_integrity: Literal[True] = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "logical_stream",
+            _require_exact_non_empty("logical_stream", self.logical_stream),
+        )
+        if type(self.limit) is not int or not 1 <= self.limit <= 511:
+            raise ValueError("limit must be between 1 and 511")
+        object.__setattr__(
+            self,
+            "continuation",
+            _optional_exact_text("continuation", self.continuation),
+        )
+        if self.strict_integrity is not True:
+            raise ValueError("segmented authority queries require strict_integrity=true")
+
+
+@dataclass(frozen=True)
+class SegmentedFactLedgerHeadV1:
+    workspace: str
+    logical_stream: str
+    storage_prefix: str
+    total_count: int
+    segment_count: int
+    global_seq: int
+    next_expected_global_seq: int
+    tail_segment_index: int | None
+    tail_local_seq: int
+    head_hash: str
+    storage_bytes: int
+    retention: Literal["pinned_audit_no_delete"] = "pinned_audit_no_delete"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "logical_stream",
+            _require_exact_non_empty("logical_stream", self.logical_stream),
+        )
+        object.__setattr__(
+            self,
+            "storage_prefix",
+            _require_exact_non_empty("storage_prefix", self.storage_prefix),
+        )
+        object.__setattr__(self, "head_hash", _require_exact_sha256_hex("head_hash", self.head_hash))
+        _require_exact_int("total_count", self.total_count, minimum=0)
+        _require_exact_int("segment_count", self.segment_count, minimum=0)
+        _require_exact_int("global_seq", self.global_seq, minimum=0)
+        _require_exact_int("next_expected_global_seq", self.next_expected_global_seq, minimum=1)
+        _require_exact_int("tail_local_seq", self.tail_local_seq, minimum=0)
+        _require_exact_int("storage_bytes", self.storage_bytes, minimum=0)
+        if self.tail_segment_index is not None:
+            _require_exact_int("tail_segment_index", self.tail_segment_index, minimum=0)
+        if self.global_seq != self.total_count:
+            raise ValueError("global_seq must equal total_count")
+        if self.next_expected_global_seq != self.global_seq + 1:
+            raise ValueError("next_expected_global_seq must equal global_seq + 1")
+        if self.total_count == 0:
+            if (
+                self.segment_count != 0
+                or self.tail_segment_index is not None
+                or self.tail_local_seq != 0
+                or self.storage_bytes != 0
+            ):
+                raise ValueError("empty segmented ledger head has inconsistent count/tail/bytes state")
+        elif (
+            self.segment_count < 1
+            or self.segment_count > self.total_count
+            or self.tail_segment_index != self.segment_count - 1
+            or self.tail_local_seq < 1
+            or self.tail_local_seq > self.total_count
+            or self.storage_bytes < 1
+        ):
+            raise ValueError("non-empty segmented ledger head has inconsistent count/tail/bytes state")
+        if type(self.retention) is not str or self.retention != "pinned_audit_no_delete":
+            raise ValueError("segmented fact ledgers require pinned_audit_no_delete retention")
+
+
+@dataclass(frozen=True)
+class SegmentedFactLedgerReadyV1:
+    workspace: str
+    logical_stream: str
+    storage_prefix: str
+    storage_identity_token: str
+    retention: Literal["pinned_audit_no_delete"]
+    head: SegmentedFactLedgerHeadV1
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "logical_stream",
+            _require_exact_non_empty("logical_stream", self.logical_stream),
+        )
+        object.__setattr__(
+            self,
+            "storage_prefix",
+            _require_exact_non_empty("storage_prefix", self.storage_prefix),
+        )
+        object.__setattr__(
+            self,
+            "storage_identity_token",
+            _require_exact_non_empty("storage_identity_token", self.storage_identity_token),
+        )
+        if type(self.retention) is not str or self.retention != "pinned_audit_no_delete":
+            raise ValueError("segmented fact ledgers require pinned_audit_no_delete retention")
+        if type(self.head) is not SegmentedFactLedgerHeadV1:
+            raise ValueError("head must be exact SegmentedFactLedgerHeadV1")
+        SegmentedFactLedgerHeadV1.__post_init__(self.head)
+        if (
+            self.head.workspace != self.workspace
+            or self.head.logical_stream != self.logical_stream
+            or self.head.storage_prefix != self.storage_prefix
+            or self.head.retention != self.retention
+        ):
+            raise ValueError("segmented ledger ready identity must exactly match its head")
+
+
+@dataclass(frozen=True)
+class SegmentedFactEventAppendedV1:
+    workspace: str
+    logical_stream: str
+    event_id: str
+    global_seq: int
+    segment_index: int
+    local_seq: int
+    event_hash: str
+    appended_at: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "logical_stream",
+            _require_exact_non_empty("logical_stream", self.logical_stream),
+        )
+        object.__setattr__(self, "event_id", _require_exact_non_empty("event_id", self.event_id))
+        _require_exact_int("global_seq", self.global_seq, minimum=1)
+        _require_exact_int("segment_index", self.segment_index, minimum=0)
+        _require_exact_int("local_seq", self.local_seq, minimum=1)
+        if self.local_seq > self.global_seq or self.segment_index >= self.global_seq:
+            raise ValueError("segmented append sequence coordinates are inconsistent")
+        object.__setattr__(self, "event_hash", _require_exact_sha256_hex("event_hash", self.event_hash))
+        object.__setattr__(self, "appended_at", _require_exact_non_empty("appended_at", self.appended_at))
+
+
+@dataclass(frozen=True)
+class SegmentedFactQueryResultV1:
+    workspace: str
+    logical_stream: str
+    events: tuple[dict[str, Any], ...]
+    captured_head: SegmentedFactLedgerHeadV1
+    continuation: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "logical_stream",
+            _require_exact_non_empty("logical_stream", self.logical_stream),
+        )
+        if type(self.captured_head) is not SegmentedFactLedgerHeadV1:
+            raise ValueError("captured_head must be exact SegmentedFactLedgerHeadV1")
+        SegmentedFactLedgerHeadV1.__post_init__(self.captured_head)
+        if self.captured_head.workspace != self.workspace or self.captured_head.logical_stream != self.logical_stream:
+            raise ValueError("segmented query identity must exactly match captured_head")
+        if type(self.events) is not tuple:
+            raise ValueError("segmented query events must be an exact tuple")
+        if any(type(item) is not dict or any(type(key) is not str for key in item) for item in self.events):
+            raise ValueError("segmented query event entries must be exact dicts")
+        events = tuple(dict(item) for item in self.events)
+        if len(events) > 511:
+            raise ValueError("segmented query result may contain at most 511 events")
+        previous_global_seq: int | None = None
+        for event in events:
+            event_stream = _require_exact_non_empty("event.logical_stream", event.get("logical_stream"))
+            if event_stream != self.logical_stream:
+                raise ValueError("segmented query event logical_stream mismatch")
+            _require_exact_non_empty("event.event_id", event.get("event_id"))
+            global_seq = _require_exact_int("event.global_seq", event.get("global_seq"), minimum=1)
+            _require_exact_int("event.segment_index", event.get("segment_index"), minimum=0)
+            local_seq = _require_exact_int("event.local_seq", event.get("local_seq"), minimum=1)
+            if local_seq > global_seq or global_seq > self.captured_head.global_seq:
+                raise ValueError("segmented query event sequence exceeds captured head")
+            if previous_global_seq is not None and global_seq != previous_global_seq + 1:
+                raise ValueError("segmented query events must have contiguous global sequence")
+            previous_global_seq = global_seq
+            _require_exact_non_empty("event.event_type", event.get("event_type"))
+            _require_exact_non_empty("event.source", event.get("source"))
+            _require_exact_non_empty("event.idempotency_key", event.get("idempotency_key"))
+            _require_exact_non_empty("event.occurred_at", event.get("occurred_at"))
+            if (
+                type(event.get("payload")) is not dict
+                or not event["payload"]
+                or any(type(key) is not str for key in event["payload"])
+            ):
+                raise ValueError("segmented query event payload must be a non-empty mapping")
+            _require_exact_sha256_hex("event.previous_event_hash", event.get("previous_event_hash"))
+            _require_exact_sha256_hex("event.event_hash", event.get("event_hash"))
+        object.__setattr__(self, "events", events)
+        object.__setattr__(
+            self,
+            "continuation",
+            _optional_exact_text("continuation", self.continuation),
+        )
+        if self.continuation is not None and (not events or events[-1]["global_seq"] >= self.captured_head.global_seq):
+            raise ValueError("segmented query continuation requires unread events below captured head")
 
 
 @dataclass(frozen=True)
@@ -472,8 +820,10 @@ class FactStreamError(RuntimeError):
 __all__ = [
     "AppendFactEventCommandV1",
     "AppendIfGuardedSnapshotCommandV1",
+    "AppendSegmentedFactEventCommandV1",
     "BootstrapFactStreamWorkspaceCommandV1",
     "EnrollFactStreamStreamsCommandV1",
+    "EnsureSegmentedFactLedgerCommandV1",
     "FactEventAppendedV1",
     "FactStreamError",
     "FactStreamHeadV1",
@@ -487,5 +837,11 @@ __all__ = [
     "ProvisionFactStreamLockAuthorityCommandV1",
     "QueryFactEventsV1",
     "QueryFactStreamHeadV1",
+    "QuerySegmentedFactEventsV1",
+    "QuerySegmentedFactLedgerHeadV1",
     "ReadGuardedFactSnapshotCommandV1",
+    "SegmentedFactEventAppendedV1",
+    "SegmentedFactLedgerHeadV1",
+    "SegmentedFactLedgerReadyV1",
+    "SegmentedFactQueryResultV1",
 ]

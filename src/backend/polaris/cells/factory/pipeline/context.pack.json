@@ -1,9 +1,53 @@
 {
   "cell_id": "factory.pipeline",
-  "version": "1.0",
-  "summary": "Automated software manufacturing pipeline orchestration",
-  "depends_on": ["director.execution", "orchestration.pm_planning"],
+  "version": "1.1",
+  "summary": "Factory orchestration with strict event-authoritative run persistence and role-evidence provenance",
+  "depends_on": [
+    "orchestration.workflow_runtime",
+    "roles.runtime",
+    "runtime.task_runtime",
+    "runtime.state_owner",
+    "runtime.execution_broker",
+    "archive.factory_archive",
+    "audit.evidence",
+    "policy.workspace_guard",
+    "policy.permission",
+    "llm.provider_runtime",
+    "orchestration.pm_dispatch",
+    "chief_engineer.blueprint",
+    "roles.kernel",
+    "events.fact_stream",
+    "storage.layout",
+    "roles.adapters",
+    "control_plane.run_ledger",
+    "control_plane.verifier_policy",
+    "control_plane.verifier_execution",
+    "runtime.projection",
+    "director.runtime"
+  ],
   "owned_paths": [
-    "polaris/application/factory"
+    "polaris/delivery/http/routers/factory.py",
+    "polaris/delivery/cli/factory/**",
+    "polaris/cells/factory/pipeline/internal/**",
+    "polaris/cells/factory/pipeline/tests/**"
+  ],
+  "state_owners": [
+    "workspace/factory/*",
+    "runtime/factory/*"
+  ],
+  "invariants": [
+    "Factory run authority is derived from strict current-run events, not mutable metadata alone.",
+    "A successful stage requires an event-first intent, immutable checkpoint, strict hash re-read, and durable commit marker before publication.",
+    "Provider-visible role evidence remains disabled until canonical source resolution and per-physical-attempt qualification close.",
+    "All text file reads and writes use explicit UTF-8."
+  ],
+  "test_targets": [
+    "polaris/cells/factory/pipeline/tests/test_factory_event_chain.py",
+    "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_admission.py",
+    "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py",
+    "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_provenance.py",
+    "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_run_service.py",
+    "polaris/cells/factory/pipeline/tests/test_factory_stage_persistence.py",
+    "polaris/cells/factory/pipeline/tests/test_factory_stage_persistence_service.py"
   ]
 }

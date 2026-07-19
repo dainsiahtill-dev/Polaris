@@ -1948,6 +1948,20 @@ def _attach_control_plane_projection(
         }
 
 
+async def _guard_automatic_router_mutation(
+    *,
+    service: FactoryRunService,
+    run_id: str,
+    current_run: FactoryRun,
+    operation: str,
+) -> FactoryRun:
+    return await service.assert_automatic_router_mutation_allowed(
+        run_id,
+        operation=operation,
+        current_run=current_run,
+    )
+
+
 async def _persist_run_summary(
     *,
     service: FactoryRunService,
@@ -1956,13 +1970,19 @@ async def _persist_run_summary(
     workspace: str,
     status: str,
 ) -> None:
-    run = await service.get_run(run_id)
-    if run is None:
+    if await service.get_run(run_id) is None:
         return
-    summary_json = _build_summary_json(run=run, payload=payload, status=status, workspace=workspace)
-    run.metadata["summary_json"] = summary_json
-    run.metadata["summary_md"] = _build_summary_markdown(summary_json)
-    await service.store.save_run(run)
+
+    def apply_summary(run: FactoryRun) -> None:
+        summary_json = _build_summary_json(run=run, payload=payload, status=status, workspace=workspace)
+        run.metadata["summary_json"] = summary_json
+        run.metadata["summary_md"] = _build_summary_markdown(summary_json)
+
+    await service.apply_automatic_router_mutation(
+        run_id,
+        operation="summary_projection",
+        mutation=apply_summary,
+    )
 
 
 def _classify_factory_failure_code(*, stage: str, detail: str) -> str:
@@ -1991,40 +2011,53 @@ async def _execute_run_with_service(
     workspace = str(service.workspace)
 
     async def _record_quality_rework_request(cycle: int, summary: dict[str, Any]) -> None:
-        current_run = await service.get_run(run_id)
-        if current_run is None or current_run.status in {ServiceRunStatus.COMPLETED, ServiceRunStatus.CANCELLED}:
+        if await service.get_run(run_id) is None:
             return
-        history_raw = current_run.metadata.get("quality_rework_history")
-        history: list[Any] = list(history_raw) if isinstance(history_raw, list) else []
-        failure_raw = current_run.metadata.get("failure")
-        intermediate_failure = dict(failure_raw) if isinstance(failure_raw, dict) else {}
-        entry = {
-            "cycle": cycle,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "source": "factory.quality_gate.taskboard_rework",
-            "summary": dict(summary),
-            "intermediate_failure": intermediate_failure,
-        }
-        history.append(entry)
-        if current_run.status == ServiceRunStatus.FAILED:
-            current_run.status = ServiceRunStatus.RUNNING
-            current_run.metadata.pop("failure", None)
-            if str(current_run.metadata.get("last_failed_stage") or "").strip() == "quality_gate":
-                current_run.metadata.pop("last_failed_stage", None)
-            current_run.stages_failed = [
-                stage for stage in current_run.stages_failed if str(stage or "").strip() != "quality_gate"
-            ]
-        current_run.metadata["quality_rework_history"] = history[-50:]
-        current_run.metadata["quality_rework_last"] = entry
-        current_run.metadata["quality_rework_cycles_executed"] = cycle
-        await service.store.save_run(current_run)
-        await service._append_event(
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        def apply_quality_rework(current_run: FactoryRun) -> bool:
+            if current_run.status in {ServiceRunStatus.COMPLETED, ServiceRunStatus.CANCELLED}:
+                return False
+            history_raw = current_run.metadata.get("quality_rework_history")
+            history: list[Any] = list(history_raw) if isinstance(history_raw, list) else []
+            failure_raw = current_run.metadata.get("failure")
+            intermediate_failure = dict(failure_raw) if isinstance(failure_raw, dict) else {}
+            entry = {
+                "cycle": cycle,
+                "timestamp": timestamp,
+                "source": "factory.quality_gate.taskboard_rework",
+                "summary": dict(summary),
+                "intermediate_failure": intermediate_failure,
+            }
+            history.append(entry)
+            if current_run.status == ServiceRunStatus.FAILED:
+                current_run.status = ServiceRunStatus.RUNNING
+                current_run.metadata.pop("failure", None)
+                if str(current_run.metadata.get("last_failed_stage") or "").strip() == "quality_gate":
+                    current_run.metadata.pop("last_failed_stage", None)
+                current_run.stages_failed = [
+                    stage for stage in current_run.stages_failed if str(stage or "").strip() != "quality_gate"
+                ]
+            current_run.metadata["quality_rework_history"] = history[-50:]
+            current_run.metadata["quality_rework_last"] = entry
+            current_run.metadata["quality_rework_cycles_executed"] = cycle
+            return True
+
+        current_run = await service.apply_automatic_router_mutation(
             run_id,
-            {
+            operation="quality_rework",
+            mutation=apply_quality_rework,
+            event={
                 "type": "quality_rework_requested",
                 "cycle": cycle,
                 "summary": dict(summary),
             },
+        )
+        if current_run.status in {ServiceRunStatus.COMPLETED, ServiceRunStatus.CANCELLED}:
+            return
+        await service.reconcile_stage_execution_for_reentry(
+            run_id,
+            operation="quality_rework_reentry",
         )
 
     async def _execute_stage_sequence(
@@ -2037,7 +2070,15 @@ async def _execute_run_with_service(
         for stage_name in stage_names:
             active_stage = str(stage_name or "").strip()
             current = await service.get_run(run_id)
-            if current is None or current.status in TERMINAL_RUN_STATUSES:
+            if current is None:
+                return "cancelled"
+            current = await _guard_automatic_router_mutation(
+                service=service,
+                run_id=run_id,
+                current_run=current,
+                operation="stage_sequence",
+            )
+            if current.status in TERMINAL_RUN_STATUSES:
                 return "cancelled"
 
             result = await service.execute_stage(
@@ -2066,9 +2107,23 @@ async def _execute_run_with_service(
         return "completed"
 
     try:
-        run = await service.get_run(run_id)
-        if run is None:
+        if await service.get_run(run_id) is None:
             return
+
+        def apply_run_configuration(current_run: FactoryRun) -> None:
+            configured = [str(stage).strip() for stage in current_run.config.stages if str(stage).strip()]
+            if not configured:
+                raise RuntimeError("Factory run has no configured stages")
+            execution = _execution_stages_for_run(current_run, configured)
+            loop_requested_value = bool(payload.loop)
+            current_run.metadata["loop_requested"] = loop_requested_value
+            current_run.metadata["loop_enabled"] = loop_requested_value and ("pm_planning" in execution)
+
+        run = await service.apply_automatic_router_mutation(
+            run_id,
+            operation="run_configuration",
+            mutation=apply_run_configuration,
+        )
 
         configured_stages = [str(stage).strip() for stage in run.config.stages if str(stage).strip()]
         if not configured_stages:
@@ -2109,9 +2164,6 @@ async def _execute_run_with_service(
 
         loop_requested = bool(payload.loop)
         loop_enabled = loop_requested and ("pm_planning" in execution_stages)
-        run.metadata["loop_requested"] = loop_requested
-        run.metadata["loop_enabled"] = loop_enabled
-        await service.store.save_run(run)
 
         if loop_enabled:
             pm_index = execution_stages.index("pm_planning")
@@ -2126,8 +2178,11 @@ async def _execute_run_with_service(
 
             if not iterative_stages:
                 loop_enabled = False
-                run.metadata["loop_enabled"] = False
-                await service.store.save_run(run)
+                run = await service.apply_automatic_router_mutation(
+                    run_id,
+                    operation="run_configuration",
+                    mutation=lambda current_run: current_run.metadata.__setitem__("loop_enabled", False),
+                )
             else:
                 if prefix_stages:
                     sequence_status = await _execute_stage_sequence(prefix_stages)
@@ -2152,7 +2207,7 @@ async def _execute_run_with_service(
                         return
 
                     current_run = await service.get_run(run_id)
-                    if current_run is None or current_run.status in TERMINAL_RUN_STATUSES:
+                    if current_run is None:
                         return
 
                     plan_signature = _read_pm_plan_signature(workspace)
@@ -2181,21 +2236,35 @@ async def _execute_run_with_service(
                         "decision_reason": decision.get("reason"),
                         "decision_message": decision.get("message"),
                     }
-                    history = current_run.metadata.get("loop_history")
-                    loop_history = history if isinstance(history, list) else []
-                    loop_history.append(loop_entry)
 
-                    current_run.metadata["loop_history"] = loop_history[-100:]
-                    current_run.metadata["loop_cycles_executed"] = cycle
-                    current_run.metadata["loop_last_plan_signature"] = plan_signature
-                    current_run.metadata["loop_last_docs_state"] = docs_state
-                    current_run.metadata["loop_last_decision"] = decision.get("reason")
-                    if decision.get("action") == "stop":
-                        current_run.metadata["loop_stop_reason"] = decision.get("reason")
-                    await service.store.save_run(current_run)
-                    await service._append_event(
+                    def apply_delivery_loop(
+                        current: FactoryRun,
+                        *,
+                        entry: dict[str, Any] = loop_entry,
+                        cycle_value: int = cycle,
+                        signature: str = plan_signature,
+                        docs: dict[str, Any] = docs_state,
+                        loop_decision: dict[str, Any] = decision,
+                    ) -> bool:
+                        if current.status in TERMINAL_RUN_STATUSES:
+                            return False
+                        history = current.metadata.get("loop_history")
+                        loop_history = list(history) if isinstance(history, list) else []
+                        loop_history.append(entry)
+                        current.metadata["loop_history"] = loop_history[-100:]
+                        current.metadata["loop_cycles_executed"] = cycle_value
+                        current.metadata["loop_last_plan_signature"] = signature
+                        current.metadata["loop_last_docs_state"] = docs
+                        current.metadata["loop_last_decision"] = loop_decision.get("reason")
+                        if loop_decision.get("action") in {"stop", "fail"}:
+                            current.metadata["loop_stop_reason"] = loop_decision.get("reason")
+                        return True
+
+                    current_run = await service.apply_automatic_router_mutation(
                         run_id,
-                        {
+                        operation="delivery_loop_projection",
+                        mutation=apply_delivery_loop,
+                        event={
                             "type": "delivery_loop_cycle",
                             "cycle": cycle,
                             "plan_signature": plan_signature,
@@ -2205,14 +2274,14 @@ async def _execute_run_with_service(
                             "decision": decision,
                         },
                     )
+                    if current_run.status in TERMINAL_RUN_STATUSES:
+                        return
 
                     action = str(decision.get("action") or "").strip().lower()
                     if action == "continue":
                         previous_plan_signature = plan_signature
                         continue
                     if action == "fail":
-                        current_run.metadata["loop_stop_reason"] = decision.get("reason")
-                        await service.store.save_run(current_run)
                         raise RuntimeError(str(decision.get("message") or "Delivery loop failed"))
                     break
 
@@ -2227,6 +2296,13 @@ async def _execute_run_with_service(
                 return
 
         current_run = await service.get_run(run_id)
+        if current_run is not None:
+            current_run = await _guard_automatic_router_mutation(
+                service=service,
+                run_id=run_id,
+                current_run=current_run,
+                operation="success_terminalization",
+            )
         if current_run is not None and current_run.status in {ServiceRunStatus.RUNNING, ServiceRunStatus.RECOVERING}:
             await _persist_run_summary(
                 service=service,
@@ -2238,12 +2314,32 @@ async def _execute_run_with_service(
             await service.complete_run(run_id, success=True)
             logger.info("Factory run %s completed successfully", run_id)
     except (RuntimeError, ValueError) as exc:
+        if str(getattr(exc, "code", "")).startswith("factory_stage_"):
+            logger.error(
+                "Factory run %s remains quarantined at stage=%s; automatic router mutation stopped: %s",
+                run_id,
+                active_stage or "<none>",
+                exc,
+            )
+            return
         logger.exception(
             "Factory run %s failed at stage=%s: %s",
             run_id,
             active_stage or "<none>",
             exc,
         )
+        try:
+            await service.reconcile_stage_execution_for_reentry(
+                run_id,
+                operation="factory_failure_terminalization",
+            )
+        except (RuntimeError, ValueError) as settlement_exc:
+            logger.error(
+                "Factory run %s failure remains isolated because stage settlement did not reconcile: %s",
+                run_id,
+                settlement_exc,
+            )
+            return
         current_run = await service.get_run(run_id)
         if current_run is not None and current_run.status != ServiceRunStatus.CANCELLED:
             failure_stage = active_stage or str(current_run.metadata.get("current_stage") or "").strip()
@@ -2251,34 +2347,44 @@ async def _execute_run_with_service(
             failure_detail = str(exc)
             failure_code = _classify_factory_failure_code(stage=failure_stage, detail=failure_detail)
             suggested_action = _factory_failure_suggestion(failure_code)
-            current_run.metadata["failure"] = {
-                "stage": failure_stage or "unknown",
-                "code": failure_code,
-                "detail": failure_detail,
-                "traceback": tb,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            if suggested_action:
-                current_run.metadata["failure"]["recoverable"] = True
-                current_run.metadata["failure"]["suggested_action"] = suggested_action
-            if failure_stage:
-                current_run.metadata["last_failed_stage"] = failure_stage
-            await service.store.save_run(current_run)
+            failure_timestamp = datetime.now(timezone.utc).isoformat()
+
+            def apply_failure(current: FactoryRun) -> bool:
+                if current.status == ServiceRunStatus.CANCELLED:
+                    return False
+                current.metadata["failure"] = {
+                    "stage": failure_stage or "unknown",
+                    "code": failure_code,
+                    "detail": failure_detail,
+                    "traceback": tb,
+                    "timestamp": failure_timestamp,
+                }
+                if suggested_action:
+                    current.metadata["failure"]["recoverable"] = True
+                    current.metadata["failure"]["suggested_action"] = suggested_action
+                if failure_stage:
+                    current.metadata["last_failed_stage"] = failure_stage
+                return True
+
+            current_run = await service.apply_automatic_router_mutation(
+                run_id,
+                operation="failure_terminalization",
+                mutation=apply_failure,
+                event={
+                    "type": "error",
+                    "stage": failure_stage or None,
+                    "message": str(exc),
+                    "traceback": tb,
+                },
+            )
+            if current_run.status == ServiceRunStatus.CANCELLED:
+                return
             await _persist_run_summary(
                 service=service,
                 run_id=run_id,
                 payload=payload,
                 workspace=workspace,
                 status="FAIL",
-            )
-            await service._append_event(
-                run_id,
-                {
-                    "type": "error",
-                    "stage": failure_stage or None,
-                    "message": str(exc),
-                    "traceback": tb,
-                },
             )
             await service.complete_run(run_id, success=False)
 

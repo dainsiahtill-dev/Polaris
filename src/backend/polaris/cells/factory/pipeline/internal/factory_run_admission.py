@@ -627,6 +627,83 @@ class FactoryWorkspaceRunAdmission:
             self._write_locked(claimed)
             return claimed
 
+    @contextmanager
+    def hold_active_stage_claim(
+        self,
+        run_id: str,
+        *,
+        fencing_token: int,
+        stage: str,
+        attempt: int,
+        nonce: str,
+    ) -> Iterator[Callable[[], FactoryWorkspaceRunLeaseV1]]:
+        """Hold the stable admission lock around one exact live stage claim.
+
+        This is a read-only authority boundary.  It does not acquire, renew,
+        release, or drain either the workspace lease or the stage claim.  The
+        caller may safely reconstruct and append a causal fact while the exact
+        ACTIVE fence/claim tuple cannot change in another process.  The yielded
+        read-only callback must be invoked at every causal write boundary so a
+        lease that expires while the stable lock is held cannot authorize a
+        later append, commit, or acknowledgement.  Revalidation never renews
+        the lease.
+        """
+
+        normalized_run_id = _normalize_run_id(run_id)
+        normalized_stage = _normalize_run_id(stage)
+        normalized_nonce = _normalize_run_id(nonce)
+        if isinstance(fencing_token, bool) or not isinstance(fencing_token, int) or fencing_token < 1:
+            raise ValueError("fencing_token must be an int >= 1")
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+            raise ValueError("attempt must be an int >= 1")
+        with _stable_exclusive_lock(self.lock_path):
+
+            def revalidate() -> FactoryWorkspaceRunLeaseV1:
+                current = self._require_owned_locked(
+                    run_id=normalized_run_id,
+                    fencing_token=fencing_token,
+                    now=self._now(),
+                )
+                if current.state.value != "active":
+                    self._raise_conflict(
+                        "Factory role evidence cutoff requires an ACTIVE workspace lease",
+                        code="factory_workspace_run_not_active",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                if current.lifecycle_operation_claim is not None:
+                    self._raise_conflict(
+                        "Factory role evidence cutoff cannot overlap a lifecycle operation",
+                        code="factory_lifecycle_operation_inflight",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                claim = current.stage_execution_claim
+                if claim is None:
+                    self._raise_conflict(
+                        "Factory role evidence cutoff requires a live stage claim",
+                        code="factory_stage_execution_claim_missing",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                assert claim is not None
+                if (
+                    claim.run_id != normalized_run_id
+                    or claim.stage != normalized_stage
+                    or claim.attempt != attempt
+                    or claim.nonce != normalized_nonce
+                ):
+                    self._raise_conflict(
+                        "Factory role evidence cutoff stage claim has been fenced",
+                        code="factory_stage_execution_fenced",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                return current
+
+            revalidate()
+            yield revalidate
+
     def release_stage(
         self,
         run_id: str,

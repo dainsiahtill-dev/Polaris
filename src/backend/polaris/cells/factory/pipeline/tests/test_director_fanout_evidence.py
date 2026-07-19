@@ -12,12 +12,19 @@ fanout configuration in production telemetry and audit trails.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -25,6 +32,168 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
+from polaris.cells.orchestration.workflow_runtime.public.service import (
+    OrchestrationMode,
+    OrchestrationRunRequest,
+    PipelineSpec,
+    PipelineTask,
+    RoleEntrySpec,
+    UnifiedOrchestrationService,
+)
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+    FactoryRoleEvidenceAuthorityBindingV1,
+    get_factory_role_evidence_authority_binding,
+)
+
+
+class _FakeAuthorityPort:
+    def __init__(self, role: str = "director", cap: int = 512) -> None:
+        self.role = role
+        self.cap = cap
+        self.minted: list[FactoryRoleEvidenceAuthorityBindingV1] = []
+        self.revoked: list[str] = []
+
+    async def acquire_cutoff(self, request: object) -> object:
+        del request
+        raise AssertionError("fanout seam test must not acquire a cutoff")
+
+    async def resolve_cutoff_proof(self, ack: object) -> object:
+        del ack
+        raise AssertionError("fanout seam test must not resolve cutoff proof")
+
+    def require_grant_capacity(self, role: str, count: int) -> None:
+        assert role == self.role
+        if len(self.minted) + count > self.cap:
+            raise RuntimeError("factory_role_evidence_stage_grant_cardinality_exceeded")
+
+    def mint_authority_binding(self, role: str) -> FactoryRoleEvidenceAuthorityBindingV1:
+        assert role == self.role
+        binding = FactoryRoleEvidenceAuthorityBindingV1(
+            schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+            verification_scope="factory",
+            factory_run_id="fanout-test-run",
+            role=role,
+            cutoff_port=self,
+            attempt_budget=32,
+            execution_authority_hash=hashlib.sha256(f"fanout-grant-{len(self.minted)}".encode()).hexdigest(),
+        )
+        self.minted.append(binding)
+        return binding
+
+    def revoke_authority_binding(self, binding: FactoryRoleEvidenceAuthorityBindingV1) -> None:
+        self.revoked.append(binding.execution_authority_hash)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["architect", "pm", "chief_engineer", "director", "qa"])
+async def test_role_task_creation_exception_revokes_unused_grant_and_clears_context(
+    tmp_path: Path,
+    role: str,
+) -> None:
+    executor = _make_executor(tmp_path)
+    authority = _FakeAuthorityPort(role=role, cap=2)
+
+    async def fail_creation() -> object:
+        binding = get_factory_role_evidence_authority_binding()
+        assert binding is authority.minted[-1]
+        raise RuntimeError("creation-failed")
+
+    with pytest.raises(RuntimeError, match="creation-failed"):
+        await executor._call_with_factory_role_evidence_authority(  # type: ignore[arg-type]
+            authority,
+            role,
+            fail_creation,
+        )
+
+    assert authority.revoked == [authority.minted[0].execution_authority_hash]
+    assert get_factory_role_evidence_authority_binding() is None
+
+
+@pytest.mark.asyncio
+async def test_background_role_submit_task_inherits_binding_while_parent_context_restores(tmp_path: Path) -> None:
+    executor = _make_executor(tmp_path)
+    authority = _FakeAuthorityPort(role="pm", cap=2)
+    release_child = asyncio.Event()
+
+    async def child() -> FactoryRoleEvidenceAuthorityBindingV1 | None:
+        await release_child.wait()
+        return get_factory_role_evidence_authority_binding()
+
+    async def submit_background() -> asyncio.Task[FactoryRoleEvidenceAuthorityBindingV1 | None]:
+        return asyncio.create_task(child())
+
+    child_task = await executor._call_with_factory_role_evidence_authority(  # type: ignore[arg-type]
+        authority,
+        "pm",
+        submit_background,
+    )
+    assert get_factory_role_evidence_authority_binding() is None
+    release_child.set()
+
+    assert await child_task is authority.minted[0]
+    assert get_factory_role_evidence_authority_binding() is None
+
+
+@pytest.mark.asyncio
+async def test_unified_orchestration_submit_run_background_task_inherits_exact_binding(tmp_path: Path) -> None:
+    class _BindingProbeAdapter:
+        role_id = "pm"
+
+        def __init__(self) -> None:
+            self.observed: list[FactoryRoleEvidenceAuthorityBindingV1 | None] = []
+
+        async def execute(
+            self,
+            task_id: str,
+            input_data: dict[str, Any],
+            context: dict[str, Any],
+        ) -> dict[str, Any]:
+            del task_id, input_data, context
+            self.observed.append(get_factory_role_evidence_authority_binding())
+            return {"success": True}
+
+        def get_capabilities(self) -> list[str]:
+            return []
+
+    executor = _make_executor(tmp_path)
+    authority = _FakeAuthorityPort(role="pm", cap=2)
+    adapter = _BindingProbeAdapter()
+    service = UnifiedOrchestrationService(role_adapters=[adapter])  # type: ignore[list-item]
+    request = OrchestrationRunRequest(
+        run_id="factory-role-binding-submit-run",
+        workspace=tmp_path,
+        mode=OrchestrationMode.WORKFLOW,
+        pipeline_spec=PipelineSpec(
+            tasks=[
+                PipelineTask(
+                    task_id="pm-task",
+                    role_entry=RoleEntrySpec(role_id="pm", scope_paths=[str(tmp_path)]),
+                )
+            ]
+        ),
+    )
+
+    await executor._call_with_factory_role_evidence_authority(  # type: ignore[arg-type]
+        authority,
+        "pm",
+        lambda: service.submit_run(request),
+    )
+    background = service._active_runs[request.run_id]
+    assert get_factory_role_evidence_authority_binding() is None
+    await background
+
+    assert adapter.observed == [authority.minted[0]]
+    assert get_factory_role_evidence_authority_binding() is None
+
+
+def test_stage_executor_requires_exact_live_factory_port_before_role_service_call(tmp_path: Path) -> None:
+    executor = _make_executor(tmp_path)
+
+    with pytest.raises(RuntimeError, match="factory_role_evidence_live_cutoff_port_required"):
+        executor._factory_role_evidence_cutoff_port({})
+    with pytest.raises(RuntimeError, match="factory_role_evidence_live_cutoff_port_required"):
+        executor._factory_role_evidence_cutoff_port({"_factory_role_evidence_cutoff_port": _FakeAuthorityPort()})
 
 
 def _make_executor(workspace: Path) -> OrchestrationStageExecutor:
@@ -62,6 +231,13 @@ def _make_full_executor(workspace: Path) -> OrchestrationStageExecutor:
     from polaris.cells.factory.pipeline.internal.factory_workspace_quality import WorkspaceQualityRunner
     from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace.resolve()),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="director_fanout_evidence_test_bootstrap",
+        )
+    )
     executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
     executor.workspace = workspace
     executor._fs = KernelFileSystem(str(workspace), get_default_adapter())
@@ -102,6 +278,7 @@ class TestFanoutMetadataPropagation:
             tasks=["task-1"],
             base_options={"execution_mode": "parallel", "max_workers": 2},
             bindings=bindings,
+            authority_port=_FakeAuthorityPort(),  # type: ignore[arg-type]
         )
 
         assert result.metadata is not None
@@ -109,6 +286,106 @@ class TestFanoutMetadataPropagation:
         assert result.metadata["binding_count"] == 2
         assert result.metadata["execution_mode"] == "parallel"
         assert result.metadata["max_workers"] == 2
+
+    @pytest.mark.asyncio
+    async def test_fanout_preflights_513_before_any_task_or_grant_creation(self, tmp_path: Path) -> None:
+        executor = _make_executor(tmp_path)
+        authority = _FakeAuthorityPort()
+        bindings = [
+            {"provider_id": f"provider-{index}", "model": f"model-{index}", "binding_id": f"b-{index}"}
+            for index in range(513)
+        ]
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="stage_grant_cardinality_exceeded"):
+            await executor._execute_director_binding_fanout(
+                service=mock_service,
+                workspace=str(tmp_path),
+                tasks=None,
+                base_options={"execution_mode": "parallel", "max_workers": 8},
+                bindings=bindings,
+                authority_port=authority,  # type: ignore[arg-type]
+            )
+
+        assert mock_service.execute_director_run.await_count == 0
+        assert authority.minted == []
+
+    @pytest.mark.asyncio
+    async def test_fanout_binds_unique_grant_per_child_and_restores_parent_context(self, tmp_path: Path) -> None:
+        executor = _make_executor(tmp_path)
+        authority = _FakeAuthorityPort()
+        observed: list[FactoryRoleEvidenceAuthorityBindingV1] = []
+
+        async def execute_director_run(**_kwargs: object) -> CommandResult:
+            binding = get_factory_role_evidence_authority_binding()
+            assert type(binding) is FactoryRoleEvidenceAuthorityBindingV1
+            observed.append(binding)
+            return CommandResult(run_id=f"run-{len(observed)}", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=execute_director_run)
+        bindings = [
+            {"provider_id": "p0", "model": "m0", "binding_id": "b0"},
+            {"provider_id": "p1", "model": "m1", "binding_id": "b1"},
+        ]
+
+        await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=str(tmp_path),
+            tasks=["task-1", "task-2"],
+            base_options={"execution_mode": "parallel", "max_workers": 2},
+            bindings=bindings,
+            authority_port=authority,  # type: ignore[arg-type]
+        )
+
+        assert len(observed) == 2
+        assert observed[0].execution_authority_hash != observed[1].execution_authority_hash
+        assert get_factory_role_evidence_authority_binding() is None
+
+    @pytest.mark.asyncio
+    async def test_fanout_create_task_failure_closes_coroutine_and_drains_created_children(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _make_executor(tmp_path)
+        authority = _FakeAuthorityPort()
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock()
+        original_create_task = asyncio.create_task
+        created: list[asyncio.Task[CommandResult]] = []
+        create_count = 0
+
+        def flaky_create_task(coroutine: Any) -> asyncio.Task[CommandResult]:
+            nonlocal create_count
+            create_count += 1
+            if create_count == 2:
+                raise RuntimeError("create-task-failed")
+            task = original_create_task(coroutine)
+            created.append(task)
+            return task
+
+        monkeypatch.setattr(asyncio, "create_task", flaky_create_task)
+        bindings = [
+            {"provider_id": "p0", "model": "m0", "binding_id": "b0"},
+            {"provider_id": "p1", "model": "m1", "binding_id": "b1"},
+        ]
+
+        with pytest.raises(RuntimeError, match="create-task-failed"):
+            await executor._execute_director_binding_fanout(
+                service=mock_service,
+                workspace=str(tmp_path),
+                tasks=["task-1", "task-2"],
+                base_options={"execution_mode": "parallel", "max_workers": 2},
+                bindings=bindings,
+                authority_port=authority,  # type: ignore[arg-type]
+            )
+
+        assert len(created) == 1
+        assert created[0].done()
+        assert mock_service.execute_director_run.await_count == 0
+        assert get_factory_role_evidence_authority_binding() is None
 
     @pytest.mark.asyncio
     async def test_max_workers_in_fanout_base_options(self, tmp_path: Path) -> None:
@@ -134,6 +411,7 @@ class TestFanoutMetadataPropagation:
             tasks=["task-1", "task-2"],
             base_options={"execution_mode": "parallel", "max_workers": 3},
             bindings=bindings,
+            authority_port=_FakeAuthorityPort(),  # type: ignore[arg-type]
         )
 
         assert len(captured_options) == 2
@@ -164,6 +442,7 @@ class TestFanoutMetadataPropagation:
             tasks=["task-1"],
             base_options={"execution_mode": "parallel", "max_workers": 2},
             bindings=bindings,
+            authority_port=_FakeAuthorityPort(),  # type: ignore[arg-type]
         )
 
         assert result.metadata is not None
@@ -198,6 +477,7 @@ class TestFanoutMetadataPropagation:
             tasks=["task-1", "task-2"],
             base_options={"execution_mode": "parallel", "max_workers": 2},
             bindings=bindings,
+            authority_port=_FakeAuthorityPort(),  # type: ignore[arg-type]
         )
 
         assert len(captured_options) == 2
@@ -340,6 +620,7 @@ class TestDispatchLogPayload:
 
         with (
             patch.object(executor, "_build_orchestration_service", return_value=mock_service),
+            patch.object(executor, "_factory_role_evidence_cutoff_port", return_value=_FakeAuthorityPort()),
             patch.object(
                 executor,
                 "_resolve_director_binding_fanout",
@@ -436,6 +717,7 @@ class TestDispatchLogPayload:
 
         with (
             patch.object(executor, "_build_orchestration_service", return_value=mock_service),
+            patch.object(executor, "_factory_role_evidence_cutoff_port", return_value=_FakeAuthorityPort()),
             patch.object(executor, "_resolve_director_binding_fanout", return_value=[]),
             patch.object(executor, "_read_taskboard_stats", side_effect=stats_sequence),
             patch.object(executor, "_wait_run_completion", return_value=single_result),
@@ -489,6 +771,7 @@ class TestFanoutQuarantineEvidence:
             tasks=["task-1"],
             base_options={"execution_mode": "parallel", "max_workers": 2},
             bindings=bindings,
+            authority_port=_FakeAuthorityPort(),  # type: ignore[arg-type]
         )
 
         assert result.metadata is not None
@@ -531,6 +814,7 @@ class TestFanoutQuarantineEvidence:
             tasks=["task-1"],
             base_options={"execution_mode": "parallel", "max_workers": 1},
             bindings=bindings,
+            authority_port=_FakeAuthorityPort(),  # type: ignore[arg-type]
         )
 
         assert result1.metadata is not None
@@ -544,6 +828,7 @@ class TestFanoutQuarantineEvidence:
             tasks=["task-1"],
             base_options={"execution_mode": "parallel", "max_workers": 1},
             bindings=bindings,
+            authority_port=_FakeAuthorityPort(),  # type: ignore[arg-type]
         )
 
         assert result2.metadata is not None

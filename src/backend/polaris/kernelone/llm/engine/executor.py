@@ -45,9 +45,11 @@ from .contracts import (
     AIStreamEvent,
     ErrorCategory,
     ModelSpec,
+    PhysicalProviderDispatchRuntimePort,
     StreamEventType,
     TaskType,
     Usage,
+    bind_physical_provider_dispatch_port,
 )
 from .model_catalog import ModelCatalog
 from .normalizer import ResponseNormalizer
@@ -354,7 +356,12 @@ class AIExecutor:
         self.token_budget = token_budget or TokenBudgetManager()
         self.final_request_receipt_sink = final_request_receipt_sink
 
-    async def invoke(self, request: AIRequest) -> AIResponse:
+    async def invoke(
+        self,
+        request: AIRequest,
+        *,
+        physical_dispatch_port: PhysicalProviderDispatchRuntimePort | None = None,
+    ) -> AIResponse:
         """执行 AI 调用
 
         Args:
@@ -393,7 +400,11 @@ class AIExecutor:
             request.model = model
 
             # 执行带弹性策略的调用
-            response = await self._invoke_with_resilience(request, trace_id)
+            response = await self._invoke_with_resilience(
+                request,
+                trace_id,
+                physical_dispatch_port=physical_dispatch_port,
+            )
 
             # 记录调用结束
             if self.telemetry:
@@ -480,11 +491,17 @@ class AIExecutor:
         self,
         request: AIRequest,
         trace_id: str,
+        *,
+        physical_dispatch_port: PhysicalProviderDispatchRuntimePort | None = None,
     ) -> AIResponse:
         """带弹性策略的执行"""
 
         async def _do_invoke() -> AIResponse:
-            return await self._execute_invoke(request, trace_id)
+            return await self._execute_invoke(
+                request,
+                trace_id,
+                physical_dispatch_port=physical_dispatch_port,
+            )
 
         resilience = self._build_request_resilience(request)
         return await resilience.execute_with_resilience(
@@ -515,6 +532,8 @@ class AIExecutor:
         self,
         request: AIRequest,
         trace_id: str,
+        *,
+        physical_dispatch_port: PhysicalProviderDispatchRuntimePort | None = None,
     ) -> AIResponse:
         """执行实际的 LLM 调用"""
         provider_id = request.provider_id
@@ -718,14 +737,18 @@ class AIExecutor:
             start_time = time.time()
             effective_timeout = invoke_cfg.get("timeout")
             try:
+
+                def _invoke_provider() -> Any:
+                    with bind_physical_provider_dispatch_port(physical_dispatch_port):
+                        return provider_instance.invoke(
+                            prompt_input,
+                            str(model or ""),
+                            invoke_cfg,
+                        )
+
                 # 使用带超时的 asyncio.to_thread 避免阻塞
                 result = await _invoke_with_timeout(
-                    asyncio.to_thread(
-                        provider_instance.invoke,
-                        prompt_input,
-                        str(model or ""),  # Ensure model is str
-                        invoke_cfg,
-                    ),
+                    asyncio.to_thread(_invoke_provider),
                     timeout=effective_timeout,
                 )
             except asyncio.TimeoutError:

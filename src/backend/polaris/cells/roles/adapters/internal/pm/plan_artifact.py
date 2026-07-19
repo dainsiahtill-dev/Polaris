@@ -19,6 +19,8 @@ from .pm_text_utils import (
     _PM_PLAN_FORBIDDEN_TEXT_REPLACEMENTS,
 )
 
+_PM_PLAN_ARTIFACT_SCHEMA_VERSION = "pm.plan_artifact.v1"
+
 
 class PMPlanArtifactMixin(_PMAdapterMixinBase):
     """PM 计划产物 mixin：写出 runtime/tasks/plan.json 并对提示词泄漏文本做脱敏。"""
@@ -37,6 +39,7 @@ class PMPlanArtifactMixin(_PMAdapterMixinBase):
         sanitized_tasks = self._sanitize_plan_artifact_value(task_contracts)
         sanitized_signals = self._sanitize_plan_artifact_value(list(quality_signals or []))
         payload = {
+            "schema_version": _PM_PLAN_ARTIFACT_SCHEMA_VERSION,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": "pm_adapter_v2",
             "directive": _PM_PLAN_DIRECTIVE_REDACTED if directive else "",

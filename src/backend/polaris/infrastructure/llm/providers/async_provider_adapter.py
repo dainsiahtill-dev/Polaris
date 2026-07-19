@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+from contextvars import copy_context
 from typing import Any
 
 from polaris.kernelone.llm.providers import BaseProvider, ProviderConfigValidationResult, ProviderInfo
@@ -36,7 +37,8 @@ def _run_async(coro: Any) -> Any:
 
     if loop and loop.is_running():
         # We're in an async context - use thread pool
-        future = _bridge_pool.submit(asyncio.run, coro)
+        context = copy_context()
+        future = _bridge_pool.submit(context.run, asyncio.run, coro)
         return future.result()
     else:
         # We're in a sync context - run directly

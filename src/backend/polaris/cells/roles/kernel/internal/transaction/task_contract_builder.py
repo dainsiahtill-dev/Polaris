@@ -20,7 +20,6 @@ from typing import Any
 from polaris.cells.roles.kernel.internal.transaction.constants import (
     ACTIVE_WRITE_TOOLS,
     REQUIRED_TOOL_EQUIVALENTS,
-    TOOL_ALIASES,
     VERIFICATION_TOOLS,
 )
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import extract_target_files_from_message
@@ -33,6 +32,7 @@ from polaris.cells.roles.kernel.internal.transaction.tool_sequence_templates imp
     build_sequence_template,
     extract_expected_read_count,
 )
+from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
 
 _SESSION_PATCH_BLOCK_RE = re.compile(r"<SESSION_PATCH>\s*(.*?)\s*</SESSION_PATCH>", flags=re.DOTALL)
 _SUPER_READONLY_STAGE_MARKERS: tuple[str, ...] = (
@@ -60,7 +60,7 @@ def _mapping(value: object) -> dict[str, Any]:
 
 def _normalize_tool_token(value: object) -> str:
     normalized = str(value or "").strip().strip("`'\". ").lower()
-    return TOOL_ALIASES.get(normalized, normalized) if normalized else ""
+    return normalize_tool_name(normalized) if normalized else ""
 
 
 def _extract_single_target_quality_repair_path(text: str) -> str:
@@ -492,7 +492,7 @@ def build_single_batch_task_contract_hint(
             normalized = raw_tool.strip().strip("`'\". ").lower()
             if not normalized:
                 continue
-            normalized = TOOL_ALIASES.get(normalized, normalized)
+            normalized = normalize_tool_name(normalized)
             if normalized not in required_tools_from_contract:
                 required_tools_from_contract.append(normalized)
             mapped = available_tools_map.get(normalized)
@@ -524,7 +524,7 @@ def build_single_batch_task_contract_hint(
                 normalized = raw_tool.strip().strip("`'\". ").lower()
                 if not normalized:
                     continue
-                normalized = TOOL_ALIASES.get(normalized, normalized)
+                normalized = normalize_tool_name(normalized)
                 if normalized not in normalized_group:
                     normalized_group.append(normalized)
             if normalized_group:

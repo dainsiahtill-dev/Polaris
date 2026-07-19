@@ -22,6 +22,7 @@ This test file covers two categories of checks:
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"
 CELLS_ROOT = BACKEND_ROOT / "polaris" / "cells"
 SUBGRAPHS_ROOT = BACKEND_ROOT / "docs" / "graph" / "subgraphs"
+ROLES_KERNEL_ROOT = CELLS_ROOT / "roles" / "kernel"
 
 # Cells that are intentionally designed to span kernelone/infrastructure
 # by ACGA architectural decision (e.g., KernelOne-tier cells).
@@ -91,6 +93,11 @@ def _load_subgraph(subgraph_id: str) -> dict[str, Any]:
     assert candidate.is_file(), f"subgraph not found: {candidate}"
     with candidate.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    assert path.is_file(), f"JSON governance asset not found: {path}"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _is_infra_path(path: str) -> bool:
@@ -227,6 +234,89 @@ class TestCellYamlCatalogConsistency:
                 f"  catalog  : {catalog_val}\n"
                 f"  cell.yaml: {cell_val}"
             )
+
+
+class TestRolesKernelFinalRequestEvidenceMetadata:
+    """B3.2 final-request cutoff metadata must have one generated truth."""
+
+    def test_b32_metadata_surfaces_stay_in_lockstep(self) -> None:
+        """Catalog, manifest, and generated context must expose the exact B3.2 slice."""
+        expected_module = "polaris.cells.roles.kernel.public.final_request_evidence_cutoff"
+        expected_query = "FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof"
+        expected_commands = {"FactoryRoleEvidenceCutoffRequestV1"}
+        expected_results = {
+            "FactoryRoleEvidenceCutoffAckV1",
+            "FactoryRoleEvidenceCutoffSourceHeadV1",
+            "FactoryRoleEvidenceCutoffProofV1",
+            "FactoryRoleSemanticRequestIdentityV1",
+            "FactoryRoleSemanticCandidateV1",
+            "FactoryRoleFrozenSemanticRequestV1",
+        }
+        expected_tests = {
+            "polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py",
+            "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py",
+            "polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py",
+            "polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py",
+            "polaris/cells/roles/kernel/tests/test_llm_caller_components.py",
+        }
+        generated_context_ref = "generated/context.pack.json"
+
+        catalog_entry = next(cell for cell in _catalog_cells(_load_catalog()) if cell.get("id") == "roles.kernel")
+        manifest = _load_cell_yaml("roles.kernel")
+        assert manifest is not None
+        generated_path = ROLES_KERNEL_ROOT / generated_context_ref
+        generated = _load_json(generated_path) if generated_path.is_file() else {}
+
+        violations: list[str] = []
+        for surface_name, surface in (("catalog", catalog_entry), ("cell.yaml", manifest)):
+            if expected_module not in (surface.get("current_modules") or []):
+                violations.append(f"{surface_name}: missing current module {expected_module}")
+            contracts = surface.get("public_contracts") or {}
+            if expected_module not in (contracts.get("modules") or []):
+                violations.append(f"{surface_name}: missing public module {expected_module}")
+            missing_commands = sorted(expected_commands.difference(contracts.get("commands") or []))
+            if missing_commands:
+                violations.append(f"{surface_name}: missing commands {missing_commands}")
+            if expected_query not in (contracts.get("queries") or []):
+                violations.append(f"{surface_name}: missing query {expected_query}")
+            missing_results = sorted(expected_results.difference(contracts.get("results") or []))
+            if missing_results:
+                violations.append(f"{surface_name}: missing results {missing_results}")
+            misclassified_results = sorted(expected_commands.intersection(contracts.get("results") or []))
+            if misclassified_results:
+                violations.append(f"{surface_name}: request DTOs misclassified as results {misclassified_results}")
+            missing_tests = sorted(expected_tests.difference((surface.get("verification") or {}).get("tests") or []))
+            if missing_tests:
+                violations.append(f"{surface_name}: missing tests {missing_tests}")
+            if generated_context_ref not in (surface.get("generated_artifacts") or []):
+                violations.append(f"{surface_name}: missing artifact {generated_context_ref}")
+
+        if not generated:
+            violations.append(f"generated context missing: {generated_path}")
+        else:
+            contracts = generated.get("public_contracts") or {}
+            missing_commands = sorted(expected_commands.difference(contracts.get("commands") or []))
+            if missing_commands:
+                violations.append(f"generated context: missing commands {missing_commands}")
+            if expected_query not in (contracts.get("queries") or []):
+                violations.append(f"generated context: missing query {expected_query}")
+            missing_results = sorted(expected_results.difference(contracts.get("results") or []))
+            if missing_results:
+                violations.append(f"generated context: missing results {missing_results}")
+            misclassified_results = sorted(expected_commands.intersection(contracts.get("results") or []))
+            if misclassified_results:
+                violations.append(f"generated context: request DTOs misclassified as results {misclassified_results}")
+            missing_tests = sorted(expected_tests.difference(generated.get("test_targets") or []))
+            if missing_tests:
+                violations.append(f"generated context: missing tests {missing_tests}")
+
+        legacy_root = ROLES_KERNEL_ROOT / "context.pack.json"
+        if legacy_root.exists():
+            violations.append(
+                "roles.kernel/context.pack.json must be retired after generated/context.pack.json becomes canonical"
+            )
+
+        assert not violations, "roles.kernel B3.2 metadata drift:\n" + "\n".join(f"  - {item}" for item in violations)
 
 
 class TestChiefEngineerBlueprintGovernance:

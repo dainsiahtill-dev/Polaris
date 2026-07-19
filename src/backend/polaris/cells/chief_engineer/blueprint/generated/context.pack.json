@@ -17,13 +17,15 @@
       "GenerateTaskBlueprintCommandV1"
     ],
     "queries": [
-      "GetBlueprintStatusQueryV1"
+      "GetBlueprintStatusQueryV1",
+      "QueryBlueprintProvenanceV1"
     ],
     "events": [
       "TaskBlueprintGeneratedEventV1"
     ],
     "results": [
-      "TaskBlueprintResultV1"
+      "TaskBlueprintResultV1",
+      "TaskBlueprintProvenanceSnapshotV1"
     ],
     "errors": [
       "ChiefEngineerBlueprintErrorV1"

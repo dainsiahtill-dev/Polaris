@@ -268,15 +268,30 @@ def normalize_tool_arguments_from_snapshot(
 
     if not isinstance(snapshot, CapturedToolSpecSnapshotV1) or not snapshot.registered:
         raise ValueError("registered CapturedToolSpecSnapshotV1 required")
-    spec = frozen_node_to_value(snapshot.canonical_effective_spec)
+    validated = CapturedToolSpecSnapshotV1(
+        raw_tool_name=snapshot.raw_tool_name,
+        canonical_tool_name=snapshot.canonical_tool_name,
+        registered=snapshot.registered,
+        canonical_effective_spec=snapshot.canonical_effective_spec,
+        canonical_name_view=snapshot.canonical_name_view,
+        alias_binding_view=snapshot.alias_binding_view,
+    )
+    if (
+        snapshot.tool_spec_hash != validated.tool_spec_hash
+        or snapshot.canonical_name_view_hash != validated.canonical_name_view_hash
+        or snapshot.alias_binding_hash != validated.alias_binding_hash
+        or snapshot.snapshot_hash != validated.snapshot_hash
+    ):
+        raise ValueError("captured tool snapshot hash mismatch")
+    spec = frozen_node_to_value(validated.canonical_effective_spec)
     if not isinstance(spec, dict):
         raise ValueError("snapshot effective spec must be a mapping")
     from .schema_driven_normalizer import SchemaDrivenNormalizer
 
-    normalized: dict[str, Any] = SchemaDrivenNormalizer({snapshot.canonical_tool_name: spec}).normalize(
-        snapshot.canonical_tool_name, dict(arguments)
+    normalized: dict[str, Any] = SchemaDrivenNormalizer({validated.canonical_tool_name: spec}).normalize(
+        validated.canonical_tool_name, dict(arguments)
     )
-    normalizer = TOOL_NORMALIZERS.get(snapshot.canonical_tool_name)
+    normalizer = TOOL_NORMALIZERS.get(validated.canonical_tool_name)
     if normalizer is not None:
         normalized = normalizer(normalized)
     return normalized

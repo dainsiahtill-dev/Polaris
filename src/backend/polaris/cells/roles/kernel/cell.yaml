@@ -11,6 +11,7 @@ purpose: 'Provide the shared role execution kernel for prompt construction, outp
   '
 current_modules:
 - polaris.cells.roles.kernel.public.service
+- polaris.cells.roles.kernel.public.final_request_evidence_cutoff
 - polaris.cells.roles.kernel.internal.kernel
 - polaris.cells.roles.kernel.internal.prompt_builder
 - polaris.cells.roles.kernel.internal.output_parser
@@ -32,20 +33,29 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.roles.kernel.public.contracts
+  - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
   commands:
   - BuildRolePromptCommandV1
   - ParseRoleOutputCommandV1
   - CheckRoleQualityCommandV1
   - ExecuteRoleKernelTurnCommandV1
+  - FactoryRoleEvidenceCutoffRequestV1
   queries:
   - ClassifyKernelErrorQueryV1
   - ResolveRetryPolicyQueryV1
+  - FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof
   events:
   - RoleKernelPromptBuiltEventV1
   - RoleKernelParsedOutputEventV1
   - RoleKernelQualityCheckedEventV1
   results:
   - RoleKernelResultV1
+  - FactoryRoleEvidenceCutoffAckV1
+  - FactoryRoleEvidenceCutoffSourceHeadV1
+  - FactoryRoleEvidenceCutoffProofV1
+  - FactoryRoleSemanticRequestIdentityV1
+  - FactoryRoleSemanticCandidateV1
+  - FactoryRoleFrozenSemanticRequestV1
   errors:
   - RoleKernelErrorV1
 depends_on:
@@ -54,6 +64,7 @@ depends_on:
 - policy.permission
 - audit.evidence
 - control_plane.run_ledger
+- director.runtime
 - director.execution
 - roles.profile
 - roles.session
@@ -85,6 +96,11 @@ verification:
   - tests/test_turn_engine_semantic_stages.py
   - tests/test_turn_engine_policy_convergence.py
   - tests/test_kernel_stream_tool_loop.py
+  - polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py
+  - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py
+  - polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py
+  - polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py
+  - polaris/cells/roles/kernel/tests/test_llm_caller_components.py
   gaps:
   - Some callers still import role kernel components through transitional compatibility
     paths instead of canonical public contracts.
@@ -97,6 +113,9 @@ verification:
     adopt canonical source imports.
 
     '
+  - B3.3-B3.5 physical provider-attempt qualification, snapshot persistence, and
+    all-role/retry audit remain guarded; B3.2 metadata does not authorize provider
+    dispatch.
   - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the\
     \ single execution engine supporting CHAT and WORKFLOW modes: - kernel.run(role,\
     \ request) — blocking execution with RoleTurnResult - kernel.run_stream(role,\
@@ -107,4 +126,5 @@ verification:
     \ surfaces (StandaloneRoleAgent, AgentService, RoleAgentTUI) are non-production\
     \ compatibility windows — all production routes must go through RoleExecutionKernel.\n"
   smoke_commands: []
-generated_artifacts: []
+generated_artifacts:
+- generated/context.pack.json

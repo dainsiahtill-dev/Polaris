@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -12,6 +15,11 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from polaris.bootstrap.config import Settings
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRunService,
@@ -32,7 +40,44 @@ from polaris.kernelone.quality import (
     owner_handoff_identifier_tokens,
     task_record_identifier_tokens,
 )
-from polaris.kernelone.storage import resolve_logical_path
+from polaris.kernelone.storage import clear_storage_roots_cache, resolve_logical_path
+
+_SETTINGS_ENV_NAMES: tuple[str, ...] = (
+    "KERNELONE_WORKSPACE",
+    "KERNELONE_SELF_UPGRADE_MODE",
+    "KERNELONE_RUNTIME_ROOT",
+    "KERNELONE_STATE_TO_RAMDISK",
+    "KERNELONE_RUNTIME_CACHE_ROOT",
+    "KERNELONE_RAMDISK_ROOT",
+    "KERNELONE_NATS_ENABLED",
+    "KERNELONE_NATS_REQUIRED",
+    "KERNELONE_NATS_URL",
+    "KERNELONE_NATS_USER",
+    "KERNELONE_NATS_PASSWORD",
+    "KERNELONE_NATS_CONNECT_TIMEOUT",
+    "KERNELONE_NATS_RECONNECT_WAIT",
+    "KERNELONE_NATS_MAX_RECONNECT",
+    "KERNELONE_NATS_STREAM_NAME",
+    "KERNELONE_AUDIT_LLM_ENABLED",
+    "KERNELONE_AUDIT_LLM_ROLE",
+    "KERNELONE_AUDIT_LLM_TIMEOUT",
+    "KERNELONE_AUDIT_LLM_PREFER_LOCAL_OLLAMA",
+    "KERNELONE_AUDIT_LLM_ALLOW_REMOTE_FALLBACK",
+)
+
+
+def _snapshot_process_settings_environment() -> dict[str, str | None]:
+    return {name: os.environ.get(name) for name in _SETTINGS_ENV_NAMES}
+
+
+def _restore_process_settings_environment(snapshot: dict[str, str | None]) -> None:
+    for name in _SETTINGS_ENV_NAMES:
+        value = snapshot[name]
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+    clear_storage_roots_cache()
 
 
 def _complete_task_row(
@@ -388,22 +433,114 @@ def _disable_factory_jetstream_publish(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(factory_router_module, "publish_to_jetstream", _noop_publish_to_jetstream)
 
 
+@pytest.fixture(autouse=True)
+def _bootstrap_direct_service_workspace(request: pytest.FixtureRequest) -> None:
+    """Bootstrap direct-service tests while preserving HTTP lifespan coverage."""
+
+    if "temp_workspace" not in request.fixturenames or "client" in request.fixturenames:
+        return
+    workspace = Path(request.getfixturevalue("temp_workspace")).resolve()
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="factory_router_direct_service_test_bootstrap",
+        )
+    )
+
+
 @pytest.fixture
 def service(temp_workspace: Path) -> FactoryRunService:
     return FactoryRunService(temp_workspace, executor=FakeStageExecutor())
 
 
-@pytest.fixture
-def client(temp_workspace: Path, service: FactoryRunService, monkeypatch: pytest.MonkeyPatch):
-    # Set a test token before creating the app (IRONWALL-1: auth is now enforced)
-    test_token = "test-factory-router-token-2024"
-    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
-    app = create_app(Settings(workspace=temp_workspace))
-    monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
-    monkeypatch.setattr(factory_router_module, "ensure_required_roles_ready", lambda *args, **kwargs: None)
+@contextmanager
+def _factory_test_client(
+    temp_workspace: Path,
+    service: FactoryRunService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[TestClient]:
+    settings_environment = _snapshot_process_settings_environment()
+    try:
+        # Set a test token before creating the app (IRONWALL-1: auth is now enforced)
+        test_token = "test-factory-router-token-2024"
+        monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+        app = create_app(
+            Settings(
+                workspace=temp_workspace,
+                nats={"enabled": False, "required": False},
+            )
+        )
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        monkeypatch.setattr(factory_router_module, "ensure_required_roles_ready", lambda *args, **kwargs: None)
 
-    with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as test_client:
+        with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as test_client:
+            yield test_client
+    finally:
+        _restore_process_settings_environment(settings_environment)
+
+
+@pytest.fixture
+def client(
+    temp_workspace: Path,
+    service: FactoryRunService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[TestClient]:
+    with _factory_test_client(temp_workspace, service, monkeypatch) as test_client:
         yield test_client
+
+
+def test_client_fixture_restores_process_settings_environment(
+    temp_workspace: Path,
+    service: FactoryRunService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The HTTP client fixture must not leak app-scoped settings into later tests."""
+
+    expected: dict[str, str | None] = {
+        "KERNELONE_WORKSPACE": None,
+        "KERNELONE_SELF_UPGRADE_MODE": "1",
+        "KERNELONE_RUNTIME_ROOT": str(temp_workspace / "original-runtime"),
+        "KERNELONE_STATE_TO_RAMDISK": None,
+        "KERNELONE_RUNTIME_CACHE_ROOT": str(temp_workspace / "original-cache"),
+        "KERNELONE_RAMDISK_ROOT": str(temp_workspace / "original-ramdisk"),
+        "KERNELONE_NATS_ENABLED": None,
+        "KERNELONE_NATS_REQUIRED": "1",
+        "KERNELONE_NATS_URL": "nats://127.0.0.1:49999",
+        "KERNELONE_NATS_USER": "test-user",
+        "KERNELONE_NATS_PASSWORD": "test-password",
+        "KERNELONE_NATS_CONNECT_TIMEOUT": "9.5",
+        "KERNELONE_NATS_RECONNECT_WAIT": "4.5",
+        "KERNELONE_NATS_MAX_RECONNECT": "7",
+        "KERNELONE_NATS_STREAM_NAME": "TEST_ORIGINAL_STREAM",
+        "KERNELONE_AUDIT_LLM_ENABLED": None,
+        "KERNELONE_AUDIT_LLM_ROLE": "director",
+        "KERNELONE_AUDIT_LLM_TIMEOUT": "77",
+        "KERNELONE_AUDIT_LLM_PREFER_LOCAL_OLLAMA": "0",
+        "KERNELONE_AUDIT_LLM_ALLOW_REMOTE_FALLBACK": "0",
+    }
+    for name, value in expected.items():
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert set(expected) == set(_SETTINGS_ENV_NAMES)
+
+    cache_clear_calls = 0
+    real_clear_storage_roots_cache = clear_storage_roots_cache
+
+    def _track_cache_clear() -> None:
+        nonlocal cache_clear_calls
+        cache_clear_calls += 1
+        real_clear_storage_roots_cache()
+
+    monkeypatch.setitem(globals(), "clear_storage_roots_cache", _track_cache_clear)
+
+    with _factory_test_client(temp_workspace, service, monkeypatch) as test_client:
+        assert isinstance(test_client, TestClient)
+
+    assert {name: os.environ.get(name) for name in expected} == expected
+    assert cache_clear_calls == 1
 
 
 def test_start_and_get_factory_run_without_workspace(client: TestClient, temp_workspace: Path) -> None:

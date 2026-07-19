@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 import polaris.cells.chief_engineer.blueprint.public.service as blueprint_service_module
@@ -13,12 +14,14 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
     HandoffDecisionV1,
+    QueryBlueprintProvenanceV1,
     RegisterRiskCommandV1,
     RegisterTechDebtCommandV1,
     RiskRecordV1,
     RiskSeverity,
     RiskStatus,
     TaskBlueprintGeneratedEventV1,
+    TaskBlueprintProvenanceSnapshotV1,
     TaskBlueprintResultV1,
 )
 from polaris.cells.chief_engineer.blueprint.public.service import (
@@ -28,12 +31,85 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     generate_task_blueprint,
     get_blueprint_status,
     project_chief_engineer_task_blueprint,
+    query_blueprint_provenance,
 )
+from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.kernelone.quality.file_ownership_ledger import (
     FileOwnershipLedgerError,
     read_file_owners,
 )
 from polaris.kernelone.storage import resolve_storage_roots
+
+
+def _producer_v1_hashable(value):
+    if isinstance(value, dict):
+        return {
+            str(key): _producer_v1_hashable(item)
+            for key, item in value.items()
+            if str(key) not in {"blueprint_hash", "capability_token", "job_token"}
+        }
+    if isinstance(value, (list, tuple)):
+        return [_producer_v1_hashable(item) for item in value]
+    return value
+
+
+def _pm_task_payload() -> dict:
+    return {
+        "id": "TASK-1",
+        "goal": "Implement the declared task contract.",
+        "target_files": ["src/main.py", "tests/test_main.py"],
+    }
+
+
+def _blueprint_provenance_payload() -> dict:
+    pm_task = _pm_task_payload()
+    payload = {
+        "schema_version": "chief_engineer.blueprint.v1",
+        "blueprint_id": "ce_TASK-1_20260718010101000000",
+        "task_id": "TASK-1",
+        "run_id": "factory-run-1",
+        "summary": "Implement the declared task contract.",
+        "pm_task": pm_task,
+        "pm_contract_hash": stable_hash(_producer_v1_hashable(pm_task)),
+        "target_files": ["src/main.py", "tests/test_main.py"],
+        "context": {
+            "capability_token": {"token_id": "cap-1"},
+            "nested": [{"job_token": {"token_id": "job-1"}, "kept": "yes"}],
+        },
+    }
+    payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+    return payload
+
+
+def _blueprint_provenance_query(payload: dict | None = None) -> QueryBlueprintProvenanceV1:
+    blueprint = payload or _blueprint_provenance_payload()
+    blueprint_id = "ce_TASK-1_20260718010101000000"
+    return QueryBlueprintProvenanceV1(
+        blueprint=blueprint,
+        expected_pm_task=_pm_task_payload(),
+        expected_factory_run_id="factory-run-1",
+        expected_task_id="TASK-1",
+        expected_blueprint_id=blueprint_id,
+        expected_logical_path=f"runtime/blueprints/{blueprint_id}.json",
+    )
+
+
+def _blueprint_provenance_snapshot_kwargs() -> dict:
+    payload = _blueprint_provenance_payload()
+    pm_contract_hash = stable_hash(_producer_v1_hashable(_pm_task_payload()))
+    return {
+        "logical_path": f"runtime/blueprints/{payload['blueprint_id']}.json",
+        "factory_run_id": "factory-run-1",
+        "task_id": "TASK-1",
+        "blueprint_id": payload["blueprint_id"],
+        "embedded_blueprint_hash": payload["blueprint_hash"],
+        "recomputed_blueprint_hash": payload["blueprint_hash"],
+        "matches": True,
+        "pm_contract_hash": pm_contract_hash,
+        "recomputed_pm_contract_hash": pm_contract_hash,
+        "pm_task_canonical_hash": stable_hash(_pm_task_payload()),
+        "target_files": ("src/main.py", "tests/test_main.py"),
+    }
 
 
 class TestGovernanceEnumFailClosed:
@@ -599,6 +675,360 @@ class TestGetBlueprintStatusQueryV1EdgeCases:
             GetBlueprintStatusQueryV1(task_id="task-1", workspace="")
 
 
+class TestQueryBlueprintProvenanceV1:
+    def test_valid_blueprint_returns_typed_snapshot(self) -> None:
+        payload = _blueprint_provenance_payload()
+
+        result = query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert isinstance(result, TaskBlueprintProvenanceSnapshotV1)
+        assert result.schema_version == "chief_engineer.blueprint_provenance.v1"
+        assert result.blueprint_schema_version == "chief_engineer.blueprint.v1"
+        assert result.hash_scheme == "chief_engineer.blueprint_hash.v1"
+        assert result.logical_path == f"runtime/blueprints/{payload['blueprint_id']}.json"
+        assert result.factory_run_id == "factory-run-1"
+        assert result.task_id == "TASK-1"
+        assert result.blueprint_id == payload["blueprint_id"]
+        assert result.embedded_blueprint_hash == payload["blueprint_hash"]
+        assert result.recomputed_blueprint_hash == payload["blueprint_hash"]
+        assert result.matches is True
+        assert result.pm_contract_hash == stable_hash(_producer_v1_hashable(_pm_task_payload()))
+        assert result.recomputed_pm_contract_hash == stable_hash(_producer_v1_hashable(_pm_task_payload()))
+        assert result.pm_task_canonical_hash == stable_hash(_pm_task_payload())
+        assert result.target_files == ("src/main.py", "tests/test_main.py")
+        assert result.to_dict()["recomputed_pm_contract_hash"] == result.recomputed_pm_contract_hash
+
+    def test_semantic_mutation_fails_closed(self) -> None:
+        payload = _blueprint_provenance_payload()
+        payload["summary"] = "mutated after producer hash"
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_hash_mismatch"
+
+    def test_embedded_hash_mismatch_fails_closed(self) -> None:
+        payload = _blueprint_provenance_payload()
+        payload["blueprint_hash"] = "b" * 64
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_hash_mismatch"
+
+    @pytest.mark.parametrize(
+        ("field", "value", "error_code"),
+        [
+            ("run_id", "other-run", "blueprint_provenance_run_id_mismatch"),
+            ("task_id", "TASK-2", "blueprint_provenance_task_id_mismatch"),
+            ("blueprint_id", "ce_other", "blueprint_provenance_blueprint_id_mismatch"),
+            ("schema_version", "chief_engineer.blueprint.v2", "blueprint_provenance_schema_mismatch"),
+        ],
+    )
+    def test_payload_identity_or_schema_mismatch_fails_closed(
+        self,
+        field: str,
+        value: str,
+        error_code: str,
+    ) -> None:
+        payload = _blueprint_provenance_payload()
+        payload[field] = value
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == error_code
+
+    def test_noncanonical_logical_path_fails_closed(self) -> None:
+        query = _blueprint_provenance_query()
+        forged = QueryBlueprintProvenanceV1(
+            blueprint=query.blueprint,
+            expected_pm_task=query.expected_pm_task,
+            expected_factory_run_id=query.expected_factory_run_id,
+            expected_task_id=query.expected_task_id,
+            expected_blueprint_id=query.expected_blueprint_id,
+            expected_logical_path=f".polaris/blueprints/{query.expected_blueprint_id}.json",
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(forged)
+
+        assert exc_info.value.code == "blueprint_provenance_logical_path_mismatch"
+
+    def test_missing_pm_task_fails_closed_without_alias_fallback(self) -> None:
+        payload = _blueprint_provenance_payload()
+        payload.pop("pm_task")
+        payload["context"]["pm_task_contract"] = _pm_task_payload()
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_pm_task_invalid"
+
+    def test_pm_task_mismatch_fails_closed(self) -> None:
+        payload = _blueprint_provenance_payload()
+        payload["pm_task"]["goal"] = "mutated PM task"
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_pm_task_mismatch"
+
+    def test_embedded_pm_contract_hash_mismatch_fails_closed(self) -> None:
+        payload = _blueprint_provenance_payload()
+        payload["pm_contract_hash"] = "b" * 64
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_pm_contract_hash_mismatch"
+
+    def test_blueprint_target_files_must_exactly_match_expected_pm_targets(self) -> None:
+        payload = _blueprint_provenance_payload()
+        payload["target_files"] = ["src/other.py", "tests/test_main.py"]
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_target_files_mismatch"
+
+    @pytest.mark.parametrize(
+        "unsafe_path",
+        [
+            "/absolute.py",
+            "src\\main.py",
+            "src/\x00main.py",
+            "",
+            ".",
+            "..",
+            "src/./main.py",
+            "src/../main.py",
+            "src//main.py",
+            "src/\x01main.py",
+            "e\u0301.py",
+            "a" * 1025,
+        ],
+    )
+    def test_blueprint_target_files_reject_unsafe_paths(self, unsafe_path: str) -> None:
+        payload = _blueprint_provenance_payload()
+        payload["target_files"] = [unsafe_path]
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_target_files_invalid"
+
+    @pytest.mark.parametrize("invalid_targets", [None, "src/main.py", ("src/main.py",)])
+    def test_blueprint_target_files_reject_missing_or_non_list(self, invalid_targets: object) -> None:
+        payload = _blueprint_provenance_payload()
+        if invalid_targets is None:
+            payload.pop("target_files")
+        else:
+            payload["target_files"] = invalid_targets
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_target_files_invalid"
+
+    @pytest.mark.parametrize(
+        "invalid_targets",
+        [
+            ["src/main.py", "src/main.py"],
+            [f"src/file-{index}.py" for index in range(513)],
+        ],
+    )
+    def test_blueprint_target_files_reject_duplicates_and_overflow(self, invalid_targets: list[str]) -> None:
+        payload = _blueprint_provenance_payload()
+        payload["target_files"] = invalid_targets
+        payload["blueprint_hash"] = stable_hash(_producer_v1_hashable(payload))
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_target_files_invalid"
+
+    @pytest.mark.parametrize(
+        "invalid_expected_targets",
+        [None, "src/main.py", ("src/main.py",), ["src/../main.py"]],
+    )
+    def test_expected_pm_target_files_reject_missing_non_list_or_unsafe(
+        self,
+        invalid_expected_targets: object,
+    ) -> None:
+        expected_pm_task = _pm_task_payload()
+        if invalid_expected_targets is None:
+            expected_pm_task.pop("target_files")
+        else:
+            expected_pm_task["target_files"] = invalid_expected_targets
+        valid_query = _blueprint_provenance_query()
+        query = QueryBlueprintProvenanceV1(
+            blueprint=valid_query.blueprint,
+            expected_pm_task=expected_pm_task,
+            expected_factory_run_id=valid_query.expected_factory_run_id,
+            expected_task_id=valid_query.expected_task_id,
+            expected_blueprint_id=valid_query.expected_blueprint_id,
+            expected_logical_path=valid_query.expected_logical_path,
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(query)
+
+        assert exc_info.value.code == "blueprint_provenance_expected_target_files_invalid"
+
+    @pytest.mark.parametrize("embedded_hash", ["", "A" * 64, "a" * 63, "g" * 64, 7])
+    def test_invalid_embedded_hash_fails_closed(self, embedded_hash: object) -> None:
+        payload = _blueprint_provenance_payload()
+        payload["blueprint_hash"] = embedded_hash
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert exc_info.value.code == "blueprint_provenance_hash_invalid"
+
+    def test_nested_ignored_keys_preserve_producer_v1_compatibility(self) -> None:
+        payload = _blueprint_provenance_payload()
+        original_hash = payload["blueprint_hash"]
+        payload["context"]["capability_token"] = {"token_id": "cap-rotated"}
+        payload["context"]["nested"][0]["job_token"] = {"token_id": "job-rotated"}
+
+        result = query_blueprint_provenance(_blueprint_provenance_query(payload))
+
+        assert result.matches is True
+        assert result.recomputed_blueprint_hash == original_hash
+
+    def test_query_and_service_do_not_mutate_input(self) -> None:
+        payload = _blueprint_provenance_payload()
+        before = deepcopy(payload)
+        query = _blueprint_provenance_query(payload)
+
+        result = query_blueprint_provenance(query)
+
+        assert result.matches is True
+        assert payload == before
+        assert query.blueprint == before
+        assert query.blueprint is not payload
+        assert query.expected_pm_task == _pm_task_payload()
+
+    @pytest.mark.parametrize(
+        ("field", "invalid_value"),
+        [
+            ("expected_factory_run_id", 7),
+            ("expected_factory_run_id", "x" * 257),
+            ("expected_task_id", "task\ncontrol"),
+            ("expected_task_id", "e\u0301"),
+            ("expected_blueprint_id", "../unsafe"),
+            ("expected_blueprint_id", "x" * 257),
+            ("expected_logical_path", "/absolute/blueprint.json"),
+            ("expected_logical_path", "runtime//blueprints/value.json"),
+            ("expected_logical_path", "x" * 1025),
+        ],
+    )
+    def test_query_dto_rejects_unbounded_or_unsafe_identity_and_path(
+        self,
+        field: str,
+        invalid_value: object,
+    ) -> None:
+        valid = _blueprint_provenance_query()
+        values = {
+            "blueprint": valid.blueprint,
+            "expected_pm_task": valid.expected_pm_task,
+            "expected_factory_run_id": valid.expected_factory_run_id,
+            "expected_task_id": valid.expected_task_id,
+            "expected_blueprint_id": valid.expected_blueprint_id,
+            "expected_logical_path": valid.expected_logical_path,
+        }
+        values[field] = invalid_value
+
+        with pytest.raises((TypeError, ValueError)):
+            QueryBlueprintProvenanceV1(**values)
+
+
+class TestTaskBlueprintProvenanceSnapshotV1StrictDto:
+    @pytest.mark.parametrize("invalid_matches", [1, 0, "true", None])
+    def test_matches_requires_exact_bool(self, invalid_matches: object) -> None:
+        values = _blueprint_provenance_snapshot_kwargs()
+        values["matches"] = invalid_matches
+
+        with pytest.raises(TypeError, match="matches"):
+            TaskBlueprintProvenanceSnapshotV1(**values)
+
+    @pytest.mark.parametrize(
+        ("field", "invalid_value"),
+        [
+            ("schema_version", "chief_engineer.blueprint_provenance.v2"),
+            ("blueprint_schema_version", "chief_engineer.blueprint.v2"),
+            ("hash_scheme", "chief_engineer.blueprint_hash.v2"),
+        ],
+    )
+    def test_schema_and_hash_scheme_are_frozen(self, field: str, invalid_value: str) -> None:
+        values = _blueprint_provenance_snapshot_kwargs()
+        values[field] = invalid_value
+
+        with pytest.raises(ValueError, match=field):
+            TaskBlueprintProvenanceSnapshotV1(**values)
+
+    @pytest.mark.parametrize(
+        ("field", "invalid_value"),
+        [
+            ("embedded_blueprint_hash", "A" * 64),
+            ("recomputed_blueprint_hash", "a" * 63),
+            ("pm_contract_hash", "g" * 64),
+            ("recomputed_pm_contract_hash", 7),
+            ("pm_task_canonical_hash", ""),
+        ],
+    )
+    def test_all_hash_fields_require_lower_sha256(self, field: str, invalid_value: object) -> None:
+        values = _blueprint_provenance_snapshot_kwargs()
+        values[field] = invalid_value
+
+        with pytest.raises((TypeError, ValueError), match=field):
+            TaskBlueprintProvenanceSnapshotV1(**values)
+
+    @pytest.mark.parametrize(
+        ("field", "invalid_value"),
+        [
+            ("factory_run_id", 7),
+            ("factory_run_id", "x" * 257),
+            ("task_id", "task\ncontrol"),
+            ("task_id", "e\u0301"),
+            ("blueprint_id", "../unsafe"),
+            ("logical_path", "/absolute/blueprint.json"),
+            ("logical_path", "runtime//blueprints/value.json"),
+            ("logical_path", "x" * 1025),
+        ],
+    )
+    def test_identity_and_logical_path_are_strict(self, field: str, invalid_value: object) -> None:
+        values = _blueprint_provenance_snapshot_kwargs()
+        values[field] = invalid_value
+
+        with pytest.raises((TypeError, ValueError), match=field):
+            TaskBlueprintProvenanceSnapshotV1(**values)
+
+    @pytest.mark.parametrize(
+        "invalid_target_files",
+        [
+            ["src/main.py"],
+            ("src/main.py", "src/main.py"),
+            ("src/../main.py",),
+            tuple(f"src/file-{index}.py" for index in range(513)),
+        ],
+    )
+    def test_target_files_are_bounded_unique_safe_tuple(self, invalid_target_files: object) -> None:
+        values = _blueprint_provenance_snapshot_kwargs()
+        values["target_files"] = invalid_target_files
+
+        with pytest.raises((TypeError, ValueError), match="target_files"):
+            TaskBlueprintProvenanceSnapshotV1(**values)
+
+
 class TestTaskBlueprintGeneratedEventV1HappyPath:
     def test_construction(self) -> None:
         evt = TaskBlueprintGeneratedEventV1(
@@ -855,6 +1285,87 @@ class TestChiefEngineerBlueprintPublicService:
         with pytest.raises(FileOwnershipLedgerError, match="simulated ownership write failure"):
             generate_task_blueprint(command)
 
+        assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+
+    def test_generate_factory_pm_task_contract_is_exact_authority(self, tmp_path) -> None:
+        exact_pm_task = {
+            "id": "TASK-FACTORY",
+            "goal": "Persist the exact Factory PM task contract.",
+            "target_files": ["src/exact.py"],
+            "acceptance_criteria": ["Exact PM task provenance is durable"],
+            "steps": ["Generate the CE blueprint"],
+        }
+        alias_task = {
+            "id": "TASK-ALIAS",
+            "goal": "This compatibility alias must not replace Factory authority.",
+            "target_files": ["src/alias.py"],
+        }
+        exact_before = deepcopy(exact_pm_task)
+        command = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-FACTORY",
+            workspace=str(tmp_path),
+            objective="Persist exact Factory PM task provenance",
+            run_id="factory-run-exact",
+            context={
+                "pm_task_contract": exact_pm_task,
+                "pm_contract_hash": "1" * 64,
+                "contract_hash": "2" * 64,
+                "task": alias_task,
+                "pm_task": alias_task,
+                "target_files": ["src/exact.py"],
+                "acceptance_criteria": ["Exact PM task provenance is durable"],
+                "execution_checklist": ["Generate the CE blueprint"],
+            },
+        )
+
+        result = generate_task_blueprint(command)
+
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["pm_task"] == exact_pm_task
+        expected_hash = stable_hash(_producer_v1_hashable(exact_pm_task))
+        assert persisted["pm_contract_hash"] == expected_hash
+        assert persisted["contract_hash"] == expected_hash
+        assert persisted["context"]["pm_contract_hash"] == expected_hash
+        assert persisted["context"]["contract_hash"] == expected_hash
+        assert exact_pm_task == exact_before
+
+    @pytest.mark.parametrize("invalid_pm_task_contract", [None, {}, [], "not-a-mapping"])
+    def test_generate_rejects_invalid_explicit_factory_contract_before_persistence(
+        self,
+        tmp_path,
+        monkeypatch,
+        invalid_pm_task_contract: object,
+    ) -> None:
+        ownership_calls: list[tuple[object, ...]] = []
+
+        def record_ownership(*args: object, **_kwargs: object) -> dict[str, dict[str, str]]:
+            ownership_calls.append(args)
+            return {}
+
+        monkeypatch.setattr(blueprint_service_module, "record_task_file_owners", record_ownership)
+        command = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-INVALID-FACTORY",
+            workspace=str(tmp_path),
+            objective="Reject invalid exact Factory PM task provenance",
+            context={
+                "pm_task_contract": invalid_pm_task_contract,
+                "task": {
+                    "id": "TASK-ALIAS",
+                    "goal": "Compatibility alias must never rescue an invalid Factory slot.",
+                },
+                "target_files": ["src/should-not-persist.py"],
+                "acceptance_criteria": ["Invalid Factory contracts fail closed"],
+                "execution_checklist": ["Reject before every write"],
+            },
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
+            generate_task_blueprint(command)
+
+        assert exc_info.value.code == "blueprint_pm_task_contract_invalid"
+        assert exc_info.value.details["field"] == "pm_task_contract"
+        assert ownership_calls == []
         assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
 
     def test_generate_and_query_task_blueprint(self, tmp_path) -> None:

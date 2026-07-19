@@ -13,6 +13,27 @@ from polaris.cells.control_plane.run_ledger.public import (
     query_factory_settlement_barrier,
 )
 from polaris.cells.events.fact_stream.public import AppendFactEventCommandV1, append_fact_event
+from polaris.cells.events.fact_stream.public.contracts import (
+    BootstrapFactStreamWorkspaceCommandV1,
+)
+from polaris.cells.events.fact_stream.public.workspace_bootstrap import (
+    bootstrap_fact_stream_workspace,
+)
+
+
+def _bootstrap_run_ledger_fact_streams(workspace: Path) -> None:
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=("execution.control_plane", "task_runtime.execution"),
+            maintenance_reason="factory_settlement_barrier_tests",
+        )
+    )
+
+
+@pytest.fixture(autouse=True)
+def _bootstrap_default_run_ledger_fact_streams(tmp_path: Path) -> None:
+    _bootstrap_run_ledger_fact_streams(tmp_path)
 
 
 def _append_task_fact(
@@ -376,19 +397,11 @@ def test_barrier_hash_is_idempotent_for_unchanged_facts(tmp_path: Path) -> None:
         factory_run_id="factory-stable",
         run_id="run-stable",
     )
-    files_before = {
-        path.relative_to(tmp_path): path.read_bytes()
-        for path in tmp_path.rglob("*")
-        if path.is_file()
-    }
+    files_before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
 
     first = query_factory_settlement_barrier(tmp_path, "factory-stable")
     second = query_factory_settlement_barrier(tmp_path, "factory-stable")
-    files_after = {
-        path.relative_to(tmp_path): path.read_bytes()
-        for path in tmp_path.rglob("*")
-        if path.is_file()
-    }
+    files_after = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
 
     assert first == second
     assert files_after == files_before
@@ -401,6 +414,8 @@ def test_barrier_hash_is_idempotent_for_unchanged_facts(tmp_path: Path) -> None:
 def test_query_isolated_across_workspace_and_factory_run(tmp_path: Path) -> None:
     workspace_a = tmp_path / "workspace-a"
     workspace_b = tmp_path / "workspace-b"
+    _bootstrap_run_ledger_fact_streams(workspace_a)
+    _bootstrap_run_ledger_fact_streams(workspace_b)
     _append_terminal_run(
         workspace_a,
         factory_run_id="factory-a",

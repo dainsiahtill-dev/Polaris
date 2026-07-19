@@ -8,6 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FactoryRoleFrozenSemanticRequestV1,
+)
+
 
 @dataclass
 class LLMResponse:
@@ -116,6 +120,7 @@ class PreparedLLMRequest:
     response_format_mode: str = "plain_text"
     context_os_audit: dict[str, Any] = field(default_factory=dict)
     capability_profile: dict[str, Any] = field(default_factory=dict)
+    factory_semantic_request: FactoryRoleFrozenSemanticRequestV1 | None = None
 
 
 @dataclass

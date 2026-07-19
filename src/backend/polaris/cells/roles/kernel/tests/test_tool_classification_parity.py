@@ -281,16 +281,13 @@ def test_synthetic_names_are_not_tool_invocations(synthetic_name: str) -> None:
 def test_synthetic_shadow_key_is_deeply_immutable_and_hash_stable() -> None:
     from polaris.cells.roles.kernel.internal.speculation.contracts import SyntheticShadowToolKeyV1
 
-    source_arguments = {"path": "src/app.py", "content_length": 5}
     key = SyntheticShadowToolKeyV1.build(
         source_tool_call_id="call_1",
         canonical_tool_name="__prepare_shadow__",
         shadow_phase="write_phase",
-        arguments=source_arguments,
     )
     original_hash = key.shadow_key_hash
     original_object_hash = hash(key)
-    source_arguments["path"] = "src/changed.py"
 
     assert key.shadow_key_hash == original_hash
     assert hash(key) == original_object_hash
@@ -305,63 +302,89 @@ def test_synthetic_shadow_key_is_deeply_immutable_and_hash_stable() -> None:
     assert not hasattr(key, "arguments")
 
 
-def test_synthetic_shadow_key_equality_is_parameter_and_phase_sensitive() -> None:
+def test_synthetic_shadow_key_equality_is_call_and_phase_sensitive() -> None:
     from polaris.cells.roles.kernel.internal.speculation.contracts import SyntheticShadowToolKeyV1
 
     first = SyntheticShadowToolKeyV1.build(
         source_tool_call_id="call_1",
         canonical_tool_name="__prepare_shadow__",
         shadow_phase="write_phase",
-        arguments={"path": "src/app.py", "content_length": 5},
     )
     same = SyntheticShadowToolKeyV1.build(
         source_tool_call_id="call_1",
         canonical_tool_name="__prepare_shadow__",
         shadow_phase="write_phase",
-        arguments={"content_length": 5, "path": "src/app.py"},
     )
-    different_arguments = SyntheticShadowToolKeyV1.build(
-        source_tool_call_id="call_1",
+    different_call = SyntheticShadowToolKeyV1.build(
+        source_tool_call_id="call_2",
         canonical_tool_name="__prepare_shadow__",
         shadow_phase="write_phase",
-        arguments={"path": "src/app.py", "content_length": 6},
     )
     different_phase = SyntheticShadowToolKeyV1.build(
         source_tool_call_id="call_1",
         canonical_tool_name="__prepare_shadow__",
         shadow_phase="candidate",
-        arguments={"path": "src/app.py", "content_length": 5},
     )
 
     assert first == same
     assert hash(first) == hash(same)
     assert first.shadow_key_hash == same.shadow_key_hash
-    assert first != different_arguments
-    assert first.shadow_key_hash != different_arguments.shadow_key_hash
+    assert first != different_call
+    assert first.shadow_key_hash != different_call.shadow_key_hash
     assert first != different_phase
     assert first.shadow_key_hash != different_phase.shadow_key_hash
 
 
-def test_synthetic_shadow_key_preserves_concurrent_semantic_equality() -> None:
+def test_synthetic_shadow_key_prevents_cross_call_collisions() -> None:
     from polaris.cells.roles.kernel.internal.speculation.contracts import SyntheticShadowToolKeyV1
 
     first = SyntheticShadowToolKeyV1.build(
         source_tool_call_id="call_first",
         canonical_tool_name="__prepare_shadow__",
         shadow_phase="write_phase",
-        arguments={"path": "src/app.py", "content_length": 5},
     )
     concurrent_equivalent = SyntheticShadowToolKeyV1.build(
         source_tool_call_id="call_second",
         canonical_tool_name="__prepare_shadow__",
         shadow_phase="write_phase",
-        arguments={"path": "src/app.py", "content_length": 5},
     )
 
     assert first.source_tool_call_id != concurrent_equivalent.source_tool_call_id
-    assert first == concurrent_equivalent
-    assert hash(first) == hash(concurrent_equivalent)
-    assert first.shadow_key_hash == concurrent_equivalent.shadow_key_hash
+    assert first != concurrent_equivalent
+    assert hash(first) != hash(concurrent_equivalent)
+    assert first.shadow_key_hash != concurrent_equivalent.shadow_key_hash
+
+
+def test_synthetic_shadow_key_exact_shape_binds_source_call_without_arguments() -> None:
+    import inspect
+
+    from polaris.cells.roles.kernel.internal.speculation.contracts import SyntheticShadowToolKeyV1
+
+    assert "arguments" not in inspect.signature(SyntheticShadowToolKeyV1.build).parameters
+    first = SyntheticShadowToolKeyV1.build(
+        source_tool_call_id="call_first",
+        canonical_tool_name="__prepare_shadow__",
+        shadow_phase="write_phase",
+    )
+    second = SyntheticShadowToolKeyV1.build(
+        source_tool_call_id="call_second",
+        canonical_tool_name="__prepare_shadow__",
+        shadow_phase="write_phase",
+    )
+
+    assert first != second
+    assert first.shadow_key_hash != second.shadow_key_hash
+    assert "_shadow_arguments" not in inspect.getsource(SyntheticShadowToolKeyV1)
+
+
+def test_transaction_layer_has_no_second_tool_alias_authority() -> None:
+    from pathlib import Path
+
+    backend_root = Path(__file__).resolve().parents[5]
+    transaction_root = backend_root / "polaris/cells/roles/kernel/internal/transaction"
+    for relative in ("constants.py", "__init__.py", "task_contract_builder.py", "contract_guards.py"):
+        source = (transaction_root / relative).read_text(encoding="utf-8")
+        assert "TOOL_ALIASES" not in source, relative
 
 
 def test_decoder_read_alias_preserves_raw_arguments_without_normalization(

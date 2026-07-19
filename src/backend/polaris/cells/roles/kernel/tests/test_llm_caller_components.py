@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import hashlib
 import time
 import warnings
 from types import SimpleNamespace
@@ -20,6 +21,8 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from polaris.cells.roles.kernel.internal import context_gateway as context_gateway_module
+from polaris.cells.roles.kernel.internal.llm_caller import request_preparer as request_preparer_module
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     build_final_provider_request_snapshot,
     build_final_request_context_audit,
@@ -52,7 +55,11 @@ from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
     NativeProviderFormatter,
     create_formatter,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import _ensure_current_user_message_final
+from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
+    LLMRequestPreparer,
+    _ensure_core_role_identity,
+    _ensure_current_user_message_final,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     LLMResponse,
     PreparedLLMRequest,
@@ -61,7 +68,18 @@ from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import (
     StreamEngine,
     _store_context_messages_accepts_provider_request,
 )
+from polaris.cells.roles.kernel.public import final_request_evidence_cutoff as cutoff_contract
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+    FACTORY_ROLE_EVIDENCE_CUTOFF_ACK_SCHEMA,
+    FactoryRoleEvidenceAuthorityBindingV1,
+    FactoryRoleEvidenceCutoffAckV1,
+    FactoryRoleEvidenceCutoffRequestV1,
+    FactoryRoleSemanticRequestIdentityV1,
+    bind_factory_role_evidence_authority,
+)
 from polaris.kernelone.audit.omniscient.dedup import LLMEventDeduplicator, set_global_llm_dedup
+from polaris.kernelone.context.contracts import TurnEngineContextResult
 
 
 @pytest.fixture(autouse=True)
@@ -120,6 +138,719 @@ def _minimal_director_evidence_context() -> dict[str, object]:
             "failed_required_modalities": ["command"],
         },
     }
+
+
+class _B32IdentityCutoffPort:
+    async def acquire_cutoff(
+        self,
+        request: FactoryRoleEvidenceCutoffRequestV1,
+    ) -> FactoryRoleEvidenceCutoffAckV1:
+        del request
+        raise AssertionError("identity tests stop before cutoff acquisition")
+
+    async def resolve_cutoff_proof(self, ack: FactoryRoleEvidenceCutoffAckV1) -> object:
+        del ack
+        raise AssertionError("identity tests stop before proof resolution")
+
+
+class _B32CountingCutoffPort:
+    def __init__(self) -> None:
+        self.acquire_count = 0
+        self.resolve_count = 0
+
+    async def acquire_cutoff(
+        self,
+        request: FactoryRoleEvidenceCutoffRequestV1,
+    ) -> FactoryRoleEvidenceCutoffAckV1:
+        del request
+        self.acquire_count += 1
+        raise AssertionError("malformed authority must fail before cutoff acquisition")
+
+    async def resolve_cutoff_proof(self, ack: FactoryRoleEvidenceCutoffAckV1) -> object:
+        del ack
+        self.resolve_count += 1
+        raise AssertionError("malformed authority must fail before proof resolution")
+
+
+class _B32AcquireBarrierCutoffPort(_B32CountingCutoffPort):
+    def __init__(self, *, factory_run_id: str) -> None:
+        super().__init__()
+        self.factory_run_id = factory_run_id
+        self.acquire_started = asyncio.Event()
+        self.acquire_release = asyncio.Event()
+
+    async def acquire_cutoff(
+        self,
+        request: FactoryRoleEvidenceCutoffRequestV1,
+    ) -> FactoryRoleEvidenceCutoffAckV1:
+        self.acquire_count += 1
+        self.acquire_started.set()
+        await self.acquire_release.wait()
+        return FactoryRoleEvidenceCutoffAckV1(
+            schema_version=FACTORY_ROLE_EVIDENCE_CUTOFF_ACK_SCHEMA,
+            factory_run_id=self.factory_run_id,
+            run_id=request.run_id,
+            role=request.role,
+            turn_id=request.turn_id,
+            call_id=request.call_id,
+            request_freeze_id=request.request_freeze_id,
+            semantic_candidate_hash=request.semantic_candidate_hash,
+            attempt_budget=request.attempt_budget,
+            execution_authority_hash=request.execution_authority_hash,
+            authority_stream=(
+                f"factory.role_evidence_authority.{hashlib.sha256(self.factory_run_id.encode('utf-8')).hexdigest()}"
+            ),
+            cutoff_fact_id="cutoff-fact-1",
+            cutoff_fact_sequence=1,
+            cutoff_fact_hash="c" * 64,
+            cutoff_body_hash="d" * 64,
+            cutoff_fragment_vector_hash="e" * 64,
+            cutoff_fragment_count=1,
+        )
+
+
+def _b32_identity_authority() -> FactoryRoleEvidenceAuthorityBindingV1:
+    return FactoryRoleEvidenceAuthorityBindingV1(
+        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+        verification_scope="factory",
+        factory_run_id="factory-run-identity",
+        role="director",
+        cutoff_port=_B32IdentityCutoffPort(),
+        attempt_budget=3,
+        execution_authority_hash="a" * 64,
+    )
+
+
+def _b32_profile() -> SimpleNamespace:
+    return SimpleNamespace(
+        role_id="director",
+        provider_id="provider-a",
+        provider_type="openai_compat",
+        model="kimi-for-coding",
+        max_context_tokens=262_144,
+        tool_policy=SimpleNamespace(whitelist=()),
+    )
+
+
+def _b32_context() -> SimpleNamespace:
+    messages = [
+        {"role": "system", "content": "You are Director."},
+        {"role": "user", "content": "Implement."},
+    ]
+    return SimpleNamespace(
+        message="Implement.",
+        domain="code",
+        task_id=None,
+        context_override={
+            "run_id": "forged-run",
+            "turn_id": "forged-turn",
+            "call_id": "f" * 32,
+            "request_freeze_id": "e" * 32,
+            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: messages,
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [],
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY: "none",
+        },
+    )
+
+
+def _b32_semantic_identity() -> FactoryRoleSemanticRequestIdentityV1:
+    return FactoryRoleSemanticRequestIdentityV1(
+        run_id="role-run-controlled",
+        turn_id="role-run-controlled:turn:0",
+        call_id="a" * 32,
+        request_freeze_id="b" * 32,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "corrupted_value", "expected_exception", "expected_error"),
+    [
+        (
+            "schema_version",
+            "polaris.forged.v1",
+            ValueError,
+            "factory_role_evidence_authority_binding_schema_mismatch",
+        ),
+        ("verification_scope", "other", ValueError, "verification_scope_mismatch"),
+        ("factory_run_id", "", ValueError, "factory_run_id_missing"),
+        ("cutoff_port", object(), TypeError, "factory_role_evidence_cutoff_port_required"),
+        ("attempt_budget", 0, ValueError, "attempt_budget_invalid"),
+        ("execution_authority_hash", "0", ValueError, "execution_authority_hash_invalid"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_factory_authority_mutation_after_bind_fails_before_cutoff(
+    field_name: str,
+    corrupted_value: object,
+    expected_exception: type[Exception],
+    expected_error: str,
+) -> None:
+    port = _B32CountingCutoffPort()
+    authority = FactoryRoleEvidenceAuthorityBindingV1(
+        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+        verification_scope="factory",
+        factory_run_id="factory-run-mutation",
+        role="director",
+        cutoff_port=port,
+        attempt_budget=3,
+        execution_authority_hash="a" * 64,
+    )
+
+    with bind_factory_role_evidence_authority(authority):
+        object.__setattr__(authority, field_name, corrupted_value)
+        with pytest.raises(expected_exception, match=expected_error):
+            await LLMRequestPreparer(workspace=".")._prepare_llm_request(
+                profile=_b32_profile(),
+                system_prompt="You are Director.",
+                context=_b32_context(),
+                temperature=0.2,
+                max_tokens=4000,
+                stream=False,
+                factory_semantic_identity=_b32_semantic_identity(),
+            )
+
+    assert port.acquire_count == 0
+    assert port.resolve_count == 0
+
+
+@pytest.mark.asyncio
+async def test_factory_authority_subclass_fails_before_cutoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _AuthoritySubclass(FactoryRoleEvidenceAuthorityBindingV1):
+        pass
+
+    port = _B32CountingCutoffPort()
+    authority = _AuthoritySubclass(
+        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+        verification_scope="factory",
+        factory_run_id="factory-run-subclass",
+        role="director",
+        cutoff_port=port,
+        attempt_budget=3,
+        execution_authority_hash="a" * 64,
+    )
+    monkeypatch.setattr(
+        request_preparer_module,
+        "get_factory_role_evidence_authority_binding",
+        lambda: authority,
+    )
+
+    with pytest.raises(TypeError, match="factory_role_evidence_authority_binding_exact_type_required"):
+        await LLMRequestPreparer(workspace=".")._prepare_llm_request(
+            profile=_b32_profile(),
+            system_prompt="You are Director.",
+            context=_b32_context(),
+            temperature=0.2,
+            max_tokens=4000,
+            stream=False,
+            factory_semantic_identity=_b32_semantic_identity(),
+        )
+
+    assert port.acquire_count == 0
+    assert port.resolve_count == 0
+
+
+@pytest.mark.asyncio
+async def test_factory_authority_valid_drift_during_context_await_fails_before_cutoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context_started = asyncio.Event()
+    context_release = asyncio.Event()
+
+    class _AwaitBarrierGateway:
+        def __init__(self, _profile: object, _workspace: object) -> None:
+            pass
+
+        async def build_context(
+            self,
+            _context: object,
+            *,
+            system_prompt: str,
+        ) -> TurnEngineContextResult:
+            context_started.set()
+            await context_release.wait()
+            return TurnEngineContextResult(
+                messages=(
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "Implement."},
+                ),
+                token_estimate=10,
+            )
+
+    monkeypatch.setattr(context_gateway_module, "RoleContextGateway", _AwaitBarrierGateway)
+    old_port = _B32CountingCutoffPort()
+    new_port = _B32CountingCutoffPort()
+    authority = FactoryRoleEvidenceAuthorityBindingV1(
+        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+        verification_scope="factory",
+        factory_run_id="factory-run-before-await",
+        role="director",
+        cutoff_port=old_port,
+        attempt_budget=3,
+        execution_authority_hash="a" * 64,
+    )
+    context = SimpleNamespace(message="Implement.", domain="code", context_override={})
+
+    with bind_factory_role_evidence_authority(authority):
+        prepare_task = asyncio.create_task(
+            LLMRequestPreparer(workspace=".")._prepare_llm_request(
+                profile=_b32_profile(),
+                system_prompt="You are Director.",
+                context=context,
+                temperature=0.2,
+                max_tokens=4000,
+                stream=False,
+                factory_semantic_identity=_b32_semantic_identity(),
+            )
+        )
+        await context_started.wait()
+        object.__setattr__(authority, "factory_run_id", "factory-run-after-await")
+        object.__setattr__(authority, "cutoff_port", new_port)
+        object.__setattr__(authority, "attempt_budget", 4)
+        object.__setattr__(authority, "execution_authority_hash", "b" * 64)
+        context_release.set()
+        with pytest.raises(RuntimeError, match="factory_role_evidence_authority_binding_drift"):
+            await prepare_task
+
+    assert old_port.acquire_count == 0
+    assert old_port.resolve_count == 0
+    assert new_port.acquire_count == 0
+    assert new_port.resolve_count == 0
+
+
+@pytest.mark.asyncio
+async def test_factory_authority_port_drift_during_acquire_fails_before_resolve() -> None:
+    factory_run_id = "factory-run-acquire-await"
+    old_port = _B32AcquireBarrierCutoffPort(factory_run_id=factory_run_id)
+    new_port = _B32CountingCutoffPort()
+    authority = FactoryRoleEvidenceAuthorityBindingV1(
+        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+        verification_scope="factory",
+        factory_run_id=factory_run_id,
+        role="director",
+        cutoff_port=old_port,
+        attempt_budget=3,
+        execution_authority_hash="a" * 64,
+    )
+
+    with bind_factory_role_evidence_authority(authority):
+        prepare_task = asyncio.create_task(
+            LLMRequestPreparer(workspace=".")._prepare_llm_request(
+                profile=_b32_profile(),
+                system_prompt="You are Director.",
+                context=_b32_context(),
+                temperature=0.2,
+                max_tokens=4000,
+                stream=False,
+                factory_semantic_identity=_b32_semantic_identity(),
+            )
+        )
+        await old_port.acquire_started.wait()
+        object.__setattr__(authority, "cutoff_port", new_port)
+        old_port.acquire_release.set()
+        with pytest.raises(RuntimeError, match="factory_role_evidence_authority_binding_drift"):
+            await prepare_task
+
+    assert old_port.acquire_count == 1
+    assert old_port.resolve_count == 0
+    assert new_port.acquire_count == 0
+    assert new_port.resolve_count == 0
+
+
+def test_existing_factory_role_marker_must_be_terminal_and_canonical() -> None:
+    messages = [
+        {
+            "role": "system",
+            "content": "You are Director.\n\npolaris.role_identity.v1:director\nintervening text",
+        },
+        {"role": "user", "content": "Implement."},
+    ]
+
+    with pytest.raises(RuntimeError, match="role_identity_marker_invalid:marker_must_be_terminal"):
+        _ensure_core_role_identity(
+            messages,
+            "director",
+            system_prompt="You are Director.",
+        )
+
+
+def _b32_prepared_factory_request() -> PreparedLLMRequest:
+    messages = [
+        {
+            "role": "system",
+            "content": "You are Director.\n\npolaris.role_identity.v1:director",
+        },
+        {"role": "user", "content": "Implement."},
+    ]
+    ai_request = SimpleNamespace(
+        input="Implement.",
+        context={"chat_messages": messages},
+        options={},
+        provider_id="provider-a",
+        model="kimi-for-coding",
+    )
+    return PreparedLLMRequest(
+        messages=messages,
+        input_text="Implement.",
+        context_result=SimpleNamespace(
+            token_estimate=3,
+            compression_strategy=None,
+            compression_applied=False,
+            metadata={},
+        ),
+        context_summary="summary",
+        request_options={},
+        ai_request=ai_request,
+        factory_semantic_request=Mock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_factory_semantic_call_stops_before_executor_and_retry_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoker = LLMInvoker(workspace="/ws")
+    profile = _b32_profile()
+    prepared = _b32_prepared_factory_request()
+    prepare = AsyncMock(return_value=prepared)
+    snapshot = AsyncMock()
+    executor_invoke = AsyncMock(side_effect=AssertionError("physical executor must not run"))
+    get_executor = Mock(return_value=SimpleNamespace(invoke=executor_invoke))
+    retry_fallback = AsyncMock(side_effect=AssertionError("retry/fallback must not run"))
+    monkeypatch.setattr(
+        LLMInvoker,
+        "_profile_for_healthy_binding",
+        staticmethod(lambda _role, _profile: profile),
+    )
+    monkeypatch.setattr(LLMInvoker, "_get_executor", lambda _self: get_executor())
+    monkeypatch.setattr(LLMInvoker, "_try_retryable_exception_role_binding_fallback", retry_fallback)
+    monkeypatch.setattr(LLMInvoker, "_is_cache_eligible", lambda _self, **_kwargs: False)
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.LLMRequestPreparer._prepare_llm_request",
+            prepare,
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_call_start_context_snapshot",
+            snapshot,
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.build_final_request_context_audit_for_request",
+            return_value={"final_request_token_estimate": 3},
+        ),
+        patch("polaris.cells.roles.kernel.internal.llm_caller.invoker.enforce_final_request_evidence_coverage"),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.classify_error",
+            return_value=ERROR_CATEGORY_RATE_LIMIT,
+        ),
+        bind_factory_role_evidence_authority(_b32_identity_authority()),
+    ):
+        response = await invoker.call(
+            profile=profile,
+            system_prompt="You are Director.",
+            context=_b32_context(),
+            run_id="role-run-zero-transport",
+        )
+
+    assert response.error == ("LLM call failed: factory_role_semantic_request_frozen_physical_dispatch_not_enabled")
+    prepare.assert_awaited_once()
+    snapshot.assert_not_awaited()
+    get_executor.assert_not_called()
+    executor_invoke.assert_not_awaited()
+    retry_fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_factory_semantic_structured_call_stops_before_all_dispatch_ladders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoker = LLMInvoker(workspace="/ws")
+    profile = _b32_profile()
+    prepare = AsyncMock(return_value=_b32_prepared_factory_request())
+    snapshot = AsyncMock()
+    native_dispatch = AsyncMock(side_effect=AssertionError("native structured dispatch must not run"))
+    instructor_dispatch = AsyncMock(side_effect=AssertionError("instructor dispatch must not run"))
+    fallback_dispatch = AsyncMock(side_effect=AssertionError("structured fallback must not run"))
+    monkeypatch.setattr(LLMInvoker, "_try_native_response_format_structured", native_dispatch)
+    monkeypatch.setattr(LLMInvoker, "_try_instructor_structured", instructor_dispatch)
+    monkeypatch.setattr(LLMInvoker, "_run_structured_fallback", fallback_dispatch)
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.LLMRequestPreparer._prepare_llm_request",
+            prepare,
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_call_start_context_snapshot",
+            snapshot,
+        ),
+        bind_factory_role_evidence_authority(_b32_identity_authority()),
+    ):
+        response = await invoker.call_structured(
+            profile=profile,
+            system_prompt="You are Director.",
+            context=_b32_context(),
+            response_model=dict,
+            run_id="role-run-structured-zero-transport",
+        )
+
+    assert response.error == (
+        "Structured LLM call failed: factory_role_semantic_request_frozen_physical_dispatch_not_enabled"
+    )
+    prepare.assert_awaited_once()
+    snapshot.assert_not_awaited()
+    native_dispatch.assert_not_awaited()
+    instructor_dispatch.assert_not_awaited()
+    fallback_dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_factory_semantic_stream_call_stops_before_stream_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoker = LLMInvoker(workspace="/ws")
+    profile = _b32_profile()
+    prepare = AsyncMock(return_value=_b32_prepared_factory_request())
+    stream_dispatch = Mock(side_effect=AssertionError("stream engine must not run"))
+    monkeypatch.setattr(invoker, "_stream_engine", SimpleNamespace(run_stream=stream_dispatch))
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.LLMRequestPreparer._prepare_llm_request",
+            prepare,
+        ),
+        bind_factory_role_evidence_authority(_b32_identity_authority()),
+    ):
+        events = [
+            event
+            async for event in invoker.call_stream(
+                profile=profile,
+                system_prompt="You are Director.",
+                context=_b32_context(),
+                run_id="role-run-stream-zero-transport",
+            )
+        ]
+
+    assert [event["error"] for event in events] == [
+        "factory_role_semantic_request_frozen_physical_dispatch_not_enabled"
+    ]
+    prepare.assert_awaited_once()
+    stream_dispatch.assert_not_called()
+
+
+def _assert_invoker_owned_identity(identity: object, *, run_id: str, turn_round: int) -> None:
+    identity_type = getattr(cutoff_contract, "FactoryRoleSemanticRequestIdentityV1", None)
+    assert identity_type is not None, "B3.2 semantic identity contract missing"
+    assert type(identity) is identity_type
+    assert identity.run_id == run_id
+    assert identity.turn_id == f"{run_id}:turn:{turn_round}"
+    assert len(identity.call_id) == 32
+    assert len(identity.request_freeze_id) == 32
+    assert identity.call_id != "f" * 32
+    assert identity.request_freeze_id != "e" * 32
+
+
+@pytest.mark.asyncio
+async def test_factory_call_requires_controlled_child_run_id_before_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoker = LLMInvoker(workspace="/ws")
+    profile = _b32_profile()
+    monkeypatch.setattr(
+        LLMInvoker,
+        "_profile_for_healthy_binding",
+        staticmethod(lambda _role, _profile: profile),
+    )
+    prepare = AsyncMock(side_effect=AssertionError("candidate preparation must not run"))
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.LLMRequestPreparer._prepare_llm_request",
+            prepare,
+        ),
+        bind_factory_role_evidence_authority(_b32_identity_authority()),
+        pytest.raises(RuntimeError, match="factory_role_controlled_run_id_required"),
+    ):
+        await invoker.call(
+            profile=profile,
+            system_prompt="You are Director.",
+            context=_b32_context(),
+            run_id=None,
+            turn_round=2,
+        )
+    prepare.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_factory_call_mints_full_uuid_identity_and_ignores_context_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoker = LLMInvoker(workspace="/ws")
+    profile = _b32_profile()
+    monkeypatch.setattr(
+        LLMInvoker,
+        "_profile_for_healthy_binding",
+        staticmethod(lambda _role, _profile: profile),
+    )
+    prepare = AsyncMock(side_effect=ValueError("stop-after-identity-capture"))
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.LLMRequestPreparer._prepare_llm_request",
+            prepare,
+        ),
+        bind_factory_role_evidence_authority(_b32_identity_authority()),
+    ):
+        await invoker.call(
+            profile=profile,
+            system_prompt="You are Director.",
+            context=_b32_context(),
+            run_id="role-run-controlled",
+            turn_round=3,
+        )
+
+    prepare.assert_awaited_once()
+    _assert_invoker_owned_identity(
+        prepare.await_args.kwargs["factory_semantic_identity"],
+        run_id="role-run-controlled",
+        turn_round=3,
+    )
+
+
+@pytest.mark.asyncio
+async def test_factory_structured_call_mints_full_uuid_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoker = LLMInvoker(workspace="/ws")
+    profile = _b32_profile()
+    monkeypatch.setattr(
+        LLMInvoker,
+        "_profile_for_healthy_binding",
+        staticmethod(lambda _role, _profile: profile),
+    )
+    prepare = AsyncMock(side_effect=ValueError("stop-after-identity-capture"))
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.LLMRequestPreparer._prepare_llm_request",
+            prepare,
+        ),
+        bind_factory_role_evidence_authority(_b32_identity_authority()),
+        pytest.raises(ValueError, match="stop-after-identity-capture"),
+    ):
+        await invoker.call_structured(
+            profile=profile,
+            system_prompt="You are Director.",
+            context=_b32_context(),
+            response_model=dict,
+            run_id="role-run-structured",
+            turn_round=4,
+        )
+
+    prepare.assert_awaited_once()
+    _assert_invoker_owned_identity(
+        prepare.await_args.kwargs["factory_semantic_identity"],
+        run_id="role-run-structured",
+        turn_round=4,
+    )
+
+
+@pytest.mark.asyncio
+async def test_factory_stream_call_mints_full_uuid_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoker = LLMInvoker(workspace="/ws")
+    profile = _b32_profile()
+    monkeypatch.setattr(
+        LLMInvoker,
+        "_profile_for_healthy_binding",
+        staticmethod(lambda _role, _profile: profile),
+    )
+    prepare = AsyncMock(side_effect=ValueError("stop-after-identity-capture"))
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.LLMRequestPreparer._prepare_llm_request",
+            prepare,
+        ),
+        bind_factory_role_evidence_authority(_b32_identity_authority()),
+    ):
+        events = [
+            event
+            async for event in invoker.call_stream(
+                profile=profile,
+                system_prompt="You are Director.",
+                context=_b32_context(),
+                run_id="role-run-stream",
+                turn_round=5,
+            )
+        ]
+
+    assert events
+    prepare.assert_awaited_once()
+    _assert_invoker_owned_identity(
+        prepare.await_args.kwargs["factory_semantic_identity"],
+        run_id="role-run-stream",
+        turn_round=5,
+    )
+
+
+@pytest.mark.asyncio
+async def test_role_binding_fallback_preserves_run_turn_call_and_refreezes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity_type = getattr(cutoff_contract, "FactoryRoleSemanticRequestIdentityV1", None)
+    assert identity_type is not None, "B3.2 semantic identity contract missing"
+    original_identity = identity_type(
+        run_id="role-run-fallback",
+        turn_id="role-run-fallback:turn:6",
+        call_id="a" * 32,
+        request_freeze_id="b" * 32,
+    )
+    invoker = LLMInvoker(workspace="/ws")
+    profile = _b32_profile()
+    slot = SimpleNamespace(provider_id="provider-b", model="fallback-model", binding_id="binding-b")
+    monkeypatch.setattr(LLMInvoker, "_mark_profile_binding_unhealthy", staticmethod(lambda *_args: None))
+    monkeypatch.setattr(LLMInvoker, "_fallback_slots_for_role", staticmethod(lambda *_args: (slot,)))
+    monkeypatch.setattr(
+        LLMInvoker,
+        "_profile_for_binding",
+        staticmethod(lambda _profile, _slot: profile),
+    )
+    preparer = SimpleNamespace(
+        _prepare_llm_request=AsyncMock(side_effect=ValueError("stop-after-fallback-identity-capture"))
+    )
+
+    result = await invoker._try_role_binding_fallback(
+        request_preparer=preparer,
+        profile=profile,
+        system_prompt="You are Director.",
+        context=_b32_context(),
+        temperature=0.2,
+        max_tokens=4000,
+        response_model=None,
+        platform_retry_max=1,
+        executor=Mock(),
+        role_id="director",
+        run_id="role-run-fallback",
+        task_id=None,
+        attempt=0,
+        model="kimi-for-coding",
+        call_id="a" * 32,
+        event_emitter=None,
+        original_error="rate limit",
+        factory_semantic_identity=original_identity,
+    )
+
+    assert result is None
+    fallback_identity = preparer._prepare_llm_request.await_args.kwargs["factory_semantic_identity"]
+    assert fallback_identity.run_id == original_identity.run_id
+    assert fallback_identity.turn_id == original_identity.turn_id
+    assert fallback_identity.call_id == original_identity.call_id
+    assert fallback_identity.request_freeze_id != original_identity.request_freeze_id
+    assert len(fallback_identity.request_freeze_id) == 32
 
 
 def test_final_request_context_audit_counts_tools_and_coverage() -> None:

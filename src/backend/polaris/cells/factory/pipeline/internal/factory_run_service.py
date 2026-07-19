@@ -19,7 +19,7 @@ import shutil  # re-exported for lossless surface + test monkeypatch of ``shutil
 import subprocess  # re-exported for lossless surface compatibility
 import threading  # re-exported for lossless surface compatibility
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field  # re-exported for lossless surface
 from datetime import datetime, timezone  # re-exported for lossless surface
 from enum import Enum  # re-exported for lossless surface
@@ -32,6 +32,9 @@ from polaris.cells.control_plane.run_ledger.public import (
     query_factory_settlement_barrier,
 )
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    contains_factory_role_evidence_runtime_authority,
+)
 from polaris.cells.runtime.task_runtime.public.contracts import (
     FenceExpiredFactoryRunSessionsCommandV1,
 )
@@ -45,6 +48,16 @@ from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_logical_path, resolve_storage_roots
 from polaris.kernelone.utils import utc_now_iso
 
+from .factory_event_chain import (
+    FactoryRunAdmissionV1,
+    build_factory_run_admitted_event,
+)
+from .factory_role_evidence_authority import (
+    FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY,
+    FactoryRoleEvidenceAuthorityPort,
+    FactoryRoleEvidenceStageAuthorityV1,
+)
+from .factory_role_evidence_source_resolver import CanonicalFactoryRoleEvidenceSourceAuthority
 from .factory_run_admission import FactoryWorkspaceRunAdmission
 from .factory_run_models import (
     _FACTORY_CANCEL_EVENTS,
@@ -71,7 +84,29 @@ from .factory_run_models import (
     _signal_factory_cancel_event,
     _unregister_factory_cancel_event,
 )
+from .factory_stage_artifact_bindings import (
+    CEBlueprintArtifactBindingV1,
+    CEReviewManifestArtifactBindingV1,
+    FactoryStageArtifactBindingError,
+    FactoryStageArtifactBindingsV1,
+    PMContractArtifactBindingV1,
+    PMStageEventArtifactBindingV1,
+    build_chief_engineer_stage_artifact_bindings,
+    build_pm_stage_artifact_bindings,
+)
 from .factory_stage_executor import OrchestrationStageExecutor
+from .factory_stage_persistence import (
+    FactoryLastStageCommitV1,
+    FactoryStagePersistenceCommittedV1,
+    FactoryStagePersistenceError,
+    bounded_redacted_error,
+    build_stage_persistence_intent,
+    canonical_checkpoint_sha256,
+    canonical_run_snapshot_sha256,
+    reduce_factory_stage_persistence,
+    validate_committed_checkpoint_hashes,
+    validate_current_stage_commit_pointer,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -81,12 +116,63 @@ if TYPE_CHECKING:
         FactoryWorkspaceRunLeaseV1,
     )
 
+
+class _FactoryStageCancellationCutError(RuntimeError):
+    """Internal cut proving outer cancellation won before marker append."""
+
+
+class _FactoryStageCommitArbitration:
+    """One shared linearization point for cancellation and marker durability."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = False
+
+    @contextlib.contextmanager
+    def commit_permit(self) -> Iterator[None]:
+        """Hold the permit across marker fsync and strict post-append reread."""
+
+        with self._lock:
+            if self._cancelled:
+                raise _FactoryStageCancellationCutError(
+                    "outer cancellation cut won before authoritative marker durability"
+                )
+            yield
+
+    def mark_cancelled(self) -> None:
+        """Linearize cancellation without ever blocking the asyncio event loop."""
+
+        with self._lock:
+            self._cancelled = True
+
+
 logger = logging.getLogger(__name__)
 
 _WORKSPACE_LEASE_METADATA_KEY = "factory_workspace_run_lease"
 _STAGE_IN_FLIGHT_METADATA_KEY = "factory_stage_in_flight"
+_FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY = FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY
 _CHILD_SESSIONS_SETTLED_METADATA_KEY = "factory_child_sessions_settled"
 _CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY = "factory_child_session_settlement_evidence"
+
+# Service-owned semantic audit matrix for every automatic-router write family.
+# Router code may select an operation, but it cannot authorize or persist one.
+_AUTOMATIC_ROUTER_MUTATION_GUARD_MATRIX: dict[str, tuple[str, ...]] = {
+    "summary_projection": ("store.save_run",),
+    "quality_rework": ("store.save_run", "_append_event", "reconcile_stage_execution_for_reentry"),
+    "quality_rework_reentry": ("reconcile_stage_execution_for_reentry",),
+    "stage_sequence": ("execute_stage",),
+    "run_configuration": ("store.save_run",),
+    "delivery_loop_projection": ("store.save_run", "_append_event"),
+    "success_terminalization": ("_persist_run_summary", "complete_run"),
+    "failure_terminalization": (
+        "reconcile_stage_execution_for_reentry",
+        "store.save_run",
+        "_persist_run_summary",
+        "_append_event",
+        "complete_run",
+    ),
+    "factory_failure_terminalization": ("reconcile_stage_execution_for_reentry",),
+}
 
 
 def _factory_jetstream_fanout_timeout_seconds() -> float:
@@ -187,6 +273,8 @@ class FactoryRunService:
         settlement_barrier_query: Callable[
             [str | Path, str], FactorySettlementBarrierResultV1
         ] = query_factory_settlement_barrier,
+        stage_artifact_binding_builder: Callable[[str, StageResult], FactoryStageArtifactBindingsV1 | None]
+        | None = None,
     ) -> None:
         from .factory_store import FactoryStore
 
@@ -205,6 +293,16 @@ class FactoryRunService:
         # 细粒度锁: 按 run_id 哈希分片，减少竞争
         self._run_locks: list[asyncio.Lock] = [asyncio.Lock() for _ in range(self._LOCK_BUCKETS)]
         self._executor: FactoryStageExecutor = executor or OrchestrationStageExecutor(self.workspace)
+        # Explicit injected executors are test/adapter seams and cannot claim
+        # production PM/CE artifacts. Production construction (executor=None)
+        # always uses the strict Factory-owned binding builders below.
+        self._stage_artifact_binding_builder: Callable[[str, StageResult], FactoryStageArtifactBindingsV1 | None] | None
+        if stage_artifact_binding_builder is not None:
+            self._stage_artifact_binding_builder = stage_artifact_binding_builder
+        elif executor is not None:
+            self._stage_artifact_binding_builder = lambda _run_id, _result: None
+        else:
+            self._stage_artifact_binding_builder = None
 
     def _get_run_lock(self, run_id: str) -> asyncio.Lock:
         """获取 run_id 对应的细粒度锁。
@@ -280,9 +378,7 @@ class FactoryRunService:
         expected_fencing_token: int | None = None,
     ) -> FactoryWorkspaceRunLeaseV1:
         expected_token = (
-            self._expected_lifecycle_fencing_token(run)
-            if expected_fencing_token is None
-            else expected_fencing_token
+            self._expected_lifecycle_fencing_token(run) if expected_fencing_token is None else expected_fencing_token
         )
         lease = self._admission.claim_lifecycle_operation(
             run.id,
@@ -411,6 +507,53 @@ class FactoryRunService:
         self._attach_workspace_lease(run, lease)
         return lease
 
+    def _build_factory_role_evidence_cutoff_port(
+        self,
+        *,
+        run: FactoryRun,
+        stage: str,
+        lease: FactoryWorkspaceRunLeaseV1,
+        run_lock: asyncio.Lock,
+    ) -> FactoryRoleEvidenceAuthorityPort:
+        """Capture one live stage claim into an A009B1-private authority port."""
+
+        claim = lease.stage_execution_claim
+        if claim is None or claim.run_id != run.id or claim.stage != stage:
+            raise RuntimeError("factory_role_evidence_stage_claim_missing_after_claim")
+
+        async def load_current_run() -> FactoryRun | None:
+            return await self.store.get_run(run.id)
+
+        return FactoryRoleEvidenceAuthorityPort(
+            workspace=self.workspace,
+            authority=FactoryRoleEvidenceStageAuthorityV1(
+                factory_run_id=run.id,
+                stage=stage,
+                workspace_fencing_token=lease.fencing_token,
+                stage_claim_attempt=claim.attempt,
+                stage_claim_nonce=claim.nonce,
+            ),
+            run_lock=run_lock,
+            run_loader=load_current_run,
+            admission=self._admission,
+            source_authority=CanonicalFactoryRoleEvidenceSourceAuthority(
+                workspace=self.workspace,
+                factory_store=self.store,
+                factory_event_loader=self.store._read_authoritative_events_sync,
+            ),
+        )
+
+    @staticmethod
+    def _assert_no_factory_role_evidence_port_leak(
+        result: StageResult,
+        port: FactoryRoleEvidenceAuthorityPort,
+    ) -> None:
+        """Fail before persistence if StageResult projections capture private authority."""
+
+        del port
+        if contains_factory_role_evidence_runtime_authority(result):
+            raise RuntimeError("factory_role_evidence_private_port_leaked_to_stage_result")
+
     async def _release_stage_execution(
         self,
         run: FactoryRun,
@@ -434,10 +577,33 @@ class FactoryRunService:
 
     @staticmethod
     def _stage_result_releases_execution_claim(result: StageResult) -> bool:
+        if str(result.status or "").strip().lower() in {"failed", "cancelled"}:
+            return False
         metadata = result.metadata if isinstance(result.metadata, dict) else {}
         if metadata.get("inflight_run_continues") is True:
             return False
         return metadata.get("child_sessions_settled") is not False
+
+    async def reconcile_stage_execution_for_reentry(
+        self,
+        run_id: str,
+        *,
+        operation: str,
+    ) -> FactoryRun:
+        """Explicitly release a failed-stage claim only after settlement proof."""
+
+        run_lock = self._get_run_lock(run_id)
+        async with run_lock:
+            run = await self.store.get_run(run_id)
+            if run is None:
+                raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
+            settlement = await self._require_child_session_settlement_for_reentry(
+                run,
+                operation=operation,
+            )
+            await self._reconcile_stage_execution_claim(run, settlement=settlement)
+            return run
 
     async def _reconcile_stage_execution_claim(
         self,
@@ -685,9 +851,16 @@ class FactoryRunService:
 
     async def create_run(self, config: FactoryConfig) -> FactoryRun:
         """Create a new factory run with directory structure."""
+        detached_config = FactoryConfig(
+            name=config.name,
+            description=config.description,
+            stages=list(config.stages),
+            auto_dispatch=config.auto_dispatch,
+            checkpoint_interval=config.checkpoint_interval,
+        )
         run = FactoryRun(
             id=f"factory_{uuid.uuid4().hex[:12]}",
-            config=config,
+            config=detached_config,
             status=FactoryRunStatus.PENDING,
             created_at=self._now(),
             metadata={
@@ -700,12 +873,26 @@ class FactoryRunService:
             },
         )
 
+        admitted = await self._append_event(
+            run.id,
+            build_factory_run_admitted_event(
+                FactoryRunAdmissionV1(
+                    factory_run_id=run.id,
+                    created_at=run.created_at,
+                    name=run.config.name,
+                    description=run.config.description,
+                )
+            ),
+            publish=False,
+        )
         run_dir = self.store.get_run_dir(run.id)
         (run_dir / "artifacts").mkdir(parents=True, exist_ok=True)
-        (run_dir / "events").mkdir(parents=True, exist_ok=True)
         (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
-
         await self.store.save_run(run)
+        # Realtime observers may only learn about the run after the mutable
+        # snapshot exists.  The admission bytes remain authoritative if save
+        # fails, but that half-run stays quarantined and unpublished.
+        await self._publish_factory_event(run.id, admitted)
         logger.info("Created factory run %s", run.id)
         return run
 
@@ -717,6 +904,8 @@ class FactoryRunService:
     ) -> StageResult:
         """Execute a single stage with durable lifecycle updates."""
         normalized_context = dict(context or {})
+        if contains_factory_role_evidence_runtime_authority(normalized_context):
+            raise RuntimeError("factory_role_evidence_private_authority_in_caller_context")
         normalized_context["_factory_abort_checker"] = self._build_abort_checker(run_id)
         cancel_event = _register_factory_cancel_event(self.workspace, run_id)
         normalized_context["_factory_cancel_event"] = cancel_event
@@ -728,6 +917,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
             if run.status not in {FactoryRunStatus.RUNNING, FactoryRunStatus.RECOVERING}:
                 current_lease = self._admission.current()
                 if (
@@ -743,13 +933,20 @@ class FactoryRunService:
                     )
                 raise ValueError(f"Run {run_id} is not executable in status {run.status.value}")
             self._renew_workspace_lease(run, require_active=True)
-            self._claim_stage_execution(
+            claimed_lease = self._claim_stage_execution(
                 run,
                 stage=stage,
                 nonce=stage_claim_nonce,
             )
             started_at = self._now()
             await self._mark_stage_started(run, stage, started_at)
+            cutoff_port = self._build_factory_role_evidence_cutoff_port(
+                run=run,
+                stage=stage,
+                lease=claimed_lease,
+                run_lock=run_lock,
+            )
+            normalized_context[_FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY] = cutoff_port
 
         heartbeat_task: asyncio.Task[None] | None = None
         if heartbeat_interval > 0:
@@ -759,7 +956,15 @@ class FactoryRunService:
             )
 
         try:
-            result = await self._execute_stage_logic(run, stage, normalized_context)
+            try:
+                result = await self._execute_stage_logic(run, stage, normalized_context)
+                self._assert_no_factory_role_evidence_port_leak(result, cutoff_port)
+            finally:
+                # The live capability ends with stage-logic execution on every
+                # exit path, including failed results, wrapper exceptions, and
+                # cancellation.  Claim settlement/release remains a separate
+                # durable lifecycle decision below.
+                cutoff_port.close_authority()
         except (
             AttributeError,
             OSError,
@@ -850,6 +1055,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 return
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
             current_stage = str(run.metadata.get("current_stage") or "").strip()
             if current_stage != stage:
                 return
@@ -900,6 +1106,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
 
             if run.status in TERMINAL_RUN_STATUSES:
                 return run
@@ -974,6 +1181,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
 
             if run.status in {FactoryRunStatus.COMPLETED, FactoryRunStatus.CANCELLED}:
                 return run
@@ -1056,6 +1264,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
 
             if run.status == FactoryRunStatus.RUNNING:
                 self._renew_workspace_lease(run, require_active=True)
@@ -1080,6 +1289,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
 
             if run.status == FactoryRunStatus.PAUSED:
                 self._acquire_workspace_lease(run)
@@ -1105,6 +1315,13 @@ class FactoryRunService:
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
 
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
+            if "last_factory_stage_commit" in metadata:
+                raise FactoryStagePersistenceError(
+                    "factory_stage_commit_pointer_mutation_forbidden",
+                    "Only the stage transaction may update its monotonic commit pointer",
+                )
+
             run.metadata.update(dict(metadata))
             run.updated_at = self._now()
             await self.store.save_run(run)
@@ -1127,6 +1344,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
 
             if run.status in TERMINAL_RUN_STATUSES:
                 return run
@@ -1186,6 +1404,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
 
             if run.status not in TERMINAL_RUN_STATUSES:
                 operation = "cancel_run"
@@ -1257,6 +1476,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
 
             if run.status not in TERMINAL_RUN_STATUSES:
                 operation = "complete_run"
@@ -1340,6 +1560,7 @@ class FactoryRunService:
             run = await self.store.get_run(run_id)
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
+            run = await self.assert_mutation_allowed(run_id, current_run=run)
             if run.status not in TERMINAL_RUN_STATUSES:
                 return run
             current = self._admission.current()
@@ -1365,11 +1586,14 @@ class FactoryRunService:
                 )
                 claimed = True
                 if lease.state.value == "active":
-                    lease = await self._begin_terminal_drain(
+                    draining_lease = await self._begin_terminal_drain(
                         run,
                         reason=f"terminal_{run.status.value}",
                         operation_nonce=nonce,
                     )
+                    if draining_lease is None:
+                        raise RuntimeError("factory_terminal_drain_lease_missing")
+                    lease = draining_lease
                 run = await self._finalize_terminal_drain(
                     run,
                     lease,
@@ -1410,6 +1634,7 @@ class FactoryRunService:
 
         run_lock = self._get_run_lock(run_id)
         async with run_lock:
+            await self.assert_mutation_allowed(run_id)
             stale = self._admission.assert_stale_owner(
                 run_id,
                 fencing_token=expected_fencing_token,
@@ -1510,6 +1735,114 @@ class FactoryRunService:
         """Get all events for a run."""
         return await self.store.get_events(run_id)
 
+    async def assert_mutation_allowed(
+        self,
+        run_id: str,
+        *,
+        current_run: FactoryRun | None = None,
+    ) -> FactoryRun:
+        """Fail closed unless the latest stage transaction is fully committed."""
+
+        run_snapshot = await self.store.read_strict_run_snapshot(run_id)
+        try:
+            persisted_run = FactoryRun.from_dict(run_snapshot)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FactoryStagePersistenceError(
+                "factory_stage_current_run_invalid",
+                "Current run snapshot does not satisfy the Factory run contract",
+            ) from exc
+        if persisted_run.id != run_id:
+            raise FactoryStagePersistenceError(
+                "factory_stage_current_run_identity_mismatch",
+                "Current run snapshot belongs to another Factory run",
+            )
+        events = await self.store.get_authoritative_events(run_id)
+        state = reduce_factory_stage_persistence(events, factory_run_id=run_id)
+        if state.is_quarantined:
+            raise FactoryStagePersistenceError(
+                "factory_stage_persistence_quarantined",
+                "Factory run has an explicit quarantine or unmatched stage event",
+                details={
+                    "pending_stage_event_id": state.pending_stage_event_id or "",
+                    "quarantine_event_id": state.quarantine_event_id or "",
+                },
+            )
+        latest_commit = state.latest_commit
+        if latest_commit is not None:
+            checkpoint = await self.store.read_strict_checkpoint_snapshot(run_id, latest_commit.checkpoint_ref)
+            self._validate_checkpoint_ref_from_typed_run(run_id, latest_commit.checkpoint_ref, checkpoint)
+            validate_committed_checkpoint_hashes(latest_commit, checkpoint)
+            validate_current_stage_commit_pointer(
+                persisted_run.metadata.get("last_factory_stage_commit"),
+                latest_commit,
+            )
+            metadata = checkpoint.get("metadata")
+            checkpoint_pointer = metadata.get("last_factory_stage_commit") if isinstance(metadata, Mapping) else None
+            validate_current_stage_commit_pointer(checkpoint_pointer, latest_commit)
+        else:
+            validate_current_stage_commit_pointer(
+                persisted_run.metadata.get("last_factory_stage_commit"),
+                latest_commit,
+            )
+        if current_run is not None:
+            self._copy_run_state(current_run, persisted_run)
+        return persisted_run
+
+    @staticmethod
+    def automatic_router_mutation_guard_matrix() -> dict[str, tuple[str, ...]]:
+        """Return a detached audit projection of the Service-owned matrix."""
+
+        return dict(_AUTOMATIC_ROUTER_MUTATION_GUARD_MATRIX)
+
+    @staticmethod
+    def _automatic_router_mutation_families(operation: str) -> tuple[str, ...]:
+        families = _AUTOMATIC_ROUTER_MUTATION_GUARD_MATRIX.get(operation)
+        if families is None:
+            raise RuntimeError(f"Unknown automatic Factory router mutation group: {operation}")
+        return families
+
+    async def assert_automatic_router_mutation_allowed(
+        self,
+        run_id: str,
+        *,
+        operation: str,
+        current_run: FactoryRun | None = None,
+    ) -> FactoryRun:
+        """Service-owned read guard for service methods that do their own writes."""
+
+        self._automatic_router_mutation_families(operation)
+        async with self._get_run_lock(run_id):
+            return await self.assert_mutation_allowed(run_id, current_run=current_run)
+
+    async def apply_automatic_router_mutation(
+        self,
+        run_id: str,
+        *,
+        operation: str,
+        mutation: Callable[[FactoryRun], bool | None],
+        event: Mapping[str, Any] | None = None,
+    ) -> FactoryRun:
+        """Atomically guard, mutate, persist, and optionally append one router event.
+
+        The strict stage-transaction reread and all mutable-run writes share the
+        same per-run lock. A concurrent cancel/commit therefore cannot be
+        overwritten by a stale router snapshot.
+        """
+
+        families = self._automatic_router_mutation_families(operation)
+        if "store.save_run" not in families:
+            raise RuntimeError(f"Automatic Factory router operation is not a direct persistence family: {operation}")
+        if event is not None and "_append_event" not in families:
+            raise RuntimeError(f"Automatic Factory router operation cannot append events: {operation}")
+        async with self._get_run_lock(run_id):
+            current = await self.assert_mutation_allowed(run_id)
+            changed = mutation(current) is not False
+            if changed:
+                await self.store.save_run(current)
+                if event is not None:
+                    await self._append_event(run_id, dict(event))
+            return FactoryRun.from_dict(current.to_dict())
+
     async def _execute_stage_logic(
         self,
         run: FactoryRun,
@@ -1521,46 +1854,75 @@ class FactoryRunService:
         return await self._executor.execute(stage, run, context)
 
     async def _find_last_successful_stage(self, run_id: str) -> str | None:
-        """Find the last successful stage from events."""
-        events = await self.store.get_events(run_id)
-        for event in reversed(events):
-            if event.get("type") != "stage_completed":
+        """Find the last checkpoint-backed, commit-ACKed successful stage."""
+        events = await self.store.get_authoritative_events(run_id)
+        state = reduce_factory_stage_persistence(events, factory_run_id=run_id)
+        if state.is_quarantined:
+            raise FactoryStagePersistenceError(
+                "factory_stage_persistence_quarantined",
+                "Factory run has an explicit or unmatched stage transaction",
+            )
+        events_by_id = {str(event.get("event_id") or ""): event for event in events}
+        for commit in reversed(state.commits):
+            event = events_by_id.get(commit.stage_completed_event_id)
+            result = event.get("result") if isinstance(event, Mapping) else None
+            if not isinstance(result, Mapping) or result.get("status") != "success":
                 continue
-            result = event.get("result", {})
-            if result.get("status") == "success":
-                return result.get("stage")
+            checkpoint = await self.store.read_strict_checkpoint_snapshot(run_id, commit.checkpoint_ref)
+            self._validate_checkpoint_ref_from_typed_run(run_id, commit.checkpoint_ref, checkpoint)
+            validate_committed_checkpoint_hashes(commit, checkpoint)
+            return commit.stage
         return None
 
-    async def _mark_stage_started(self, run: FactoryRun, stage: str, started_at: str) -> None:
-        run.metadata["current_stage"] = stage
-        run.metadata["current_stage_started_at"] = started_at
-        run.metadata["last_stage"] = stage
-        run.metadata[_STAGE_IN_FLIGHT_METADATA_KEY] = True
-        run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = False
-        run.updated_at = started_at
-        await self.store.save_run(run)
-        await self._append_event(
-            run.id,
-            {
-                "type": "stage_started",
-                "stage": stage,
-                "message": f"Started stage {stage}",
-                "timestamp": started_at,
-            },
-        )
-
-    async def _mark_stage_finished(
+    def _validate_checkpoint_ref_from_typed_run(
         self,
-        run: FactoryRun,
+        run_id: str,
+        checkpoint_ref: str,
+        checkpoint: Mapping[str, Any],
+    ) -> FactoryRun:
+        """Reconstruct the sole checkpoint ref from a strict typed checkpoint."""
+
+        try:
+            checkpoint_run = FactoryRun.from_dict(dict(checkpoint))
+            expected_ref = self.store.checkpoint_ref(checkpoint_run)
+        except (KeyError, RuntimeError, TypeError, ValueError) as exc:
+            raise FactoryStagePersistenceError(
+                "factory_stage_checkpoint_invalid",
+                "Committed checkpoint does not satisfy the typed Factory run contract",
+            ) from exc
+        if checkpoint_run.id != run_id or expected_ref != checkpoint_ref:
+            raise FactoryStagePersistenceError(
+                "factory_stage_checkpoint_ref_mismatch",
+                "Committed checkpoint ref is not the exact Store reconstruction",
+                details={"expected": expected_ref, "observed": checkpoint_ref},
+            )
+        return checkpoint_run
+
+    @staticmethod
+    def _copy_run_state(target: FactoryRun, source: FactoryRun) -> None:
+        restored = FactoryRun.from_dict(source.to_dict())
+        target.config = restored.config
+        target.status = restored.status
+        target.created_at = restored.created_at
+        target.updated_at = restored.updated_at
+        target.started_at = restored.started_at
+        target.completed_at = restored.completed_at
+        target.stages_completed = restored.stages_completed
+        target.stages_failed = restored.stages_failed
+        target.recovery_point = restored.recovery_point
+        target.metadata = restored.metadata
+
+    def _apply_stage_result_to_run(
+        self,
+        target_run: FactoryRun,
         result: StageResult,
-        error: Exception | None = None,
+        *,
+        source_run: FactoryRun,
+        error: Exception | None,
     ) -> None:
         completed_at = result.completed_at or self._now()
         result.completed_at = completed_at
-        latest_run = await self.store.get_run(run.id)
-        target_run = latest_run or run
-
-        lease_payload = run.metadata.get(_WORKSPACE_LEASE_METADATA_KEY)
+        lease_payload = source_run.metadata.get(_WORKSPACE_LEASE_METADATA_KEY)
         if isinstance(lease_payload, Mapping):
             target_run.metadata[_WORKSPACE_LEASE_METADATA_KEY] = dict(lease_payload)
         target_run.metadata["last_stage"] = result.stage
@@ -1608,27 +1970,492 @@ class FactoryRunService:
                 "recoverable": True,
                 "timestamp": completed_at,
             }
-
         target_run.updated_at = completed_at
-        await self.store.save_run(target_run)
+
+    async def _build_stage_artifact_bindings(
+        self,
+        run_id: str,
+        result: StageResult,
+    ) -> FactoryStageArtifactBindingsV1 | None:
+        if result.status != "success" or result.stage not in {"pm_planning", "chief_engineer_review"}:
+            return None
+        if self._stage_artifact_binding_builder is not None:
+            return self._stage_artifact_binding_builder(run_id, result)
+        source_root = Path(resolve_storage_roots(str(self.workspace)).runtime_root).resolve()
+        if result.stage == "pm_planning":
+            return await asyncio.to_thread(
+                build_pm_stage_artifact_bindings,
+                factory_store=self.store,
+                source_root=source_root,
+                factory_run_id=run_id,
+            )
+        events = await self.store.get_authoritative_events(run_id)
+        state = reduce_factory_stage_persistence(events, factory_run_id=run_id)
+        pm_commits = [commit for commit in state.commits if commit.stage == "pm_planning"]
+        if not pm_commits:
+            raise FactoryStagePersistenceError(
+                "factory_stage_artifact_pm_commit_missing",
+                "CE artifact binding requires a committed PM stage event",
+            )
+        pm_event_id = pm_commits[-1].stage_completed_event_id
+        pm_event = next((event for event in events if event.get("event_id") == pm_event_id), None)
+        if not isinstance(pm_event, Mapping):
+            raise FactoryStagePersistenceError(
+                "factory_stage_artifact_pm_event_missing",
+                "Committed PM event is absent from the authoritative chain",
+            )
+        return await asyncio.to_thread(
+            build_chief_engineer_stage_artifact_bindings,
+            factory_store=self.store,
+            source_root=source_root,
+            factory_run_id=run_id,
+            pm_stage_event=pm_event,
+        )
+
+    async def _strict_reread_stage_artifact_bindings(
+        self,
+        run_id: str,
+        stage: str,
+        bindings: FactoryStageArtifactBindingsV1,
+    ) -> None:
+        """Re-prove every immutable binding snapshot immediately before fact append."""
+
+        try:
+            parsed = FactoryStageArtifactBindingsV1.from_record(bindings.to_record())
+            if parsed.factory_run_id != run_id or parsed.stage != stage:
+                raise FactoryStageArtifactBindingError(
+                    "factory_stage_artifact_binding_identity_mismatch",
+                    "Artifact binding does not match the exact Factory run/stage identity",
+                )
+
+            async def reread(ref: str, raw_hash: str, byte_count: int) -> None:
+                await asyncio.to_thread(
+                    self.store.read_stage_artifact_snapshot,
+                    run_id,
+                    ref,
+                    raw_hash,
+                    byte_count,
+                )
+
+            if parsed.stage == "pm_planning":
+                pm_item = parsed.items[0]
+                if not isinstance(pm_item, PMContractArtifactBindingV1):
+                    raise FactoryStageArtifactBindingError(
+                        "factory_stage_artifact_pm_item_invalid",
+                        "PM binding does not contain the exact PM contract item",
+                    )
+                await reread(pm_item.immutable_snapshot_ref, pm_item.raw_sha256, pm_item.utf8_byte_count)
+                return
+
+            pm_event_item = parsed.items[0]
+            review_item = parsed.items[1]
+            if not isinstance(pm_event_item, PMStageEventArtifactBindingV1) or not isinstance(
+                review_item, CEReviewManifestArtifactBindingV1
+            ):
+                raise FactoryStageArtifactBindingError(
+                    "factory_stage_artifact_ce_item_invalid",
+                    "CE binding prefix items are not exact PM-event/review bindings",
+                )
+            events = await self.store.get_authoritative_events(run_id)
+            pm_stage_event = next(
+                (
+                    event
+                    for event in events
+                    if event.get("event_id") == pm_event_item.event_id
+                    and event.get("chain_sequence") == pm_event_item.chain_sequence
+                    and event.get("chain_event_hash") == pm_event_item.chain_event_hash
+                ),
+                None,
+            )
+            if not isinstance(pm_stage_event, Mapping):
+                raise FactoryStageArtifactBindingError(
+                    "factory_stage_artifact_pm_event_identity_mismatch",
+                    "CE binding does not reference an exact authoritative PM stage event",
+                )
+            pm_bindings = FactoryStageArtifactBindingsV1.from_record(pm_stage_event.get("stage_artifact_bindings"))
+            if pm_bindings.factory_run_id != run_id or pm_bindings.stage != "pm_planning":
+                raise FactoryStageArtifactBindingError(
+                    "factory_stage_artifact_pm_event_binding_invalid",
+                    "Referenced PM stage binding identity is invalid",
+                )
+            pm_item = pm_bindings.items[0]
+            if not isinstance(pm_item, PMContractArtifactBindingV1) or (
+                pm_event_item.pm_immutable_snapshot_ref,
+                pm_event_item.pm_raw_sha256,
+                pm_event_item.pm_canonical_json_sha256,
+                pm_event_item.pm_task_id_vector_sha256,
+                pm_event_item.pm_target_files_projection_sha256,
+            ) != (
+                pm_item.immutable_snapshot_ref,
+                pm_item.raw_sha256,
+                pm_item.canonical_json_sha256,
+                pm_item.task_id_vector_sha256,
+                pm_item.target_files_projection_sha256,
+            ):
+                raise FactoryStageArtifactBindingError(
+                    "factory_stage_artifact_pm_event_binding_mismatch",
+                    "CE PM-event binding does not match the committed PM artifact binding",
+                )
+            await reread(pm_item.immutable_snapshot_ref, pm_item.raw_sha256, pm_item.utf8_byte_count)
+            await reread(review_item.immutable_snapshot_ref, review_item.raw_sha256, review_item.utf8_byte_count)
+            for item in parsed.items[2:]:
+                if not isinstance(item, CEBlueprintArtifactBindingV1):
+                    raise FactoryStageArtifactBindingError(
+                        "factory_stage_artifact_ce_blueprint_item_invalid",
+                        "CE binding contains a non-blueprint tail item",
+                    )
+                await reread(item.immutable_snapshot_ref, item.raw_sha256, item.utf8_byte_count)
+        except FactoryStagePersistenceError:
+            raise
+        except (FactoryStageArtifactBindingError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise FactoryStagePersistenceError(
+                "factory_stage_artifact_snapshot_reread_failed",
+                "Immutable stage artifact binding failed strict pre-append reread",
+                details={"error_type": type(exc).__name__},
+            ) from exc
+
+    async def _append_stage_quarantine(
+        self,
+        *,
+        run_id: str,
+        stage: str,
+        failed_step: str,
+        stage_event: Mapping[str, Any],
+        persistence_intent_sha256: str,
+        error: BaseException,
+    ) -> None:
+        error_type = bounded_redacted_error(type(error).__name__, max_utf8_bytes=256) or "Error"
+        error_message = bounded_redacted_error(error, max_utf8_bytes=2048) or error_type
         await self._append_event(
-            target_run.id,
+            run_id,
             {
-                "type": "stage_completed",
-                "stage": result.stage,
-                "message": result.output or f"Completed stage {result.stage}",
-                "result": result.to_dict(),
-                "timestamp": completed_at,
+                "type": "factory_run_quarantined",
+                "schema_version": "factory.run_quarantined.v1",
+                "factory_run_id": run_id,
+                "stage": stage,
+                "failed_step": failed_step,
+                "stage_completed_event_id": str(stage_event["event_id"]),
+                "stage_completed_chain_sequence": int(stage_event["chain_sequence"]),
+                "stage_completed_chain_event_hash": str(stage_event["chain_event_hash"]),
+                "persistence_intent_sha256": persistence_intent_sha256,
+                "error_type": error_type,
+                "error_message": error_message,
+                "timestamp": self._now(),
+            },
+            publish=False,
+        )
+
+    async def _preflight_stage_transaction(
+        self,
+        *,
+        run_id: str,
+        stage_event: dict[str, Any],
+        checkpoint_ref: str,
+        persistence_intent_sha256: str,
+    ) -> None:
+        """Prove 8 MiB capacity for both ordered transaction records."""
+
+        (preview_stage,) = await self.store.preflight_authoritative_events(run_id, (stage_event,))
+        marker_preview = {
+            "type": "factory_stage_persistence_committed",
+            "schema_version": "factory.stage_persistence_committed.v1",
+            "run_id": run_id,
+            "event_id": f"evt_{uuid.uuid4().hex[:12]}",
+            "timestamp": self._now(),
+            "factory_run_id": run_id,
+            "stage": str(stage_event["stage"]),
+            "stage_completed_event_id": str(preview_stage["event_id"]),
+            "stage_completed_chain_sequence": int(preview_stage["chain_sequence"]),
+            "stage_completed_chain_event_hash": str(preview_stage["chain_event_hash"]),
+            "persistence_intent_sha256": persistence_intent_sha256,
+            "run_snapshot_canonical_sha256": "0" * 64,
+            "checkpoint_ref": checkpoint_ref,
+            "checkpoint_canonical_sha256": "0" * 64,
+        }
+        await self.store.preflight_authoritative_events(run_id, (stage_event, marker_preview))
+
+    async def _commit_stage_transaction(
+        self,
+        *,
+        source_run: FactoryRun,
+        candidate_run: FactoryRun,
+        result: StageResult,
+        event_payload: dict[str, Any],
+        intent_sha256: str,
+        checkpoint_ref: str,
+        bindings: FactoryStageArtifactBindingsV1 | None,
+        arbitration: _FactoryStageCommitArbitration,
+        state: dict[str, object],
+    ) -> FactoryRun:
+        if bindings is not None:
+            await self._strict_reread_stage_artifact_bindings(source_run.id, result.stage, bindings)
+        stage_event = await self._append_event(source_run.id, event_payload, publish=False)
+        state["stage_event"] = stage_event
+        pointer = FactoryLastStageCommitV1(
+            stage=result.stage,
+            stage_completed_event_id=str(stage_event["event_id"]),
+            stage_completed_chain_sequence=int(stage_event["chain_sequence"]),
+            stage_completed_chain_event_hash=str(stage_event["chain_event_hash"]),
+            persistence_intent_sha256=intent_sha256,
+            checkpoint_ref=checkpoint_ref,
+        )
+        candidate_run.metadata["last_factory_stage_commit"] = pointer.to_record()
+        failed_step = "save_run"
+        try:
+            await self.store.save_run(candidate_run)
+            failed_step = "checkpoint"
+            observed_checkpoint_ref = await self.store.checkpoint(candidate_run)
+            if observed_checkpoint_ref != checkpoint_ref:
+                raise FactoryStagePersistenceError(
+                    "factory_stage_checkpoint_ref_mismatch",
+                    "Checkpoint write returned a different logical ref",
+                )
+            run_snapshot = await self.store.read_strict_run_snapshot(source_run.id)
+            checkpoint = await self.store.read_strict_checkpoint_snapshot(source_run.id, checkpoint_ref)
+            self._validate_checkpoint_ref_from_typed_run(source_run.id, checkpoint_ref, checkpoint)
+            if run_snapshot != candidate_run.to_dict() or checkpoint != candidate_run.to_dict():
+                raise FactoryStagePersistenceError(
+                    "factory_stage_snapshot_reread_mismatch",
+                    "Strict run/checkpoint reread differs from the detached candidate",
+                )
+            failed_step = "commit_marker"
+            marker = await self._append_event(
+                source_run.id,
+                {
+                    "type": "factory_stage_persistence_committed",
+                    "schema_version": "factory.stage_persistence_committed.v1",
+                    "factory_run_id": source_run.id,
+                    "stage": result.stage,
+                    "stage_completed_event_id": str(stage_event["event_id"]),
+                    "stage_completed_chain_sequence": int(stage_event["chain_sequence"]),
+                    "stage_completed_chain_event_hash": str(stage_event["chain_event_hash"]),
+                    "persistence_intent_sha256": intent_sha256,
+                    "run_snapshot_canonical_sha256": canonical_run_snapshot_sha256(run_snapshot),
+                    "checkpoint_ref": checkpoint_ref,
+                    "checkpoint_canonical_sha256": canonical_checkpoint_sha256(checkpoint),
+                    "timestamp": self._now(),
+                },
+                publish=False,
+                commit_permit=arbitration.commit_permit,
+            )
+            commit = FactoryStagePersistenceCommittedV1.from_record(marker)
+            validate_current_stage_commit_pointer(candidate_run.metadata.get("last_factory_stage_commit"), commit)
+            state["marker_ack"] = True
+        except _FactoryStageCancellationCutError:
+            raise
+        except BaseException as exc:
+            try:
+                await self._append_stage_quarantine(
+                    run_id=source_run.id,
+                    stage=result.stage,
+                    failed_step=failed_step,
+                    stage_event=stage_event,
+                    persistence_intent_sha256=intent_sha256,
+                    error=exc,
+                )
+            except BaseException as quarantine_exc:
+                raise FactoryStagePersistenceError(
+                    "factory_stage_quarantine_append_failed",
+                    "Pending stage transaction could not append explicit quarantine",
+                    details={"failed_step": failed_step},
+                ) from quarantine_exc
+            raise
+        # Fanout is non-authoritative. A cancellation here cannot revoke the
+        # already ACKed event+snapshot+checkpoint transaction.
+        try:
+            await self._publish_factory_event(source_run.id, stage_event)
+        except asyncio.CancelledError:
+            logger.debug("stage event fanout cancelled after durable commit ACK run=%s", source_run.id)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "stage event fanout failed after durable commit ACK run=%s: %s",
+                source_run.id,
+                exc,
+            )
+        return candidate_run
+
+    async def _mark_stage_started(self, run: FactoryRun, stage: str, started_at: str) -> None:
+        run.metadata["current_stage"] = stage
+        run.metadata["current_stage_started_at"] = started_at
+        run.metadata["last_stage"] = stage
+        run.metadata[_STAGE_IN_FLIGHT_METADATA_KEY] = True
+        run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = False
+        run.updated_at = started_at
+        await self.store.save_run(run)
+        await self._append_event(
+            run.id,
+            {
+                "type": "stage_started",
+                "stage": stage,
+                "message": f"Started stage {stage}",
+                "timestamp": started_at,
             },
         )
-        await self.store.checkpoint(target_run)
 
-    async def _append_event(self, run_id: str, event: dict[str, Any]) -> None:
+    async def _mark_stage_finished(
+        self,
+        run: FactoryRun,
+        result: StageResult,
+        error: Exception | None = None,
+    ) -> None:
+        latest_run = await self.store.get_run(run.id)
+        if latest_run is None:
+            raise FactoryStagePersistenceError(
+                "factory_stage_run_snapshot_missing",
+                "Stage transaction requires the current run snapshot",
+            )
+        detached_result = StageResult(**result.to_dict())
+        detached_result.completed_at = detached_result.completed_at or self._now()
+        candidate_run = FactoryRun.from_dict(latest_run.to_dict())
+        self._apply_stage_result_to_run(candidate_run, detached_result, source_run=run, error=error)
+        checkpoint_ref = self.store.checkpoint_ref(candidate_run)
+        preliminary_intent = build_stage_persistence_intent(
+            factory_run_id=run.id,
+            stage=detached_result.stage,
+            stage_result=detached_result.to_dict(),
+            checkpoint_ref=checkpoint_ref,
+        )
+        preliminary_event = {
+            "type": "stage_completed",
+            "run_id": run.id,
+            "event_id": f"evt_{uuid.uuid4().hex[:12]}",
+            "timestamp": detached_result.completed_at,
+            "stage": detached_result.stage,
+            "message": detached_result.output or f"Completed stage {detached_result.stage}",
+            "result": detached_result.to_dict(),
+            "persistence_intent": preliminary_intent.to_record(),
+        }
+        # Capacity is proven before any PM/CE source snapshot is frozen.
+        await self._preflight_stage_transaction(
+            run_id=run.id,
+            stage_event=preliminary_event,
+            checkpoint_ref=checkpoint_ref,
+            persistence_intent_sha256=preliminary_intent.persistence_intent_sha256,
+        )
+        bindings: FactoryStageArtifactBindingsV1 | None = None
+        try:
+            bindings = await self._build_stage_artifact_bindings(run.id, detached_result)
+        except (FactoryStageArtifactBindingError, FactoryStagePersistenceError, OSError, TypeError, ValueError) as exc:
+            detached_result = StageResult(
+                stage=result.stage,
+                status="failed",
+                output=f"factory_stage_artifact_binding_failed: {exc}",
+                artifacts=[],
+                started_at=result.started_at,
+                completed_at=result.completed_at or self._now(),
+                metadata={"error_code": "factory_stage_artifact_binding_failed"},
+            )
+            candidate_run = FactoryRun.from_dict(latest_run.to_dict())
+            self._apply_stage_result_to_run(candidate_run, detached_result, source_run=run, error=exc)
+            checkpoint_ref = self.store.checkpoint_ref(candidate_run)
+        intent = build_stage_persistence_intent(
+            factory_run_id=run.id,
+            stage=detached_result.stage,
+            stage_result=detached_result.to_dict(),
+            checkpoint_ref=checkpoint_ref,
+        )
+        event_payload = {
+            "type": "stage_completed",
+            "run_id": run.id,
+            "event_id": f"evt_{uuid.uuid4().hex[:12]}",
+            "timestamp": detached_result.completed_at,
+            "stage": detached_result.stage,
+            "message": detached_result.output or f"Completed stage {detached_result.stage}",
+            "result": detached_result.to_dict(),
+            "persistence_intent": intent.to_record(),
+        }
+        if bindings is not None and detached_result.status == "success":
+            event_payload["stage_artifact_bindings"] = bindings.to_record()
+        # Re-prove exact payload capacity after bindings are frozen.
+        await self._preflight_stage_transaction(
+            run_id=run.id,
+            stage_event=event_payload,
+            checkpoint_ref=checkpoint_ref,
+            persistence_intent_sha256=intent.persistence_intent_sha256,
+        )
+        transaction_state: dict[str, object] = {"marker_ack": False}
+        arbitration = _FactoryStageCommitArbitration()
+        worker = asyncio.create_task(
+            self._commit_stage_transaction(
+                source_run=run,
+                candidate_run=candidate_run,
+                result=detached_result,
+                event_payload=event_payload,
+                intent_sha256=intent.persistence_intent_sha256,
+                checkpoint_ref=checkpoint_ref,
+                bindings=bindings,
+                arbitration=arbitration,
+                state=transaction_state,
+            )
+        )
+        try:
+            committed_run = await asyncio.shield(worker)
+        except asyncio.CancelledError as cancellation:
+            cancellation_cut = asyncio.create_task(asyncio.to_thread(arbitration.mark_cancelled))
+            while not cancellation_cut.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(cancellation_cut)
+            cancellation_cut.result()
+            while not worker.done():
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await asyncio.shield(worker)
+            marker_was_acked = transaction_state.get("marker_ack") is True
+            worker_error: BaseException | None = None
+            try:
+                committed_run = worker.result()
+            except (asyncio.CancelledError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                worker_error = exc
+            if marker_was_acked and worker_error is None:
+                pass
+            else:
+                stage_event = transaction_state.get("stage_event")
+                if isinstance(worker_error, _FactoryStageCancellationCutError) and isinstance(stage_event, Mapping):
+                    with contextlib.suppress(BaseException):
+                        await self._append_stage_quarantine(
+                            run_id=run.id,
+                            stage=detached_result.stage,
+                            failed_step="cancelled_before_commit_ack",
+                            stage_event=stage_event,
+                            persistence_intent_sha256=intent.persistence_intent_sha256,
+                            error=cancellation,
+                        )
+                raise
+        self._copy_run_state(run, committed_run)
+        self._copy_run_state(latest_run, committed_run)
+        result.stage = detached_result.stage
+        result.status = detached_result.status
+        result.output = detached_result.output
+        result.artifacts = list(detached_result.artifacts)
+        result.started_at = detached_result.started_at
+        result.completed_at = detached_result.completed_at
+        result.metadata = dict(detached_result.metadata)
+
+    async def _append_event(
+        self,
+        run_id: str,
+        event: dict[str, Any],
+        *,
+        publish: bool = True,
+        commit_permit: Callable[[], contextlib.AbstractContextManager[None]] | None = None,
+    ) -> dict[str, Any]:
         payload = dict(event)
         payload.setdefault("run_id", run_id)
         payload.setdefault("event_id", f"evt_{uuid.uuid4().hex[:12]}")
         payload.setdefault("timestamp", self._now())
-        await self.store.append_event(run_id, payload)
+        if commit_permit is None:
+            committed = await self.store.append_authoritative_event(run_id, payload)
+        else:
+            committed = await self.store.append_authoritative_event(
+                run_id,
+                payload,
+                commit_permit=commit_permit,
+            )
+        if publish:
+            await self._publish_factory_event(run_id, committed)
+        return committed
+
+    async def _publish_factory_event(self, run_id: str, event: Mapping[str, Any]) -> None:
+        payload = dict(event)
         # Best-effort NAT JetStream fanout so the unified WebSocket pipeline
         # (``event.factory:<run_id>`` channel) can stream these events to
         # subscribers. The factory run stays the source of truth (durable on

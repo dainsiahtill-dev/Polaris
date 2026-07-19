@@ -357,6 +357,56 @@ class TestBuildPmRetryMessage:
 
 
 class TestPlanArtifactSanitization:
+    def test_write_plan_artifact_freezes_root_schema_without_changing_utf8_or_tasks(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        contracts = adapter._synthesize_task_contracts_from_directive(
+            directive="构建中文桌面工作台，并保留可验证的任务结构",
+        )
+        contracts[0]["schema_version"] = "task.attempted_override"
+        contracts[0]["title"] = "实现中文工作台核心流程"
+
+        path = adapter._write_plan_artifact(
+            directive='{"schema_version":"directive.attempted_override","提示词":"不得泄漏"}',
+            task_contracts=contracts,
+            quality={
+                "schema_version": "quality.attempted_override",
+                "score": 91,
+                "critical_issues": ["一", "二"],
+                "summary": "质量门禁通过",
+            },
+            quality_signals=[
+                {
+                    "schema_version": "signal.attempted_override",
+                    "code": "pm.utf8",
+                    "severity": "info",
+                    "detail": "角色设定已完成检查",
+                }
+            ],
+        )
+
+        raw = path.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+
+        assert payload["schema_version"] == "pm.plan_artifact.v1"
+        assert payload["directive"].startswith("[redacted planning context")
+        assert payload["tasks"][0]["schema_version"] == "task.attempted_override"
+        assert payload["tasks"][0]["title"] == "实现中文工作台核心流程"
+        assert payload["quality_gate"] == {
+            "score": 91,
+            "critical_issue_count": 2,
+            "summary": "质量门禁通过",
+            "signals": [
+                {
+                    "schema_version": "signal.attempted_override",
+                    "code": "pm.utf8",
+                    "severity": "info",
+                    "detail": "职责设定已完成检查",
+                }
+            ],
+        }
+        assert "实现中文工作台核心流程" in raw.decode("utf-8")
+        assert raw.endswith(b"\n")
+
     def test_write_plan_artifact_redacts_prompt_leakage_terms(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         contracts = adapter._synthesize_task_contracts_from_directive(

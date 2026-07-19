@@ -20,6 +20,7 @@ REQUEST_FACT_PROVENANCE_KEY = "request_fact_provenance"
 # list at the request-preparation boundary so upstream callers do not need
 # Factory-, role-, or provider-specific projection branches.
 FINAL_REQUEST_EVIDENCE_CONTEXT_KEYS: tuple[str, ...] = (
+    "pm_raw_intent",
     "pm_contract",
     "pm_task_contract",
     "pm_task_contracts",
@@ -53,8 +54,11 @@ FINAL_REQUEST_EVIDENCE_CONTEXT_KEYS: tuple[str, ...] = (
     "director_execution_envelope",
     "execution_envelope",
     "execution_envelope_hash",
+    "failure_feedback",
     "failed_gate_evidence",
+    "workspace_quality",
     "workspace_quality_evidence",
+    "verifier_receipts",
     "context_evidence_slots",
     "run_ledger_projection",
     "task_metadata",

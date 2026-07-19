@@ -19,6 +19,9 @@ from polaris.cells.events.fact_stream.internal.debug_trace import (
 from polaris.kernelone.events.sourcing import (
     EventSourcingError,
     JsonlEventStore,
+    SegmentedEventStoreError,
+    SegmentedJsonlEventStore,
+    SegmentedLedgerHeadV1,
     append_if_guarded_snapshot as _append_if_guarded_snapshot,
     read_guarded_fact_snapshot as _read_guarded_fact_snapshot,
 )
@@ -28,7 +31,9 @@ from polaris.kernelone.fs.locked_regular_file import default_platform_lock_root
 from .contracts import (
     AppendFactEventCommandV1,
     AppendIfGuardedSnapshotCommandV1,
+    AppendSegmentedFactEventCommandV1,
     EnrollFactStreamStreamsCommandV1,
+    EnsureSegmentedFactLedgerCommandV1,
     FactEventAppendedV1,
     FactStreamError,
     FactStreamHeadV1,
@@ -43,7 +48,19 @@ from .contracts import (
     ProvisionFactStreamLockAuthorityCommandV1,
     QueryFactEventsV1,
     QueryFactStreamHeadV1,
+    QuerySegmentedFactEventsV1,
+    QuerySegmentedFactLedgerHeadV1,
     ReadGuardedFactSnapshotCommandV1,
+    SegmentedFactEventAppendedV1,
+    SegmentedFactLedgerHeadV1,
+    SegmentedFactLedgerReadyV1,
+    SegmentedFactQueryResultV1,
+)
+
+_SEGMENTED_AUTHORITY_PREFIXES = (
+    "roles.kernel.provider_attempts.factory.",
+    "roles.kernel.provider_attempts.session.",
+    "factory.role_evidence_authority.",
 )
 
 
@@ -57,6 +74,7 @@ def provision_fact_stream_lock_authority(
     state, which remains limited to physical identity and format fields.
     """
 
+    _reject_ordinary_segmented_streams(command.streams)
     store, root = _maintenance_store(command.workspace, command.platform_lock_root)
     identity = store.storage_identity
     try:
@@ -98,6 +116,7 @@ def enroll_fact_stream_streams(
 ) -> FactStreamMaintenanceReceiptV1:
     """Enroll stream lock keys without provisioning or repairing authority."""
 
+    _reject_ordinary_segmented_streams(command.streams)
     store, root = _maintenance_store(command.workspace, command.platform_lock_root)
     identity = store.storage_identity
     logical_paths = tuple(store.stream_logical_path(stream) for stream in command.streams)
@@ -217,6 +236,7 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
     the existing event's seq doesn't match the request, we fail-closed
     rather than silently returning a mismatched event.
     """
+    _reject_ordinary_segmented_stream(command.stream)
     idempotency_key = str(command.idempotency_key or "").strip()
     store: JsonlEventStore | None = None
     try:
@@ -313,6 +333,7 @@ def _find_existing_idempotent_event(
 
 def query_fact_events(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
     """Query canonical fact events with pagination and optional filters."""
+    _reject_ordinary_segmented_stream(query.stream)
     try:
         store = JsonlEventStore(query.workspace)
         result = store.query(
@@ -338,7 +359,10 @@ def query_fact_events(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
             },
         ) from exc
 
-    event_payloads = tuple(_event_to_dict(item.to_record()) for item in result.events)
+    event_payloads = tuple(
+        item.to_record(include_integrity_digest=True) if query.strict_integrity else _event_to_dict(item.to_record())
+        for item in result.events
+    )
     return FactStreamQueryResultV1(
         workspace=query.workspace,
         stream=query.stream,
@@ -350,6 +374,8 @@ def query_fact_events(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
 
 def query_fact_stream_head(query: QueryFactStreamHeadV1) -> FactStreamHeadV1:
     """Return the durable stream cursor through the FactStream boundary."""
+
+    _reject_ordinary_segmented_stream(query.stream)
 
     try:
         store = JsonlEventStore(query.workspace)
@@ -372,6 +398,170 @@ def query_fact_stream_head(query: QueryFactStreamHeadV1) -> FactStreamHeadV1:
         current_seq=current_seq,
         next_expected_seq=current_seq + 1,
     )
+
+
+def ensure_segmented_fact_ledger(
+    command: EnsureSegmentedFactLedgerCommandV1,
+) -> SegmentedFactLedgerReadyV1:
+    """Enroll one dynamic logical lock under existing workspace authority."""
+
+    _require_segmented_authority_stream(command.logical_stream)
+    store = SegmentedJsonlEventStore(command.workspace, logical_stream=command.logical_stream)
+    identity = store.storage_identity
+    try:
+        LockedRegularFileSetV1.enroll_stream_lock_keys(
+            platform_lock_root=default_platform_lock_root(),
+            storage_identity_token=identity.token,
+            runtime_root=identity.runtime_root,
+            logical_paths=(store.control_logical_path,),
+        )
+        head = store.ensure()
+    except (LockedRegularFileError, SegmentedEventStoreError, ValueError) as exc:
+        raise _segmented_failure("ensure_segmented_fact_ledger", command.logical_stream, exc) from exc
+    projected = _project_segmented_head(identity.workspace_abs, head)
+    return SegmentedFactLedgerReadyV1(
+        workspace=identity.workspace_abs,
+        logical_stream=command.logical_stream,
+        storage_prefix=head.storage_prefix,
+        storage_identity_token=identity.token,
+        retention=command.retention,
+        head=projected,
+    )
+
+
+def append_segmented_fact_event(
+    command: AppendSegmentedFactEventCommandV1,
+) -> SegmentedFactEventAppendedV1:
+    """Append one strict fsync fact through the segmented authority API."""
+
+    _require_segmented_authority_stream(command.logical_stream)
+    store = SegmentedJsonlEventStore(command.workspace, logical_stream=command.logical_stream)
+    try:
+        event = store.append(
+            event_type=command.event_type,
+            source=command.source,
+            payload=command.payload,
+            idempotency_key=command.idempotency_key,
+            expected_global_seq=command.expected_global_seq,
+            require_idempotency_replay=command.require_idempotency_replay,
+            durability=command.durability,
+        )
+    except (LockedRegularFileError, SegmentedEventStoreError, ValueError) as exc:
+        raise _segmented_failure("append_segmented_fact_event", command.logical_stream, exc) from exc
+    return SegmentedFactEventAppendedV1(
+        workspace=store.storage_identity.workspace_abs,
+        logical_stream=command.logical_stream,
+        event_id=event.event_id,
+        global_seq=event.global_seq,
+        segment_index=event.segment_index,
+        local_seq=event.local_seq,
+        event_hash=event.event_hash,
+        appended_at=event.occurred_at,
+    )
+
+
+def query_segmented_fact_ledger_head(
+    query: QuerySegmentedFactLedgerHeadV1,
+) -> SegmentedFactLedgerHeadV1:
+    _require_segmented_authority_stream(query.logical_stream)
+    store = SegmentedJsonlEventStore(query.workspace, logical_stream=query.logical_stream)
+    try:
+        head = store.head(strict_integrity=query.strict_integrity)
+    except (LockedRegularFileError, SegmentedEventStoreError, ValueError) as exc:
+        raise _segmented_failure("query_segmented_fact_ledger_head", query.logical_stream, exc) from exc
+    return _project_segmented_head(store.storage_identity.workspace_abs, head)
+
+
+def query_segmented_fact_events(
+    query: QuerySegmentedFactEventsV1,
+) -> SegmentedFactQueryResultV1:
+    _require_segmented_authority_stream(query.logical_stream)
+    store = SegmentedJsonlEventStore(query.workspace, logical_stream=query.logical_stream)
+    try:
+        result = store.query(
+            limit=query.limit,
+            continuation=query.continuation,
+            strict_integrity=query.strict_integrity,
+        )
+    except (LockedRegularFileError, SegmentedEventStoreError, ValueError) as exc:
+        raise _segmented_failure("query_segmented_fact_events", query.logical_stream, exc) from exc
+    events = tuple(
+        {
+            "event_id": event.event_id,
+            "logical_stream": event.logical_stream,
+            "global_seq": event.global_seq,
+            "segment_index": event.segment_index,
+            "local_seq": event.local_seq,
+            "event_type": event.event_type,
+            "source": event.source,
+            "payload": dict(event.payload),
+            "idempotency_key": event.idempotency_key,
+            "occurred_at": event.occurred_at,
+            "previous_event_hash": event.previous_event_hash,
+            "event_hash": event.event_hash,
+        }
+        for event in result.events
+    )
+    return SegmentedFactQueryResultV1(
+        workspace=store.storage_identity.workspace_abs,
+        logical_stream=query.logical_stream,
+        events=events,
+        captured_head=_project_segmented_head(store.storage_identity.workspace_abs, result.captured_head),
+        continuation=result.continuation,
+    )
+
+
+def _project_segmented_head(workspace: str, head: SegmentedLedgerHeadV1) -> SegmentedFactLedgerHeadV1:
+    return SegmentedFactLedgerHeadV1(
+        workspace=workspace,
+        logical_stream=head.logical_stream,
+        storage_prefix=head.storage_prefix,
+        total_count=head.total_count,
+        segment_count=head.segment_count,
+        global_seq=head.global_seq,
+        next_expected_global_seq=head.global_seq + 1,
+        tail_segment_index=head.tail_segment_index,
+        tail_local_seq=head.tail_local_seq,
+        head_hash=head.head_hash,
+        storage_bytes=head.storage_bytes,
+    )
+
+
+def _is_segmented_authority_stream(stream: str) -> bool:
+    token = str(stream or "").strip()
+    return any(token.startswith(prefix) and len(token) > len(prefix) for prefix in _SEGMENTED_AUTHORITY_PREFIXES)
+
+
+def _require_segmented_authority_stream(stream: str) -> None:
+    if not _is_segmented_authority_stream(stream):
+        raise FactStreamError(
+            "logical stream is not an approved segmented authority namespace",
+            code="segmented_stream_namespace_required",
+            details={"stream": stream},
+        )
+
+
+def _reject_ordinary_segmented_stream(stream: str) -> None:
+    token = str(stream or "").strip()
+    if any(token.startswith(prefix) for prefix in _SEGMENTED_AUTHORITY_PREFIXES) or ".segmented" in token:
+        raise FactStreamError(
+            "segmented authority streams require the typed segmented API",
+            code="segmented_stream_api_required",
+            details={"stream": token},
+        )
+
+
+def _reject_ordinary_segmented_streams(streams: tuple[str, ...]) -> None:
+    for stream in streams:
+        _reject_ordinary_segmented_stream(stream)
+
+
+def _segmented_failure(operation: str, stream: str, exc: Exception) -> FactStreamError:
+    code = str(getattr(exc, "code", "") or "segmented_fact_ledger_failed")
+    details = dict(getattr(exc, "details", {}) or {})
+    details.setdefault("stream", stream)
+    details.setdefault("operation", operation)
+    return FactStreamError(f"{operation} failed: {exc}", code=code, details=details)
 
 
 def _compact_metadata(payload: dict[str, Any]) -> dict[str, Any]:

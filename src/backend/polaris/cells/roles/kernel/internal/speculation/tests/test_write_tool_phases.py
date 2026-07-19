@@ -111,8 +111,8 @@ class TestBuildPrepareInvocation:
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
         assert prepare.source_tool_call_id == "call_123"
 
-    def test_prepare_preserves_path(self) -> None:
-        """Prepare path provenance determines a stable semantic identity."""
+    def test_prepare_key_is_argument_free_and_call_bound(self) -> None:
+        """Private key identity is the source call, not mutable tool arguments."""
         invocation = ToolInvocation(
             call_id=ToolCallId("call_1"),
             tool_name="write_file",
@@ -132,10 +132,20 @@ class TestBuildPrepareInvocation:
                 execution_mode=ToolExecutionMode.WRITE_SERIAL,
             )
         )
-        assert other_path.shadow_key_hash != prepare.shadow_key_hash
+        assert other_path.shadow_key_hash == prepare.shadow_key_hash
+        other_call = WriteToolPhases.build_prepare_invocation(
+            ToolInvocation(
+                call_id=ToolCallId("call_2"),
+                tool_name="write_file",
+                arguments={"path": "src/app.py", "content": "code"},
+                effect_type=ToolEffectType.WRITE,
+                execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            )
+        )
+        assert other_call.shadow_key_hash != prepare.shadow_key_hash
 
-    def test_prepare_binds_full_content_identity_without_persisting_content(self) -> None:
-        """Equal-length content must not share a shadow key or leak into the key."""
+    def test_prepare_does_not_embed_content_identity(self) -> None:
+        """Synthetic keys contain no argument shape or content identity."""
         invocation = ToolInvocation(
             call_id=ToolCallId("call_1"),
             tool_name="write_file",
@@ -153,7 +163,7 @@ class TestBuildPrepareInvocation:
                 execution_mode=ToolExecutionMode.WRITE_SERIAL,
             )
         )
-        assert prepare.shadow_key_hash != different_content.shadow_key_hash
+        assert prepare.shadow_key_hash == different_content.shadow_key_hash
         assert WriteToolPhases.build_prepare_invocation(invocation).shadow_key_hash == prepare.shadow_key_hash
         assert "AAAA" not in repr(prepare)
 
@@ -176,7 +186,7 @@ class TestBuildPrepareInvocation:
                 execution_mode=ToolExecutionMode.WRITE_SERIAL,
             )
         )
-        assert prepare.shadow_key_hash != with_content.shadow_key_hash
+        assert prepare.shadow_key_hash == with_content.shadow_key_hash
 
     def test_prepare_handles_non_string_content(self) -> None:
         """Prepare should handle non-string content gracefully."""
@@ -197,7 +207,7 @@ class TestBuildPrepareInvocation:
                 execution_mode=ToolExecutionMode.WRITE_SERIAL,
             )
         )
-        assert empty_string.shadow_key_hash != prepare.shadow_key_hash
+        assert empty_string.shadow_key_hash == prepare.shadow_key_hash
         boolean_content = WriteToolPhases.build_prepare_invocation(
             ToolInvocation(
                 call_id=ToolCallId("call_1"),
@@ -207,7 +217,7 @@ class TestBuildPrepareInvocation:
                 execution_mode=ToolExecutionMode.WRITE_SERIAL,
             )
         )
-        assert boolean_content.shadow_key_hash != prepare.shadow_key_hash
+        assert boolean_content.shadow_key_hash == prepare.shadow_key_hash
 
 
 class TestBuildValidateInvocation:
@@ -248,8 +258,8 @@ class TestBuildValidateInvocation:
         validate = WriteToolPhases.build_validate_invocation(invocation)
         assert validate.source_tool_call_id == "call_456"
 
-    def test_validate_adds_validate_content_flag(self) -> None:
-        """Validate should add validate_content=True signal."""
+    def test_validate_key_is_argument_free_and_phase_distinct(self) -> None:
+        """Validate key ignores arguments but remains distinct from prepare."""
         invocation = ToolInvocation(
             call_id=ToolCallId("call_1"),
             tool_name="write_file",
@@ -267,7 +277,7 @@ class TestBuildValidateInvocation:
                 execution_mode=ToolExecutionMode.WRITE_SERIAL,
             )
         )
-        assert without_content.shadow_key_hash != validate.shadow_key_hash
+        assert without_content.shadow_key_hash == validate.shadow_key_hash
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
         assert prepare.shadow_key_hash != validate.shadow_key_hash
 

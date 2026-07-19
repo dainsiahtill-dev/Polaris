@@ -7,17 +7,38 @@ Owns provider request construction and fallback request shaping for
 
 from __future__ import annotations
 
-from dataclasses import replace
+import re
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.forced_tool_scope import augment_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.interaction_contract import (
     ProviderCapabilities,
     build_interaction_contract,
 )
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
+    FactoryRoleEvidenceAuthorityBindingV1,
+    FactoryRoleEvidenceCutoffAckV1,
+    FactoryRoleEvidenceCutoffPort,
+    FactoryRoleEvidenceCutoffProofV1,
+    FactoryRoleEvidenceCutoffRequestV1,
+    FactoryRoleFrozenSemanticRequestV1,
+    FactoryRoleSemanticCandidateV1,
+    FactoryRoleSemanticRequestIdentityV1,
+    get_factory_role_evidence_authority_binding,
+)
 from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
+from polaris.kernelone.context.context_os.decision_log import build_context_result_id
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
+from polaris.kernelone.events.final_request_evidence import (
+    FINAL_REQUEST_EVIDENCE_ANCHOR_SCHEMA,
+    FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA,
+    ROLE_FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA,
+    ROLE_FINAL_REQUEST_POLICY_FACTS_SCHEMA,
+    render_role_final_request_policy_facts,
+)
 from polaris.kernelone.llm.budget_policy import (
     REASONING_TRUNCATION_RETRY_OUTPUT_TOKENS,
     REQUIRED_TOOL_RETRY_OUTPUT_TOKEN_CAP,
@@ -31,6 +52,10 @@ from .capability_profile import resolve_actor_capability_profile
 from .error_handling import (
     append_runtime_fallback_instruction,
     build_text_response_fallback_instruction,
+)
+from .factory_role_evidence_binding import (
+    FactoryRoleEvidenceBindingV1,
+    get_factory_role_evidence_binding,
 )
 from .helpers import (
     _resolve_context_max_tokens_override,
@@ -87,6 +112,84 @@ _RESIDENT_AGI_PARTICIPATION_FLAGS = (
 _REASONING_TRUNCATION_RETRY_MAX_TOKENS = REASONING_TRUNCATION_RETRY_OUTPUT_TOKENS
 _REQUIRED_TOOL_RETRY_MAX_TOKENS = REQUIRED_TOOL_RETRY_OUTPUT_TOKEN_CAP
 _REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS = REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS
+_CORE_ROLE_IDENTITIES = frozenset({"architect", "pm", "chief_engineer", "director", "qa"})
+_ROLE_IDENTITY_MARKER_PREFIX = "polaris.role_identity.v1:"
+_ROLE_IDENTITY_TOKEN_RE = re.compile(r"[a-z_][a-z0-9_]*")
+_FACTORY_EVIDENCE_PROTOCOL_MARKERS = (
+    "polaris.final_request_evidence.v1:begin",
+    "polaris.final_request_evidence.v1:end",
+    FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA,
+    ROLE_FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA,
+    FINAL_REQUEST_EVIDENCE_ANCHOR_SCHEMA,
+    ROLE_FINAL_REQUEST_POLICY_FACTS_SCHEMA,
+)
+
+_FACTORY_EVIDENCE_BEGIN = "polaris.final_request_evidence.v1:begin"
+_FACTORY_EVIDENCE_END = "polaris.final_request_evidence.v1:end"
+
+
+@dataclass(frozen=True, slots=True)
+class _FactoryAuthorityEntrySnapshot:
+    carrier: FactoryRoleEvidenceAuthorityBindingV1
+    schema_version: str
+    verification_scope: str
+    factory_run_id: str
+    role: str
+    cutoff_port: FactoryRoleEvidenceCutoffPort
+    attempt_budget: int
+    execution_authority_hash: str
+
+
+def _snapshot_factory_authority(
+    authority: object,
+) -> _FactoryAuthorityEntrySnapshot:
+    if type(authority) is not FactoryRoleEvidenceAuthorityBindingV1:
+        raise TypeError("factory_role_evidence_authority_binding_exact_type_required")
+    typed_authority = cast(FactoryRoleEvidenceAuthorityBindingV1, authority)
+    typed_authority.__post_init__()
+    return _FactoryAuthorityEntrySnapshot(
+        carrier=typed_authority,
+        schema_version=typed_authority.schema_version,
+        verification_scope=typed_authority.verification_scope,
+        factory_run_id=typed_authority.factory_run_id,
+        role=typed_authority.role,
+        cutoff_port=typed_authority.cutoff_port,
+        attempt_budget=typed_authority.attempt_budget,
+        execution_authority_hash=typed_authority.execution_authority_hash,
+    )
+
+
+def _revalidate_factory_authority_before_cutoff(
+    authority: object,
+    snapshot: _FactoryAuthorityEntrySnapshot,
+) -> None:
+    if type(authority) is not FactoryRoleEvidenceAuthorityBindingV1:
+        raise TypeError("factory_role_evidence_authority_binding_exact_type_required")
+    typed_authority = cast(FactoryRoleEvidenceAuthorityBindingV1, authority)
+    raw_projection = (
+        typed_authority.schema_version,
+        typed_authority.verification_scope,
+        typed_authority.factory_run_id,
+        typed_authority.role,
+        typed_authority.attempt_budget,
+        typed_authority.execution_authority_hash,
+    )
+    raw_cutoff_port = typed_authority.cutoff_port
+    typed_authority.__post_init__()
+    entry_projection = (
+        snapshot.schema_version,
+        snapshot.verification_scope,
+        snapshot.factory_run_id,
+        snapshot.role,
+        snapshot.attempt_budget,
+        snapshot.execution_authority_hash,
+    )
+    if (
+        typed_authority is not snapshot.carrier
+        or raw_projection != entry_projection
+        or raw_cutoff_port is not snapshot.cutoff_port
+    ):
+        raise RuntimeError("factory_role_evidence_authority_binding_drift")
 
 
 def is_reasoning_truncation_error(error: str) -> bool:
@@ -134,6 +237,90 @@ def _ensure_current_user_message_final(
 
     normalized_messages.append({"role": "user", "content": current_user_token})
     return normalized_messages
+
+
+def _ensure_core_role_identity(
+    messages: list[dict[str, Any]],
+    role: str,
+    *,
+    system_prompt: str,
+) -> list[dict[str, Any]]:
+    """Inject one canonical first-system identity marker or fail closed."""
+
+    normalized = [dict(message) for message in messages if isinstance(message, dict)]
+    canonical_role = str(role or "").strip()
+    if canonical_role not in _CORE_ROLE_IDENTITIES:
+        return normalized
+    if not normalized or str(normalized[0].get("role") or "").strip().lower() != "system":
+        normalized.insert(0, {"role": "system", "content": str(system_prompt or "")})
+    elif normalized[0].get("role") != "system":
+        raise RuntimeError("role_identity_marker_invalid:first_role_must_be_exact_system")
+    markers: list[tuple[int, str]] = []
+    for index, message in enumerate(normalized):
+        content = str(message.get("content") or "")
+        for line in content.splitlines():
+            if _ROLE_IDENTITY_MARKER_PREFIX not in line:
+                continue
+            if not line.startswith(_ROLE_IDENTITY_MARKER_PREFIX) or line.count(_ROLE_IDENTITY_MARKER_PREFIX) != 1:
+                raise RuntimeError("role_identity_marker_invalid:marker_must_be_complete_line")
+            marker_role = line.removeprefix(_ROLE_IDENTITY_MARKER_PREFIX)
+            if _ROLE_IDENTITY_TOKEN_RE.fullmatch(marker_role) is None:
+                raise RuntimeError("role_identity_marker_invalid:marker_must_be_complete_line")
+            markers.append((index, marker_role))
+    if markers:
+        if len(markers) != 1 or markers[0] != (0, canonical_role):
+            raise RuntimeError("role_identity_marker_invalid:wrong_duplicate_or_nonfirst")
+        first_content = str(normalized[0].get("content") or "")
+        marker = f"{_ROLE_IDENTITY_MARKER_PREFIX}{canonical_role}"
+        if first_content != marker and not first_content.endswith(f"\n\n{marker}"):
+            raise RuntimeError("role_identity_marker_invalid:marker_must_be_terminal")
+        return normalized
+    first_content = str(normalized[0].get("content") or "").rstrip()
+    marker = f"{_ROLE_IDENTITY_MARKER_PREFIX}{canonical_role}"
+    normalized[0]["content"] = f"{first_content}\n\n{marker}" if first_content else marker
+    return normalized
+
+
+def _reject_preexisting_factory_evidence_protocol(
+    messages: list[dict[str, Any]],
+    *,
+    factory_authority_bound: bool,
+) -> None:
+    """Reject every caller-supplied evidence frame before authority injection."""
+
+    for message in messages:
+        content = str(message.get("content") or "")
+        if any(marker in content for marker in _FACTORY_EVIDENCE_PROTOCOL_MARKERS):
+            error = (
+                "factory_role_evidence_protocol_preexisting"
+                if factory_authority_bound
+                else "factory_role_evidence_protocol_without_binding"
+            )
+            raise RuntimeError(error)
+
+
+def _inject_factory_evidence_block(
+    messages: list[dict[str, Any]],
+    *,
+    role: str,
+    binding: FactoryRoleEvidenceBindingV1,
+) -> list[dict[str, Any]]:
+    """Append the exact detached policy line after the first role marker."""
+
+    if not messages or messages[0].get("role") != "system":
+        raise RuntimeError("factory_role_evidence_first_system_required")
+    marker = f"{_ROLE_IDENTITY_MARKER_PREFIX}{role}"
+    first_content = str(messages[0].get("content") or "")
+    lines = first_content.splitlines()
+    if lines.count(marker) != 1 or marker not in lines:
+        raise RuntimeError("factory_role_evidence_role_marker_invalid")
+    if first_content != marker and not first_content.endswith(f"\n\n{marker}"):
+        raise RuntimeError("factory_role_evidence_role_marker_not_terminal")
+    policy_line = render_role_final_request_policy_facts(binding.policy_facts)
+    evidence_block = f"{_FACTORY_EVIDENCE_BEGIN}\n{policy_line}\n{_FACTORY_EVIDENCE_END}"
+    injected = [dict(message) for message in messages]
+    injected[0]["content"] = f"{first_content.rstrip()}\n\n{evidence_block}"
+    return injected
 
 
 def _tool_surface_explicitly_disabled(override: dict[str, Any]) -> bool:
@@ -660,10 +847,33 @@ class LLMRequestPreparer:
         stream: bool,
         response_model: type | None = None,
         platform_retry_max: int = 1,
+        factory_semantic_identity: FactoryRoleSemanticRequestIdentityV1 | None = None,
     ) -> PreparedLLMRequest:
         """Build canonical LLM request bundle."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
         from polaris.kernelone.context.contracts import TurnEngineContextResult
+
+        factory_binding = get_factory_role_evidence_binding()
+        if factory_binding is not None:
+            binding_error = factory_binding.validation_error(expected_role=str(getattr(profile, "role_id", "") or ""))
+            if binding_error:
+                raise RuntimeError(f"factory_role_evidence_binding_malformed:{binding_error}")
+            raise RuntimeError("factory_role_evidence_cutoff_not_enabled")
+
+        factory_authority = get_factory_role_evidence_authority_binding()
+        factory_authority_snapshot = (
+            _snapshot_factory_authority(factory_authority) if factory_authority is not None else None
+        )
+        canonical_role = str(getattr(profile, "role_id", "") or "").strip()
+        if factory_authority is not None:
+            if factory_authority_snapshot is None:
+                raise RuntimeError("factory_role_evidence_authority_binding_drift")
+            if factory_authority_snapshot.role != canonical_role:
+                raise RuntimeError("factory_role_evidence_authority_binding_role_mismatch")
+            if type(factory_semantic_identity) is not FactoryRoleSemanticRequestIdentityV1:
+                raise RuntimeError("factory_role_semantic_identity_required")
+            assert factory_semantic_identity is not None
+            factory_semantic_identity.__post_init__()
 
         override = getattr(context, "context_override", None)
         prebuilt_messages = self._extract_prebuilt_projection_messages(context)
@@ -843,6 +1053,109 @@ class LLMRequestPreparer:
             messages = list(context_result.messages)
 
         messages = _ensure_current_user_message_final(messages, getattr(context, "message", ""))
+        _reject_preexisting_factory_evidence_protocol(
+            messages,
+            factory_authority_bound=factory_authority is not None,
+        )
+        messages = _ensure_core_role_identity(
+            messages,
+            canonical_role,
+            system_prompt=system_prompt,
+        )
+
+        factory_semantic_candidate: FactoryRoleSemanticCandidateV1 | None = None
+        resolved_factory_binding: FactoryRoleEvidenceBindingV1 | None = None
+        if factory_authority is not None:
+            if factory_authority_snapshot is None:
+                raise RuntimeError("factory_role_evidence_authority_binding_drift")
+            _revalidate_factory_authority_before_cutoff(
+                factory_authority,
+                factory_authority_snapshot,
+            )
+            assert factory_semantic_identity is not None  # exact type checked above
+            factory_semantic_candidate = FactoryRoleSemanticCandidateV1.create(
+                identity=factory_semantic_identity,
+                role=canonical_role,
+                provider_id=provider_id,
+                model=str(getattr(profile, "model", "") or ""),
+                interaction_mode=native_tool_mode,
+                capability_profile=capability_profile,
+                messages=messages,
+                tools=request_options.get("tools", []),
+                tool_choice=request_options.get("tool_choice"),
+                response_format=request_options.get("response_format"),
+                temperature=request_options.get("temperature"),
+                max_tokens=request_options.get("max_tokens"),
+                stream=stream,
+            )
+            cutoff_request = FactoryRoleEvidenceCutoffRequestV1(
+                schema_version=FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
+                run_id=factory_semantic_identity.run_id,
+                role=canonical_role,
+                turn_id=factory_semantic_identity.turn_id,
+                call_id=factory_semantic_identity.call_id,
+                request_freeze_id=factory_semantic_identity.request_freeze_id,
+                semantic_candidate_hash=factory_semantic_candidate.semantic_candidate_hash,
+                attempt_budget=factory_authority_snapshot.attempt_budget,
+                execution_authority_hash=factory_authority_snapshot.execution_authority_hash,
+                candidate_refs=(),
+            )
+            cutoff_ack = await factory_authority_snapshot.cutoff_port.acquire_cutoff(cutoff_request)
+            _revalidate_factory_authority_before_cutoff(
+                factory_authority,
+                factory_authority_snapshot,
+            )
+            if type(cutoff_ack) is not FactoryRoleEvidenceCutoffAckV1:
+                raise RuntimeError("factory_role_evidence_cutoff_ack_exact_type_required")
+            FactoryRoleEvidenceCutoffAckV1.__post_init__(cutoff_ack)
+            expected_ack_projection = (
+                factory_authority_snapshot.factory_run_id,
+                cutoff_request.run_id,
+                cutoff_request.role,
+                cutoff_request.turn_id,
+                cutoff_request.call_id,
+                cutoff_request.request_freeze_id,
+                cutoff_request.semantic_candidate_hash,
+                cutoff_request.attempt_budget,
+                cutoff_request.execution_authority_hash,
+            )
+            actual_ack_projection = (
+                cutoff_ack.factory_run_id,
+                cutoff_ack.run_id,
+                cutoff_ack.role,
+                cutoff_ack.turn_id,
+                cutoff_ack.call_id,
+                cutoff_ack.request_freeze_id,
+                cutoff_ack.semantic_candidate_hash,
+                cutoff_ack.attempt_budget,
+                cutoff_ack.execution_authority_hash,
+            )
+            if actual_ack_projection != expected_ack_projection:
+                raise RuntimeError("factory_role_evidence_cutoff_ack_request_mismatch")
+            cutoff_proof = await factory_authority_snapshot.cutoff_port.resolve_cutoff_proof(cutoff_ack)
+            _revalidate_factory_authority_before_cutoff(
+                factory_authority,
+                factory_authority_snapshot,
+            )
+            if type(cutoff_proof) is not FactoryRoleEvidenceCutoffProofV1:
+                raise RuntimeError("factory_role_evidence_cutoff_proof_exact_type_required")
+            FactoryRoleEvidenceCutoffProofV1.__post_init__(cutoff_proof)
+            if cutoff_proof.ack != cutoff_ack:
+                raise RuntimeError("factory_role_evidence_cutoff_proof_ack_mismatch")
+            resolved_factory_binding = FactoryRoleEvidenceBindingV1.from_cutoff_proof(cutoff_proof)
+            binding_error = resolved_factory_binding.validation_error(expected_role=canonical_role)
+            if binding_error:
+                raise RuntimeError(f"factory_role_evidence_binding_malformed:{binding_error}")
+            messages = _inject_factory_evidence_block(
+                messages,
+                role=canonical_role,
+                binding=resolved_factory_binding,
+            )
+        input_text = messages_to_input(
+            messages,
+            format_type="auto",
+            provider_id=str(getattr(profile, "provider_id", "")),
+        )
         context_result = replace(
             context_result,
             messages=tuple(
@@ -852,11 +1165,7 @@ class LLMRequestPreparer:
                 }
                 for message in messages
             ),
-        )
-        input_text = messages_to_input(
-            messages,
-            format_type="auto",
-            provider_id=str(getattr(profile, "provider_id", "")),
+            token_estimate=max(0, len(input_text) // 4),
         )
         context_summary = compute_context_summary(input_text)
         context_metadata = (
@@ -873,10 +1182,24 @@ class LLMRequestPreparer:
             expected=True,
         )
         capability_profile_ref = context_metadata.get("capability_profile_ref")
-        context_projection_id = str(
-            context_metadata.get("projection_id") or context_os_audit.get("prompt_digest") or ""
-        ).strip()
-        context_result_id = str(context_metadata.get("context_result_id") or "").strip()
+        source_projection_id = str(context_metadata.get("projection_id") or "").strip()
+        source_context_result_id = str(context_metadata.get("context_result_id") or "").strip()
+        final_prompt_digest = str(context_os_audit.get("prompt_digest") or "").strip()
+        if canonical_role in _CORE_ROLE_IDENTITIES:
+            if not final_prompt_digest:
+                raise RuntimeError("role_identity_final_projection_digest_missing")
+            context_projection_id = final_prompt_digest
+            if source_projection_id and source_projection_id != context_projection_id:
+                context_metadata["source_projection_id"] = source_projection_id
+            context_result_id = build_context_result_id(context_projection_id)
+            if source_context_result_id and source_context_result_id != context_result_id:
+                context_metadata["source_context_result_id"] = source_context_result_id
+            context_metadata["projection_id"] = context_projection_id
+            context_metadata["context_result_id"] = context_result_id
+            context_result = replace(context_result, metadata=context_metadata)
+        else:
+            context_projection_id = source_projection_id or final_prompt_digest
+            context_result_id = source_context_result_id
         prompt_profile_audit: dict[str, Any] = {}
         selected_prompt_profile_ids: list[str] = []
         director_execution_profile: dict[str, Any] = {}
@@ -969,6 +1292,20 @@ class LLMRequestPreparer:
                 ],
             },
         )
+        frozen_factory_request: FactoryRoleFrozenSemanticRequestV1 | None = None
+        if factory_semantic_candidate is not None and resolved_factory_binding is not None:
+            frozen_factory_request = FactoryRoleFrozenSemanticRequestV1.create(
+                candidate=factory_semantic_candidate,
+                signed_factory_binding_ref=resolved_factory_binding.signed_factory_binding_ref,
+                signed_factory_binding_hash=resolved_factory_binding.signed_factory_binding_hash,
+                messages=messages,
+                tools=request_options.get("tools", []),
+                tool_choice=request_options.get("tool_choice"),
+                response_format=request_options.get("response_format"),
+                temperature=request_options.get("temperature"),
+                max_tokens=request_options.get("max_tokens"),
+                stream=stream,
+            )
         return PreparedLLMRequest(
             messages=messages,
             input_text=input_text,
@@ -983,6 +1320,7 @@ class LLMRequestPreparer:
             response_format_mode=response_format_mode,
             context_os_audit=context_os_audit,
             capability_profile=capability_profile,
+            factory_semantic_request=frozen_factory_request,
         )
 
     def _build_structured_fallback_request(

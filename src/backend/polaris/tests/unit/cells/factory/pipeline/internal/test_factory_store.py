@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.factory.pipeline.internal.factory_store import (
+    FactoryRunSnapshotError,
     FactoryStore,
     FileLockTimeoutError,
     _acquire_file_lock,
@@ -173,16 +175,93 @@ class TestFactoryStore:
         mock_run.status.value = "running"
         mock_run.to_dict.return_value = {"id": "run-001", "status": "running"}
 
-        await tmp_store.checkpoint(mock_run)
+        checkpoint_ref = await tmp_store.checkpoint(mock_run)
         checkpoint_dir = tmp_store.get_run_dir("run-001") / "checkpoints"
         assert checkpoint_dir.exists()
         files = list(checkpoint_dir.iterdir())
         assert len(files) == 1
+        assert checkpoint_ref == "runtime/run-001/checkpoints/running_2024-01-01T00_00_00.json"
+
+    @pytest.mark.asyncio
+    async def test_strict_run_and_checkpoint_reread_exact_objects(self, tmp_store: FactoryStore) -> None:
+        mock_run = MagicMock()
+        mock_run.id = "run-strict"
+        mock_run.updated_at = "2024-01-01T00:00:00"
+        mock_run.created_at = "2024-01-01T00:00:00"
+        mock_run.status = MagicMock()
+        mock_run.status.value = "running"
+        mock_run.to_dict.return_value = {"id": "run-strict", "status": "running"}
+
+        run_ref = await tmp_store.save_run(mock_run)
+        checkpoint_ref = await tmp_store.checkpoint(mock_run)
+
+        assert run_ref == "runtime/run-strict/run.json"
+        assert await tmp_store.read_strict_run_snapshot("run-strict") == mock_run.to_dict.return_value
+        assert (
+            await tmp_store.read_strict_checkpoint_snapshot("run-strict", checkpoint_ref)
+            == mock_run.to_dict.return_value
+        )
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_ref_is_immutable_and_rejects_different_bytes(self, tmp_store: FactoryStore) -> None:
+        mock_run = MagicMock()
+        mock_run.id = "run-immutable"
+        mock_run.updated_at = "2024-01-01T00:00:00"
+        mock_run.created_at = "2024-01-01T00:00:00"
+        mock_run.status = MagicMock()
+        mock_run.status.value = "running"
+        mock_run.to_dict.return_value = {"id": "run-immutable", "status": "running"}
+
+        checkpoint_ref = await tmp_store.checkpoint(mock_run)
+        assert await tmp_store.checkpoint(mock_run) == checkpoint_ref
+        mock_run.to_dict.return_value = {"id": "run-immutable", "status": "changed"}
+        with pytest.raises(FactoryRunSnapshotError) as captured:
+            await tmp_store.checkpoint(mock_run)
+        assert captured.value.code == "factory_checkpoint_immutable_collision"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "raw,code",
+        [
+            ('{"id":"run-bad","id":"other"}', "factory_run_snapshot_duplicate_key"),
+            ('{"id":"run-bad","value":NaN}', "factory_run_snapshot_non_finite_number"),
+            ('["not-an-object"]', "factory_run_snapshot_root_invalid"),
+        ],
+    )
+    async def test_strict_run_snapshot_rejects_ambiguous_json(
+        self,
+        tmp_store: FactoryStore,
+        raw: str,
+        code: str,
+    ) -> None:
+        run_dir = tmp_store.get_run_dir("run-bad")
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(raw, encoding="utf-8")
+
+        with pytest.raises(FactoryRunSnapshotError) as captured:
+            await tmp_store.read_strict_run_snapshot("run-bad")
+        assert captured.value.code == code
+
+    @pytest.mark.asyncio
+    async def test_strict_run_snapshot_rejects_symlink(self, tmp_store: FactoryStore) -> None:
+        outside = tmp_store.base_dir / "outside.json"
+        outside.write_text(json.dumps({"id": "run-link"}), encoding="utf-8")
+        run_dir = tmp_store.get_run_dir("run-link")
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").symlink_to(outside)
+
+        with pytest.raises(FactoryRunSnapshotError) as captured:
+            await tmp_store.read_strict_run_snapshot("run-link")
+        assert captured.value.code == "factory_run_snapshot_guard_failed"
 
     def test_list_runs(self, tmp_store: FactoryStore) -> None:
-        # Create some run directories manually
-        (tmp_store.base_dir / "run-a").mkdir()
-        (tmp_store.base_dir / "run-b").mkdir()
+        # Only directories with a regular mutable snapshot are discoverable;
+        # admission-first half-runs remain quarantined for strict audit.
+        for run_id in ("run-a", "run-b"):
+            run_dir = tmp_store.base_dir / run_id
+            run_dir.mkdir()
+            (run_dir / "run.json").write_text("{}", encoding="utf-8")
+        (tmp_store.base_dir / "half-run").mkdir()
         (tmp_store.base_dir / "not_a_dir.txt").write_text("x")
 
         runs = tmp_store.list_runs()

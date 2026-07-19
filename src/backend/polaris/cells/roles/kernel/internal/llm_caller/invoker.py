@@ -28,6 +28,10 @@ from typing import TYPE_CHECKING, Any
 from polaris.cells.control_plane.run_ledger.public import (
     project_native_tool_call_envelopes_to_metadata,
 )
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FactoryRoleSemanticRequestIdentityV1,
+    get_factory_role_evidence_authority_binding,
+)
 from polaris.kernelone.llm.engine import AIExecutor
 from polaris.kernelone.llm.engine._executor_base import coerce_required_flag
 from polaris.kernelone.llm.runtime_config import (
@@ -81,6 +85,56 @@ if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
 
 logger = logging.getLogger(__name__)
+
+_FACTORY_SEMANTIC_DISPATCH_NOT_ENABLED = "factory_role_semantic_request_frozen_physical_dispatch_not_enabled"
+
+
+class _FactorySemanticDispatchNotEnabledError(RuntimeError):
+    """B3.2 hard stop: semantic freeze is not physical-call authority."""
+
+
+def _enforce_factory_semantic_zero_transport(prepared: PreparedLLMRequest) -> None:
+    if prepared.factory_semantic_request is not None:
+        raise _FactorySemanticDispatchNotEnabledError(_FACTORY_SEMANTIC_DISPATCH_NOT_ENABLED)
+
+
+def _invoker_owned_factory_semantic_identity(
+    *,
+    run_id: str | None,
+    turn_round: int,
+    call_id: str,
+) -> FactoryRoleSemanticRequestIdentityV1 | None:
+    """Mint identity only for an explicitly controlled Factory child run."""
+
+    if get_factory_role_evidence_authority_binding() is None:
+        return None
+    if type(run_id) is not str or not run_id.strip():
+        raise RuntimeError("factory_role_controlled_run_id_required")
+    if type(turn_round) is not int or turn_round < 0:
+        raise RuntimeError("factory_role_turn_round_invalid")
+    controlled_run_id = run_id.strip()
+    return FactoryRoleSemanticRequestIdentityV1(
+        run_id=controlled_run_id,
+        turn_id=f"{controlled_run_id}:turn:{turn_round}",
+        call_id=call_id,
+        request_freeze_id=uuid.uuid4().hex,
+    )
+
+
+def _refreeze_factory_semantic_identity(
+    identity: FactoryRoleSemanticRequestIdentityV1 | None,
+) -> FactoryRoleSemanticRequestIdentityV1 | None:
+    if identity is None:
+        return None
+    if type(identity) is not FactoryRoleSemanticRequestIdentityV1:
+        raise TypeError("factory_role_semantic_identity_exact_type_required")
+    FactoryRoleSemanticRequestIdentityV1.__post_init__(identity)
+    return FactoryRoleSemanticRequestIdentityV1(
+        run_id=identity.run_id,
+        turn_id=identity.turn_id,
+        call_id=identity.call_id,
+        request_freeze_id=uuid.uuid4().hex,
+    )
 
 
 @dataclass(frozen=True)
@@ -778,6 +832,7 @@ class LLMInvoker:
         event_emitter: Any | None,
         original_error: str,
         failure_sink: list[_RoleBindingFallbackFailure] | None = None,
+        factory_semantic_identity: FactoryRoleSemanticRequestIdentityV1 | None = None,
     ) -> tuple[RoleProfile, PreparedLLMRequest, Any, Any] | None:
         self._mark_profile_binding_unhealthy(role_id, profile)
         fallback_slots = self._fallback_slots_for_role(role_id, profile)
@@ -828,6 +883,7 @@ class LLMInvoker:
                     stream=False,
                     response_model=response_model,
                     platform_retry_max=platform_retry_max,
+                    factory_semantic_identity=_refreeze_factory_semantic_identity(factory_semantic_identity),
                 )
                 fallback_active_request = fallback_prepared.ai_request
                 fallback_required_tools = _required_tools_from_final_request_audit(
@@ -1589,6 +1645,7 @@ class LLMInvoker:
         model: str,
         call_id: str,
         event_emitter: Any | None,
+        factory_semantic_identity: FactoryRoleSemanticRequestIdentityV1 | None,
     ) -> FallbackLadderResult:
         """Run the call-phase fallback ladder after the primary invoke.
 
@@ -1711,6 +1768,7 @@ class LLMInvoker:
                     event_emitter=event_emitter,
                     original_error=response_error,
                     failure_sink=fallback_failures,
+                    factory_semantic_identity=factory_semantic_identity,
                 )
                 if fallback is not None:
                     profile, prepared, active_request, response = fallback
@@ -1971,7 +2029,12 @@ class LLMInvoker:
     ) -> LLMResponse:
         """Invoke LLM with non-streaming mode."""
         logger.warning("[LLMInvoker.call] ENTRY: profile=%s run_id=%s", getattr(profile, "role_id", "unknown"), run_id)
-        call_id = str(uuid.uuid4())[:8]
+        call_id = uuid.uuid4().hex
+        factory_semantic_identity = _invoker_owned_factory_semantic_identity(
+            run_id=run_id,
+            turn_round=turn_round,
+            call_id=call_id,
+        )
         run_id = run_id or f"llm_{call_id}"
         task_id = task_id or getattr(context, "task_id", None)
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
@@ -2007,7 +2070,9 @@ class LLMInvoker:
                 stream=False,
                 response_model=response_model,
                 platform_retry_max=platform_retry_max,
+                factory_semantic_identity=factory_semantic_identity,
             )
+            _enforce_factory_semantic_zero_transport(prepared)
             effective_temperature = _prepared_request_temperature(prepared, effective_temperature)
             active_request = prepared.ai_request
             await _store_call_start_context_snapshot(
@@ -2148,6 +2213,7 @@ class LLMInvoker:
                 model=model,
                 call_id=call_id,
                 event_emitter=event_emitter,
+                factory_semantic_identity=factory_semantic_identity,
             )
             response = ladder.response
             active_request = ladder.active_request
@@ -2257,6 +2323,21 @@ class LLMInvoker:
 
         except RuntimeError as e:
             logger.exception(f"LLM call unexpected error: {e}")
+            if isinstance(e, _FactorySemanticDispatchNotEnabledError):
+                return self._call_exception_response(
+                    e,
+                    prepared=prepared,
+                    active_request=prepared.ai_request if prepared else None,
+                    profile=profile,
+                    model=model,
+                    role_id=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    call_id=call_id,
+                    event_emitter=event_emitter,
+                    start_time=start_time,
+                )
             fallback_response = await self._try_retryable_exception_role_binding_fallback(
                 exc=e,
                 request_preparer=request_preparer,
@@ -2280,6 +2361,7 @@ class LLMInvoker:
                 event_emitter=event_emitter,
                 prompt_tokens=prompt_tokens,
                 start_time=start_time,
+                factory_semantic_identity=factory_semantic_identity,
             )
             if fallback_response is not None:
                 return fallback_response
@@ -2323,6 +2405,7 @@ class LLMInvoker:
         event_emitter: Any | None,
         prompt_tokens: int,
         start_time: float,
+        factory_semantic_identity: FactoryRoleSemanticRequestIdentityV1 | None,
     ) -> LLMResponse | None:
         """Fallback to another role binding when a provider raises a retryable exception.
 
@@ -2360,6 +2443,7 @@ class LLMInvoker:
             event_emitter=event_emitter,
             original_error=str(exc),
             failure_sink=fallback_failures,
+            factory_semantic_identity=factory_semantic_identity,
         )
         if fallback is None:
             if fallback_failures:
@@ -2979,7 +3063,12 @@ class LLMInvoker:
         event_emitter: Any | None = None,
     ) -> StructuredLLMResponse:
         """Invoke LLM with structured output validation."""
-        call_id = str(uuid.uuid4())[:8]
+        call_id = uuid.uuid4().hex
+        factory_semantic_identity = _invoker_owned_factory_semantic_identity(
+            run_id=run_id,
+            turn_round=turn_round,
+            call_id=call_id,
+        )
         run_id = run_id or f"llm_struct_{call_id}"
         task_id = task_id or getattr(context, "task_id", None)
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
@@ -3009,7 +3098,9 @@ class LLMInvoker:
                 stream=False,
                 response_model=response_model,
                 platform_retry_max=max_retries,
+                factory_semantic_identity=factory_semantic_identity,
             )
+            _enforce_factory_semantic_zero_transport(prepared)
             await _store_call_start_context_snapshot(
                 workspace=self.workspace,
                 prepared=prepared,
@@ -3265,7 +3356,12 @@ class LLMInvoker:
         logger.warning(
             "[LLMInvoker.call_stream] ENTRY: profile=%s run_id=%s", getattr(profile, "role_id", "unknown"), run_id
         )
-        call_id = str(uuid.uuid4())[:8]
+        call_id = uuid.uuid4().hex
+        factory_semantic_identity = _invoker_owned_factory_semantic_identity(
+            run_id=run_id,
+            turn_round=turn_round,
+            call_id=call_id,
+        )
         run_id = run_id or f"llm_stream_{call_id}"
         task_id = task_id or getattr(context, "task_id", None)
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
@@ -3326,7 +3422,9 @@ class LLMInvoker:
                 temperature=effective_temperature,
                 max_tokens=effective_max_tokens,
                 stream=True,
+                factory_semantic_identity=factory_semantic_identity,
             )
+            _enforce_factory_semantic_zero_transport(prepared)
             effective_temperature = _prepared_request_temperature(prepared, effective_temperature)
             resolved_provider_id = str(
                 getattr(prepared.ai_request, "provider_id", None) or getattr(profile, "provider_id", "") or ""

@@ -74,6 +74,7 @@ depends_on:
 - policy.workspace_guard
 - workspace.integrity
 - events.fact_stream
+- runtime.task_runtime
 subgraphs: []
 state_owners: []
 effects_allowed:

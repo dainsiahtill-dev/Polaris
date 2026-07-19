@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +18,8 @@ from unittest.mock import patch
 import pytest
 from polaris.kernelone.llm.engine.context_store_retention import (
     SWEEP_STATE_FILENAME,
+    ContextSnapshotAuditPinError,
+    ContextSnapshotAuditPinRepository,
     ContextStoreRetention,
     ContextStoreRetentionConfig,
     SweepReport,
@@ -492,6 +495,139 @@ class TestConfigDisableBlocklist:
     def test_unset_keeps_enabled(self) -> None:
         cfg = ContextStoreRetentionConfig()
         assert cfg.enabled is True
+
+
+class TestPinnedContextSnapshotRetention:
+    def _repository(self, workspace: Path) -> ContextSnapshotAuditPinRepository:
+        return ContextSnapshotAuditPinRepository(workspace=str(workspace))
+
+    def _persist(self, repository: ContextSnapshotAuditPinRepository, *, provider_request_id: str = "req-1"):
+        return repository.persist_snapshot_and_pin(
+            snapshot={"schema_version": "llm.provider_request_snapshot.v2", "payload": "pinned"},
+            factory_run_id="factory-run-1",
+            role="director",
+            verification_scope="factory",
+            request_freeze_id="freeze-1",
+            provider_request_id=provider_request_id,
+            composite_request_hash="c" * 64,
+            snapshot_source="roles.kernel.final_provider_attempt",
+        )
+
+    def test_producer_and_retention_share_one_registered_lock_identity(self, tmp_path: Path) -> None:
+        producer = self._repository(tmp_path)
+        retention = ContextStoreRetention(
+            workspace=str(tmp_path),
+            config=ContextStoreRetentionConfig(sweep_min_interval_seconds=0),
+        )
+
+        assert producer.lock_logical_path == retention.pin_repository.lock_logical_path
+        assert producer.runtime_root == retention.pin_repository.runtime_root
+        assert producer.storage_identity_token == retention.pin_repository.storage_identity_token
+
+    def test_pinned_snapshot_survives_ttl_while_unpinned_snapshot_is_removed(self, tmp_path: Path) -> None:
+        repository = self._repository(tmp_path)
+        pin = self._persist(repository)
+        pinned_path = Path(pin.snapshot_absolute_path)
+        unpinned = Path(repository.contexts_root) / "ff" / ("f" * 24)
+        unpinned.parent.mkdir(parents=True, exist_ok=True)
+        unpinned.write_text("unpinned", encoding="utf-8")
+        _backdate_file(pinned_path, seconds_old=3600)
+        _backdate_file(unpinned, seconds_old=3600)
+
+        retention = ContextStoreRetention(
+            workspace=str(tmp_path),
+            config=ContextStoreRetentionConfig(
+                ttl_seconds=0,
+                max_total_bytes=10**9,
+                max_files=1000,
+                sweep_min_interval_seconds=0,
+            ),
+        )
+        report = retention.sweep()
+        assert pinned_path.is_file()
+        assert not unpinned.exists()
+        assert report.removed_files == 1
+        assert repository.query_snapshot_pins(pin.context_snapshot_ref) == (pin,)
+
+    def test_pinned_snapshot_ref_refuses_non_identical_replacement(self, tmp_path: Path) -> None:
+        repository = self._repository(tmp_path)
+        pin = self._persist(repository)
+        Path(pin.snapshot_absolute_path).write_text("corrupt replacement", encoding="utf-8")
+        with pytest.raises(ContextSnapshotAuditPinError, match=r"immutable|content"):
+            self._persist(repository)
+
+    def test_cross_workspace_pin_copy_is_mismatch_and_retention_keeps_snapshot(self, tmp_path: Path) -> None:
+        source_repository = self._repository(tmp_path / "one")
+        target_repository = self._repository(tmp_path / "two")
+        pin = self._persist(source_repository)
+        source_pin_path = Path(source_repository.pin_path(pin.context_snapshot_ref, pin.provider_request_id))
+        target_pin_path = Path(target_repository.pin_path(pin.context_snapshot_ref, pin.provider_request_id))
+        target_pin_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_pin_path, target_pin_path)
+        target_snapshot_path = Path(target_repository.snapshot_path(pin.context_snapshot_ref))
+        target_snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(pin.snapshot_absolute_path, target_snapshot_path)
+        _backdate_file(target_snapshot_path, seconds_old=3600)
+
+        with pytest.raises(ContextSnapshotAuditPinError, match=r"workspace|storage"):
+            target_repository.query_snapshot_pins(pin.context_snapshot_ref)
+        retention = ContextStoreRetention(
+            workspace=str(tmp_path / "two"),
+            config=ContextStoreRetentionConfig(ttl_seconds=0, sweep_min_interval_seconds=0),
+        )
+        retention.sweep()
+        assert target_snapshot_path.is_file()
+
+    def test_sweep_rechecks_pin_under_delete_lock_to_defeat_toctou(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repository = self._repository(tmp_path)
+        snapshot = {"schema_version": "llm.provider_request_snapshot.v2", "payload": "pinned"}
+        content, context_ref = repository.canonical_snapshot(snapshot)
+        snapshot_path = Path(repository.snapshot_path(context_ref))
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(content, encoding="utf-8")
+        _backdate_file(snapshot_path, seconds_old=3600)
+        retention = ContextStoreRetention(
+            workspace=str(tmp_path),
+            config=ContextStoreRetentionConfig(ttl_seconds=0, sweep_min_interval_seconds=0),
+        )
+        original_remove = retention.pin_repository.remove_snapshot_if_unpinned
+        raced = False
+
+        def _pin_then_remove(path: str) -> bool:
+            nonlocal raced
+            if not raced:
+                raced = True
+                self._persist(repository)
+            return original_remove(path)
+
+        monkeypatch.setattr(retention.pin_repository, "remove_snapshot_if_unpinned", _pin_then_remove)
+        retention.sweep()
+        assert raced is True
+        assert snapshot_path.is_file()
+
+    def test_corrupt_present_pin_state_fails_closed_and_keeps_snapshot(self, tmp_path: Path) -> None:
+        repository = self._repository(tmp_path)
+        content, context_ref = repository.canonical_snapshot(
+            {"schema_version": "llm.provider_request_snapshot.v2", "payload": "corrupt-pin"}
+        )
+        snapshot_path = Path(repository.snapshot_path(context_ref))
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(content, encoding="utf-8")
+        _backdate_file(snapshot_path, seconds_old=3600)
+        corrupt_pin = Path(repository.pin_path(context_ref, "req-corrupt"))
+        corrupt_pin.parent.mkdir(parents=True, exist_ok=True)
+        corrupt_pin.write_text("{not-json", encoding="utf-8")
+
+        retention = ContextStoreRetention(
+            workspace=str(tmp_path),
+            config=ContextStoreRetentionConfig(ttl_seconds=0, sweep_min_interval_seconds=0),
+        )
+        retention.sweep()
+        assert snapshot_path.is_file()
 
 
 class TestSettingsEnvWiring:

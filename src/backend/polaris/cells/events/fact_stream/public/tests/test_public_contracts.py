@@ -27,6 +27,18 @@ def test_bootstrap_catalog_is_static_and_nonempty() -> None:
     assert "task_runtime.execution" in streams
 
 
+def test_bootstrap_catalog_excludes_reserved_segmented_namespaces() -> None:
+    streams = fact_stream_bootstrap_streams()
+    reserved_prefixes = (
+        "roles.kernel.provider_attempts.factory.",
+        "roles.kernel.provider_attempts.session.",
+        "factory.role_evidence_authority.",
+    )
+
+    assert all(not stream.startswith(reserved_prefixes) for stream in streams)
+    assert all(".segmented" not in stream for stream in streams)
+
+
 def test_authority_provision_command_requires_explicit_maintenance_intent() -> None:
     command = ProvisionFactStreamLockAuthorityCommandV1(
         workspace="/repo",

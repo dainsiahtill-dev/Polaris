@@ -8,7 +8,11 @@ from .contracts import (
     FactStreamMaintenanceReceiptV1,
     ProvisionFactStreamLockAuthorityCommandV1,
 )
-from .service import enroll_fact_stream_streams, provision_fact_stream_lock_authority
+from .service import (
+    _reject_ordinary_segmented_streams,
+    enroll_fact_stream_streams,
+    provision_fact_stream_lock_authority,
+)
 
 
 def bootstrap_fact_stream_workspace(
@@ -22,6 +26,7 @@ def bootstrap_fact_stream_workspace(
     in-memory state.
     """
 
+    _reject_ordinary_segmented_streams(command.streams)
     provision = provision_fact_stream_lock_authority(
         ProvisionFactStreamLockAuthorityCommandV1(
             workspace=command.workspace,

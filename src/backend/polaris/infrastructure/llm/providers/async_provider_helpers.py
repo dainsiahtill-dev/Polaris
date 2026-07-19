@@ -18,13 +18,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 from polaris.kernelone.common.clock import ClockPort, RealClock
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
-from polaris.kernelone.llm.response_parser import LLMResponseParser
+from polaris.kernelone.llm.engine.contracts import get_physical_provider_dispatch_port
+from polaris.kernelone.llm.response_parser import FinalizedResponse, LLMResponseParser
 from polaris.kernelone.llm.types import (
     HealthResult,
     InvokeResult,
@@ -35,8 +37,12 @@ from .async_http_client import (
     AsyncCircuitBreaker,
     AsyncProviderHttpClient,
     CircuitOpenError,
+    HttpResult,
     ProviderHttpClientError,
 )
+
+if TYPE_CHECKING:
+    from polaris.kernelone.llm.engine.contracts import AsyncPhysicalProviderDispatchPort
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +68,69 @@ class UsageFromResponseFn(Protocol):
 # ---------------------------------------------------------------------------
 
 
+class _GovernedAsyncHttpResultError(RuntimeError):
+    """Carry one non-success async HTTP result through the attempt gate."""
+
+    def __init__(self, result: HttpResult) -> None:
+        self.result = result
+        super().__init__(f"governed async HTTP response status {result.status_code}")
+
+
+@dataclass(frozen=True, slots=True)
+class _GovernedAsyncHttpAttemptResult:
+    result: HttpResult
+    data: dict[str, Any]
+    latency_ms: int
+    output: str
+    finalized: FinalizedResponse
+    usage: Usage
+
+
+def _thaw_physical_dispatch_value(value: Any) -> Any:
+    """Create the sole mutable HTTP transport copy from a frozen dispatch view."""
+
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_physical_dispatch_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_physical_dispatch_value(item) for item in value]
+    return value
+
+
+async def _send_governed_async_http_attempt(
+    frozen: Mapping[str, Any],
+    *,
+    client: AsyncProviderHttpClient,
+    prompt: str,
+    clock: ClockPort,
+    start: float,
+    extract_output: ExtractOutputFn,
+    usage_from_response: UsageFromResponseFn,
+) -> _GovernedAsyncHttpAttemptResult:
+    """Send and parse once inside the async physical-attempt lifecycle boundary."""
+
+    result = await client._post_json_impl(
+        str(frozen["endpoint"]),
+        _thaw_physical_dispatch_value(frozen["headers"]),
+        _thaw_physical_dispatch_value(frozen["body"]),
+        timeout=float(frozen["transport"]["timeout"]),
+    )
+    if result.status_code >= 400:
+        raise _GovernedAsyncHttpResultError(result)
+    data = _parse_json(result.text)
+    latency_ms = int((clock.time() - start) * 1000)
+    output = extract_output(data)
+    finalized = LLMResponseParser.finalize_response(data, visible_text=output)
+    usage = usage_from_response(prompt, finalized.output, data)
+    return _GovernedAsyncHttpAttemptResult(
+        result=result,
+        data=data,
+        latency_ms=latency_ms,
+        output=output,
+        finalized=finalized,
+        usage=usage,
+    )
+
+
 async def async_invoke_with_retry(
     url: str,
     headers: dict[str, str],
@@ -77,6 +146,7 @@ async def async_invoke_with_retry(
     backoff_base_seconds: float = 0.5,
     backoff_max_seconds: float = 30.0,
     clock: ClockPort | None = None,
+    physical_dispatch_port: AsyncPhysicalProviderDispatchPort | None = None,
 ) -> InvokeResult:
     """POST *url* with JSON *payload*, retrying up to *retries* times on failure.
 
@@ -101,6 +171,13 @@ async def async_invoke_with_retry(
         InvokeResult with success/failure details.
     """
     _clock: ClockPort = clock if clock is not None else RealClock()
+    resolved_physical_dispatch_port = physical_dispatch_port
+    if resolved_physical_dispatch_port is None:
+        bound_port = get_physical_provider_dispatch_port()
+        if bound_port is not None:
+            if not hasattr(bound_port, "dispatch_async"):
+                raise RuntimeError("bound physical provider dispatch port does not support dispatch_async")
+            resolved_physical_dispatch_port = cast("AsyncPhysicalProviderDispatchPort", bound_port)
     attempt = 0
     retries = max(0, int(retries))
     breaker = circuit_breaker or AsyncCircuitBreaker()
@@ -126,7 +203,37 @@ async def async_invoke_with_retry(
                 )
 
             try:
-                result = await client._post_json_impl(url, headers, payload, timeout=float(timeout))
+                governed_result: _GovernedAsyncHttpAttemptResult | None = None
+                if resolved_physical_dispatch_port is None:
+                    result = await client._post_json_impl(url, headers, payload, timeout=float(timeout))
+                else:
+                    try:
+                        governed_result = await resolved_physical_dispatch_port.dispatch_async(
+                            wire_request={
+                                "endpoint": url,
+                                "headers": headers,
+                                "body": payload,
+                                "transport": {
+                                    "kind": "httpx.AsyncClient.post",
+                                    "timeout": float(timeout),
+                                },
+                            },
+                            send=lambda frozen: _send_governed_async_http_attempt(
+                                frozen,
+                                client=client,
+                                prompt=prompt,
+                                clock=_clock,
+                                start=start,
+                                extract_output=extract_output,
+                                usage_from_response=usage_from_response,
+                            ),
+                        )
+                        result = governed_result.result
+                    except _GovernedAsyncHttpResultError as governed_failure:
+                        # The gate has already recorded this physical attempt as
+                        # failed. Reuse the exact HttpResult for existing status,
+                        # overflow-heal, breaker, and retry policy.
+                        result = governed_failure.result
 
                 if result.status_code >= 400:
                     error_body = result.text
@@ -177,11 +284,18 @@ async def async_invoke_with_retry(
                     result.raise_for_status()
 
                 # Success path
-                data = _parse_json(result.text)
-                latency_ms = int((_clock.time() - start) * 1000)
-                output = extract_output(data)
-                finalized = LLMResponseParser.finalize_response(data, visible_text=output)
-                usage = usage_from_response(prompt, finalized.output, data)
+                if governed_result is None:
+                    data = _parse_json(result.text)
+                    latency_ms = int((_clock.time() - start) * 1000)
+                    output = extract_output(data)
+                    finalized = LLMResponseParser.finalize_response(data, visible_text=output)
+                    usage = usage_from_response(prompt, finalized.output, data)
+                else:
+                    data = governed_result.data
+                    latency_ms = governed_result.latency_ms
+                    output = governed_result.output
+                    finalized = governed_result.finalized
+                    usage = governed_result.usage
                 await breaker.on_success()
 
                 if not finalized.ok:

@@ -54,6 +54,7 @@ from .contracts import (
     ListTechDebtQueryV1,
     ListTechRadarQueryV1,
     PostMortemRecordV1,
+    QueryBlueprintProvenanceV1,
     RegisterADRCommandV1,
     RegisterPostMortemCommandV1,
     RegisterRiskCommandV1,
@@ -62,6 +63,7 @@ from .contracts import (
     ReleaseReadinessV1,
     RiskRecordV1,
     StackPolicyViolationV1,
+    TaskBlueprintProvenanceSnapshotV1,
     TaskBlueprintResultV1,
     TechDebtRecordV1,
     TechRadarEntryV1,
@@ -70,9 +72,11 @@ from .contracts import (
     UpdateRiskStatusCommandV1,
     UpdateTechDebtStatusCommandV1,
     UpdateTechRadarRingCommandV1,
+    _strict_provenance_target_paths,
 )
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_LOWER_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _SEMANTIC_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 _CAMEL_TOKEN_RE = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+")
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -160,6 +164,8 @@ def _blueprint_path(blueprint_id: str) -> str:
 
 _BLUEPRINT_HASH_IGNORED_KEYS = frozenset({"blueprint_hash", "capability_token", "job_token"})
 _PORTFOLIO_HASH_IGNORED_KEYS = _BLUEPRINT_HASH_IGNORED_KEYS | {"portfolio_hash"}
+_BLUEPRINT_PROVENANCE_SCHEMA_VERSION = "chief_engineer.blueprint_provenance.v1"
+_BLUEPRINT_PROVENANCE_HASH_SCHEME = "chief_engineer.blueprint_hash.v1"
 
 
 def _hashable_blueprint_payload(value: Any) -> Any:
@@ -176,6 +182,231 @@ def _hashable_blueprint_payload(value: Any) -> Any:
 
 def _blueprint_hash(payload: dict[str, Any]) -> str:
     return stable_hash(_hashable_blueprint_payload(payload))
+
+
+def _blueprint_provenance_text(
+    payload: Mapping[str, Any],
+    field_name: str,
+    *,
+    error_code: str,
+) -> str:
+    value = payload.get(field_name)
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ChiefEngineerBlueprintErrorV1(
+            f"blueprint provenance requires exact non-empty {field_name}",
+            code=error_code,
+            details={"field": field_name},
+        )
+    return value
+
+
+def query_blueprint_provenance(
+    query: QueryBlueprintProvenanceV1,
+) -> TaskBlueprintProvenanceSnapshotV1:
+    """Validate one strict-parsed immutable blueprint mapping without I/O."""
+
+    if not isinstance(query, QueryBlueprintProvenanceV1):
+        raise TypeError("QueryBlueprintProvenanceV1 required")
+
+    payload = dict(query.blueprint)
+    blueprint_schema_version = _blueprint_provenance_text(
+        payload,
+        "schema_version",
+        error_code="blueprint_provenance_schema_mismatch",
+    )
+    if blueprint_schema_version != "chief_engineer.blueprint.v1":
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance schema does not match chief_engineer.blueprint.v1",
+            code="blueprint_provenance_schema_mismatch",
+            details={"observed_schema_version": blueprint_schema_version},
+        )
+
+    blueprint_id = _blueprint_provenance_text(
+        payload,
+        "blueprint_id",
+        error_code="blueprint_provenance_blueprint_id_mismatch",
+    )
+    if blueprint_id != query.expected_blueprint_id:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance blueprint id does not match expected identity",
+            code="blueprint_provenance_blueprint_id_mismatch",
+            details={"expected": query.expected_blueprint_id, "observed": blueprint_id},
+        )
+
+    task_id = _blueprint_provenance_text(
+        payload,
+        "task_id",
+        error_code="blueprint_provenance_task_id_mismatch",
+    )
+    if task_id != query.expected_task_id:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance task id does not match expected identity",
+            code="blueprint_provenance_task_id_mismatch",
+            details={"expected": query.expected_task_id, "observed": task_id},
+        )
+
+    factory_run_id = _blueprint_provenance_text(
+        payload,
+        "run_id",
+        error_code="blueprint_provenance_run_id_mismatch",
+    )
+    if factory_run_id != query.expected_factory_run_id:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance run id does not match expected Factory run",
+            code="blueprint_provenance_run_id_mismatch",
+            details={"expected": query.expected_factory_run_id, "observed": factory_run_id},
+        )
+
+    canonical_logical_path = _blueprint_path(query.expected_blueprint_id)
+    if query.expected_logical_path != canonical_logical_path:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance logical path is not canonical",
+            code="blueprint_provenance_logical_path_mismatch",
+            details={"expected": canonical_logical_path, "observed": query.expected_logical_path},
+        )
+
+    embedded_blueprint_hash = payload.get("blueprint_hash")
+    if not isinstance(embedded_blueprint_hash, str) or _LOWER_SHA256_RE.fullmatch(embedded_blueprint_hash) is None:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance embedded hash must be lower-case 64-hex",
+            code="blueprint_provenance_hash_invalid",
+            details={"field": "blueprint_hash"},
+        )
+    try:
+        recomputed_blueprint_hash = _blueprint_hash(payload)
+    except (TypeError, ValueError) as exc:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance payload cannot be hashed with producer v1 semantics",
+            code="blueprint_provenance_payload_invalid",
+        ) from exc
+    matches = embedded_blueprint_hash == recomputed_blueprint_hash
+    if not matches:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance embedded hash does not match independently recomputed hash",
+            code="blueprint_provenance_hash_mismatch",
+            details={
+                "embedded_blueprint_hash": embedded_blueprint_hash,
+                "recomputed_blueprint_hash": recomputed_blueprint_hash,
+            },
+        )
+
+    raw_pm_task = payload.get("pm_task")
+    if not isinstance(raw_pm_task, Mapping) or not raw_pm_task:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance requires one non-empty canonical pm_task payload",
+            code="blueprint_provenance_pm_task_invalid",
+            details={"field": "pm_task"},
+        )
+    pm_task = dict(raw_pm_task)
+    expected_pm_task = dict(query.expected_pm_task)
+    try:
+        pm_task_target_files = _strict_provenance_target_paths(
+            "pm_task.target_files",
+            pm_task.get("target_files"),
+            require_list=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance canonical pm_task target_files are invalid",
+            code="blueprint_provenance_pm_target_files_invalid",
+            details={"field": "pm_task.target_files", "reason": str(exc)},
+        ) from exc
+    try:
+        expected_target_files = _strict_provenance_target_paths(
+            "expected_pm_task.target_files",
+            expected_pm_task.get("target_files"),
+            require_list=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance expected PM target_files are invalid",
+            code="blueprint_provenance_expected_target_files_invalid",
+            details={"field": "expected_pm_task.target_files", "reason": str(exc)},
+        ) from exc
+    if pm_task_target_files != expected_target_files:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance pm_task target_files do not match expected PM targets",
+            code="blueprint_provenance_pm_task_mismatch",
+            details={
+                "expected_target_files": list(expected_target_files),
+                "observed_pm_task_target_files": list(pm_task_target_files),
+            },
+        )
+    try:
+        target_files = _strict_provenance_target_paths(
+            "target_files",
+            payload.get("target_files"),
+            require_list=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance target_files are invalid",
+            code="blueprint_provenance_target_files_invalid",
+            details={"field": "target_files", "reason": str(exc)},
+        ) from exc
+    if target_files != expected_target_files:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance target_files do not match expected PM targets",
+            code="blueprint_provenance_target_files_mismatch",
+            details={
+                "expected_target_files": list(expected_target_files),
+                "observed_target_files": list(target_files),
+            },
+        )
+    try:
+        pm_task_canonical_hash = stable_hash(pm_task)
+        expected_pm_task_canonical_hash = stable_hash(expected_pm_task)
+        recomputed_pm_contract_hash = _blueprint_hash(pm_task)
+    except (TypeError, ValueError) as exc:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance PM task payload cannot be canonically hashed",
+            code="blueprint_provenance_pm_task_invalid",
+        ) from exc
+    if pm_task_canonical_hash != expected_pm_task_canonical_hash:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance pm_task does not match expected PM task payload",
+            code="blueprint_provenance_pm_task_mismatch",
+            details={
+                "expected_pm_task_canonical_hash": expected_pm_task_canonical_hash,
+                "observed_pm_task_canonical_hash": pm_task_canonical_hash,
+            },
+        )
+
+    pm_contract_hash = _blueprint_provenance_text(
+        payload,
+        "pm_contract_hash",
+        error_code="blueprint_provenance_pm_contract_hash_invalid",
+    )
+    if _LOWER_SHA256_RE.fullmatch(pm_contract_hash) is None:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance PM contract hash must be lower-case 64-hex",
+            code="blueprint_provenance_pm_contract_hash_invalid",
+        )
+    if pm_contract_hash != recomputed_pm_contract_hash:
+        raise ChiefEngineerBlueprintErrorV1(
+            "blueprint provenance PM contract hash does not match canonical pm_task",
+            code="blueprint_provenance_pm_contract_hash_mismatch",
+            details={
+                "embedded_pm_contract_hash": pm_contract_hash,
+                "recomputed_pm_contract_hash": recomputed_pm_contract_hash,
+            },
+        )
+    return TaskBlueprintProvenanceSnapshotV1(
+        schema_version=_BLUEPRINT_PROVENANCE_SCHEMA_VERSION,
+        blueprint_schema_version=blueprint_schema_version,
+        hash_scheme=_BLUEPRINT_PROVENANCE_HASH_SCHEME,
+        logical_path=canonical_logical_path,
+        factory_run_id=factory_run_id,
+        task_id=task_id,
+        blueprint_id=blueprint_id,
+        embedded_blueprint_hash=embedded_blueprint_hash,
+        recomputed_blueprint_hash=recomputed_blueprint_hash,
+        matches=matches,
+        pm_contract_hash=pm_contract_hash,
+        recomputed_pm_contract_hash=recomputed_pm_contract_hash,
+        pm_task_canonical_hash=pm_task_canonical_hash,
+        target_files=target_files,
+    )
 
 
 def _hashable_portfolio_payload(value: Any) -> Any:
@@ -923,6 +1154,18 @@ def _blueprint_declared_file_paths(value: Any, *, parent_key: str = "") -> list[
 
 
 def _task_payload_from_context(context: dict[str, Any]) -> dict[str, Any]:
+    if "pm_task_contract" in context:
+        pm_task_contract = context.get("pm_task_contract")
+        if not isinstance(pm_task_contract, Mapping) or not pm_task_contract:
+            raise ChiefEngineerBlueprintErrorV1(
+                "explicit Factory pm_task_contract must be a non-empty mapping",
+                code="blueprint_pm_task_contract_invalid",
+                details={
+                    "field": "pm_task_contract",
+                    "observed_type": type(pm_task_contract).__name__,
+                },
+            )
+        return dict(pm_task_contract)
     for key in ("task", "pm_task", "source_task", "contract_task"):
         nested = _mapping(context.get(key))
         if nested:
@@ -2319,9 +2562,14 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "Verify delivery_depth_contract behavior rules and edge cases before marking the task complete.",
     )
     risks = tuple(_merge_string_lists(contract_fields["risks"], llm_blueprint_overlay.get("risk_flags")))
-    pm_contract_hash = str(context.get("pm_contract_hash") or context.get("contract_hash") or "").strip()
-    if not pm_contract_hash:
+    if "pm_task_contract" in context:
         pm_contract_hash = _blueprint_hash(dict(contract_fields["task"]))
+        context["pm_contract_hash"] = pm_contract_hash
+        context["contract_hash"] = pm_contract_hash
+    else:
+        pm_contract_hash = str(context.get("pm_contract_hash") or context.get("contract_hash") or "").strip()
+        if not pm_contract_hash:
+            pm_contract_hash = _blueprint_hash(dict(contract_fields["task"]))
     profile_metadata = {
         **context,
         "contract_hash": pm_contract_hash,
@@ -3297,6 +3545,7 @@ __all__ = [
     "list_tech_debt",
     "list_tech_radar",
     "project_chief_engineer_task_blueprint",
+    "query_blueprint_provenance",
     "register_adr",
     "register_post_mortem",
     "register_risk",

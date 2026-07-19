@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
 )
 from polaris.cells.events.fact_stream.public import (
     AppendFactEventCommandV1,
+    FactEventAppendedV1,
     QueryFactEventsV1,
     append_fact_event,
     query_fact_events,
@@ -60,6 +62,247 @@ from polaris.kernelone.storage import resolve_storage_roots
 logger = logging.getLogger(__name__)
 _JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 _EXECUTION_CONTROL_PLANE_STREAM = "execution.control_plane"
+_RUN_LEDGER_FACT_PAYLOAD_KEYS = frozenset({"schema_version", "run_id", "event"})
+_RUN_LEDGER_EVENT_IDENTITY_KEYS = frozenset({"event_id", "content_id", "append_id"})
+_RUN_LEDGER_FACT_PROOF_PAGE_SIZE = 1000
+# Keep the recovery proof no broader than both authoritative stores: FactStream
+# strict reads and RunLedger projections each cap canonical records at 4096.
+_RUN_LEDGER_FACT_PROOF_MAX_RECORDS = 4096
+_RUN_LEDGER_FACT_PROOF_MAX_PAGES = (
+    _RUN_LEDGER_FACT_PROOF_MAX_RECORDS + _RUN_LEDGER_FACT_PROOF_PAGE_SIZE - 1
+) // _RUN_LEDGER_FACT_PROOF_PAGE_SIZE
+
+
+@dataclass(frozen=True, slots=True)
+class _RunLedgerFactAuthority:
+    canonical_event: dict[str, Any]
+    projection_row: dict[str, Any]
+    projection_bytes: bytes
+    receipt: FactEventAppendedV1
+
+
+def _is_run_ledger_fact_candidate(fact: dict[str, Any]) -> bool:
+    """Identify every suspicious Run Ledger authority for strict validation.
+
+    The union deliberately includes both canonical outer markers and structural
+    identity markers.  A damaged Fact must not evade completeness proof merely
+    because its source, schema, and idempotency marker were corrupted together.
+    Obviously unrelated control-plane Facts remain outside this recovery-only
+    boundary unless they have the exact Run Ledger envelope or event identity.
+    """
+
+    payload = fact.get("payload")
+    fact_payload = payload if isinstance(payload, dict) else {}
+    metadata = fact.get("metadata")
+    fact_metadata = metadata if isinstance(metadata, dict) else {}
+    raw_idempotency_key = fact_metadata.get("idempotency_key")
+    raw_event = fact_payload.get("event")
+    has_event_identity = type(raw_event) is dict and _RUN_LEDGER_EVENT_IDENTITY_KEYS.issubset(raw_event)
+    return bool(
+        fact.get("source") == "control_plane.run_ledger"
+        or fact_payload.get("schema_version") == "execution.control_plane.fact.v1"
+        or (isinstance(raw_idempotency_key, str) and raw_idempotency_key.startswith("run-ledger:"))
+        or set(fact_payload) == _RUN_LEDGER_FACT_PAYLOAD_KEYS
+        or has_event_identity
+    )
+
+
+def _build_run_ledger_fact_authority(
+    *,
+    fact: dict[str, Any],
+    fact_event_id: str,
+    fact_seq: int,
+    workspace: Path,
+    run_id: str,
+    ledger: RunLedger,
+) -> _RunLedgerFactAuthority | None:
+    """Strictly reconstruct one candidate Fact authority, or ignore unrelated evidence."""
+
+    payload = fact.get("payload")
+    fact_payload = payload if isinstance(payload, dict) else {}
+    metadata = fact.get("metadata")
+    fact_metadata = metadata if isinstance(metadata, dict) else {}
+    if not _is_run_ledger_fact_candidate(fact):
+        return None
+    raw_event = fact_payload.get("event")
+    if type(raw_event) is not dict:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_noncanonical")
+    try:
+        canonical_fact_event = ledger.prepare_idempotent_event(raw_event)
+    except ValueError as exc:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_noncanonical") from exc
+    expected_event_type = str(canonical_fact_event.get("event_type") or "control_plane_event").strip()
+    expected_task_id = str(canonical_fact_event.get("task_id") or "").strip()
+    expected_correlation_id = str(
+        canonical_fact_event.get("turn_id") or canonical_fact_event.get("event_id") or ""
+    ).strip()
+    expected_idempotency_key = ledger.fact_idempotency_key(canonical_fact_event)
+    expected_aggregate_id = expected_task_id or run_id
+    if (
+        fact.get("source") != "control_plane.run_ledger"
+        or fact.get("stream") != _EXECUTION_CONTROL_PLANE_STREAM
+        or fact.get("event_type") != expected_event_type
+        or fact.get("event_version") != 1
+        or fact.get("aggregate_id") != expected_aggregate_id
+        or fact.get("correlation_id") != expected_correlation_id
+        or fact.get("causation_id") is not None
+        or set(fact_payload) != _RUN_LEDGER_FACT_PAYLOAD_KEYS
+        or fact_payload.get("schema_version") != "execution.control_plane.fact.v1"
+        or fact_payload.get("run_id") != run_id
+        or raw_event != canonical_fact_event
+        or fact_metadata.get("idempotency_key") != expected_idempotency_key
+        or fact_metadata.get("run_id") != run_id
+        or str(fact_metadata.get("task_id") or "") != expected_task_id
+        or str(fact_metadata.get("correlation_id") or "") != expected_correlation_id
+    ):
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_noncanonical")
+    fact_occurred_at = fact.get("occurred_at")
+    if type(fact_occurred_at) is not str or not fact_occurred_at:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_noncanonical")
+    receipt = FactEventAppendedV1(
+        event_id=fact_event_id,
+        workspace=str(workspace),
+        stream=_EXECUTION_CONTROL_PLANE_STREAM,
+        storage_path="runtime/events/execution.control_plane.jsonl",
+        appended_at=fact_occurred_at,
+        appended_seq=fact_seq,
+    )
+    try:
+        projection_row, projection_bytes = ledger._build_canonical_projection_row(
+            canonical_fact_event,
+            recorded_at=receipt.appended_at,
+        )
+    except ValueError as exc:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_noncanonical") from exc
+    return _RunLedgerFactAuthority(
+        canonical_event=canonical_fact_event,
+        projection_row=projection_row,
+        projection_bytes=projection_bytes,
+        receipt=receipt,
+    )
+
+
+def _next_run_ledger_fact_page_offset(
+    *,
+    current_offset: int,
+    raw_next_offset: Any,
+    visited_offsets: set[int],
+) -> int | None:
+    if type(raw_next_offset) is not int or raw_next_offset < 0:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_page_offset_noncanonical")
+    if raw_next_offset == 0:
+        return None
+    if raw_next_offset == current_offset:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_page_offset_stalled")
+    if raw_next_offset in visited_offsets:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_page_offset_cycle")
+    if raw_next_offset < current_offset:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_page_offset_regressed")
+    return raw_next_offset
+
+
+def _load_run_ledger_fact_authorities(
+    *,
+    workspace: Path,
+    run_id: str,
+    ledger: RunLedger,
+) -> tuple[_RunLedgerFactAuthority, ...]:
+    """Page all same-run Facts once, proving bounded identity and authority order."""
+
+    authorities: list[_RunLedgerFactAuthority] = []
+    seen_fact_event_ids: set[str] = set()
+    seen_fact_seqs: set[int] = set()
+    visited_offsets: set[int] = set()
+    previous_fact_seq = 0
+    record_count = 0
+    page_count = 0
+    offset = 0
+    while True:
+        if page_count >= _RUN_LEDGER_FACT_PROOF_MAX_PAGES:
+            raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_page_limit_exceeded")
+        visited_offsets.add(offset)
+        page_count += 1
+        page = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(workspace),
+                stream=_EXECUTION_CONTROL_PLANE_STREAM,
+                limit=_RUN_LEDGER_FACT_PROOF_PAGE_SIZE,
+                offset=offset,
+                run_id=run_id,
+                strict_integrity=True,
+            )
+        )
+        page_events = page.events
+        record_count += len(page_events)
+        if record_count > _RUN_LEDGER_FACT_PROOF_MAX_RECORDS:
+            raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_record_limit_exceeded")
+        for fact in page_events:
+            fact_event_id = fact.get("event_id")
+            if type(fact_event_id) is not str or not fact_event_id:
+                raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_event_id_noncanonical")
+            if fact_event_id in seen_fact_event_ids:
+                raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_event_id_duplicate")
+            fact_seq = fact.get("seq")
+            if type(fact_seq) is not int or fact_seq < 1:
+                raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_seq_noncanonical")
+            if fact_seq in seen_fact_seqs:
+                raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_seq_duplicate")
+            if previous_fact_seq and fact_seq <= previous_fact_seq:
+                raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_seq_out_of_order")
+            seen_fact_event_ids.add(fact_event_id)
+            seen_fact_seqs.add(fact_seq)
+            previous_fact_seq = fact_seq
+            authority = _build_run_ledger_fact_authority(
+                fact=fact,
+                fact_event_id=fact_event_id,
+                fact_seq=fact_seq,
+                workspace=workspace,
+                run_id=run_id,
+                ledger=ledger,
+            )
+            if authority is not None:
+                authorities.append(authority)
+        next_offset = _next_run_ledger_fact_page_offset(
+            current_offset=offset,
+            raw_next_offset=page.next_offset,
+            visited_offsets=visited_offsets,
+        )
+        if next_offset is None:
+            return tuple(authorities)
+        offset = next_offset
+
+
+def _reconcile_run_ledger_partial_tail_authority(
+    *,
+    authorities: tuple[_RunLedgerFactAuthority, ...],
+    canonical_event: dict[str, Any],
+    projected_rows: tuple[dict[str, Any], ...],
+    partial_tail: bytes,
+) -> tuple[str, FactEventAppendedV1] | None:
+    """Require the projection to be the exact authority prefix plus one partial row."""
+
+    if not authorities:
+        if projected_rows:
+            raise ValueError("run_ledger_projection_corrupt:partial_tail_projection_fact_mismatch")
+        return None
+    authority_append_ids: set[str] = set()
+    for authority in authorities:
+        append_id = str(authority.canonical_event.get("append_id") or "")
+        if append_id in authority_append_ids:
+            raise ValueError("run_ledger_projection_corrupt:partial_tail_fact_ambiguous")
+        authority_append_ids.add(append_id)
+    if len(projected_rows) != len(authorities) - 1:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_unprojected_fact_ambiguity")
+    for authority, projected_row in zip(authorities[:-1], projected_rows, strict=True):
+        if authority.projection_row != projected_row:
+            raise ValueError("run_ledger_projection_corrupt:partial_tail_projection_fact_order_mismatch")
+    authority = authorities[-1]
+    if authority.canonical_event != canonical_event:
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_current_fact_mismatch")
+    projection_bytes = authority.projection_bytes
+    if len(partial_tail) >= len(projection_bytes) or not projection_bytes.startswith(partial_tail):
+        raise ValueError("run_ledger_projection_corrupt:partial_tail_mismatch")
+    return authority.receipt.appended_at, authority.receipt
 
 
 def _count_value(value: Any) -> int:
@@ -425,6 +668,9 @@ def _read_execution_control_plane_facts(
                 if not isinstance(event, dict):
                     continue
                 projected = dict(event)
+                recorded_at = str(projected.get("recorded_at") or fact.get("occurred_at") or "").strip()
+                if recorded_at:
+                    projected["recorded_at"] = recorded_at
                 projected["fact_event_id"] = str(fact.get("event_id") or "")
                 projected["fact_event_seq"] = int(fact.get("seq") or 0)
                 projected["fact_stream"] = _EXECUTION_CONTROL_PLANE_STREAM
@@ -918,29 +1164,59 @@ def _publish_run_ledger_projection_update(
 
 
 def append_run_ledger_event(command: AppendRunLedgerEventCommandV1) -> RunLedgerAppendResultV1:
-    """Commit one control-plane fact, then update the rebuildable ledger view."""
+    """Commit one Fact-backed ledger row through the projection-owned transaction."""
 
     workspace = Path(command.workspace).expanduser().resolve()
     ledger = RunLedger(workspace, run_id=command.run_id)
-    prepared_event = ledger.prepare_event(dict(command.event))
+    prepared_event = ledger.prepare_idempotent_event(dict(command.event))
     event_type = str(prepared_event.get("event_type") or "control_plane_event").strip()
-    fact_receipt = append_fact_event(
-        AppendFactEventCommandV1(
-            workspace=str(workspace),
-            stream=_EXECUTION_CONTROL_PLANE_STREAM,
-            event_type=event_type,
-            payload={
-                "schema_version": "execution.control_plane.fact.v1",
-                "run_id": command.run_id,
-                "event": prepared_event,
-            },
-            source="control_plane.run_ledger",
+
+    def prove_partial_tail_fact(
+        canonical_event: dict[str, Any],
+        projected_rows: tuple[dict[str, Any], ...],
+        partial_tail: bytes,
+    ) -> tuple[str, Any] | None:
+        """Prove complete Fact ownership before repairing one partial tail."""
+        authorities = _load_run_ledger_fact_authorities(
+            workspace=workspace,
             run_id=command.run_id,
-            task_id=str(prepared_event.get("task_id") or "").strip() or None,
-            correlation_id=str(prepared_event.get("turn_id") or prepared_event.get("event_id") or "").strip() or None,
+            ledger=ledger,
         )
+        return _reconcile_run_ledger_partial_tail_authority(
+            authorities=authorities,
+            canonical_event=canonical_event,
+            projected_rows=projected_rows,
+            partial_tail=partial_tail,
+        )
+
+    def append_canonical_fact(canonical_event: dict[str, Any]) -> tuple[str, Any]:
+        fact_receipt = append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=str(workspace),
+                stream=_EXECUTION_CONTROL_PLANE_STREAM,
+                event_type=event_type,
+                payload={
+                    "schema_version": "execution.control_plane.fact.v1",
+                    "run_id": command.run_id,
+                    "event": canonical_event,
+                },
+                source="control_plane.run_ledger",
+                run_id=command.run_id,
+                task_id=str(canonical_event.get("task_id") or "").strip() or None,
+                correlation_id=str(canonical_event.get("turn_id") or canonical_event.get("event_id") or "").strip()
+                or None,
+                idempotency_key=ledger.fact_idempotency_key(canonical_event),
+                durability="fsync",
+                strict_integrity=True,
+            )
+        )
+        return fact_receipt.appended_at, fact_receipt
+
+    persisted, fact_receipt = ledger.append_event_with_fact_transaction(
+        prepared_event,
+        append_fact=append_canonical_fact,
+        prove_partial_tail_fact=prove_partial_tail_fact,
     )
-    persisted = ledger.append_event(prepared_event)
     persisted["fact_receipt"] = {
         "event_id": fact_receipt.event_id,
         "stream": fact_receipt.stream,
@@ -949,12 +1225,14 @@ def append_run_ledger_event(command: AppendRunLedgerEventCommandV1) -> RunLedger
         "appended_seq": fact_receipt.appended_seq,
     }
     event = persisted.get("event")
-    if isinstance(event, dict):
-        _publish_run_ledger_projection_update(
+    if isinstance(event, dict) and _jetstream_publish_enabled():
+        published = _publish_run_ledger_projection_update(
             workspace=workspace,
             run_id=command.run_id,
             event=event,
         )
+        if not published:
+            raise RuntimeError("Run Ledger projection publish failed after durable append")
     return RunLedgerAppendResultV1(receipt=persisted)
 
 

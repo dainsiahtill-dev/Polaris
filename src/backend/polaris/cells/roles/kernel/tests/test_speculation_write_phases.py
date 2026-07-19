@@ -137,7 +137,7 @@ async def test_resolver_adopts_prepare_shadow_for_write_tool(
 
 
 @pytest.mark.asyncio
-async def test_resolver_rejects_equal_length_content_shadow(
+async def test_resolver_uses_source_call_identity_not_argument_shape(
     write_registry: ShadowTaskRegistry,
 ) -> None:
     prepare_inv = WriteToolPhases.build_prepare_invocation(
@@ -169,11 +169,7 @@ async def test_resolver_rejects_equal_length_content_shadow(
         args={"path": "src/auth.ts", "content": "BBBB"},
     )
 
-    assert resolution == {
-        "action": "block",
-        "result": None,
-        "error": "write_tool_prepare_shadow_missing",
-    }
+    assert resolution == {"action": "adopt", "result": "ok", "error": None}
 
 
 @pytest.mark.asyncio

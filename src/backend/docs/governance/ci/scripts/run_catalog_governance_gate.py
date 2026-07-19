@@ -112,7 +112,7 @@ _FACT_STREAM_REQUIRED_EFFECTS = frozenset(
     }
 )
 _FACT_STREAM_CONTRACT_KINDS = ("commands", "queries", "events", "results", "errors")
-_FACT_STREAM_PUBLIC_EXPORT_COUNT = 37
+_FACT_STREAM_PUBLIC_EXPORT_COUNT = 49
 
 # Cross-cell acyclicity (GATE-01): a NEW policy enhancement.
 # ACGA 2.0 has NO on-disk peer-cell acyclicity rule, so this gate does not enforce a
@@ -370,10 +370,7 @@ def _check_fact_stream_contract_projection(
             _fact_stream_issue(
                 issues,
                 path=path,
-                message=(
-                    f"FactStream {artifact} declares nonexistent {kind}: "
-                    + ", ".join(sorted(nonexistent))
-                ),
+                message=(f"FactStream {artifact} declares nonexistent {kind}: " + ", ".join(sorted(nonexistent))),
             )
         missing = expected_contracts[kind] - declared
         extra = declared - expected_contracts[kind]
@@ -520,8 +517,7 @@ def _check_fact_stream_surface_drift(
                 issues,
                 path=_FACT_STREAM_ROOT_REL,
                 message=(
-                    "FactStream root imports outside the public facade: "
-                    + ", ".join(sorted(unexpected_root_imports))
+                    "FactStream root imports outside the public facade: " + ", ".join(sorted(unexpected_root_imports))
                 ),
             )
 
@@ -1288,10 +1284,7 @@ def _internal_component_edges(
     member_set = frozenset(members)
     return tuple(
         sorted(
-            f"{source} -> {target}"
-            for source in member_set
-            for target in graph.get(source, ())
-            if target in member_set
+            f"{source} -> {target}" for source in member_set for target in graph.get(source, ()) if target in member_set
         )
     )
 
@@ -1378,15 +1371,11 @@ def _check_no_new_cross_cell_cycle(
     for component in components:
         component_members = frozenset(component)
         observed_edges = frozenset(_internal_component_edges(graph, component_members))
-        matching_member_baselines = tuple(
-            baseline for baseline in baselines if component_members <= baseline.members
-        )
+        matching_member_baselines = tuple(baseline for baseline in baselines if component_members <= baseline.members)
         if any(observed_edges <= baseline.internal_edges for baseline in matching_member_baselines):
             continue
         if matching_member_baselines:
-            allowed_edges = frozenset().union(
-                *(baseline.internal_edges for baseline in matching_member_baselines)
-            )
+            allowed_edges = frozenset().union(*(baseline.internal_edges for baseline in matching_member_baselines))
             unexpected_edges = sorted(observed_edges - allowed_edges)
             reason = "new internal edge(s): " + ", ".join(unexpected_edges)
         else:

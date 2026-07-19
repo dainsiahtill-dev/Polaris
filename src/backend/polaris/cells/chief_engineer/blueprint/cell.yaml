@@ -26,10 +26,12 @@ public_contracts:
   - GenerateTaskBlueprintCommandV1
   queries:
   - GetBlueprintStatusQueryV1
+  - QueryBlueprintProvenanceV1
   events:
   - TaskBlueprintGeneratedEventV1
   results:
   - TaskBlueprintResultV1
+  - TaskBlueprintProvenanceSnapshotV1
   errors:
   - ChiefEngineerBlueprintErrorV1
 depends_on:

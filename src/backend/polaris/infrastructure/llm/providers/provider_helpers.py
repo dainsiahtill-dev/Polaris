@@ -31,7 +31,8 @@ import concurrent.futures
 import os
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     pass
@@ -40,12 +41,14 @@ import logging
 import random
 import threading
 from collections import OrderedDict
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import requests
 from polaris.kernelone.common.clock import ClockPort, RealClock
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
-from polaris.kernelone.llm.response_parser import LLMResponseParser
+from polaris.kernelone.llm.engine.contracts import get_physical_provider_dispatch_port
+from polaris.kernelone.llm.response_parser import FinalizedResponse, LLMResponseParser
 from polaris.kernelone.llm.types import (
     HealthResult,
     InvokeResult,
@@ -55,9 +58,13 @@ from polaris.kernelone.llm.types import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterable, Callable
+    from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 
     import aiohttp
+    from polaris.kernelone.llm.engine.contracts import (
+        AsyncPhysicalProviderDispatchPort,
+        PhysicalProviderDispatchPort,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +295,16 @@ def _blocking_http_post(
 
     # Loop exists but is not running -- call directly.
     return _do_requests_post(url, headers, payload, timeout)
+
+
+def _thaw_physical_dispatch_value(value: Any) -> Any:
+    """Create the sole mutable transport copy immediately before requests.post."""
+
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_physical_dispatch_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_physical_dispatch_value(item) for item in value]
+    return value
 
 
 def _blocking_sleep(seconds: float) -> None:
@@ -762,6 +779,82 @@ def _parse_retry_after_seconds(response: Any) -> float | None:
     return seconds if seconds >= 0 else None
 
 
+class _GovernedHttpResponseError(RuntimeError):
+    """Carry one non-success physical HTTP response through the attempt gate."""
+
+    def __init__(self, response: Any) -> None:
+        self.response = response
+        status_code = getattr(response, "status_code", "unknown")
+        super().__init__(f"governed HTTP response status {status_code}")
+
+
+class _GovernedHttpAttemptResult:
+    """Parsed result of one successful governed physical HTTP attempt."""
+
+    __slots__ = ("data", "finalized", "latency_ms", "output", "response", "usage")
+
+    def __init__(
+        self,
+        *,
+        response: Any,
+        data: dict[str, Any],
+        latency_ms: int,
+        output: str,
+        finalized: FinalizedResponse,
+        usage: Usage,
+    ) -> None:
+        self.response = response
+        self.data = data
+        self.latency_ms = latency_ms
+        self.output = output
+        self.finalized = finalized
+        self.usage = usage
+
+
+def _http_response_is_ok(response: Any) -> bool:
+    response_ok = getattr(response, "ok", None)
+    if response_ok is not None:
+        return bool(response_ok)
+    status_code = getattr(response, "status_code", None)
+    return isinstance(status_code, int) and status_code < 400
+
+
+def _send_governed_http_attempt(
+    frozen: Mapping[str, Any],
+    *,
+    prompt: str,
+    clock: ClockPort,
+    start: float,
+    extract_output: Callable[[dict[str, Any]], str],
+    usage_from_response: Callable[[str, str, dict[str, Any]], Usage],
+) -> _GovernedHttpAttemptResult:
+    """Send and parse once inside the physical-attempt lifecycle boundary."""
+
+    response = _blocking_http_post(
+        str(frozen["endpoint"]),
+        _thaw_physical_dispatch_value(frozen["headers"]),
+        _thaw_physical_dispatch_value(frozen["body"]),
+        frozen["transport"]["timeout"],
+    )
+    if not _http_response_is_ok(response):
+        raise _GovernedHttpResponseError(response)
+    data: dict[str, Any] = response.json()
+    # Preserve the legacy latency boundary: JSON parsing is included, while
+    # provider extraction, semantic finalization, and usage projection are not.
+    latency_ms = int((clock.time() - start) * 1000)
+    output = extract_output(data)
+    finalized = LLMResponseParser.finalize_response(data, visible_text=output)
+    usage = usage_from_response(prompt, finalized.output, data)
+    return _GovernedHttpAttemptResult(
+        response=response,
+        data=data,
+        latency_ms=latency_ms,
+        output=output,
+        finalized=finalized,
+        usage=usage,
+    )
+
+
 def invoke_with_retry(
     url: str,
     headers: dict[str, str],
@@ -777,6 +870,7 @@ def invoke_with_retry(
     backoff_base_seconds: float = 0.5,
     backoff_max_seconds: float = 30.0,
     clock: ClockPort | None = None,
+    physical_dispatch_port: PhysicalProviderDispatchPort | None = None,
 ) -> InvokeResult:
     """POST *url* with JSON *payload*, retrying up to *retries* times on failure.
 
@@ -784,6 +878,13 @@ def invoke_with_retry(
         clock: Optional injected clock for testability. Defaults to RealClock.
     """
     _clock: ClockPort = clock if clock is not None else RealClock()
+    resolved_physical_dispatch_port = physical_dispatch_port
+    if resolved_physical_dispatch_port is None:
+        bound_port = get_physical_provider_dispatch_port()
+        if bound_port is not None:
+            if not hasattr(bound_port, "dispatch_sync"):
+                raise RuntimeError("bound physical provider dispatch port does not support dispatch_sync")
+            resolved_physical_dispatch_port = cast("PhysicalProviderDispatchPort", bound_port)
     attempt = 0
     retries = max(0, int(retries))
     breaker = circuit_breaker or get_circuit_breaker(
@@ -809,11 +910,39 @@ def invoke_with_retry(
         try:
             # _blocking_http_post offloads to a ThreadPoolExecutor when an event
             # loop is running, preventing event-loop blocking.
-            response = _blocking_http_post(url, headers, payload, timeout)
-            response_ok = getattr(response, "ok", None)
-            if response_ok is None:
-                status_code = getattr(response, "status_code", None)
-                response_ok = isinstance(status_code, int) and status_code < 400
+            governed_result: _GovernedHttpAttemptResult | None = None
+            if resolved_physical_dispatch_port is None:
+                response = _blocking_http_post(url, headers, payload, timeout)
+            else:
+                try:
+                    governed_result = resolved_physical_dispatch_port.dispatch_sync(
+                        wire_request={
+                            "endpoint": url,
+                            "headers": headers,
+                            "body": payload,
+                            "transport": {
+                                "kind": "requests.post",
+                                "timeout": timeout,
+                            },
+                        },
+                        send=lambda frozen: _send_governed_http_attempt(
+                            frozen,
+                            prompt=prompt,
+                            clock=_clock,
+                            start=start,
+                            extract_output=extract_output,
+                            usage_from_response=usage_from_response,
+                        ),
+                    )
+                    response = governed_result.response
+                except _GovernedHttpResponseError as governed_failure:
+                    # Reuse the exact response object that crossed the wire. The
+                    # gate has already recorded this physical attempt as failed;
+                    # the helper now applies its existing body/status/Retry-After,
+                    # overflow-heal, backoff, and breaker policy without a second
+                    # POST or a reconstructed response.
+                    response = governed_failure.response
+            response_ok = _http_response_is_ok(response)
             if not response_ok:
                 # Log response body for error debugging before raising
                 error_body = ""
@@ -922,16 +1051,23 @@ def invoke_with_retry(
                         error=f"{status_code} Client Error from {url}: {error_body[:500] if error_body else '(empty)'}",
                     )
                 response.raise_for_status()
-            data = response.json()
-            latency_ms = int((_clock.time() - start) * 1000)
-            output = extract_output(data)
+            if governed_result is None:
+                data = response.json()
+                latency_ms = int((_clock.time() - start) * 1000)
+                output = extract_output(data)
+                finalized = LLMResponseParser.finalize_response(data, visible_text=output)
+                usage = usage_from_response(prompt, finalized.output, data)
+            else:
+                data = governed_result.data
+                latency_ms = governed_result.latency_ms
+                output = governed_result.output
+                finalized = governed_result.finalized
+                usage = governed_result.usage
             # Canonical reasoning-aware finalization (DEFECT 2 SSoT): one funnel
             # recovers a content:null reasoning-model answer (qwen3.6/MiniMax-M3)
             # or fails closed on a mid-reasoning truncation, instead of silently
             # reporting an empty result. ``output`` is this provider's own content
             # extraction; the reasoning/finish_reason channels come from ``data``.
-            finalized = LLMResponseParser.finalize_response(data, visible_text=output)
-            usage = usage_from_response(prompt, finalized.output, data)
             breaker.on_success()  # transport succeeded even if the visible output was empty
             if not finalized.ok:
                 return InvokeResult(
@@ -1231,6 +1367,147 @@ async def _close_and_create_session(
     return aiohttp_module.ClientSession(timeout=timeout, connector=connector)
 
 
+_AsyncStreamGovernanceMode = Literal["legacy_ungoverned", "governed_required"]
+
+
+def _validate_async_stream_governance(
+    *,
+    governance_mode: _AsyncStreamGovernanceMode,
+    physical_dispatch_port: AsyncPhysicalProviderDispatchPort | None,
+) -> None:
+    if governance_mode not in {"legacy_ungoverned", "governed_required"}:
+        raise ValueError("async stream governance_mode is invalid")
+    if governance_mode == "governed_required" and physical_dispatch_port is None:
+        raise RuntimeError("governed async stream requires a physical dispatch port")
+
+
+def _build_async_stream_wire_request(
+    *,
+    url: str,
+    headers: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    return {
+        "endpoint": str(url),
+        "headers": dict(headers),
+        "body": dict(payload),
+        "transport": {
+            "kind": "aiohttp.ClientSession.post",
+            "timeout_seconds": timeout_seconds if timeout_seconds > 0 else 60,
+        },
+    }
+
+
+@asynccontextmanager
+async def _open_frozen_aiohttp_stream(
+    frozen_wire: Mapping[str, Any],
+) -> AsyncIterator[aiohttp.ClientResponse]:
+    """Open one response/session pair from the gate's immutable dispatch view."""
+
+    session: aiohttp.ClientSession | None = None
+    try:
+        session = await _close_and_create_session(None)
+        endpoint = str(frozen_wire["endpoint"])
+        headers = _thaw_physical_dispatch_value(frozen_wire["headers"])
+        body = _thaw_physical_dispatch_value(frozen_wire["body"])
+        transport = frozen_wire["transport"]
+        if not isinstance(headers, dict) or not isinstance(body, dict) or not isinstance(transport, Mapping):
+            raise TypeError("frozen async HTTP dispatch view is malformed")
+        timeout_total = int(transport["timeout_seconds"])
+        timeout = _ensure_aiohttp_imported().ClientTimeout(total=timeout_total)
+        async with session.post(
+            endpoint,
+            headers=headers,
+            json=body,
+            timeout=timeout,
+        ) as response:
+            yield response
+    finally:
+        if session is not None:
+            await _close_session_if_possible(session)
+
+
+def _dispatch_async_stream_attempt(
+    *,
+    wire_request: Mapping[str, Any],
+    physical_dispatch_port: AsyncPhysicalProviderDispatchPort | None,
+    consume: Callable[[aiohttp.ClientResponse], AsyncIterator[Any]],
+) -> AsyncIterator[Any]:
+    if physical_dispatch_port is not None:
+        return physical_dispatch_port.dispatch_stream_async(
+            wire_request=wire_request,
+            open_stream=_open_frozen_aiohttp_stream,
+            consume=consume,
+        )
+
+    async def _legacy_dispatch() -> AsyncIterator[Any]:
+        async with _open_frozen_aiohttp_stream(wire_request) as response:
+            async for item in consume(response):
+                yield item
+
+    return _legacy_dispatch()
+
+
+async def _aclose_stream_resisting_cancellation(stream: AsyncIterator[Any]) -> bool:
+    close = getattr(stream, "aclose", None)
+    if not callable(close):
+        return False
+    close_task = asyncio.create_task(close())
+    cancellation_observed = False
+    while True:
+        try:
+            await asyncio.shield(close_task)
+            return cancellation_observed
+        except asyncio.CancelledError:
+            if close_task.cancelled():
+                raise
+            cancellation_observed = True
+
+
+async def _consume_data_line_response(
+    response: aiohttp.ClientResponse,
+    *,
+    url: str,
+) -> AsyncIterator[dict[str, Any]]:
+    if not response.ok:
+        try:
+            error_body = await response.text()
+            logger.warning(
+                "[provider-helpers] HTTP %s from %s: %s",
+                response.status,
+                url,
+                error_body[:500] if error_body else "(empty)",
+            )
+        except (RuntimeError, ValueError):
+            logger.warning("[provider-helpers] HTTP %s from %s (failed to read body)", response.status, url)
+    response.raise_for_status()
+    content_type = str(response.headers.get("Content-Type", "") or "").lower()
+    if "application/json" in content_type:
+        payload_obj = await response.json()
+        if isinstance(payload_obj, dict):
+            yield payload_obj
+            return
+        raise RuntimeError(
+            f"provider_stream_invalid_json: expected JSON object from {url}, got {type(payload_obj).__name__}"
+        )
+
+    decoded_event_count = 0
+    async for data_str in iter_data_line_payloads(response.content):
+        if data_str == "[DONE]":
+            break
+        try:
+            payload_obj = json.loads(data_str)
+        except (RuntimeError, ValueError) as exc:
+            logger.debug("[provider-helpers] Failed to decode provider JSON payload from %s: %s", url, exc)
+            continue
+        if isinstance(payload_obj, dict):
+            decoded_event_count += 1
+            yield payload_obj
+    if decoded_event_count == 0:
+        raise RuntimeError(f"provider_stream_empty: no structured events decoded from streaming response {url}")
+
+
 async def invoke_stream_with_retry(
     url: str,
     headers: dict[str, str],
@@ -1239,134 +1516,67 @@ async def invoke_stream_with_retry(
     *,
     max_attempts: int = _STREAM_RETRY_MAX_ATTEMPTS,
     retry_delay_seconds: float = _STREAM_RETRY_DELAY_SEC,
+    governance_mode: _AsyncStreamGovernanceMode = "legacy_ungoverned",
+    physical_dispatch_port: AsyncPhysicalProviderDispatchPort | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
-    """POST *url* with JSON *payload* as provider data-line stream, retrying on transient network errors.
+    """POST provider data-line streams with one physical gate per retry."""
 
-    This is the async counterpart to invoke_with_retry, designed for streaming responses.
-    Uses aiohttp for async HTTP requests and implements retry with configurable delay.
-
-    Args:
-        url: The endpoint URL to POST to.
-        headers: HTTP headers for the request.
-        payload: JSON-serializable request body.
-        timeout_seconds: Request timeout in seconds.
-        max_attempts: Maximum number of retry attempts (default from env or 3).
-        retry_delay_seconds: Delay between retries in seconds (default from env or 5s).
-
-    Yields:
-        dict: Parsed JSON events from the provider data-line stream.
-
-    Raises:
-        aiohttp.ClientError: If all retries are exhausted.
-    """
-    aiohttp_module = _ensure_aiohttp_imported()
-    session: aiohttp.ClientSession | None = None
+    _validate_async_stream_governance(
+        governance_mode=governance_mode,
+        physical_dispatch_port=physical_dispatch_port,
+    )
     last_exc: BaseException | None = None
+    for attempt in range(1, max_attempts + 1):
+        attempt_stream: AsyncIterator[Any] | None = None
+        try:
+            wire_request = _build_async_stream_wire_request(
+                url=url,
+                headers=headers,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+            )
 
-    try:
-        for attempt in range(1, max_attempts + 1):
-            try:
-                # Create or reuse session
-                if session is None or _session_is_closed(session):
-                    session = await _close_and_create_session(session)
+            async def _consume(response: aiohttp.ClientResponse) -> AsyncIterator[dict[str, Any]]:
+                async for item in _consume_data_line_response(response, url=url):
+                    yield item
 
-                timeout = aiohttp_module.ClientTimeout(total=timeout_seconds if timeout_seconds > 0 else 60)
-
-                async with session.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=timeout,
-                ) as response:
-                    if not response.ok:
-                        # Log response body for error debugging before raising
-                        try:
-                            error_body = await response.text()
-                            logger.warning(
-                                "[provider-helpers] HTTP %s from %s: %s",
-                                response.status,
-                                url,
-                                error_body[:500] if error_body else "(empty)",
-                            )
-                        except (RuntimeError, ValueError):
-                            logger.warning(
-                                "[provider-helpers] HTTP %s from %s (failed to read body)", response.status, url
-                            )
-                    response.raise_for_status()
-                    content_type = str(response.headers.get("Content-Type", "") or "").lower()
-                    if "application/json" in content_type:
-                        payload_obj = await response.json()
-                        if isinstance(payload_obj, dict):
-                            yield payload_obj
-                            return
-                        raise RuntimeError(
-                            "provider_stream_invalid_json: expected JSON object "
-                            f"from {url}, got {type(payload_obj).__name__}"
-                        )
-
-                    decoded_event_count = 0
-                    async for data_str in iter_data_line_payloads(response.content):
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            payload_obj = json.loads(data_str)
-                        except (RuntimeError, ValueError) as exc:
-                            logger.debug(
-                                "[provider-helpers] Failed to decode provider JSON payload from %s: %s",
-                                url,
-                                exc,
-                            )
-                            continue
-                        if isinstance(payload_obj, dict):
-                            decoded_event_count += 1
-                            yield payload_obj
-                    if decoded_event_count == 0:
-                        raise RuntimeError(
-                            f"provider_stream_empty: no structured events decoded from streaming response {url}"
-                        )
-
-                # Stream completed successfully
-                return
-
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                # Don't retry on timeout or cancellation
+            attempt_stream = _dispatch_async_stream_attempt(
+                wire_request=wire_request,
+                physical_dispatch_port=physical_dispatch_port,
+                consume=_consume,
+            )
+            async for item in attempt_stream:
+                yield item
+            return
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            raise
+        except BaseException as exc:
+            last_exc = exc
+            if not _is_retryable_network_error(exc):
                 raise
+            if attempt < max_attempts:
+                logger.warning(
+                    "[provider-helpers] Network jitter detected (attempt %d/%d): %s. Retrying in %.1fs...",
+                    attempt,
+                    max_attempts,
+                    type(exc).__name__,
+                    retry_delay_seconds,
+                )
+                await asyncio.sleep(retry_delay_seconds)
+            else:
+                logger.error(
+                    "[provider-helpers] Network jitter retry exhausted (all %d attempts failed): %s",
+                    max_attempts,
+                    str(exc),
+                )
+        finally:
+            if attempt_stream is not None:
+                close_cancelled = await _aclose_stream_resisting_cancellation(attempt_stream)
+                if close_cancelled:
+                    raise asyncio.CancelledError
 
-            except BaseException as exc:
-                last_exc = exc
-
-                if not _is_retryable_network_error(exc):
-                    # Non-retryable error, propagate immediately
-                    raise
-
-                if attempt < max_attempts:
-                    logger.warning(
-                        "[provider-helpers] Network jitter detected (attempt %d/%d): %s. Retrying in %.1fs...",
-                        attempt,
-                        max_attempts,
-                        type(exc).__name__,
-                        retry_delay_seconds,
-                    )
-                    # Close the failed session before retry to prevent leak
-                    old_session = session
-                    session = None  # Prevent _close_and_create_session from closing old session
-                    if old_session is not None:
-                        await _close_session_if_possible(old_session)
-                    await asyncio.sleep(retry_delay_seconds)
-                else:
-                    logger.error(
-                        "[provider-helpers] Network jitter retry exhausted (all %d attempts failed): %s",
-                        max_attempts,
-                        str(exc),
-                    )
-
-        # All retries exhausted
-        if last_exc is not None:
-            raise last_exc
-    finally:
-        # Ensure session is closed when generator is cleaned up
-        if session is not None:
-            await _close_session_if_possible(session)
+    if last_exc is not None:
+        raise last_exc
 
 
 async def invoke_stream_with_retry_and_handler(
@@ -1374,101 +1584,76 @@ async def invoke_stream_with_retry_and_handler(
     headers: dict[str, str],
     payload: dict[str, Any],
     timeout_seconds: int,
-    stream_handler: Callable[
-        [aiohttp.ClientResponse],
-        AsyncGenerator[Any, None],
-    ],
+    stream_handler: Callable[[aiohttp.ClientResponse], AsyncGenerator[Any, None]],
     *,
     max_attempts: int = _STREAM_RETRY_MAX_ATTEMPTS,
     retry_delay_seconds: float = _STREAM_RETRY_DELAY_SEC,
+    governance_mode: _AsyncStreamGovernanceMode = "legacy_ungoverned",
+    physical_dispatch_port: AsyncPhysicalProviderDispatchPort | None = None,
 ) -> AsyncGenerator[Any, None]:
-    """POST *url* with JSON *payload* as stream, with custom handler and retry on network errors.
+    """POST custom provider streams with one physical gate per retry."""
 
-    This is a more flexible version of invoke_stream_with_retry that allows providers
-    to provide their own stream processing logic (e.g., custom data-line parsing, token extraction).
-
-    Args:
-        url: The endpoint URL to POST to.
-        headers: HTTP headers for the request.
-        payload: JSON-serializable request body.
-        timeout_seconds: Request timeout in seconds.
-        stream_handler: Async generator function that processes the response and yields items.
-        max_attempts: Maximum number of retry attempts (default from env or 3).
-        retry_delay_seconds: Delay between retries in seconds (default from env or 5s).
-
-    Yields:
-        Any: Items yielded by the stream_handler function.
-
-    Raises:
-        aiohttp.ClientError: If all retries are exhausted.
-    """
-    aiohttp_module = _ensure_aiohttp_imported()
-    session: aiohttp.ClientSession | None = None
+    _validate_async_stream_governance(
+        governance_mode=governance_mode,
+        physical_dispatch_port=physical_dispatch_port,
+    )
     last_exc: BaseException | None = None
+    for attempt in range(1, max_attempts + 1):
+        attempt_stream: AsyncIterator[Any] | None = None
+        try:
+            wire_request = _build_async_stream_wire_request(
+                url=url,
+                headers=headers,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+            )
 
-    try:
-        for attempt in range(1, max_attempts + 1):
-            try:
-                # Create or reuse session
-                if session is None or _session_is_closed(session):
-                    session = await _close_and_create_session(session)
+            async def _consume(response: aiohttp.ClientResponse) -> AsyncIterator[Any]:
+                response.raise_for_status()
+                consumed = 0
+                async for item in stream_handler(response):
+                    consumed += 1
+                    yield item
+                if consumed == 0:
+                    raise RuntimeError(f"provider_stream_empty: custom handler decoded no events from {url}")
 
-                timeout = aiohttp_module.ClientTimeout(total=timeout_seconds if timeout_seconds > 0 else 60)
-
-                async with session.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=timeout,
-                ) as response:
-                    response.raise_for_status()
-
-                    # Use the provided stream handler
-                    async for item in stream_handler(response):
-                        yield item
-
-                # Stream completed successfully
-                return
-
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                # Don't retry on timeout or cancellation
+            attempt_stream = _dispatch_async_stream_attempt(
+                wire_request=wire_request,
+                physical_dispatch_port=physical_dispatch_port,
+                consume=_consume,
+            )
+            async for item in attempt_stream:
+                yield item
+            return
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            raise
+        except BaseException as exc:
+            last_exc = exc
+            if not _is_retryable_network_error(exc):
                 raise
+            if attempt < max_attempts:
+                logger.warning(
+                    "[provider-helpers] Network jitter detected (attempt %d/%d): %s. Retrying in %.1fs...",
+                    attempt,
+                    max_attempts,
+                    type(exc).__name__,
+                    retry_delay_seconds,
+                )
+                await asyncio.sleep(retry_delay_seconds)
+            else:
+                logger.error(
+                    "[provider-helpers] Network jitter retry exhausted (all %d attempts failed): %s",
+                    max_attempts,
+                    str(exc),
+                )
+        finally:
+            if attempt_stream is not None:
+                close_cancelled = await _aclose_stream_resisting_cancellation(attempt_stream)
+                if close_cancelled:
+                    raise asyncio.CancelledError
 
-            except BaseException as exc:
-                last_exc = exc
-
-                if not _is_retryable_network_error(exc):
-                    # Non-retryable error, propagate immediately
-                    raise
-
-                if attempt < max_attempts:
-                    logger.warning(
-                        "[provider-helpers] Network jitter detected (attempt %d/%d): %s. Retrying in %.1fs...",
-                        attempt,
-                        max_attempts,
-                        type(exc).__name__,
-                        retry_delay_seconds,
-                    )
-                    # Close the failed session before retry to prevent leak
-                    old_session = session
-                    session = None  # Prevent _close_and_create_session from closing old session
-                    if old_session is not None:
-                        await _close_session_if_possible(old_session)
-                    await asyncio.sleep(retry_delay_seconds)
-                else:
-                    logger.error(
-                        "[provider-helpers] Network jitter retry exhausted (all %d attempts failed): %s",
-                        max_attempts,
-                        str(exc),
-                    )
-
-        # All retries exhausted
-        if last_exc is not None:
-            raise last_exc
-    finally:
-        # Ensure session is closed when generator is cleaned up
-        if session is not None:
-            await _close_session_if_possible(session)
+    if last_exc is not None:
+        raise last_exc
 
 
 def build_chat_messages_payload(

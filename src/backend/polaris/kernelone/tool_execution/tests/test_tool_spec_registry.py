@@ -757,6 +757,136 @@ class TestEffectiveToolSpecSnapshots:
         assert after.canonical_tool_name == "second"
         assert after.snapshot_hash != before.snapshot_hash
 
+    def test_alias_only_binding_survives_unrelated_registration_in_effective_owner_view(self) -> None:
+        ToolSpecRegistry.register(
+            "first",
+            {"category": "read", "description": "first", "aliases": [], "arguments": []},
+        )
+        ToolSpecRegistry.register_alias_only("first", "legacy")
+        before = ToolSpecRegistry.capture_effective_spec("legacy")
+
+        ToolSpecRegistry.register(
+            "unrelated",
+            {"category": "read", "description": "unrelated", "aliases": [], "arguments": []},
+        )
+
+        state = ToolSpecRegistry._get_state()
+        assert hasattr(state, "effective_canonical_specs")
+        after = ToolSpecRegistry.capture_effective_spec("legacy")
+        assert after.canonical_tool_name == "first"
+        assert after.canonical_effective_spec == before.canonical_effective_spec
+
+    @pytest.mark.parametrize(
+        "bindings",
+        [
+            {"declared_alias": "owner"},
+            {"owner": "owner"},
+        ],
+    )
+    def test_provided_alias_view_requires_canonical_and_declared_alias_bindings(
+        self,
+        bindings: dict[str, str],
+    ) -> None:
+        from polaris.kernelone.tool_execution import tool_spec_registry
+
+        raw = {
+            "owner": {
+                "category": "read",
+                "description": "owner",
+                "aliases": ["declared_alias"],
+                "arguments": [],
+            }
+        }
+
+        with pytest.raises(
+            tool_spec_registry.ToolSpecRegistryConsistencyError,
+            match="alias binding view",
+        ):
+            tool_spec_registry._state_from_raw(raw, bindings)
+
+    def test_alias_only_rebind_keeps_complete_declared_owner_view(self) -> None:
+        ToolSpecRegistry.register(
+            "first",
+            {"category": "read", "description": "first", "aliases": ["declared"], "arguments": []},
+        )
+        ToolSpecRegistry.register(
+            "second",
+            {"category": "read", "description": "second", "aliases": [], "arguments": []},
+        )
+
+        ToolSpecRegistry.register_alias_only("first", "legacy")
+        ToolSpecRegistry.register_alias_only("second", "legacy")
+
+        assert ToolSpecRegistry.capture_effective_spec("declared").canonical_tool_name == "first"
+        assert ToolSpecRegistry.capture_effective_spec("legacy").canonical_tool_name == "second"
+        specs = ToolSpecRegistry.get_all_specs()
+        assert "legacy" not in specs["first"]["aliases"]
+        assert "legacy" in specs["second"]["aliases"]
+
+    def test_alias_only_exact_repeat_preserves_state_identity_and_snapshot_hashes(self) -> None:
+        ToolSpecRegistry.register(
+            "first",
+            {"category": "read", "description": "first", "aliases": [], "arguments": []},
+        )
+        ToolSpecRegistry.register_alias_only("first", "legacy")
+        state_before = ToolSpecRegistry._get_state()
+        snapshot_before = ToolSpecRegistry.capture_effective_spec("legacy")
+
+        ToolSpecRegistry.register_alias_only("first", "legacy")
+
+        assert ToolSpecRegistry._get_state() is state_before
+        snapshot_after = ToolSpecRegistry.capture_effective_spec("legacy")
+        assert snapshot_after.tool_spec_hash == snapshot_before.tool_spec_hash
+        assert snapshot_after.alias_binding_hash == snapshot_before.alias_binding_hash
+        assert snapshot_after.snapshot_hash == snapshot_before.snapshot_hash
+
+    def test_alias_only_fold_equivalent_repeat_preserves_declared_spelling_and_hashes(self) -> None:
+        ToolSpecRegistry.register(
+            "first",
+            {"category": "read", "description": "first", "aliases": [], "arguments": []},
+        )
+        ToolSpecRegistry.register_alias_only("first", "legacy")
+        state_before = ToolSpecRegistry._get_state()
+        specs_before = ToolSpecRegistry.get_all_specs()
+        snapshot_before = ToolSpecRegistry.capture_effective_spec("legacy")
+
+        ToolSpecRegistry.register_alias_only("first", "LEGACY")
+
+        assert ToolSpecRegistry._get_state() is state_before
+        assert ToolSpecRegistry.get_all_specs() == specs_before
+        assert ToolSpecRegistry.get_all_specs()["first"]["aliases"] == ["legacy"]
+        snapshot_after = ToolSpecRegistry.capture_effective_spec("legacy")
+        assert snapshot_after.tool_spec_hash == snapshot_before.tool_spec_hash
+        assert snapshot_after.alias_binding_hash == snapshot_before.alias_binding_hash
+        assert snapshot_after.snapshot_hash == snapshot_before.snapshot_hash
+
+    @pytest.mark.parametrize("raw_tool_name", ["Write-File", "WriteFile", "tools.Write-File"])
+    def test_capture_projects_exact_raw_binding_without_mutating_owner_state(self, raw_tool_name: str) -> None:
+        from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
+
+        token = ToolSpecRegistry._state_var.set(None)
+        try:
+            state_before = ToolSpecRegistry._get_state()
+            owner_bindings_before = state_before.alias_bindings
+
+            snapshot = ToolSpecRegistry.capture_effective_spec(raw_tool_name)
+            snapshot_bindings = frozen_node_to_value(snapshot.alias_binding_view)
+
+            assert snapshot.registered is True
+            assert snapshot.canonical_tool_name == "write_file"
+            assert isinstance(snapshot_bindings, dict)
+            assert snapshot_bindings[raw_tool_name] == "write_file"
+            assert ToolSpecRegistry._get_state().alias_bindings == owner_bindings_before
+        finally:
+            ToolSpecRegistry._state_var.reset(token)
+
+    def test_frozen_sequence_rejects_mutable_items_owner(self) -> None:
+        from polaris.kernelone.tool_execution.contracts import FrozenScalarV1, FrozenSequenceV1
+
+        mutable_items = [FrozenScalarV1("string", "first")]
+        with pytest.raises(ValueError, match="tuple"):
+            FrozenSequenceV1(mutable_items)  # type: ignore[arg-type]
+
     def test_snapshot_rejects_map_sequence_collision_and_nonfinite_scalars(self) -> None:
         from polaris.kernelone.tool_execution.contracts import (
             CapturedToolSpecSnapshotV1,

@@ -847,6 +847,66 @@ DEO-3, DEO-4, pre-Bench, and Bench remain `not_schedulable`.
 
 ## Task 4: Implement classification and public-policy evidence before DEO preflight
 
+### Architecture Amendment A6 (frozen; supersedes A5 dependency-cycle wording only)
+
+The A5 code ownership and public-contract direction remain authoritative:
+`roles.kernel` consumes `director.runtime.public`, `director.runtime` owns the
+authorization/public-policy evidence semantics, and `director.runtime` consumes
+TaskRuntime public contracts. A6 corrects one false graph claim discovered by
+the mandatory metadata-last gate. The repository is not globally acyclic: the
+live catalog contains one frozen historical 49-Cell SCC that already contains
+both `roles.kernel` and `director.runtime`. Adding the intended
+`roles.kernel -> director.runtime` public dependency therefore adds exactly one
+new internal shortcut edge to that SCC. `director.runtime ->
+runtime.task_runtime` remains outside the SCC and introduces no cycle.
+
+The metadata-last gate is authoritative evidence for this correction. After
+the two planned dependency declarations were added, catalog reconciliation had
+zero manifest mismatches but `no_new_cross_cell_cycle` reported exactly one
+High issue: `roles.kernel -> director.runtime`. This is not permission to
+regenerate or broadly relax the historical baseline.
+
+#### A6 exact governance decision
+
+- Preserve the strong typed one-way public dependency required by A5. Do not
+  replace Director-owned evidence with an opaque `object` bridge, duplicate the
+  closed error taxonomy, or move policy truth into `roles.adapters`.
+- Add exactly `roles.kernel -> director.runtime` to the existing SCC's frozen
+  internal-edge allowlist. Keep its 49-member set and every other edge
+  unchanged. Do not add an allowlist entry for `director.runtime ->
+  runtime.task_runtime`.
+- Add executable AST/import fences proving the approved shortcut stays
+  one-way: `director.runtime` production may not import `roles.kernel` or
+  `roles.adapters`; `runtime.task_runtime` production may not import Director
+  or roles Cells; Task 4 DEO imports from `roles.kernel` may target only
+  `director.runtime.public`, never Director internal modules.
+- The allowlist update is a precise declaration of current graph debt, not a
+  claim that Task 4 made the whole graph acyclic. Any additional member or
+  internal edge remains a High failure under the existing cycle gate.
+
+#### A6 exact additional write set and gates
+
+- Modify `src/backend/docs/governance/ci/cell-cycle-allowlist.yaml` by adding
+  only the exact approved edge.
+- Add
+  `src/backend/polaris/cells/roles/kernel/tests/test_directed_effect_dependency_fence.py`
+  for the three reverse/internal import prohibitions above.
+- Retain A5 metadata-last changes in
+  `director/runtime/cell.yaml`, `roles/kernel/cell.yaml`, and the catalog.
+- Run the Task 4 focused/static gates plus:
+
+```bash
+rtk proxy python -m pytest -q \
+  polaris/cells/roles/kernel/tests/test_directed_effect_dependency_fence.py \
+  docs/governance/ci/scripts/tests/test_catalog_cycle_gate.py
+rtk proxy python docs/governance/ci/scripts/run_catalog_governance_gate.py \
+  --workspace . --mode hard-fail
+```
+
+Expected GREEN: the new AST fence and existing cycle tests pass, manifest and
+catalog dependencies match, and catalog hard-fail returns zero issues. A6 does
+not schedule Task 5/Task 9, physical effects, DEO-3/4, pre-Bench, or Bench.
+
 ### Architecture Amendment A5 (frozen; supersedes A4 in full)
 
 **A5.1 errata (authoritative and additive):** The path, focused-gate, and

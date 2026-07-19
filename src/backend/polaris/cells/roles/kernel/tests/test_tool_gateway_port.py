@@ -377,6 +377,121 @@ class TestServiceExports:
 
 
 class TestSnapshotBoundGateway:
+    @pytest.mark.parametrize("raw_tool_name", ["Write-File", "WriteFile", "tools.Write-File"])
+    def test_bound_permission_accepts_owner_projected_exact_raw_binding(self, raw_tool_name: str) -> None:
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        gateway = RoleToolGateway(
+            RoleProfile(
+                role_id="director",
+                display_name="Director",
+                description="test profile",
+                tool_policy=RoleToolPolicy(
+                    whitelist=["write_file"],
+                    blacklist=[],
+                    allow_code_write=True,
+                    allow_command_execution=False,
+                    allow_file_delete=False,
+                    max_tool_calls_per_turn=10,
+                ),
+            ),
+            workspace=".",
+        )
+        snapshot = ToolSpecRegistry.capture_effective_spec(raw_tool_name)
+
+        allowed, reason = gateway.check_tool_permission_from_snapshot(
+            raw_tool_name=raw_tool_name,
+            canonical_tool_name="write_file",
+            normalized_tool_args={"file": "main.py", "content": "x"},
+            tool_snapshot=snapshot,
+        )
+
+        assert allowed is True
+        assert reason == "授权通过"
+
+    def test_bound_permission_rejects_forged_raw_alias_binding(self) -> None:
+        from dataclasses import replace
+
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        gateway = RoleToolGateway(
+            RoleProfile(
+                role_id="director",
+                display_name="Director",
+                description="test profile",
+                tool_policy=RoleToolPolicy(
+                    whitelist=["write_file"],
+                    blacklist=[],
+                    allow_code_write=True,
+                    allow_command_execution=False,
+                    allow_file_delete=False,
+                    max_tool_calls_per_turn=10,
+                ),
+            ),
+            workspace=".",
+        )
+        genuine = ToolSpecRegistry.capture_effective_spec("write_file")
+        forged = replace(genuine, raw_tool_name="read_file")
+
+        allowed, reason = gateway.check_tool_permission_from_snapshot(
+            raw_tool_name="read_file",
+            canonical_tool_name="write_file",
+            normalized_tool_args={"file": "main.py", "content": "x"},
+            tool_snapshot=forged,
+        )
+
+        assert allowed is False
+        assert "工具快照不一致" in reason
+
+    def test_bound_permission_does_not_fold_captured_raw_alias(self) -> None:
+        from dataclasses import replace
+
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        gateway = RoleToolGateway(
+            RoleProfile(
+                role_id="director",
+                display_name="Director",
+                description="test profile",
+                tool_policy=RoleToolPolicy(
+                    whitelist=["read_file"],
+                    blacklist=[],
+                    allow_code_write=False,
+                    allow_command_execution=False,
+                    allow_file_delete=False,
+                    max_tool_calls_per_turn=10,
+                ),
+            ),
+            workspace=".",
+        )
+        genuine = ToolSpecRegistry.capture_effective_spec("cat")
+        forged = replace(genuine, raw_tool_name="CAT")
+
+        allowed, reason = gateway.check_tool_permission_from_snapshot(
+            raw_tool_name="CAT",
+            canonical_tool_name="read_file",
+            normalized_tool_args={"path": "README.md"},
+            tool_snapshot=forged,
+        )
+
+        assert allowed is False
+        assert "工具快照不一致" in reason
+
+    def test_bound_snapshot_check_has_no_name_resolver_or_folding_scanner(self) -> None:
+        import inspect
+
+        from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+
+        source = inspect.getsource(RoleToolGateway._snapshot_matches_bound_tool)
+
+        assert not hasattr(RoleToolGateway, "_snapshot_name_candidates")
+        assert "canonicalize_tool_name" not in source
+        assert "_snapshot_name_candidates" not in source
+        assert "re." not in source
+
     def test_bound_permission_uses_only_the_supplied_snapshot(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.cells.roles.kernel.internal import tool_gateway
         from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway

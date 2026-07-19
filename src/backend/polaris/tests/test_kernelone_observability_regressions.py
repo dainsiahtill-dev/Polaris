@@ -7,6 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard, TaskStatus
 from polaris.kernelone.audit.invariant_sentinel import run_invariant_sentinel
 from polaris.kernelone.llm.providers import (
@@ -202,9 +207,7 @@ def test_reflection_generator_logs_exhausted_retries(
 
     with caplog.at_level(logging.WARNING):
         # generate() is now async after reflection.py refactor
-        result = asyncio.run(
-            generator.generate([_build_memory_item()], current_step=5)
-        )
+        result = asyncio.run(generator.generate([_build_memory_item()], current_step=5))
 
     assert result == []
     assert "attempt failed" in caplog.text
@@ -289,6 +292,13 @@ def test_task_board_terminal_event_write_does_not_spawn_thread(monkeypatch, tmp_
 
     monkeypatch.setattr("polaris.cells.runtime.task_runtime.internal.task_board.threading.Thread", _unexpected_thread)
 
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="kernelone_observability_regression_test_setup",
+        )
+    )
     board = TaskBoard(str(tmp_path))
     task = board.create(subject="t1")
     updated = board.update_status(

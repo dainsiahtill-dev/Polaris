@@ -6,12 +6,18 @@ import asyncio
 import multiprocessing
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 from polaris.cells.control_plane.run_ledger.public import FactorySettlementBarrierResultV1
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
 )
@@ -167,6 +173,13 @@ def _create_active_factory_child(
     *,
     factory_run_id: str,
 ) -> tuple[TaskRuntimeService, int, TaskRuntimeExecutionAttemptIdentityV1]:
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace.resolve()),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="factory_workspace_admission_test_bootstrap",
+        )
+    )
     runtime = TaskRuntimeService(str(workspace))
     row = runtime.create_task_row(subject="active Factory child")
     task_id = int(row["id"])
@@ -208,12 +221,15 @@ def _settle_factory_child(
     )
 
 
-def _expire_task_runtime_session(runtime: TaskRuntimeService, task_id: int) -> str:
-    session = runtime._read_session(task_id)
+def _expire_task_runtime_session(
+    runtime: TaskRuntimeService,
+    identity: TaskRuntimeExecutionAttemptIdentityV1,
+) -> TaskRuntimeExecutionAttemptIdentityV1:
+    session = runtime._read_session(identity.task_id)
     assert session is not None
     session.lease_expires_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
     assert runtime._write_session(session) is True
-    return session.session_id
+    return replace(identity, lease_expires_at=session.lease_expires_at)
 
 
 def _process_acquire_worker(
@@ -327,7 +343,7 @@ def test_expired_active_task_runtime_session_remains_unsettled_and_cannot_renew(
         workspace,
         factory_run_id="factory-expired-child",
     )
-    _expire_task_runtime_session(runtime, task_id)
+    identity = _expire_task_runtime_session(runtime, identity)
 
     settlement = runtime.query_factory_run_settlement(
         factory_run_id="factory-expired-child",
@@ -930,16 +946,60 @@ async def test_two_services_cannot_execute_same_run_stage_concurrently(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_failed_settled_stage_releases_active_workspace_lease(tmp_path: Path) -> None:
+async def test_failed_settled_stage_retains_exact_claim_until_explicit_reconciliation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed attempt stays fenced until canonical settlement is reconciled."""
+
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    barrier_queries: list[tuple[str, str]] = []
+
+    def query_closed_barrier(
+        queried_workspace: str | Path,
+        factory_run_id: str,
+    ) -> FactorySettlementBarrierResultV1:
+        normalized_workspace = str(Path(queried_workspace).resolve())
+        assert normalized_workspace == str(workspace.resolve())
+        barrier_queries.append((normalized_workspace, factory_run_id))
+        return _settlement_barrier(
+            workspace=workspace,
+            factory_run_id=factory_run_id,
+            release_allowed=True,
+        )
+
     service = FactoryRunService(
         workspace,
         cache_root=tmp_path / "runtime",
         executor=_FailedSettledStageExecutor(),
+        settlement_barrier_query=query_closed_barrier,
     )
     run = await service.create_run(FactoryConfig(name="failed-settled", stages=["director_dispatch"]))
     await service.start_run(run.id)
+
+    canonical_settlement: dict[str, object] = {
+        "schema_version": "task-runtime.factory-run-settlement/1",
+        "factory_run_id": run.id,
+        "settled": True,
+        "active_session_count": 0,
+        "active_sessions": [],
+        "conflict_count": 0,
+        "conflicts": [],
+        "observable_source": "task_runtime.observable_task_rows",
+        "observable_authoritative": True,
+        "observable_row_count": 1,
+        "proof_sources": [
+            "task_runtime.observable_task_rows",
+            "task_runtime.execution_session_files",
+        ],
+    }
+
+    def query_canonical_settlement(factory_run_id: str) -> dict[str, object]:
+        assert factory_run_id == run.id
+        return dict(canonical_settlement)
+
+    monkeypatch.setattr(service, "_query_child_session_settlement", query_canonical_settlement)
 
     result = await service.execute_stage(
         run.id,
@@ -951,10 +1011,41 @@ async def test_failed_settled_stage_releases_active_workspace_lease(tmp_path: Pa
     stored = await service.get_run(run.id)
     assert stored is not None
     assert stored.status == FactoryRunStatus.FAILED
-    lease = service._admission.current()
-    assert lease is not None
-    assert lease.state.value == "released"
-    assert lease.stage_execution_claim is None
+    retained = service._admission.current()
+    assert retained is not None
+    assert retained.state.value == "active"
+    assert retained.release_evidence is None
+    retained_claim = retained.stage_execution_claim
+    assert retained_claim is not None
+    assert retained_claim.run_id == run.id
+    assert retained_claim.stage == "director_dispatch"
+    assert retained_claim.attempt == 1
+    assert retained_claim.nonce
+    assert barrier_queries == []
+
+    reconciled = await service.reconcile_stage_execution_for_reentry(
+        run.id,
+        operation="factory_failure_terminalization",
+    )
+
+    assert reconciled.status == FactoryRunStatus.FAILED
+    after_reconciliation = service._admission.current()
+    assert after_reconciliation is not None
+    assert after_reconciliation.state.value == "active"
+    assert after_reconciliation.stage_execution_claim is None
+    assert after_reconciliation.release_evidence is None
+    assert barrier_queries == []
+
+    settled = await service.settle_terminal_run(run.id)
+
+    released = service._admission.current()
+    assert released is not None
+    assert released.state.value == "released"
+    assert released.stage_execution_claim is None
+    assert released.release_evidence is not None
+    assert released.release_evidence.source == "factory_terminal_drain"
+    assert settled.metadata["factory_run_ledger_settlement_barrier"]["barrier_hash"] == "barrier-closed"
+    assert barrier_queries == [(str(workspace.resolve()), run.id)]
 
 
 @pytest.mark.asyncio
@@ -969,7 +1060,7 @@ async def test_inflight_stage_claim_survives_wrapper_return_until_child_settles(
     )
     run = await service.create_run(FactoryConfig(name="retained-stage-claim", stages=["director_dispatch"]))
     await service.start_run(run.id)
-    runtime, task_id, identity = _create_active_factory_child(
+    runtime, _task_id, identity = _create_active_factory_child(
         workspace,
         factory_run_id=run.id,
     )
@@ -1215,7 +1306,7 @@ async def test_explicit_stale_owner_recovery_fences_old_session_before_takeover(
         workspace,
         factory_run_id=run.id,
     )
-    _expire_task_runtime_session(runtime, task_id)
+    identity = _expire_task_runtime_session(runtime, identity)
     clock.advance(11)
     stale = admission.current()
     assert stale is not None
@@ -1234,7 +1325,10 @@ async def test_explicit_stale_owner_recovery_fences_old_session_before_takeover(
     assert heartbeat["success"] is False
     assert heartbeat["reason"] == "session_not_active"
     assert completion["success"] is False
-    assert completion["code"] == "session_not_active"
+    # Recovery fences the expired session by rotating its persisted lease
+    # version.  The old attempt must therefore fail at the exact-identity
+    # barrier before its inactive status can be considered.
+    assert completion["code"] == "lease_version_mismatch"
 
     replacement = admission.acquire("factory-replacement")
     assert replacement.run_id == "factory-replacement"

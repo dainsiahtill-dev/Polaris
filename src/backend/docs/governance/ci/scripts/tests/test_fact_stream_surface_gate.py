@@ -19,18 +19,32 @@ _CONTRACTS: dict[str, list[str]] = {
     "commands": [
         "AppendFactEventCommandV1",
         "AppendIfGuardedSnapshotCommandV1",
+        "AppendSegmentedFactEventCommandV1",
+        "EnsureSegmentedFactLedgerCommandV1",
     ],
-    "queries": ["QueryFactEventsV1", "ReadGuardedFactSnapshotCommandV1"],
-    "events": ["FactEventAppendedV1", "GuardedFactEventV1"],
-    "results": ["FactStreamHeadV1"],
+    "queries": [
+        "QueryFactEventsV1",
+        "QuerySegmentedFactEventsV1",
+        "QuerySegmentedFactLedgerHeadV1",
+        "ReadGuardedFactSnapshotCommandV1",
+    ],
+    "events": ["FactEventAppendedV1", "GuardedFactEventV1", "SegmentedFactEventAppendedV1"],
+    "results": [
+        "FactStreamHeadV1",
+        "SegmentedFactLedgerHeadV1",
+        "SegmentedFactLedgerReadyV1",
+        "SegmentedFactQueryResultV1",
+    ],
     "errors": ["FactStreamError"],
 }
 _CONTRACT_EXPORTS = [item for values in _CONTRACTS.values() for item in values]
 _PUBLIC_EXPORTS = [
     "AppendFactEventCommandV1",
     "AppendIfGuardedSnapshotCommandV1",
+    "AppendSegmentedFactEventCommandV1",
     "BootstrapFactStreamWorkspaceCommandV1",
     "EnrollFactStreamStreamsCommandV1",
+    "EnsureSegmentedFactLedgerCommandV1",
     "FactEventAppendedV1",
     "FactStreamError",
     "FactStreamHeadV1",
@@ -47,13 +61,21 @@ _PUBLIC_EXPORTS = [
     "ProvisionFactStreamLockAuthorityCommandV1",
     "QueryFactEventsV1",
     "QueryFactStreamHeadV1",
+    "QuerySegmentedFactEventsV1",
+    "QuerySegmentedFactLedgerHeadV1",
     "ReadGuardedFactSnapshotCommandV1",
+    "SegmentedFactEventAppendedV1",
+    "SegmentedFactLedgerHeadV1",
+    "SegmentedFactLedgerReadyV1",
+    "SegmentedFactQueryResultV1",
     "append_fact_event",
     "append_if_guarded_snapshot",
+    "append_segmented_fact_event",
     "bootstrap_fact_stream_workspace",
     "configure_debug_tracing",
     "emit_debug_event",
     "enroll_fact_stream_streams",
+    "ensure_segmented_fact_ledger",
     "fact_stream_bootstrap_streams",
     "install_global_debug_hooks",
     "is_debug_tracing_enabled",
@@ -61,6 +83,8 @@ _PUBLIC_EXPORTS = [
     "provision_fact_stream_lock_authority",
     "query_fact_events",
     "query_fact_stream_head",
+    "query_segmented_fact_events",
+    "query_segmented_fact_ledger_head",
     "read_guarded_fact_snapshot",
     "sanitize_headers",
     "set_debug_tracing_enabled",
@@ -209,7 +233,7 @@ def test_paired_public_facade_removal_fails_for_contract_support_and_service(
 
         issues = _surface_issues(repo_root)
 
-        assert any("must expose exactly 37 names" in issue.message for issue in issues)
+        assert any("must expose exactly 49 names" in issue.message for issue in issues)
 
 
 @pytest.mark.parametrize("artifact", ("manifest", "catalog", "context pack", "README"))
@@ -275,15 +299,7 @@ def test_missing_required_effect_is_reported_from_structured_metadata() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         repo_root = Path(tmpdir)
         _write_surface_fixture(repo_root)
-        context_path = (
-            repo_root
-            / "polaris"
-            / "cells"
-            / "events"
-            / "fact_stream"
-            / "generated"
-            / "context.pack.json"
-        )
+        context_path = repo_root / "polaris" / "cells" / "events" / "fact_stream" / "generated" / "context.pack.json"
         context = json.loads(context_path.read_text(encoding="utf-8"))
         context["effects_allowed"] = ["fs.read:runtime/events/*"]
         context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -291,6 +307,5 @@ def test_missing_required_effect_is_reported_from_structured_metadata() -> None:
         issues = _surface_issues(repo_root)
 
         assert any(
-            "context pack effects_allowed drift: missing=fs.write:runtime/events/*" in issue.message
-            for issue in issues
+            "context pack effects_allowed drift: missing=fs.write:runtime/events/*" in issue.message for issue in issues
         )

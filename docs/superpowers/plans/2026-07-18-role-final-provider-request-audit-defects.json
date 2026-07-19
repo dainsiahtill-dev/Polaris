@@ -1,0 +1,365 @@
+{
+  "schema_version": "polaris.main_agent_defect_ledger.v1",
+  "objective": "Every Architect, PM, chief_engineer, director, and QA physical LLM attempt has a qualified full final-provider-request fact chain before Factory completion.",
+  "updated_at": "2026-07-19",
+  "bench_schedulable": false,
+  "defects": [
+    {
+      "id": "FPR-A-001",
+      "status": "closed",
+      "symptom": "Provider attempt terminal lookup performed strict full-ledger scans on the healthy append path.",
+      "evidence": "Main-agent combined verification: 118 passed; healthy start and terminal tests forbid head, query_strict, and full-scan calls.",
+      "root_cause": "Lifecycle pairing reused strict audit queries instead of locator-backed idempotency replay.",
+      "fix_scope": [
+        "polaris.kernelone.events.sourcing.segmented_file_store",
+        "polaris.cells.events.fact_stream.public",
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle"
+      ],
+      "remaining_risk": "Full strict scan remains required on explicit audit and recovery paths."
+    },
+    {
+      "id": "FPR-A-002",
+      "status": "closed",
+      "symptom": "Context retention could delete a final provider-request snapshot after it was pinned or while pin creation raced deletion.",
+      "evidence": "Main-agent combined verification: 161 passed; pinned TTL, immutable replacement, corrupt pin, cross-workspace binding, and TOCTOU tests passed.",
+      "root_cause": "Snapshot persistence and retention deletion did not share a storage-identity lock or typed pin authority.",
+      "fix_scope": [
+        "polaris.kernelone.llm.engine.context_store_retention",
+        "polaris.kernelone.events.final_request_evidence",
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate"
+      ],
+      "remaining_risk": "Role-session snapshot retention and Phase-B qualification are not implemented yet."
+    },
+    {
+      "id": "FPR-A-003",
+      "status": "closed",
+      "symptom": "Async cancellation or a surviving blocking worker could escape Factory drain without a durable terminal fact.",
+      "evidence": "Main-agent combined acceptance: 233 passed in 79.50s, including async cancellation, surviving blocking-worker settlement, lifecycle pairing, snapshot pinning, FactStream, and lock authority tests; Ruff check/format, mypy, compileall, and git diff --check passed.",
+      "root_cause": "No explicit run/session-scoped in-flight coordinator and no cancellation-resistant terminal ownership existed.",
+      "fix_scope": [
+        "polaris.kernelone.llm.engine.contracts",
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_inflight",
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate",
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle"
+      ],
+      "remaining_risk": "Concrete HTTP/streaming/SDK/CLI provider transports still require mandatory gate wiring and per-attempt drain coverage."
+    },
+    {
+      "id": "KFS-AUTH-001",
+      "status": "closed",
+      "symptom": "Exactly-64-thread FactStream bootstrap intermittently reads an empty authority anchor and fails with lock_anchor_invalid.",
+      "evidence": "Main-agent combined acceptance: 233 passed in 79.50s, including the 49-test lock suite and deterministic bootstrap interleaving coverage; implementation-agent stress evidence additionally completed 320 concurrent bootstrap calls without failure. Ruff check/format, mypy, compileall, and git diff --check passed.",
+      "root_cause": "Initial provision publishes anchor.lock with O_CREAT|O_EXCL before acquiring its flock and writing the binding, allowing a competing opener to lock and read the empty inode first.",
+      "fix_scope": [
+        "polaris.kernelone.fs.locked_regular_file",
+        "polaris.cells.events.fact_stream.public.tests.test_workspace_bootstrap"
+      ],
+      "remaining_risk": "Cross-process authority behavior remains fail-closed by the existing malformed-anchor and inode proofs; future storage-authority changes must preserve the provision-lock ordering."
+    },
+    {
+      "id": "FPR-A-004",
+      "status": "closed",
+      "symptom": "Async streaming helpers perform raw aiohttp session.post attempts and reconnects without a per-physical-attempt frozen snapshot, start/terminal lifecycle pair, or cancellation-resistant drain ownership.",
+      "evidence": "Main-agent focused acceptance: 64 passed in 2.90s; combined Phase-A acceptance: 264 passed in 79.58s; Ruff check/format, mypy on all five slice files, compileall, and git diff --check passed. Independent quality review returned PASS after verifying real session.post interception, failed/failed/completed retry terminals, frozen mutation equivalence, response/session cleanup, aclose, BaseException, and second-cancellation behavior.",
+      "root_cause": "The first async dispatch slice modeled single awaited results and blocking workers, but not an async response context whose physical attempt remains open through iteration, consumer aclose, and response cleanup.",
+      "fix_scope": [
+        "polaris.kernelone.llm.engine.contracts",
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate",
+        "polaris.infrastructure.llm.providers.provider_helpers",
+        "polaris.infrastructure.llm.providers.tests.test_async_provider_helpers"
+      ],
+      "remaining_risk": "The helper default remains legacy_ungoverned until explicit provider cutover and registry preflight; direct provider-specific aiohttp/httpx, SDK, and CLI transports remain separate Phase-A slices."
+    },
+    {
+      "id": "FPR-A-005",
+      "status": "closed",
+      "symptom": "The governed synchronous HTTP gate records a completed terminal as soon as requests.post returns, before invoke_with_retry classifies HTTP 429, 4xx, or 5xx as a failed physical attempt.",
+      "evidence": "Main-agent focused acceptance: 67 passed in 3.13s; combined Phase-A acceptance: 267 passed in 80.18s; Ruff check/format, mypy on all three slice files, compileall, and git diff --check passed. Independent quality review returned PASS after proving one POST per attempt, identical response identity, 429/400 failed-then-completed, 401/500 failed, 200 completed, and preserved Retry-After/self-heal/breaker/legacy behavior.",
+      "root_cause": "The synchronous physical send callback returns raw non-OK HTTP responses to the gate, making transport return synonymous with attempt success even though HTTP response validation and retry decisions happen afterward.",
+      "fix_scope": [
+        "polaris.infrastructure.llm.providers.provider_helpers",
+        "polaris.cells.roles.kernel.tests.test_final_provider_attempt_gate",
+        "polaris.infrastructure.llm.providers.tests.test_provider_helpers_retry"
+      ],
+      "remaining_risk": "HTTP status lifecycle semantics are closed; 200 responses whose JSON/provider extraction fails and enters physical retry remain a separate FPR-A-006 blocker."
+    },
+    {
+      "id": "FPR-A-006",
+      "status": "closed",
+      "symptom": "A governed synchronous HTTP 200 response is terminalized as completed before response.json or provider extraction runs, even when those operations raise and the helper treats the same physical attempt as failed or retryable.",
+      "evidence": "Main-agent acceptance: 75 focused tests passed in 3.85s and 275 combined tests passed in 79.99s; Ruff, format, mypy, compileall, and scoped diff checks passed. Independent specification review PASS and code-quality review APPROVED with no Critical, Important, or Minor findings. Governed JSON, extraction, finalization, and usage exceptions now record failed physical terminals; semantic finalize ok=false remains physical completed; success performs one POST and one parse/extract/usage sequence.",
+      "root_cause": "The governed sync attempt boundary now includes HTTP status classification but still ends before response body JSON decoding and provider-specific response extraction that can drive retry/error control flow.",
+      "fix_scope": [
+        "polaris.infrastructure.llm.providers.provider_helpers",
+        "polaris.cells.roles.kernel.tests.test_final_provider_attempt_gate"
+      ],
+      "remaining_risk": "This closes only the governed synchronous helper. Direct provider transports and the end-to-end PM/Chief Engineer/Director/QA per-attempt qualification gate remain open Phase-A/Phase-B work. Exceptions outside the legacy retry taxonomy still escape after the gate durably records failed."
+    },
+    {
+      "id": "FPR-A-007",
+      "status": "closed",
+      "symptom": "The shared native async non-stream provider helper performs every httpx POST and all response parsing outside AsyncPhysicalProviderDispatchPort, so physical attempts used by async Gemini and Ollama cannot produce authoritative snapshots or lifecycle facts.",
+      "evidence": "Main-agent acceptance: 79 focused tests passed in 7.39s and 283 combined tests passed in 83.12s; Ruff, format, mypy, compileall, and scoped diff checks passed. Eight governed cases cover exact-once success and latency, JSON retry with unique failed/completed pairs, extract/finalize/usage exceptions, semantic ok=false, identical non-2xx HttpResult reuse, real pin/lifecycle evidence, and zero outbound on pin failure. Independent specification review PASS and code-quality review APPROVED with no Critical, Important, or Minor findings.",
+      "root_cause": "Only the synchronous requests helper and aiohttp stream helpers were adapted to the generic physical-dispatch contract; the shared httpx non-stream retry helper retained its legacy direct-send boundary.",
+      "fix_scope": [
+        "polaris.infrastructure.llm.providers.async_provider_helpers",
+        "polaris.infrastructure.llm.providers.tests.test_async_provider_helpers"
+      ],
+      "remaining_risk": "The generic helper seam is closed, but async Gemini/Ollama call-site cutover, provider-specific wire semantic projection, direct async streams, SDK/CLI transports, and per-role Factory qualification remain separate Phase-A/Phase-B work. The local thaw helper duplicates the synchronous pattern and requires parity checks if either evolves."
+    },
+    {
+      "id": "FPR-A-008",
+      "status": "closed",
+      "symptom": "The real roles.kernel -> AIExecutor -> BaseProvider invocation path has no typed runtime-only carrier for PhysicalProviderDispatchPort. Governed helper seams are therefore exercised only by direct tests, while PM, Chief Engineer, Director, and QA calls still reach providers without the gate.",
+      "evidence": "Main-agent acceptance: 75 focused tests passed in 1.80s and 262 Phase-A combined tests passed in 81.01s; Ruff, format, mypy on all eight slice files, compileall, and scoped diff checks passed. TDD proved the old path missed sync/async bound ports and bridge-thread context; follow-up RED proved capability mismatch silently reached raw transport, then GREEN enforced outbound=0. Independent specification review PASS and code-quality review APPROVED with no Critical, Important, or Minor findings.",
+      "root_cause": "KernelOne has generic physical-dispatch protocols and provider helpers accept explicit ports, but the executor/provider boundary lacks a concurrency-safe, non-serializable invocation sidecar. Putting the port into invoke_cfg would contaminate provider configuration, ContextOS option projection, and snapshot-safety enforcement.",
+      "fix_scope": [
+        "polaris.kernelone.llm.engine.contracts",
+        "polaris.kernelone.llm.engine.executor",
+        "polaris.infrastructure.llm.providers.provider_helpers",
+        "polaris.infrastructure.llm.providers.async_provider_helpers",
+        "polaris.infrastructure.llm.providers.async_provider_adapter",
+        "polaris.kernelone.llm.engine.tests.test_executor",
+        "polaris.infrastructure.llm.providers.tests.test_provider_helpers_retry",
+        "polaris.infrastructure.llm.providers.tests.test_async_provider_helpers"
+      ],
+      "remaining_risk": "The runtime-only carrier is closed, including concurrency isolation and async bridge propagation, but production role calls do not yet construct/inject the semantic gate/cutoff. Streaming, direct provider/SDK/CLI cutover, and Factory completion qualification remain open fail-closed Phase-A/Phase-B work."
+    },
+    {
+      "id": "FPR-A-009A",
+      "status": "closed",
+      "symptom": "Real PM, chief_engineer, director, and QA semantic requests do not carry a canonical first-system role identity marker, and KernelOne has no frozen static role policy/facts contract for a later Factory-issued evidence cutoff.",
+      "evidence": "Main-agent final acceptance: 220 related tests passed in 10.49s and 496 cross-layer tests passed in 95.32s; Ruff check/format, mypy on four source files, compileall, and scoped git diff --check passed. Independent specification review PASS and code-quality review APPROVED with no Critical, Important, or Minor findings. Exact four-role policy, distinct typed role-slot/scalar-anchor contracts, strict non-coercive authority fields, unique first-system identity, forged-protocol rejection, final projection digest rebinding, concurrency-isolated typed Factory carrier, and A009A cutoff-not-enabled fail-closed behavior are covered.",
+      "root_cause": "Existing final-request evidence helpers project post-call audit summaries, but no pure versioned role policy or universal semantic-request identity binding exists. Factory chain anchors cannot be safely synthesized until a causal cutoff is durably ACKed.",
+      "fix_scope": [
+        "polaris.kernelone.events.final_request_evidence",
+        "polaris.cells.roles.kernel.internal.llm_caller.request_facts",
+        "polaris.cells.roles.kernel.internal.llm_caller.request_preparer",
+        "polaris.kernelone.events.tests.test_final_request_evidence",
+        "polaris.cells.roles.kernel.tests"
+      ],
+      "remaining_risk": "A009A is closed without enabling Factory anchors. Authoritative Factory cutoff ledger/ACK, canonical source reconstruction and absence proof, provider-visible anchor injection, physical qualification, streaming/direct-provider cutover, and Factory completion gating remain exclusively in A009B and later buckets."
+    },
+    {
+      "id": "FPR-A-009B",
+      "status": "in_progress",
+      "symptom": "Provider-visible Factory role evidence anchors cannot yet prove complete per-role context at the causal request cut.",
+      "evidence": "A009A through A009B2b-1, A009B3-A0, BASE-FS-SEG-001, and A009B3-B3.0-B3.1 are closed. B3.1 supplies the public cross-Cell carrier, unique Factory-private grants, fixed 32-attempt budget, stage caps 1/2/1/512/1, all seven Architect/PM/CE/Director/QA recovery/fanout seams, cancellation drain and recursive leak rejection. Its P1 close/acquire race, await-time drain deadlock, and close/revoke check-to-commit/ACK TOCTOU were each reproduced by deterministic RED barriers before repair. Active acquisition leases now begin after the only await; close/revoke, authoritative commit and ACK publication share one RLock-backed Condition and exactly-once lease release. Main-agent acceptance passed five concurrency tests, the authority suite at 119 passed, the seven-file cross-layer aggregate at 310 passed in 124.03s, and FactoryRunService at 83 passed in 184.75s. Ruff, format, scoped mypy, compileall, diff check, strict Verification Card and JSON validation passed. Independent specification rereview returned PASS with no P0/P1/P2; independent quality/concurrency rereview returned APPROVED. FPR=N/A because B3.1 performs no physical provider call. Live provider dispatch remains forbidden until B3.2-B3.5 qualify every physical attempt.",
+      "root_cause": "B3.1 was missing a single linearization protocol between stage close/revoke and in-flight cutoff commit/ACK publication; that defect is closed with condition-protected active leases and check-and-act helpers. B3.2-B3.5 still must inject provider-visible anchors and qualify every physical Architect, PM, Chief Engineer, Director and QA attempt.",
+      "execution_buckets": {
+        "current": "FPR-A-009B3",
+        "FPR-A-009B1": "fenced cutoff authority ledger only; no live role binding or anchor injection",
+        "FPR-A-009B2a1": "closed: strict Factory event sequence/previous-hash/event-hash chain with fsync/CAS, immutable admission genesis, cancellation settlement and finite lock-maintenance deadline",
+        "FPR-A-009B2a2": "closed: successful PM/CE stage-time artifact byte/canonical bindings, immutable snapshots, event-first commit transaction and exact checkpoint identity",
+        "FPR-A-009B2b-0": "closed: strict fsync execution.control_plane production plus exact strict EventEnvelope projection; 585 main-agent cross-layer tests and independent spec rereview CLEAR",
+        "FPR-A-009B2b-0R": "closed: stable replay identity, crash-safe bounded recovery and ordered Fact-to-projection conservation across authoritative execution.control_plane append and rebuildable Run Ledger projection",
+        "FPR-A-009B2b-1": "closed: Factory-owned canonical four-role source reconstruction and absence proof validated against A009B2a bindings",
+        "FPR-A-009B3-A0": "closed: exact FactStream composition-root bootstrap, failed-stage claim/re-entry semantics, broad Factory baseline, and test global-state hygiene independently verified",
+        "FPR-A-009B3-B3.0": "closed: distinct exact-type runtime-private pre-cutoff authority carrier; no fabricated ACK fields and independent review CLEAR",
+        "FPR-A-009B3-B3.1": "closed: public cross-Cell binder, unique grants, fixed budget, stage caps, seven role/recovery/fanout seams, cancellation drain, recursive leak guard, and close/revoke-versus-cutoff linearization independently approved",
+      "FPR-A-009B3-B3.2": "in_progress: the specification slice proved that the locator-only ACK had no legal public exact-type route to the post-cutoff proof. The locked blueprint and ADR now require a strict public resolve_cutoff_proof(ack) re-read, Invoker-owned run/turn/call/freeze identity, deterministic semantic candidate/hash, one strict resolved-capability-profile identity, and one literal first-system evidence block. Sixteen RED classes remain mandatory before closure; no physical provider call is authorized.",
+      "FPR-A-009B3-B3.3-B3.5": "pending: dispatch propagation, per-physical-attempt full-final-request qualification, readable snapshot, lifecycle and retry-budget enforcement",
+        "FPR-A-009B3-B3.6": "pending: full Factory/roles.kernel/KernelOne/static gates and two independent reviews"
+      },
+      "fix_scope": [
+        "polaris.cells.factory.pipeline",
+        "polaris.cells.roles.kernel",
+        "polaris.kernelone.events.final_request_evidence"
+      ],
+    "remaining_risk": "B3.1 is closed but FPR=N/A and cannot authorize provider I/O. B3.2 has a frozen contract but is not implemented: its public proof resolver, semantic identity/candidate hash, strict resolved capability identity, canonical evidence injection, recomputation, deep freeze, leak fences, graph metadata synchronization, and sixteen RED classes must pass first. B3.3-B3.5 must then require every Architect/PM/Chief Engineer/Director/QA retry, fallback, fanout child and stream physical attempt to qualify and persist its exact full final provider request; N/A never counts as PASS. B3.6 must resolve or independently classify the current broad roles.kernel baseline failures before closure."
+    },
+    {
+      "id": "KFS-AUTH-002",
+      "status": "closed",
+      "symptom": "The full Factory Pipeline suite reports 87 failures; most observed stacks terminate in lock_authority_missing when direct Factory, settlement, RunLedger or TaskRuntime test seams use ordinary FactStream before explicit workspace authority/bootstrap.",
+      "evidence": "Production HTTP lifespan, Factory settlement create/start, Roles CLI modes, and Director CLIs were audited as explicit FactStream bootstrap composition roots. Direct test seams now bootstrap the exact workspace through the public maintenance API; ordinary append/query/head remain non-provisioning and fail closed without authority. Fresh main-agent gates passed 5 negative/lifespan tests, 475 affected tests, and the complete Factory Pipeline suite at 1056 passed in 559.05s. Scoped Ruff, format and diff checks passed; independent final review returned CLEAR and found no implicit ordinary-I/O provision or workspace-identity drift.",
+      "root_cause": "KernelOne correctly moved lock-authority creation into an explicit maintenance boundary, but the broad Factory/test integration still contains callers that relied on implicit authority creation.",
+      "fix_scope": [
+        "polaris.cells.events.fact_stream.public",
+        "polaris.cells.factory.pipeline",
+        "polaris.cells.control_plane.run_ledger",
+        "polaris.cells.runtime.task_runtime",
+        "their test/bootstrap fixtures"
+      ],
+      "remaining_risk": "Closed for the static FactStream catalog and audited Factory/direct-test creation seams. Ordinary read/append/head must remain non-provisioning. Segmented provider-attempt namespace enrollment remains separately tracked by BASE-FS-SEG-001 before A009B3 enables those streams."
+    },
+    {
+      "id": "FACTORY-CLAIM-001",
+      "status": "closed",
+      "symptom": "A legacy workspace-admission test expects a failed settled stage to release the active lease immediately, while the current Factory service retains failed/cancelled stage claims for explicit settlement and re-entry reconciliation.",
+      "evidence": "The reconciled contract is now tested end to end: failed stage settlement retains the ACTIVE lease and exact stage/attempt/nonce claim; canonical TaskRuntime settlement plus explicit reconcile clears that claim while preserving ACTIVE; only terminal settlement under a closed Run Ledger barrier releases the workspace with release evidence. Stale execution identity returns lease_version_mismatch before recovery mutation. Fresh main-agent affected-suite acceptance passed 475 tests and the complete Factory Pipeline suite passed 1056 tests; independent final review returned CLEAR.",
+      "root_cause": "The stage-claim lifecycle contract changed from wrapper-return release to explicit post-failure settlement/re-entry, but the broad admission contract and tests have not been fully reconciled.",
+      "fix_scope": [
+        "polaris.cells.factory.pipeline.internal.factory_run_service",
+        "polaris.cells.factory.pipeline.tests.test_factory_workspace_admission",
+        "Factory claim/settlement blueprint documentation"
+      ],
+      "remaining_risk": "Closed. Failed/cancelled claims remain fail-closed and require explicit reconciliation; no wrapper-return release or weakened fencing was restored."
+    },
+    {
+      "id": "FPR-A-009B1-C1",
+      "status": "closed",
+      "symptom": "The first Factory role-evidence cutoff implementation passes fake-ledger tests but cannot issue Director or QA cutoffs through the real FactStream because one locator-only cutoff event exceeds the platform's 4KiB fact-record limit.",
+      "evidence": "The original probes reproduced Director failure at 4280 bytes and QA failure at 5237 bytes. The replacement protocol now uses 1024-byte raw fragments (bounded to 64KiB/64 fragments) plus one small authoritative commit. Fresh real PM, chief_engineer, director, and QA tests fsync every physical record below 4096 bytes and replay through a new port without recapturing source heads. Complete-partial recovery, commit ACK-loss, incomplete partials, full-head/workspace/stream/storage drift, lease expiry, strict DTO/scalar/container boundaries, and StageResult leak cases are covered. Main verification passed 216 related tests; independent final reviews returned PASS and APPROVED.",
+      "root_cause": "A009B1 serialized the complete source-cut body into one issued event instead of using a bounded chunk-plus-commit protocol whose authoritative ACK points only to the final commit fact.",
+      "fix_scope": [
+        "polaris.cells.factory.pipeline.internal.factory_role_evidence_authority",
+        "polaris.cells.roles.kernel.public.final_request_evidence_cutoff",
+        "polaris.cells.factory.pipeline.tests"
+      ],
+      "remaining_risk": "Closed for correctness. A mid-fragment failure intentionally leaves that freeze fail-closed and incomplete; this is a documented liveness tradeoff, not authority. A009B2 must supply canonical source reconstruction before any live provider binding is allowed."
+    },
+    {
+      "id": "FPR-A-009B2a1-C1",
+      "status": "closed",
+      "symptom": "Cancellation of an awaited authoritative Factory append returns to the caller before the surviving blocking worker reaches a terminal durable outcome.",
+      "evidence": "TDD first proved CancelledError propagated while the worker was still active. The repaired API now shields terminal settlement, preserves a terminal worker failure as the cancellation cause, survives repeated cancellation, and releases the stream lock before returning. Main-agent acceptance passed the 35-test event-chain suite; independent code-quality review returned APPROVED.",
+      "root_cause": "append_authoritative_event did not own a cancellation-resistant worker task or shield settlement before re-raising cancellation, allowing a durable-but-unacknowledged admission window.",
+      "fix_scope": [
+        "polaris.cells.factory.pipeline.internal.factory_store",
+        "polaris.cells.factory.pipeline.tests.test_factory_event_chain"
+      ],
+      "remaining_risk": "Closed for Factory event append: cancellation returns only after terminal worker settlement. A cancelled successful admission may leave one strict genesis without run.json; that admission-only half-run is intentionally quarantined, unpublished and absent from list projections."
+    },
+    {
+      "id": "FPR-A-009B2a1-C2",
+      "status": "closed",
+      "symptom": "First enrollment of a new Factory event stream can wait without bound behind another stream's shared authority-anchor lease.",
+      "evidence": "TDD proved missing maintenance timeouts, deadline reset, different-stream enrollment delay and a fresh-anchor deadline omission before each repair. Main-agent acceptance passed 57 locked-file, 35 event-chain and 93 maintenance/FactStream/retention tests. Fresh/existing provision, enrollment and acquire now consume finite single deadlines; Factory uses one total five-second budget. Dedicated lock review returned PASS.",
+      "root_cause": "KernelOne provision/enrollment maintenance and LockedRegularFileSet acquisition do not share one finite monotonic deadline; acquire also recomputes its budget between the anchor and stream locks.",
+      "fix_scope": [
+        "polaris.kernelone.fs.locked_regular_file",
+        "polaris.cells.factory.pipeline.internal.factory_store",
+        "polaris.kernelone.fs.tests.test_locked_regular_file",
+        "polaris.cells.factory.pipeline.tests.test_factory_event_chain"
+      ],
+      "remaining_risk": "Closed for bounded fail-closed admission. A fresh-anchor timeout can leave isolated partial lock-authority scaffolding, but reconciliation semantics reject it and it cannot create Factory events, run snapshots, list entries or publish facts; automatic maintenance recovery is a separate non-authoritative liveness enhancement."
+    },
+    {
+      "id": "FPR-A-009B2a2-C1",
+      "status": "closed",
+      "symptom": "A successful PM stage cannot bind a producer-declared document schema because tasks/plan.json has no schema_version.",
+      "evidence": "The PM producer emits pm.plan_artifact.v1; Factory stage-time validation binds the strict document and immutable snapshot before stage authority. Focused producer, provenance and stage-transaction suites are included in the 268-test main-agent acceptance; independent final reviews returned CLEAR.",
+      "root_cause": "The PM plan producer predates stage-time provenance and never froze a versioned document contract.",
+      "fix_scope": [
+        "polaris.cells.roles.adapters.internal.pm.plan_artifact",
+        "polaris.cells.roles.adapters.tests.test_pm_adapter_pure"
+      ],
+      "remaining_risk": "Closed for A009B2a2. A009B2b must resolve the latest successful bound PM contract and its derived target-files view at the captured source cut."
+    },
+    {
+      "id": "FPR-A-009B2a2-C2",
+      "status": "closed",
+      "symptom": "CE provenance cannot independently validate an embedded blueprint_hash, and Factory supplies pm_task_contract while the CE producer ignores that slot and may persist an empty pm_task.",
+      "evidence": "The CE public provenance query independently enforces producer-v1 hash semantics, exact run/task/path identity and PM-contract/target-file binding. Factory supplies the canonical PM task through the producer-consumed slot, and persisted-blueprint regressions are included in the 47-test provenance suite. Independent final reviews returned CLEAR.",
+      "root_cause": "The blueprint Cell lacked a typed pure provenance query, while the Factory-to-CE producer context used a named PM contract slot that the producer did not consume.",
+      "fix_scope": [
+        "polaris.cells.chief_engineer.blueprint.public",
+        "polaris.cells.factory.pipeline.internal.factory_stage_executor",
+        "polaris.cells.factory.pipeline.tests.test_factory_role_evidence_provenance"
+      ],
+      "remaining_risk": "Closed for A009B2a2. A009B2b must resolve the exact current review manifest and one-to-one ordered immutable blueprint vector through this public query."
+    },
+    {
+      "id": "FPR-A-009B2a2-C3",
+      "status": "closed",
+      "symptom": "A descriptor-stable source read can still be replaced atomically before the authoritative stage event append.",
+      "evidence": "Factory now copies strict descriptor-stable PM/CE bytes into content-addressed immutable snapshots under guarded KernelOne file authority, re-reads and hashes the snapshot, and binds source plus snapshot hashes in the authoritative stage intent before commit. Replacement, symlink, hard-link, identity-drift and collision regressions passed; independent artifact and transaction reviews returned CLEAR.",
+      "root_cause": "No Factory-owned content-addressed immutable snapshot currently bridges the source-read and authoritative-event boundaries.",
+      "fix_scope": [
+        "polaris.kernelone.fs",
+        "polaris.cells.factory.pipeline.internal.factory_store",
+        "polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings"
+      ],
+      "remaining_risk": "Closed for A009B2a2. A009B2b must independently re-read these exact immutable refs and compare both byte and canonical hashes before issuing source anchors."
+    },
+    {
+      "id": "FPR-A-009B2a2-C4",
+      "status": "closed",
+      "symptom": "Stage completion currently saves mutable run.json before appending and publishing the authoritative event, then checkpoints, while mutating caller objects in place.",
+      "evidence": "The stage path now appends a detached authoritative intent first, persists the mutable run, exact immutable checkpoint and strict hashes, appends a durable commit marker, then publishes. A shared permit linearizes cancellation against append/fsync/post-read; unmatched intents and pre-ACK cancellation quarantine. Router automatic mutations use the Service per-run lock. Main-agent acceptance passed 52 persistence, 35 event-chain and 26 Store tests plus 155 role-evidence tests; independent final reviews returned CLEAR.",
+      "root_cause": "The stage commit path was designed as a UI lifecycle projection rather than an event-authoritative detached transaction with durable quarantine semantics.",
+      "fix_scope": [
+        "polaris.cells.factory.pipeline.internal.factory_run_service",
+        "polaris.cells.factory.pipeline.internal.factory_store",
+        "polaris.cells.factory.pipeline.tests.test_factory_role_evidence_provenance"
+      ],
+      "remaining_risk": "Closed for A009B2a2. Publish remains a replayable non-authoritative fanout after the durable transaction; A009B2b must require event/current-state/snapshot agreement before creating any policy cut."
+    },
+    {
+      "id": "FPR-A-009B2a2-C5",
+      "status": "closed",
+      "symptom": "The checkpoint-ref DTO accepted a valid-shaped immutable checkpoint filename whose status token was not a real Factory run lifecycle status.",
+      "evidence": "The prior parser accepted banana_2026-07-19T01_02_03Z.json. It now reuses the unique internal FactoryRunStatus enum, rejects banana with checkpoint_ref_invalid, and dynamically tests all seven actual lifecycle values. Main-agent persistence acceptance passed 52 tests; independent specification and quality reviews returned CLEAR.",
+      "root_cause": "The frozen filename grammar constrained status only as a generic lowercase identity instead of the authoritative FactoryRunStatus enum.",
+      "fix_scope": [
+        "polaris.cells.factory.pipeline.internal.factory_stage_persistence",
+        "polaris.cells.factory.pipeline.tests.test_factory_stage_persistence"
+      ],
+      "remaining_risk": "Closed. Service reconstruction still independently requires the checkpoint ref to equal the exact Store projection of checkpoint status plus updated_at."
+    },
+    {
+      "id": "FPR-A-009B2b-0R-C1",
+      "status": "closed",
+      "symptom": "A canonical execution.control_plane fact can be appended successfully and then duplicated when rebuildable Run Ledger persistence or the returned ACK fails and the same logical event is retried.",
+      "evidence": "The canonical public append now derives one stable Fact idempotency key and projection append identity, reserves capacity before Fact mutation, holds the projection flock across Fact append and projection commit, and publishes only after unlock. Retry reuses the original Fact receipt and exact recorded_at. Binary scanning validates canonical complete rows while preserving an incomplete UTF-8 tail; write/flush/fsync failures durably roll back or enter strict recovery. Recovery pages at most 4096 same-run Facts in at most five 1000-record pages, validates exact Fact identity, sequence, candidate envelope and ordered projection prefix, requires the only unprojected authority to be the current final Fact, and then truncates/fsyncs plus appends/fsyncs. Partial ASCII and multibyte writes, full-write ACK loss, rollback failure, orphan/mismatched/ambiguous/disguised/duplicate/reordered Facts, pagination stagnation/cycle/limits, capacity boundaries and concurrent replay are covered. Fresh main-agent final acceptance passed 401 RunLedger/FactStream tests, 394 TaskRuntime tests and 3 Factory legacy tests; all scoped static gates passed; independent specification review returned CLEAR and code-quality review returned APPROVED. FPR=N/A.",
+      "root_cause": "The authoritative FactStream append and rebuildable projection were ordered correctly but never shared one stable logical replay identity, and projection persistence has no lock-owned idempotent append contract.",
+      "fix_scope": [
+        "polaris.cells.control_plane.run_ledger.public.service",
+        "polaris.cells.control_plane.run_ledger.public.ledger",
+        "polaris.cells.control_plane.run_ledger.tests"
+      ],
+      "remaining_risk": "Closed for stable replay and crash recovery. A009B2b-1 remains responsible for the separate seven-source resolver and absence-proof semantics; this bucket does not enable live role binding or any physical provider call."
+    },
+    {
+      "id": "BASE-FS-SEG-001",
+      "status": "closed",
+      "symptom": "Reserved segmented-authority namespaces are rejected by ordinary append/query/head APIs but may still be enrolled through ordinary FactStream provision/enroll/bootstrap maintenance APIs.",
+      "evidence": "Ordinary provision, enroll, and bootstrap now preflight the complete stream tuple before maintenance-store or KernelOne effects and return segmented_stream_api_required with the first illegal stream. The final matrix covers three exact reserved roots, three suffixed reserved streams, and a .segmented stream across provision/enroll and reserved-only/mixed batches; real KFS checks prove rejected provision creates no authority and rejected enrollment creates no safe-stream lock. Dedicated exact-root rejection remains segmented_stream_namespace_required, fresh-workspace ensure remains lock_authority_missing, and the four-role Factory test provisions only base authority before the dedicated segmented path enrolls its control stream. Fresh main-agent verification passed 155 FactStream public tests, 96 Factory role-evidence tests, 54 provider-attempt tests, the 18-test KernelOne architecture gate, the aggregate KernelOne release gate, and the complete 1056-test Factory Pipeline suite; scoped Ruff, format, mypy, compileall, JSON and diff gates passed. Independent specification review returned CLEAR and code-quality review returned APPROVED. FPR=N/A.",
+      "root_cause": "The segmented namespace guard was added at data I/O boundaries but not applied consistently to ordinary maintenance enrollment boundaries.",
+      "fix_scope": [
+        "polaris.cells.events.fact_stream.public.service",
+        "polaris.cells.events.fact_stream.public.workspace_bootstrap",
+        "polaris.cells.events.fact_stream.public.tests"
+      ],
+      "remaining_risk": "Closed for all future ordinary maintenance enrollment. Historical workspaces may retain dormant ordinary lock keys created before this fix; they remain unusable through ordinary I/O and require explicit inventory/migration review under the separate cutover bucket rather than automatic deletion or repair. A009B3 must still reconstruct and inject live Factory authority before any physical provider attempt."
+    },
+    {
+      "id": "BASE-FS-CUTOVER-001",
+      "status": "open_out_of_bucket",
+      "symptom": "A workspace whose execution.control_plane stream contains legacy non-strict records is intentionally rejected by the new strict writer and has no explicit migration/cutover operator flow yet.",
+      "evidence": "The regression test proves strict_stream_corruption/missing_integrity_digest rather than silent upgrade. Fresh strict workspaces pass, but existing writers cannot progress until the workspace is classified or explicitly migrated/versioned.",
+      "root_cause": "Per-record integrity cannot be retroactively added without changing authoritative bytes; fail-closed cutover was frozen before an operational migration contract was defined.",
+      "fix_scope": [
+        "polaris.cells.events.fact_stream",
+        "polaris.cells.control_plane.run_ledger",
+        "pre-bench workspace admission governance"
+      ],
+      "remaining_risk": "Fresh isolated bench remains eligible. Existing workspaces require an explicit audited migration or incompatible-workspace verdict before production cutover; silent upgrade remains forbidden."
+    },
+    {
+      "id": "BASE-FS-001",
+      "status": "closed",
+      "symptom": "Some Factory admission/control-plane tests cannot create or bind TaskRuntime child rows because query_fact_stream_head reports an event-stream lock or descriptor-capability failure.",
+      "evidence": "A009B3-A0 supplied explicit exact-workspace FactStream bootstrap to the affected TaskRuntime/Factory test composition roots without changing ordinary I/O. The formerly failing expired-active-lease and execution-control-plane paths are included in the fresh 475-test affected gate and the complete Factory Pipeline result of 1056 passed in 559.05s. The independent final review returned CLEAR.",
+      "root_cause": "The TaskRuntime execution-fact bootstrap/query path cannot acquire the FactStream descriptor capability in these test setups; this is distinct from the A009B1 oversized-record defect.",
+      "fix_scope": [
+        "polaris.cells.runtime.task_runtime",
+        "polaris.cells.events.fact_stream",
+        "polaris.kernelone.fs.locked_regular_file"
+      ],
+      "remaining_risk": "Closed for the affected static-stream composition roots. Dynamic segmented provider-attempt enrollment remains separately governed by BASE-FS-SEG-001."
+    },
+    {
+      "id": "BASE-ENV-001",
+      "status": "open_out_of_bucket",
+      "symptom": "Explicit empty KERNELONE_LIGHTWEIGHT_STREAM_SESSIONS is treated as unset under pytest.",
+      "evidence": "One related regression failed; HEAD contains the same function body and reproduces the mismatch.",
+      "root_cause": "The environment read collapses an explicit empty string and an absent variable before applying the PYTEST_CURRENT_TEST fallback.",
+      "fix_scope": [
+        "polaris.infrastructure.llm.providers.provider_helpers"
+      ],
+      "remaining_risk": "Baseline defect is not caused by the final-provider-request slices and remains a separate cleanup bucket."
+    }
+  ]
+}

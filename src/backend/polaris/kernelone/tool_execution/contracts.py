@@ -67,6 +67,8 @@ class FrozenMapV1:
     kind: Literal["map"] = field(init=False, default="map")
 
     def __post_init__(self) -> None:
+        if type(self.entries) is not tuple:
+            raise ValueError("map entries must be stored as a tuple")
         keys = tuple(entry.key for entry in self.entries)
         if keys != tuple(sorted(keys, key=lambda key: key.encode("utf-8"))) or len(keys) != len(set(keys)):
             raise ValueError("map entries must be unique and sorted by UTF-8 key bytes")
@@ -80,6 +82,8 @@ class FrozenSequenceV1:
     kind: Literal["sequence"] = field(init=False, default="sequence")
 
     def __post_init__(self) -> None:
+        if type(self.items) is not tuple:
+            raise ValueError("sequence items must be stored as a tuple")
         for item in self.items:
             _validate_frozen_node(item)
 

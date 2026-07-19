@@ -5,9 +5,13 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import re
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import Any, AsyncContextManager, Protocol, TypeAlias, TypeVar
 
 # ErrorCategory is used via AIResponse.error_category annotations.
 from polaris.kernelone.errors import ErrorCategory
@@ -25,6 +29,233 @@ from ..contracts.core import (
     TokenBudgetDecision,
     Usage,
 )
+
+_DispatchResultT = TypeVar("_DispatchResultT")
+_StreamResponseT = TypeVar("_StreamResponseT")
+_EXACT_HASH_64_RE = re.compile(r"^[0-9a-f]{64}$")
+_PROVIDER_ATTEMPT_SCOPES = frozenset({"factory", "role_session"})
+
+
+def _deep_freeze_provider_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _deep_freeze_provider_value(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze_provider_value(item) for item in value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    raise TypeError("frozen provider attempts require JSON-safe values")
+
+
+def _deep_thaw_provider_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _deep_thaw_provider_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_deep_thaw_provider_value(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenFinalProviderAttemptV1:
+    """Immutable semantic and physical views for one outbound attempt."""
+
+    provider_request_id: str
+    request_freeze_id: str
+    factory_run_id: str
+    scope_id: str
+    run_id: str
+    turn_id: str
+    call_id: str
+    role: str
+    provider: str
+    model: str
+    attempt_number: int
+    verification_scope: str
+    semantic_request_hash: str
+    physical_wire_hash: str
+    composite_request_hash: str
+    dispatch_view: Mapping[str, Any]
+    durable_view: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "provider_request_id",
+            "request_freeze_id",
+            "scope_id",
+            "run_id",
+            "turn_id",
+            "call_id",
+            "role",
+            "provider",
+            "model",
+        ):
+            if not str(getattr(self, field_name) or "").strip():
+                raise ValueError(f"{field_name} is required")
+        if self.verification_scope not in _PROVIDER_ATTEMPT_SCOPES:
+            raise ValueError("verification_scope must be factory or role_session")
+        if self.verification_scope == "factory":
+            if not self.factory_run_id or self.factory_run_id != self.scope_id:
+                raise ValueError("Factory attempt requires factory_run_id equal to scope_id")
+        elif self.factory_run_id:
+            raise ValueError("role-session attempt cannot claim factory_run_id")
+        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int) or self.attempt_number < 1:
+            raise ValueError("attempt_number must be an int >= 1")
+        for hash_field in ("semantic_request_hash", "physical_wire_hash", "composite_request_hash"):
+            if not _EXACT_HASH_64_RE.fullmatch(str(getattr(self, hash_field) or "")):
+                raise ValueError(f"{hash_field} must be exactly 64 lowercase hex")
+        for view_field in ("dispatch_view", "durable_view"):
+            if not isinstance(getattr(self, view_field), Mapping):
+                raise TypeError(f"{view_field} must be a mapping")
+        object.__setattr__(self, "dispatch_view", _deep_freeze_provider_value(self.dispatch_view))
+        object.__setattr__(self, "durable_view", _deep_freeze_provider_value(self.durable_view))
+
+    def dispatch_copy(self) -> dict[str, Any]:
+        thawed = _deep_thaw_provider_value(self.dispatch_view)
+        if not isinstance(thawed, dict):
+            raise TypeError("frozen dispatch view must be a mapping")
+        return thawed
+
+    def durable_copy(self) -> dict[str, Any]:
+        thawed = _deep_thaw_provider_value(self.durable_view)
+        if not isinstance(thawed, dict):
+            raise TypeError("frozen durable view must be a mapping")
+        return thawed
+
+
+class PhysicalProviderDispatchPort(Protocol):
+    """Physical transport boundary consumed by HTTP/SDK/CLI adapters."""
+
+    def dispatch_sync(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        send: Callable[[Mapping[str, Any]], _DispatchResultT],
+    ) -> _DispatchResultT: ...
+
+
+class AsyncPhysicalProviderDispatchPort(Protocol):
+    """Generic async boundary, independent of any concrete transport."""
+
+    async def dispatch_async(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        send: Callable[[Mapping[str, Any]], Awaitable[_DispatchResultT]],
+    ) -> _DispatchResultT: ...
+
+    async def dispatch_blocking_async(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        send: Callable[[Mapping[str, Any]], _DispatchResultT],
+    ) -> _DispatchResultT: ...
+
+    def dispatch_stream_async(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        open_stream: Callable[[Mapping[str, Any]], AsyncContextManager[_StreamResponseT]],
+        consume: Callable[[_StreamResponseT], AsyncIterator[_DispatchResultT]],
+    ) -> AsyncIterator[_DispatchResultT]: ...
+
+
+PhysicalProviderDispatchRuntimePort: TypeAlias = PhysicalProviderDispatchPort | AsyncPhysicalProviderDispatchPort
+
+_physical_provider_dispatch_port: ContextVar[PhysicalProviderDispatchRuntimePort | None] = ContextVar(
+    "kernelone_physical_provider_dispatch_port",
+    default=None,
+)
+
+
+def get_physical_provider_dispatch_port() -> PhysicalProviderDispatchRuntimePort | None:
+    """Return the request-scoped physical provider dispatch sidecar, if bound."""
+
+    return _physical_provider_dispatch_port.get()
+
+
+@contextmanager
+def bind_physical_provider_dispatch_port(
+    port: PhysicalProviderDispatchRuntimePort | None,
+) -> Iterator[None]:
+    """Bind a non-serializable physical dispatch port for one provider call."""
+
+    token = _physical_provider_dispatch_port.set(port)
+    try:
+        yield
+    finally:
+        _physical_provider_dispatch_port.reset(token)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderAttemptTerminalFailureV1:
+    provider_request_id: str
+    error_type: str
+    error: str
+
+    def __post_init__(self) -> None:
+        if not self.provider_request_id or not self.error_type or not self.error:
+            raise ValueError("terminal failure requires request id, error type, and error")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderAttemptDrainResultV1:
+    verification_scope: str
+    scope_id: str
+    settled: bool
+    inflight_request_ids: tuple[str, ...]
+    terminal_failures: tuple[ProviderAttemptTerminalFailureV1, ...]
+
+    def __post_init__(self) -> None:
+        if self.verification_scope not in _PROVIDER_ATTEMPT_SCOPES or not self.scope_id:
+            raise ValueError("drain result requires an explicit Factory or role-session scope")
+        if not isinstance(self.inflight_request_ids, tuple) or not isinstance(self.terminal_failures, tuple):
+            raise TypeError("drain result collections must be tuples")
+        if any(not isinstance(item, str) or not item for item in self.inflight_request_ids):
+            raise ValueError("drain result contains an invalid in-flight request id")
+        if tuple(sorted(set(self.inflight_request_ids))) != self.inflight_request_ids:
+            raise ValueError("drain result in-flight request ids must be unique and sorted")
+        if any(not isinstance(item, ProviderAttemptTerminalFailureV1) for item in self.terminal_failures):
+            raise TypeError("drain result terminal failures must be typed")
+        failure_ids = tuple(item.provider_request_id for item in self.terminal_failures)
+        if tuple(sorted(set(failure_ids))) != failure_ids:
+            raise ValueError("drain result terminal failures must be unique and sorted")
+        if any(request_id not in self.inflight_request_ids for request_id in failure_ids):
+            raise ValueError("terminal failure must remain registered as in-flight")
+        if self.settled != (not self.inflight_request_ids and not self.terminal_failures):
+            raise ValueError("drain settled flag contradicts in-flight diagnostics")
+
+
+class ProviderAttemptInFlightDrainPort(Protocol):
+    """Explicit run/session-scoped drain contract for provider attempts."""
+
+    @property
+    def verification_scope(self) -> str: ...
+
+    @property
+    def scope_id(self) -> str: ...
+
+    async def wait_settled(
+        self,
+        *,
+        verification_scope: str,
+        scope_id: str,
+        timeout_seconds: float | None = None,
+    ) -> ProviderAttemptDrainResultV1: ...
+
+
+class ProviderAttemptLifecyclePort(Protocol):
+    def append_start(
+        self, attempt: FrozenFinalProviderAttemptV1, *, context_snapshot_ref: str, pin_hash: str
+    ) -> None: ...
+
+    def append_terminal(
+        self,
+        attempt: FrozenFinalProviderAttemptV1,
+        *,
+        context_snapshot_ref: str,
+        pin_hash: str,
+        status: str,
+        error: str | None = None,
+    ) -> None: ...
 
 
 @dataclass
@@ -444,6 +675,7 @@ __all__ = [
     # Engine-specific types
     "AIStreamEvent",
     "AIStreamGenerator",
+    "AsyncPhysicalProviderDispatchPort",
     "CompressionResult",
     "ErrorCategory",
     "EvaluationCase",
@@ -451,7 +683,13 @@ __all__ = [
     "EvaluationRequest",
     "EvaluationResult",
     "EvaluationSuiteResult",
+    "FrozenFinalProviderAttemptV1",
     "ModelSpec",
+    "PhysicalProviderDispatchPort",
+    "ProviderAttemptDrainResultV1",
+    "ProviderAttemptInFlightDrainPort",
+    "ProviderAttemptLifecyclePort",
+    "ProviderAttemptTerminalFailureV1",
     "ProviderFormatter",
     "StreamEventType",
     "TaskType",

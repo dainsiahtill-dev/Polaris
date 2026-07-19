@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import math
 import os
 import stat
 import threading
@@ -25,6 +26,8 @@ except ImportError:  # pragma: no cover
 
 LOCK_AUTHORITY_FORMAT_REVISION: Final[str] = "polaris.lock-authority.v1"
 _POLL_SECONDS: Final[float] = 0.01
+_PROVISION_LOCK_MARKER: Final[bytes] = b"polaris.provision-lock.v1\n"
+_DEFAULT_MAINTENANCE_TIMEOUT_SECONDS: Final[float] = 5.0
 
 
 class LockedRegularFileError(RuntimeError):
@@ -44,6 +47,13 @@ def default_platform_lock_root() -> str:
 
 def _fail(code: str, message: str, **details: object) -> LockedRegularFileError:
     return LockedRegularFileError(message, code=code, details=details)
+
+
+def _deadline_from_timeout(timeout_seconds: float) -> float:
+    value = float(timeout_seconds)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("timeout_seconds must be finite and positive")
+    return time.monotonic() + value
 
 
 def _post_fsync_reconciliation(
@@ -288,6 +298,11 @@ class _AuthorityDirectoryDurability:
         """Mark the authority-file durability boundary before invoking fsync."""
 
         self._boundary_crossed = True
+
+    def fsync_existing_directory(self, fd: int, *, path: str) -> None:
+        """Durably publish a new entry inside an authority directory that already existed."""
+
+        self._fsync(fd, path=path, cause_code="directory_fsync_failed")
 
     def reconciliation_details(self) -> dict[str, object]:
         """Return detached, diagnostic-only durability progress evidence."""
@@ -635,6 +650,8 @@ def _binding_from_fd(anchor_fd: int) -> LockAuthorityBindingV1:
 def _flock(fd: int, operation: int, *, deadline: float | None = None) -> None:
     assert fcntl is not None
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise _fail("lock_acquisition_timeout", "advisory lock exceeded monotonic deadline")
         try:
             fcntl.flock(fd, operation | fcntl.LOCK_NB)
             return
@@ -938,10 +955,12 @@ class LockedRegularFileSetV1:
         storage_identity_token: str,
         runtime_root: str,
         format_revision: str = LOCK_AUTHORITY_FORMAT_REVISION,
+        timeout_seconds: float = _DEFAULT_MAINTENANCE_TIMEOUT_SECONDS,
     ) -> LockMaintenanceProofV1:
         """Create or validate one authority and return final physical proof."""
 
         _require_posix()
+        deadline = _deadline_from_timeout(timeout_seconds)
         durability = _AuthorityDirectoryDurability()
         authority_fd = cls._open_authority_dir(
             platform_lock_root,
@@ -950,7 +969,12 @@ class LockedRegularFileSetV1:
             durability=durability,
         )
         try:
-            while True:
+            authority_path = os.path.join(os.path.abspath(platform_lock_root), storage_identity_token)
+            provision_fd = cls._open_provision_lock(authority_fd)
+            provision_locked = False
+            try:
+                _flock(provision_fd, fcntl.LOCK_EX, deadline=deadline)
+                provision_locked = True
                 try:
                     anchor_fd = cls._open_anchor(authority_fd, writable=True)
                 except LockedRegularFileError as exc:
@@ -962,36 +986,65 @@ class LockedRegularFileSetV1:
                         runtime_root,
                         format_revision,
                         durability,
-                        os.path.join(os.path.abspath(platform_lock_root), storage_identity_token),
+                        authority_path,
+                        provision_fd,
+                        deadline=deadline,
                     )
-                    if proof is not None:
-                        return proof
-                    continue
-                try:
-                    _flock(anchor_fd, fcntl.LOCK_EX)
-                    binding = _binding_from_fd(anchor_fd)
-                    cls._validate_binding(
-                        binding,
-                        storage_identity_token,
-                        runtime_root,
-                        format_revision,
-                    )
-                    validation = cls._verify_authority_binding(
-                        authority_fd,
-                        anchor_fd,
-                        binding,
-                        runtime_root,
-                        root_identity_mismatch_code="lock_anchor_binding_mismatch",
-                    )
-                    return cls._build_maintenance_proof(
-                        operation="provision_authority",
-                        verdict="already_present",
-                        binding=binding,
-                        validation=validation,
-                    )
-                finally:
-                    fcntl.flock(anchor_fd, fcntl.LOCK_UN)
-                    os.close(anchor_fd)
+                else:
+                    try:
+                        _flock(anchor_fd, fcntl.LOCK_EX, deadline=deadline)
+                        binding = _binding_from_fd(anchor_fd)
+                        cls._validate_binding(
+                            binding,
+                            storage_identity_token,
+                            runtime_root,
+                            format_revision,
+                        )
+                        cls._verify_authority_binding(
+                            authority_fd,
+                            anchor_fd,
+                            binding,
+                            runtime_root,
+                            root_identity_mismatch_code="lock_anchor_binding_mismatch",
+                        )
+                        cls._initialize_provision_lock(
+                            authority_fd,
+                            provision_fd,
+                            durability=durability,
+                            authority_path=authority_path,
+                        )
+                        validation = cls._verify_authority_binding(
+                            authority_fd,
+                            anchor_fd,
+                            binding,
+                            runtime_root,
+                            root_identity_mismatch_code="lock_anchor_binding_mismatch",
+                        )
+                        proof = cls._build_maintenance_proof(
+                            operation="provision_authority",
+                            verdict="already_present",
+                            binding=binding,
+                            validation=validation,
+                            created_directories=durability.created_directories,
+                            completed_fsync_order=durability.completed_fsync_order,
+                        )
+                    finally:
+                        fcntl.flock(anchor_fd, fcntl.LOCK_UN)
+                        os.close(anchor_fd)
+                cls._verify_provision_lock(authority_fd, provision_fd)
+                return proof
+            except LockedRegularFileError as exc:
+                if durability.boundary_crossed and exc.code != "post_fsync_authority_reconciliation_required":
+                    raise _post_fsync_reconciliation(
+                        "authority provision requires reconciliation after a durability boundary",
+                        exc,
+                        **durability.reconciliation_details(),
+                    ) from exc
+                raise
+            finally:
+                if provision_locked:
+                    fcntl.flock(provision_fd, fcntl.LOCK_UN)
+                os.close(provision_fd)
         finally:
             os.close(authority_fd)
             durability.close()
@@ -1005,10 +1058,12 @@ class LockedRegularFileSetV1:
         runtime_root: str,
         logical_paths: Iterable[str],
         format_revision: str = LOCK_AUTHORITY_FORMAT_REVISION,
+        timeout_seconds: float = _DEFAULT_MAINTENANCE_TIMEOUT_SECONDS,
     ) -> LockMaintenanceProofV1:
         """Enroll canonical keys and return proof from post-fsync validation."""
 
         _require_posix()
+        deadline = _deadline_from_timeout(timeout_seconds)
         canonical_paths = {_logical_path(path)[0] for path in logical_paths}
         canonical = tuple(
             sorted(
@@ -1020,7 +1075,7 @@ class LockedRegularFileSetV1:
         try:
             anchor_fd = cls._open_anchor(authority_fd, writable=True)
             try:
-                _flock(anchor_fd, fcntl.LOCK_EX)
+                _flock(anchor_fd, fcntl.LOCK_EX, deadline=deadline)
                 binding = _binding_from_fd(anchor_fd)
                 cls._validate_binding(binding, storage_identity_token, runtime_root, format_revision)
                 cls._verify_authority_binding(authority_fd, anchor_fd, binding, runtime_root)
@@ -1167,9 +1222,7 @@ class LockedRegularFileSetV1:
                 wait_for_close = False
                 leases = tuple(self._leases.values())
                 lease_reconciliation = tuple(
-                    evidence
-                    for lease in leases
-                    if (evidence := lease._release_reconciliation_details()) is not None
+                    evidence for lease in leases if (evidence := lease._release_reconciliation_details()) is not None
                 )
                 lease_fds = tuple(lease._detach_descriptors() for lease in leases)
                 locks = tuple(self._lock_fds)
@@ -1242,8 +1295,7 @@ class LockedRegularFileSetV1:
 
     def _acquire(self) -> None:
         _require_posix()
-        if self.timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
+        deadline = _deadline_from_timeout(self.timeout_seconds)
         paths = [_logical_path(path) for path in self.logical_paths]
         if len({path for path, _ in paths}) != len(paths):
             raise ValueError("locked stream paths must be distinct")
@@ -1253,7 +1305,7 @@ class LockedRegularFileSetV1:
             self._acquire_lock(
                 self._anchor_fd,
                 fcntl.LOCK_SH,
-                deadline=time.monotonic() + self.timeout_seconds,
+                deadline=deadline,
             )
             self._binding = _binding_from_fd(self._anchor_fd)
             self._validate_binding(self._binding, self.storage_identity_token, self.runtime_root, self.format_revision)
@@ -1264,7 +1316,6 @@ class LockedRegularFileSetV1:
             self._root_identity = _identity(self._root_fd)
             if self._root_identity != (self._binding.root_device, self._binding.root_inode):
                 raise _fail("stream_identity_drift", "runtime root differs from enrolled authority identity")
-            deadline = time.monotonic() + self.timeout_seconds
             for path, _ in sorted(paths, key=lambda item: _key(self.storage_identity_token, item[0])):
                 self._validate_authority()
                 name = _key(self.storage_identity_token, path)
@@ -1403,13 +1454,142 @@ class LockedRegularFileSetV1:
         return fd
 
     @staticmethod
+    def _open_provision_lock(authority_fd: int) -> int:
+        """Open or atomically create the stable cross-process provision mutex."""
+
+        try:
+            fd = os.open(
+                "provision.lock",
+                _flags(writable=True) | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=authority_fd,
+            )
+        except FileExistsError:
+            try:
+                fd = os.open("provision.lock", _flags(writable=True), dir_fd=authority_fd)
+            except OSError as exc:
+                raise _fail(
+                    "lock_provision_invalid",
+                    "authority provision lock could not be opened safely",
+                    errno=exc.errno,
+                ) from exc
+        except OSError as exc:
+            raise _fail(
+                "lock_provision_invalid",
+                "authority provision lock could not be created safely",
+                errno=exc.errno,
+            ) from exc
+        try:
+            _regular(fd, code="lock_provision_invalid", name="provision.lock")
+            _verify_directory_entry(
+                authority_fd,
+                "provision.lock",
+                fd,
+                code="lock_provision_invalid",
+                regular=True,
+            )
+        except LockedRegularFileError:
+            os.close(fd)
+            raise
+        return fd
+
+    @staticmethod
+    def _verify_provision_lock(authority_fd: int, provision_fd: int) -> None:
+        """Prove the held provision mutex still names its stable initialized entry."""
+
+        _regular(provision_fd, code="lock_provision_invalid", name="provision.lock")
+        _verify_directory_entry(
+            authority_fd,
+            "provision.lock",
+            provision_fd,
+            code="lock_provision_invalid",
+            regular=True,
+        )
+        try:
+            os.lseek(provision_fd, 0, os.SEEK_SET)
+            marker = os.read(provision_fd, len(_PROVISION_LOCK_MARKER) + 1)
+        except OSError as exc:
+            raise _fail(
+                "lock_provision_invalid",
+                "authority provision lock marker could not be read",
+                errno=exc.errno,
+            ) from exc
+        if marker != _PROVISION_LOCK_MARKER:
+            raise _fail("lock_provision_invalid", "authority provision lock marker is malformed")
+
+    @classmethod
+    def _initialize_provision_lock(
+        cls,
+        authority_fd: int,
+        provision_fd: int,
+        *,
+        durability: _AuthorityDirectoryDurability,
+        authority_path: str,
+    ) -> None:
+        """Initialize an empty provision mutex while holding its exclusive flock."""
+
+        _regular(provision_fd, code="lock_provision_invalid", name="provision.lock")
+        _verify_directory_entry(
+            authority_fd,
+            "provision.lock",
+            provision_fd,
+            code="lock_provision_invalid",
+            regular=True,
+        )
+        try:
+            os.lseek(provision_fd, 0, os.SEEK_SET)
+            current = os.read(provision_fd, len(_PROVISION_LOCK_MARKER) + 1)
+        except OSError as exc:
+            raise _fail(
+                "lock_provision_invalid",
+                "authority provision lock marker could not be read",
+                errno=exc.errno,
+            ) from exc
+        if current == _PROVISION_LOCK_MARKER:
+            return
+        if current:
+            raise _fail("lock_provision_invalid", "authority provision lock marker is malformed")
+        try:
+            os.lseek(provision_fd, 0, os.SEEK_SET)
+            payload = memoryview(_PROVISION_LOCK_MARKER)
+            while payload:
+                written = os.write(provision_fd, payload)
+                if written <= 0:
+                    raise OSError(errno.EIO, "short authority provision lock write")
+                payload = payload[written:]
+            os.ftruncate(provision_fd, len(_PROVISION_LOCK_MARKER))
+            durability.begin_file_fsync()
+            try:
+                os.fsync(provision_fd)
+            except OSError as exc:
+                raise _fail(
+                    "provision_lock_fsync_failed",
+                    "authority provision lock fsync outcome is ambiguous",
+                    errno=exc.errno,
+                ) from exc
+            durability.record_file_fsync(os.path.join(authority_path, "provision.lock"))
+            if authority_path not in durability.created_directories:
+                durability.fsync_existing_directory(authority_fd, path=authority_path)
+        except LockedRegularFileError:
+            raise
+        except OSError as exc:
+            raise _fail(
+                "lock_provision_invalid",
+                "authority provision lock marker could not be initialized",
+                errno=exc.errno,
+            ) from exc
+        cls._verify_provision_lock(authority_fd, provision_fd)
+
+    @staticmethod
     def _open_realm(authority_fd: int) -> int:
         try:
             fd = os.open("realm", _flags(directory=True), dir_fd=authority_fd)
         except FileNotFoundError:
             raise _fail("lock_realm_missing", "bound authority realm is absent") from None
         except OSError as exc:
-            raise _fail("lock_realm_binding_mismatch", "bound authority realm could not be opened safely", errno=exc.errno) from exc
+            raise _fail(
+                "lock_realm_binding_mismatch", "bound authority realm could not be opened safely", errno=exc.errno
+            ) from exc
         try:
             _directory(fd, name="realm")
             _verify_directory_entry(
@@ -1432,7 +1612,9 @@ class LockedRegularFileSetV1:
         binding: LockAuthorityBindingV1,
         runtime_root: str,
         *,
-        root_identity_mismatch_code: Literal["lock_anchor_binding_mismatch", "stream_identity_drift"] = "stream_identity_drift",
+        root_identity_mismatch_code: Literal[
+            "lock_anchor_binding_mismatch", "stream_identity_drift"
+        ] = "stream_identity_drift",
     ) -> _ValidatedAuthority:
         """Validate the full physical authority and current runtime-root binding."""
 
@@ -1469,7 +1651,9 @@ class LockedRegularFileSetV1:
         binding: LockAuthorityBindingV1,
         runtime_root: str,
         *,
-        identity_mismatch_code: Literal["lock_anchor_binding_mismatch", "stream_identity_drift"] = "stream_identity_drift",
+        identity_mismatch_code: Literal[
+            "lock_anchor_binding_mismatch", "stream_identity_drift"
+        ] = "stream_identity_drift",
     ) -> tuple[int, int]:
         canonical_root = os.path.abspath(runtime_root)
         try:
@@ -1568,8 +1752,11 @@ class LockedRegularFileSetV1:
         revision: str,
         durability: _AuthorityDirectoryDurability,
         authority_path: str,
-    ) -> LockMaintenanceProofV1 | None:
-        """Create an authority once, tolerating only a live competing provision."""
+        provision_fd: int,
+        *,
+        deadline: float,
+    ) -> LockMaintenanceProofV1:
+        """Create an authority once while the stable provision mutex is held."""
 
         root_fd = _open_absolute_directory(os.path.abspath(runtime_root), create=True, durability=durability)
         try:
@@ -1577,24 +1764,11 @@ class LockedRegularFileSetV1:
                 os.mkdir("realm", 0o700, dir_fd=authority_fd)
                 realm_created = True
             except FileExistsError:
-                realm_created = False
                 realm_fd = cls._open_realm(authority_fd)
                 os.close(realm_fd)
-                deadline = time.monotonic() + 2.0
-                while time.monotonic() < deadline:
-                    try:
-                        fd = cls._open_anchor(authority_fd, writable=False)
-                    except LockedRegularFileError as exc:
-                        if exc.code != "lock_authority_missing":
-                            raise
-                        time.sleep(_POLL_SECONDS)
-                        continue
-                    else:
-                        os.close(fd)
-                        return None
                 raise _fail(
                     "lock_authority_provision_conflict",
-                    "authority realm exists without a durable anchor",
+                    "authority realm exists without a durable anchor while provision lock is held",
                 ) from None
             realm_fd = cls._open_realm(authority_fd)
             try:
@@ -1620,7 +1794,10 @@ class LockedRegularFileSetV1:
                         dir_fd=authority_fd,
                     )
                 except FileExistsError:
-                    return None
+                    raise _fail(
+                        "lock_authority_provision_conflict",
+                        "authority anchor appeared while provision lock was held",
+                    ) from None
                 except OSError as exc:
                     if exc.errno == errno.ELOOP:
                         raise _fail(
@@ -1630,7 +1807,7 @@ class LockedRegularFileSetV1:
                         ) from exc
                     raise
                 try:
-                    _flock(fd, fcntl.LOCK_EX)
+                    _flock(fd, fcntl.LOCK_EX, deadline=deadline)
                     payload = memoryview(_canonical_bytes(binding.to_record()))
                     while payload:
                         written = os.write(fd, payload)
@@ -1648,6 +1825,18 @@ class LockedRegularFileSetV1:
                         ) from exc
                     durability.record_file_fsync(os.path.join(authority_path, "anchor.lock"))
                     durability.fsync_created_directories()
+                    validation = cls._verify_authority_binding(
+                        authority_fd,
+                        fd,
+                        binding,
+                        runtime_root,
+                    )
+                    cls._initialize_provision_lock(
+                        authority_fd,
+                        provision_fd,
+                        durability=durability,
+                        authority_path=authority_path,
+                    )
                     validation = cls._verify_authority_binding(
                         authority_fd,
                         fd,

@@ -1878,6 +1878,7 @@ cells:
       Provide the shared role execution kernel, prompt assembly, parser,
       retry, budget, and tool-gateway primitives used by all role flows.
     current_modules:
+      - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
       - polaris.cells.roles.kernel.internal
       - polaris.cells.roles.kernel.internal.kernel
       - polaris.cells.roles.kernel.internal.tool_gateway
@@ -1896,14 +1897,23 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.roles.kernel.public.contracts
+        - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
       commands:
         - ExecuteRoleKernelCommandV1
+        - FactoryRoleEvidenceCutoffRequestV1
       queries:
         - QueryRoleKernelStatusV1
+        - FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof
       events:
         - RoleKernelEventV1
       results:
         - RoleKernelResultV1
+        - FactoryRoleEvidenceCutoffAckV1
+        - FactoryRoleEvidenceCutoffSourceHeadV1
+        - FactoryRoleEvidenceCutoffProofV1
+        - FactoryRoleSemanticRequestIdentityV1
+        - FactoryRoleSemanticCandidateV1
+        - FactoryRoleFrozenSemanticRequestV1
       errors:
         - RoleKernelErrorV1
     depends_on:
@@ -1913,6 +1923,7 @@ cells:
       - audit.evidence
       - control_plane.run_ledger
       - events.fact_stream
+      - director.runtime
       - director.execution
       - roles.profile
       - roles.session
@@ -1948,8 +1959,16 @@ cells:
         - polaris/cells/roles/kernel/tests/test_turn_contracts_v2.py
         - polaris/cells/roles/kernel/tests/test_transaction_kernel_handoff_contract.py
         - polaris/cells/roles/kernel/tests/test_context_gateway_integration.py
+        - polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py
+        - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py
+        - polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py
+        - polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py
+        - polaris/cells/roles/kernel/tests/test_llm_caller_components.py
       gaps:
         - Kernel public boundary still needs final routing cleanup for a few parser/helper exports.
+        - B3.3-B3.5 physical provider-attempt qualification, snapshot persistence, and all-role/retry audit remain guarded; B3.2 metadata does not authorize provider dispatch.
+    generated_artifacts:
+      - generated/context.pack.json
 
   - id: roles.profile
     title: Roles Profile
@@ -2205,7 +2224,12 @@ cells:
       - polaris.delivery.cli.factory.projection_lab
       - polaris.delivery.cli.factory.projection_change_analysis
       - polaris.delivery.cli.factory.projection_reproject
+      - polaris.cells.factory.pipeline.internal.factory_event_chain
+      - polaris.cells.factory.pipeline.internal.factory_role_evidence_authority
+      - polaris.cells.factory.pipeline.internal.factory_run_admission
       - polaris.cells.factory.pipeline.internal.factory_run_service
+      - polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings
+      - polaris.cells.factory.pipeline.internal.factory_stage_persistence
       - polaris.cells.factory.pipeline.internal.factory_store
       - polaris.cells.factory.pipeline.internal.resource_http_service_renderer
       - polaris.cells.factory.pipeline.internal.projection_change_analysis
@@ -2287,8 +2311,16 @@ cells:
         - polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py
         - polaris/cells/factory/pipeline/tests/test_projection_http_resources.py
         - polaris/cells/factory/pipeline/tests/test_projection_reproject.py
+        - polaris/cells/factory/pipeline/tests/test_factory_event_chain.py
+        - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_admission.py
+        - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py
+        - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_provenance.py
+        - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_run_service.py
+        - polaris/cells/factory/pipeline/tests/test_factory_stage_persistence.py
+        - polaris/cells/factory/pipeline/tests/test_factory_stage_persistence_service.py
       gaps:
         - Workflow execution runtime has been split to orchestration.workflow_runtime and still requires call-site convergence.
+        - Provider-visible Factory role evidence remains disabled until A009B3 B3.2-B3.5 injection, dispatch, physical-attempt, and snapshot qualification gates close.
 
   - id: factory.cognitive_runtime
     title: Cognitive Runtime
@@ -2577,10 +2609,12 @@ cells:
         - GenerateTaskBlueprintCommandV1
       queries:
         - GetBlueprintStatusQueryV1
+        - QueryBlueprintProvenanceV1
       events:
         - TaskBlueprintGeneratedEventV1
       results:
         - TaskBlueprintResultV1
+        - TaskBlueprintProvenanceSnapshotV1
       errors:
         - ChiefEngineerBlueprintErrorV1
     depends_on:
@@ -3011,6 +3045,7 @@ cells:
       - workspace.integrity
       - events.fact_stream
       - control_plane.run_ledger
+      - runtime.task_runtime
     subgraphs: []
     state_owners: []
     effects_allowed:
@@ -3376,8 +3411,10 @@ cells:
       exports:
         - AppendFactEventCommandV1
         - AppendIfGuardedSnapshotCommandV1
+        - AppendSegmentedFactEventCommandV1
         - BootstrapFactStreamWorkspaceCommandV1
         - EnrollFactStreamStreamsCommandV1
+        - EnsureSegmentedFactLedgerCommandV1
         - FactEventAppendedV1
         - FactStreamError
         - FactStreamHeadV1
@@ -3394,13 +3431,21 @@ cells:
         - ProvisionFactStreamLockAuthorityCommandV1
         - QueryFactEventsV1
         - QueryFactStreamHeadV1
+        - QuerySegmentedFactEventsV1
+        - QuerySegmentedFactLedgerHeadV1
         - ReadGuardedFactSnapshotCommandV1
+        - SegmentedFactEventAppendedV1
+        - SegmentedFactLedgerHeadV1
+        - SegmentedFactLedgerReadyV1
+        - SegmentedFactQueryResultV1
         - append_fact_event
         - append_if_guarded_snapshot
+        - append_segmented_fact_event
         - bootstrap_fact_stream_workspace
         - configure_debug_tracing
         - emit_debug_event
         - enroll_fact_stream_streams
+        - ensure_segmented_fact_ledger
         - fact_stream_bootstrap_streams
         - install_global_debug_hooks
         - is_debug_tracing_enabled
@@ -3408,6 +3453,8 @@ cells:
         - provision_fact_stream_lock_authority
         - query_fact_events
         - query_fact_stream_head
+        - query_segmented_fact_events
+        - query_segmented_fact_ledger_head
         - read_guarded_fact_snapshot
         - sanitize_headers
         - set_debug_tracing_enabled
@@ -3417,16 +3464,21 @@ cells:
       commands:
         - AppendFactEventCommandV1
         - AppendIfGuardedSnapshotCommandV1
+        - AppendSegmentedFactEventCommandV1
         - BootstrapFactStreamWorkspaceCommandV1
         - EnrollFactStreamStreamsCommandV1
+        - EnsureSegmentedFactLedgerCommandV1
         - ProvisionFactStreamLockAuthorityCommandV1
       queries:
         - QueryFactEventsV1
         - QueryFactStreamHeadV1
+        - QuerySegmentedFactEventsV1
+        - QuerySegmentedFactLedgerHeadV1
         - ReadGuardedFactSnapshotCommandV1
       events:
         - FactEventAppendedV1
         - GuardedFactEventV1
+        - SegmentedFactEventAppendedV1
       results:
         - FactStreamHeadV1
         - FactStreamMaintenanceReceiptV1
@@ -3435,6 +3487,9 @@ cells:
         - GuardedFactAppendedV1
         - GuardedFactSnapshotProofV1
         - GuardedFactSnapshotV1
+        - SegmentedFactLedgerHeadV1
+        - SegmentedFactLedgerReadyV1
+        - SegmentedFactQueryResultV1
       errors:
         - FactStreamError
     depends_on: []
@@ -3451,6 +3506,7 @@ cells:
         - polaris/cells/events/fact_stream/public/tests/test_guarded_fact_append.py
         - polaris/cells/events/fact_stream/public/tests/test_public_contracts.py
         - polaris/cells/events/fact_stream/public/tests/test_public_service.py
+        - polaris/cells/events/fact_stream/public/tests/test_segmented_contracts.py
         - polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py
       gaps:
         - DEO-1A guarded-append closure requires separate lifecycle, race, and startup evidence.

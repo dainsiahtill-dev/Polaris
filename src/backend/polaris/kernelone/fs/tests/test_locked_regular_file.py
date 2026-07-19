@@ -172,6 +172,203 @@ def _hold_realm_then_append(
             locked_regular_file.os.write = original_write
 
 
+@pytest.mark.parametrize("timeout_seconds", [0.0, -1.0, float("nan"), float("inf")])
+def test_maintenance_and_acquire_timeouts_require_finite_positive_values(
+    tmp_path: Path,
+    timeout_seconds: float,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    authority_root = tmp_path / "authority"
+
+    with pytest.raises(ValueError, match="finite and positive"):
+        LockedRegularFileSetV1.provision_authority(
+            platform_lock_root=str(authority_root),
+            storage_identity_token="storage-token",
+            runtime_root=str(runtime_root),
+            timeout_seconds=timeout_seconds,
+        )
+
+    LockedRegularFileSetV1.provision_authority(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(runtime_root),
+    )
+    with pytest.raises(ValueError, match="finite and positive"):
+        LockedRegularFileSetV1.enroll_stream_lock_keys(
+            platform_lock_root=str(authority_root),
+            storage_identity_token="storage-token",
+            runtime_root=str(runtime_root),
+            logical_paths=("runtime/events/test.jsonl",),
+            timeout_seconds=timeout_seconds,
+        )
+    with pytest.raises(ValueError, match="finite and positive"):
+        LockedRegularFileSetV1.acquire(
+            runtime_root=str(runtime_root),
+            storage_identity_token="storage-token",
+            logical_paths=("runtime/events/test.jsonl",),
+            platform_lock_root=str(authority_root),
+            timeout_seconds=timeout_seconds,
+        )
+
+
+def test_provision_uses_one_monotonic_deadline_for_all_flocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    authority_root = tmp_path / "authority"
+    LockedRegularFileSetV1.provision_authority(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(runtime_root),
+    )
+    observed_deadlines: list[float | None] = []
+    original_flock = locked_regular_file._flock
+    now = 100.0
+
+    def monotonic() -> float:
+        nonlocal now
+        now += 0.1
+        return now
+
+    def recording_flock(fd: int, operation: int, *, deadline: float | None = None) -> None:
+        observed_deadlines.append(deadline)
+        original_flock(fd, operation, deadline=deadline)
+
+    monkeypatch.setattr(locked_regular_file.time, "monotonic", monotonic)
+    monkeypatch.setattr(locked_regular_file, "_flock", recording_flock)
+
+    LockedRegularFileSetV1.provision_authority(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(runtime_root),
+        timeout_seconds=2.0,
+    )
+
+    assert len(observed_deadlines) == 2
+    assert observed_deadlines[0] is not None
+    assert observed_deadlines[0] == observed_deadlines[1]
+
+
+def test_fresh_provision_uses_one_monotonic_deadline_for_provision_and_new_anchor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    authority_root = tmp_path / "authority"
+    observed_deadlines: list[float | None] = []
+    original_flock = locked_regular_file._flock
+    now = 300.0
+
+    def monotonic() -> float:
+        nonlocal now
+        now += 0.1
+        return now
+
+    def recording_flock(fd: int, operation: int, *, deadline: float | None = None) -> None:
+        observed_deadlines.append(deadline)
+        original_flock(fd, operation, deadline=deadline)
+
+    monkeypatch.setattr(locked_regular_file.time, "monotonic", monotonic)
+    monkeypatch.setattr(locked_regular_file, "_flock", recording_flock)
+
+    LockedRegularFileSetV1.provision_authority(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(runtime_root),
+        timeout_seconds=2.0,
+    )
+
+    assert len(observed_deadlines) == 2
+    assert observed_deadlines[0] is not None
+    assert observed_deadlines[0] == observed_deadlines[1]
+
+
+def test_enroll_uses_one_finite_monotonic_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    authority_root = tmp_path / "authority"
+    LockedRegularFileSetV1.provision_authority(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(runtime_root),
+    )
+    observed_deadlines: list[float | None] = []
+    original_flock = locked_regular_file._flock
+
+    def recording_flock(fd: int, operation: int, *, deadline: float | None = None) -> None:
+        observed_deadlines.append(deadline)
+        original_flock(fd, operation, deadline=deadline)
+
+    monkeypatch.setattr(locked_regular_file, "_flock", recording_flock)
+
+    LockedRegularFileSetV1.enroll_stream_lock_keys(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(runtime_root),
+        logical_paths=("runtime/events/test.jsonl",),
+        timeout_seconds=2.0,
+    )
+
+    assert len(observed_deadlines) == 1
+    assert observed_deadlines[0] is not None
+
+
+def test_acquire_uses_one_monotonic_deadline_for_anchor_and_stream_locks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    authority_root = tmp_path / "authority"
+    logical_path = "runtime/events/test.jsonl"
+    LockedRegularFileSetV1.provision_authority(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(runtime_root),
+    )
+    LockedRegularFileSetV1.enroll_stream_lock_keys(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(runtime_root),
+        logical_paths=(logical_path,),
+    )
+    observed_deadlines: list[float | None] = []
+    original_flock = locked_regular_file._flock
+    now = 200.0
+
+    def monotonic() -> float:
+        nonlocal now
+        now += 0.1
+        return now
+
+    def recording_flock(fd: int, operation: int, *, deadline: float | None = None) -> None:
+        observed_deadlines.append(deadline)
+        original_flock(fd, operation, deadline=deadline)
+
+    monkeypatch.setattr(locked_regular_file.time, "monotonic", monotonic)
+    monkeypatch.setattr(locked_regular_file, "_flock", recording_flock)
+
+    with LockedRegularFileSetV1.acquire(
+        runtime_root=str(runtime_root),
+        storage_identity_token="storage-token",
+        logical_paths=(logical_path,),
+        platform_lock_root=str(authority_root),
+        timeout_seconds=2.0,
+    ):
+        pass
+
+    assert len(observed_deadlines) == 2
+    assert observed_deadlines[0] is not None
+    assert observed_deadlines[0] == observed_deadlines[1]
+
+
 def test_persistent_lock_survives_events_directory_replacement_and_detects_drift(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     events = root / "events"
@@ -697,6 +894,212 @@ def test_initial_provision_revalidates_anchor_and_realm_after_fsync(
     assert isinstance(caught.value.details["cause_details"], dict)
 
 
+def test_provision_serializes_before_empty_anchor_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "runtime"
+    authority_root = tmp_path / "authority"
+    authority = authority_root / "storage-token"
+    anchor_published = threading.Event()
+    release_creator = threading.Event()
+    competitor_first_lock = threading.Event()
+    competitor_anchor_locked = threading.Event()
+    first_lock_kind: list[str] = []
+    proofs: dict[str, LockMaintenanceProofV1] = {}
+    errors: dict[str, Exception] = {}
+    original_open = locked_regular_file.os.open
+    original_flock = locked_regular_file._flock
+
+    def controlled_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        fd = original_open(path, flags, mode, dir_fd=dir_fd)
+        if threading.current_thread().name == "authority-creator" and path == "anchor.lock" and flags & os.O_EXCL:
+            anchor_published.set()
+            assert release_creator.wait(timeout=5)
+        return fd
+
+    def controlled_flock(fd: int, operation: int, *, deadline: float | None = None) -> None:
+        if (
+            threading.current_thread().name != "authority-competitor"
+            or not operation & locked_regular_file.fcntl.LOCK_EX
+        ):
+            original_flock(fd, operation, deadline=deadline)
+            return
+        fd_info = os.fstat(fd)
+        kind = "unknown"
+        for candidate, candidate_kind in (
+            (authority / "provision.lock", "provision"),
+            (authority / "anchor.lock", "anchor"),
+        ):
+            try:
+                candidate_info = candidate.stat()
+            except FileNotFoundError:
+                continue
+            if (candidate_info.st_dev, candidate_info.st_ino) == (fd_info.st_dev, fd_info.st_ino):
+                kind = candidate_kind
+                break
+        if not first_lock_kind:
+            first_lock_kind.append(kind)
+            competitor_first_lock.set()
+        original_flock(fd, operation, deadline=deadline)
+        if kind == "anchor":
+            competitor_anchor_locked.set()
+
+    def provision(label: str) -> None:
+        try:
+            proofs[label] = LockedRegularFileSetV1.provision_authority(
+                platform_lock_root=str(authority_root),
+                storage_identity_token="storage-token",
+                runtime_root=str(root),
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced through the parent test thread
+            errors[label] = exc
+
+    monkeypatch.setattr(locked_regular_file.os, "open", controlled_open)
+    monkeypatch.setattr(locked_regular_file, "_flock", controlled_flock)
+    creator = threading.Thread(target=provision, args=("creator",), name="authority-creator")
+    competitor = threading.Thread(target=provision, args=("competitor",), name="authority-competitor")
+    try:
+        creator.start()
+        assert anchor_published.wait(timeout=5)
+        competitor.start()
+        assert competitor_first_lock.wait(timeout=5)
+        if first_lock_kind == ["anchor"]:
+            assert competitor_anchor_locked.wait(timeout=5)
+        else:
+            assert first_lock_kind == ["provision"]
+    finally:
+        release_creator.set()
+        creator.join(timeout=10)
+        competitor.join(timeout=10)
+
+    assert not creator.is_alive()
+    assert not competitor.is_alive()
+    assert errors == {}
+    assert set(proofs) == {"creator", "competitor"}
+    assert len({proof.anchor_identity for proof in proofs.values()}) == 1
+    assert first_lock_kind == ["provision"]
+
+
+def test_provision_lock_blocks_anchor_creation_across_independent_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "runtime"
+    authority_root = tmp_path / "authority"
+    authority = authority_root / "storage-token"
+    authority.mkdir(parents=True)
+    provision_lock = authority / "provision.lock"
+    provision_lock.touch(mode=0o600)
+    provision_identity = (provision_lock.stat().st_dev, provision_lock.stat().st_ino)
+    original_open = locked_regular_file.os.open
+    original_flock = locked_regular_file._flock
+    first_action_ready = threading.Event()
+    first_action: list[str] = []
+    action_guard = threading.Lock()
+    errors: list[Exception] = []
+
+    def record_first(action: str) -> None:
+        with action_guard:
+            if not first_action:
+                first_action.append(action)
+                first_action_ready.set()
+
+    def controlled_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if threading.current_thread().name == "authority-provisioner" and path == "anchor.lock" and flags & os.O_EXCL:
+            record_first("anchor_create")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    def controlled_flock(fd: int, operation: int, *, deadline: float | None = None) -> None:
+        fd_info = os.fstat(fd)
+        if (
+            threading.current_thread().name == "authority-provisioner"
+            and operation & locked_regular_file.fcntl.LOCK_EX
+            and (fd_info.st_dev, fd_info.st_ino) == provision_identity
+        ):
+            record_first("provision_lock")
+        original_flock(fd, operation, deadline=deadline)
+
+    def provision() -> None:
+        try:
+            LockedRegularFileSetV1.provision_authority(
+                platform_lock_root=str(authority_root),
+                storage_identity_token="storage-token",
+                runtime_root=str(root),
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced through the parent test thread
+            errors.append(exc)
+
+    monkeypatch.setattr(locked_regular_file.os, "open", controlled_open)
+    monkeypatch.setattr(locked_regular_file, "_flock", controlled_flock)
+    external_fd = original_open(provision_lock, os.O_RDWR | os.O_NOFOLLOW)
+    assert locked_regular_file.fcntl is not None
+    locked_regular_file.fcntl.flock(external_fd, locked_regular_file.fcntl.LOCK_EX)
+    worker = threading.Thread(target=provision, name="authority-provisioner")
+    try:
+        worker.start()
+        assert first_action_ready.wait(timeout=5)
+        observed_first_action = tuple(first_action)
+    finally:
+        locked_regular_file.fcntl.flock(external_fd, locked_regular_file.fcntl.LOCK_UN)
+        os.close(external_fd)
+        worker.join(timeout=10)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert observed_first_action == ("provision_lock",)
+    assert (authority / "anchor.lock").is_file()
+
+
+@pytest.mark.parametrize(
+    ("unsafe_kind", "expected_code"),
+    (
+        ("symlink", "lock_provision_invalid"),
+        ("hardlink", "hard_link_rejected"),
+        ("directory", "lock_provision_invalid"),
+    ),
+)
+def test_provision_lock_rejects_unsafe_existing_entry(
+    tmp_path: Path,
+    unsafe_kind: str,
+    expected_code: str,
+) -> None:
+    root = tmp_path / "runtime"
+    authority_root = tmp_path / "authority"
+    authority = authority_root / "storage-token"
+    authority.mkdir(parents=True)
+    provision_lock = authority / "provision.lock"
+    outside = tmp_path / "outside.lock"
+    outside.write_bytes(b"")
+    if unsafe_kind == "symlink":
+        provision_lock.symlink_to(outside)
+    elif unsafe_kind == "hardlink":
+        os.link(outside, provision_lock)
+    else:
+        provision_lock.mkdir()
+
+    with pytest.raises(LockedRegularFileError) as caught:
+        LockedRegularFileSetV1.provision_authority(
+            platform_lock_root=str(authority_root),
+            storage_identity_token="storage-token",
+            runtime_root=str(root),
+        )
+
+    assert caught.value.code == expected_code
+
+
 def test_authority_provision_fsyncs_created_directories_and_parents_in_descendant_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -710,6 +1113,7 @@ def test_authority_provision_fsyncs_created_directories_and_parents_in_descendan
         identities = {
             (path.stat().st_dev, path.stat().st_ino): str(path)
             for path in (
+                authority_root / "storage-token" / "provision.lock",
                 authority_root / "storage-token" / "anchor.lock",
                 authority_root / "storage-token" / "realm",
                 authority_root / "storage-token",
@@ -748,7 +1152,34 @@ def test_authority_provision_fsyncs_created_directories_and_parents_in_descendan
         str(authority_root),
         str(tmp_path / "locks"),
         str(tmp_path),
+        str(authority_root / "storage-token" / "provision.lock"),
     ]
+
+
+def test_existing_authority_republishes_missing_provision_lock_durably(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    authority_root = tmp_path / "authority"
+    authority = authority_root / "storage-token"
+    LockedRegularFileSetV1.provision_authority(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(root),
+    )
+    (authority / "provision.lock").unlink()
+
+    proof = LockedRegularFileSetV1.provision_authority(
+        platform_lock_root=str(authority_root),
+        storage_identity_token="storage-token",
+        runtime_root=str(root),
+    )
+
+    assert proof.verdict == "already_present"
+    assert proof.completed_fsync_order == (
+        str(authority / "provision.lock"),
+        str(authority),
+    )
 
 
 def test_existing_authority_has_no_created_directory_durability_proof(
@@ -1000,12 +1431,12 @@ def test_maintenance_successes_return_stable_typed_physical_proof(tmp_path: Path
         "runtime/events/zeta.jsonl",
     }
     assert all(item.verdict == "created" for item in created_keys.lock_keys)
-    assert all(item.identity.inode == (authority / "realm" / item.lock_key).stat().st_ino for item in created_keys.lock_keys)
+    assert all(
+        item.identity.inode == (authority / "realm" / item.lock_key).stat().st_ino for item in created_keys.lock_keys
+    )
     assert existing_keys.verdict == "already_present"
     assert all(item.verdict == "already_present" for item in existing_keys.lock_keys)
-    assert [item.lock_key for item in existing_keys.lock_keys] == [
-        item.lock_key for item in created_keys.lock_keys
-    ]
+    assert [item.lock_key for item in existing_keys.lock_keys] == [item.lock_key for item in created_keys.lock_keys]
     assert existing_keys.root_identity == created_keys.root_identity
     assert existing_keys.anchor_identity == created_keys.anchor_identity
     assert existing_keys.realm_identity == created_keys.realm_identity
@@ -1218,9 +1649,7 @@ def test_64_concurrent_process_enrollments_return_one_created_and_stable_final_p
     ready_root.mkdir()
     child_env = os.environ.copy()
     inherited_pythonpath = child_env.get("PYTHONPATH", "")
-    child_env["PYTHONPATH"] = os.pathsep.join(
-        path for path in (str(backend_root), inherited_pythonpath) if path
-    )
+    child_env["PYTHONPATH"] = os.pathsep.join(path for path in (str(backend_root), inherited_pythonpath) if path)
     child_env["PYTHONUTF8"] = "1"
     child_env["PYTHONIOENCODING"] = "utf-8"
 

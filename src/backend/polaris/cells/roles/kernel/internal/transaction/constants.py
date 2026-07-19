@@ -109,14 +109,6 @@ RECON_TOOLS: frozenset[str] = _SCOUT_RECON_TOOLS
 VERIFICATION_TOOLS: frozenset[str] = frozenset({"execute_command"})
 
 # ---------------------------------------------------------------------------
-# 工具别名（功能等价归一化）
-# ---------------------------------------------------------------------------
-TOOL_ALIASES: dict[str, str] = {
-    "ripgrep": "repo_rg",
-    "rg": "repo_rg",
-}
-
-# ---------------------------------------------------------------------------
 # 文件 token 扩展名识别
 # ---------------------------------------------------------------------------
 # 用于从最终 prompt、SESSION_PATCH、quality repair target blocks 中提取

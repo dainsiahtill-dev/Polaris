@@ -1,14 +1,21 @@
 """Tests for FactoryRunService and FactoryStore."""
 
 import asyncio
+import hashlib
 import json
 import tempfile
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.factory.pipeline.internal import (
     factory_run_service as factory_service_module,
     factory_stage_executor as factory_stage_module,
@@ -23,6 +30,11 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 )
 from polaris.cells.factory.pipeline.internal.factory_store import FactoryStore
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+    FactoryRoleEvidenceAuthorityBindingV1,
+    get_factory_role_evidence_authority_binding,
+)
 from polaris.cells.runtime.task_runtime.public.contracts import (
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -128,7 +140,15 @@ class SlowStageExecutor:
 def temp_workspace():
     """Create a temporary workspace"""
     with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+        workspace = Path(tmpdir).resolve()
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=str(workspace),
+                streams=fact_stream_bootstrap_streams(),
+                maintenance_reason="factory_run_service_test_bootstrap",
+            )
+        )
+        yield workspace
 
 
 @pytest.fixture
@@ -301,9 +321,13 @@ class TestFactoryStore:
         # Initially empty
         assert store.list_runs() == []
 
-        # Create some run directories
-        (store.base_dir / "run1").mkdir()
-        (store.base_dir / "run2").mkdir()
+        # Only runs with a regular mutable snapshot are discoverable.  A
+        # directory holding admission bytes alone is a quarantined half-run.
+        for run_id in ("run1", "run2"):
+            run_dir = store.base_dir / run_id
+            run_dir.mkdir()
+            (run_dir / "run.json").write_text("{}", encoding="utf-8")
+        (store.base_dir / "half-run").mkdir()
         (store.base_dir / "not_a_run.txt").touch()
 
         runs = store.list_runs()
@@ -749,8 +773,10 @@ class _DetailedFailureCommandService:
 class _CompletedCommandService:
     def __init__(self) -> None:
         self.query_calls = 0
+        self.observed_bindings: list[FactoryRoleEvidenceAuthorityBindingV1 | None] = []
 
     async def execute_pm_run(self, workspace: str, run_type: str, options: dict) -> CommandResult:
+        self.observed_bindings.append(get_factory_role_evidence_authority_binding())
         del workspace, run_type, options
         return CommandResult(
             run_id="pm-run-completed",
@@ -759,6 +785,7 @@ class _CompletedCommandService:
         )
 
     async def execute_qa_run(self, workspace: str, target: str, options: dict) -> CommandResult:
+        self.observed_bindings.append(get_factory_role_evidence_authority_binding())
         del workspace, target, options
         return CommandResult(
             run_id="qa-run-completed",
@@ -767,6 +794,7 @@ class _CompletedCommandService:
         )
 
     async def execute_director_run(self, workspace: str, tasks: list | None, options: dict) -> CommandResult:
+        self.observed_bindings.append(get_factory_role_evidence_authority_binding())
         del workspace, tasks, options
         return CommandResult(
             run_id="director-run-completed",
@@ -790,6 +818,7 @@ class _CapturingCompletedCommandService(_CompletedCommandService):
         self.pm_calls: list[dict[str, object]] = []
 
     async def execute_pm_run(self, workspace: str, run_type: str, options: dict) -> CommandResult:
+        self.observed_bindings.append(get_factory_role_evidence_authority_binding())
         self.pm_calls.append(
             {
                 "workspace": workspace,
@@ -811,6 +840,7 @@ class _CapturingQaCommandService(_CompletedCommandService):
         self.validation_exists_at_qa = False
 
     async def execute_qa_run(self, workspace: str, target: str, options: dict) -> CommandResult:
+        self.observed_bindings.append(get_factory_role_evidence_authority_binding())
         validation_path = Path(resolve_runtime_path(workspace, "runtime/qa/workspace-validation.json"))
         self.validation_exists_at_qa = validation_path.is_file()
         self.qa_calls.append(
@@ -973,10 +1003,47 @@ class _DirectorNoMaterializedChangesOnlyService(_CompletedCommandService):
         )
 
 
+class _TestFactoryRoleEvidenceAuthorityPort:
+    def __init__(self, factory_run_id: str = "factory-test-run") -> None:
+        self.factory_run_id = factory_run_id
+        self.bindings: list[FactoryRoleEvidenceAuthorityBindingV1] = []
+        self.revoked: list[str] = []
+
+    async def acquire_cutoff(self, request: object) -> object:
+        del request
+        raise AssertionError("stage seam test must not acquire cutoff")
+
+    async def resolve_cutoff_proof(self, ack: object) -> object:
+        del ack
+        raise AssertionError("stage seam test must not resolve cutoff proof")
+
+    def require_grant_capacity(self, role: str, count: int) -> None:
+        del role
+        if len(self.bindings) + count > 512:
+            raise RuntimeError("factory_role_evidence_stage_grant_cardinality_exceeded")
+
+    def mint_authority_binding(self, role: str) -> FactoryRoleEvidenceAuthorityBindingV1:
+        binding = FactoryRoleEvidenceAuthorityBindingV1(
+            schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+            verification_scope="factory",
+            factory_run_id=self.factory_run_id,
+            role=role,
+            cutoff_port=self,
+            attempt_budget=32,
+            execution_authority_hash=hashlib.sha256(f"test-grant-{len(self.bindings)}-{role}".encode()).hexdigest(),
+        )
+        self.bindings.append(binding)
+        return binding
+
+    def revoke_authority_binding(self, binding: FactoryRoleEvidenceAuthorityBindingV1) -> None:
+        self.revoked.append(binding.execution_authority_hash)
+
+
 class _TestStageExecutor(OrchestrationStageExecutor):
     def __init__(self, workspace: Path, command_service: object) -> None:
         super().__init__(workspace)
         self._command_service = command_service
+        self._test_role_evidence_port = _TestFactoryRoleEvidenceAuthorityPort()
 
     def _build_orchestration_service(self, context: dict):
         return self._command_service
@@ -984,6 +1051,10 @@ class _TestStageExecutor(OrchestrationStageExecutor):
     def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
         del context
         return []
+
+    def _factory_role_evidence_cutoff_port(self, context: Mapping[str, Any]) -> Any:
+        del context
+        return self._test_role_evidence_port
 
     def _validate_director_binding_coverage(self, additional_events=None):
         return True, []
@@ -1190,6 +1261,9 @@ class TestOrchestrationStageExecutor:
 
         assert result.status == "success"
         assert captured["timeout_seconds"] == 600
+        assert command_service.observed_bindings[-1] is executor._test_role_evidence_port.bindings[-1]
+        assert command_service.observed_bindings[-1].role == "architect"
+        assert get_factory_role_evidence_authority_binding() is None
 
     @pytest.mark.asyncio
     async def test_pm_stage_uses_extended_default_timeout_budget(self, temp_workspace, monkeypatch):
@@ -1222,6 +1296,9 @@ class TestOrchestrationStageExecutor:
 
         assert result.status == "success"
         assert captured["timeout_seconds"] == 600
+        assert command_service.observed_bindings[-1] is executor._test_role_evidence_port.bindings[-1]
+        assert command_service.observed_bindings[-1].role == "pm"
+        assert get_factory_role_evidence_authority_binding() is None
 
     @pytest.mark.asyncio
     async def test_pm_stage_builds_directive_from_architect_artifacts(self, temp_workspace, monkeypatch):
@@ -1314,6 +1391,13 @@ class TestOrchestrationStageExecutor:
         assert result.status == "success"
         assert wait_calls == 2
         assert len(command_service.pm_calls) == 2
+        assert len(command_service.observed_bindings) == 2
+        assert all(binding is not None and binding.role == "pm" for binding in command_service.observed_bindings)
+        assert (
+            command_service.observed_bindings[0].execution_authority_hash
+            != command_service.observed_bindings[1].execution_authority_hash
+        )
+        assert get_factory_role_evidence_authority_binding() is None
         second_options = command_service.pm_calls[1]["options"]
         assert isinstance(second_options, dict)
         metadata = second_options.get("metadata")
@@ -1506,10 +1590,12 @@ class TestOrchestrationStageExecutor:
         from polaris.cells.roles.runtime.public.contracts._execution_contracts import RoleExecutionResultV1
 
         captured_commands = []
+        captured_bindings: list[FactoryRoleEvidenceAuthorityBindingV1 | None] = []
 
         class FakeRoleRuntimeService:
             async def execute_role_task(self, command):
                 captured_commands.append(command)
+                captured_bindings.append(get_factory_role_evidence_authority_binding())
                 return RoleExecutionResultV1(
                     ok=True,
                     status="success",
@@ -1557,6 +1643,9 @@ class TestOrchestrationStageExecutor:
         assert payload["generated_blueprints"] == 1
         assert payload["blueprints"][0]["task_id"] == "TASK-1"
         assert len(captured_commands) == 1
+        assert captured_bindings == [executor._test_role_evidence_port.bindings[-1]]
+        assert captured_bindings[0] is not None and captured_bindings[0].role == "chief_engineer"
+        assert get_factory_role_evidence_authority_binding() is None
         ce_command = captured_commands[0]
         assert ce_command.context["cognitive_runtime_mode"] == "off"
         assert ce_command.context["cognitive_runtime_enabled"] is False
@@ -1702,6 +1791,9 @@ class TestOrchestrationStageExecutor:
         assert result.status == "failed"
         assert "error_code=director.run_status_non_success" in str(result.output)
         assert "dispatch/log.json" in result.artifacts
+        assert command_service.observed_bindings[-1] is executor._test_role_evidence_port.bindings[-1]
+        assert command_service.observed_bindings[-1].role == "director"
+        assert get_factory_role_evidence_authority_binding() is None
 
     @pytest.mark.asyncio
     async def test_director_stage_rejects_file_only_taskboard_even_with_metadata_progress(
@@ -1858,9 +1950,7 @@ class TestOrchestrationStageExecutor:
         dispatch_log = Path(resolve_logical_path(str(temp_workspace), "workspace/dispatch/latest.log.json"))
         payload = json.loads(dispatch_log.read_text(encoding="utf-8"))
         assert "director.run_status_non_success" in {
-            signal.get("code")
-            for signal in payload.get("signals", [])
-            if isinstance(signal, dict)
+            signal.get("code") for signal in payload.get("signals", []) if isinstance(signal, dict)
         }
 
     @pytest.mark.asyncio
@@ -1941,11 +2031,7 @@ class TestOrchestrationStageExecutor:
         signal_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/signals/director_dispatch.signals.json"))
         payload = json.loads(signal_path.read_text(encoding="utf-8"))
         rows = payload.get("signals") if isinstance(payload, dict) else []
-        assert any(
-            isinstance(item, dict)
-            and item.get("code") == "director.run_status_non_success"
-            for item in rows
-        )
+        assert any(isinstance(item, dict) and item.get("code") == "director.run_status_non_success" for item in rows)
 
     @pytest.mark.asyncio
     async def test_director_stage_covered_targets_do_not_bypass_execution_facts(
@@ -2334,6 +2420,9 @@ class TestOrchestrationStageExecutor:
 
         assert result.status == "failed"
         assert "canonical_reason=qa_verdict_missing" in str(result.output)
+        assert command_service.observed_bindings[-1] is executor._test_role_evidence_port.bindings[-1]
+        assert command_service.observed_bindings[-1].role == "qa"
+        assert get_factory_role_evidence_authority_binding() is None
         assert executor.commands_seen == [["npm", "run", "build"], ["npm", "test"]]
         assert "workspace_checks_diagnostic=True" in str(result.output)
         assert "runtime/qa/workspace-validation.json" in result.artifacts

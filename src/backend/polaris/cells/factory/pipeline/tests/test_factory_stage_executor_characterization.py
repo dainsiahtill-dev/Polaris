@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import logging
@@ -34,6 +35,11 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.events.fact_stream.public.service import (
     QueryFactEventsV1,
     query_fact_events,
@@ -52,6 +58,9 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
+from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
+    FactoryRoleEvidenceAuthorityPort,
+)
 from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
@@ -61,6 +70,10 @@ from polaris.cells.roles.adapters.public import (
     build_director_materialization_quality_repair_message,
     extract_workspace_quality_summary,
     resolve_director_semantic_quality_repair_target_files,
+)
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+    FactoryRoleEvidenceAuthorityBindingV1,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     ObservableTaskRowsProjectionV1,
@@ -72,8 +85,95 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
 
+def _CharacterizationAuthorityPort() -> FactoryRoleEvidenceAuthorityPort:
+    """Return an exact production port type with test-only grant behavior."""
+
+    port = object.__new__(FactoryRoleEvidenceAuthorityPort)
+    bindings: list[FactoryRoleEvidenceAuthorityBindingV1] = []
+
+    async def acquire_cutoff(request: object) -> object:
+        del request
+        raise AssertionError("characterization test must not acquire cutoff")
+
+    async def resolve_cutoff_proof(ack: object) -> object:
+        del ack
+        raise AssertionError("characterization test must not resolve cutoff proof")
+
+    def require_grant_capacity(role: str, count: int) -> None:
+        assert role == "director"
+        assert len(bindings) + count <= 512
+
+    def mint_authority_binding(role: str) -> FactoryRoleEvidenceAuthorityBindingV1:
+        binding = FactoryRoleEvidenceAuthorityBindingV1(
+            schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+            verification_scope="factory",
+            factory_run_id="characterization-run",
+            role=role,
+            cutoff_port=port,
+            attempt_budget=32,
+            execution_authority_hash=hashlib.sha256(f"grant-{len(bindings)}".encode()).hexdigest(),
+        )
+        bindings.append(binding)
+        return binding
+
+    def revoke_authority_binding(binding: FactoryRoleEvidenceAuthorityBindingV1) -> None:
+        del binding
+
+    port.acquire_cutoff = acquire_cutoff  # type: ignore[method-assign]
+    port.resolve_cutoff_proof = resolve_cutoff_proof  # type: ignore[method-assign]
+    port.require_grant_capacity = require_grant_capacity  # type: ignore[method-assign]
+    port.mint_authority_binding = mint_authority_binding  # type: ignore[method-assign]
+    port.revoke_authority_binding = revoke_authority_binding  # type: ignore[method-assign]
+    return port
+
+
+def _bootstrap_fact_stream_workspace(workspace: Path) -> None:
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace.resolve()),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="factory_stage_executor_characterization_test_bootstrap",
+        )
+    )
+
+
+@pytest.fixture(autouse=True)
+def _bootstrap_real_fact_stream_workspace(request: pytest.FixtureRequest) -> None:
+    """Provision FactStream before characterization tests use a real workspace."""
+
+    if "tmp_path" not in request.fixturenames:
+        return
+    _bootstrap_fact_stream_workspace(Path(request.getfixturevalue("tmp_path")))
+
+
+@pytest.fixture(autouse=True)
+def _install_exact_test_factory_role_evidence_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give direct stage-unit calls the exact live-port runtime type B3.2 requires."""
+
+    monkeypatch.setattr(
+        OrchestrationStageExecutor,
+        "_factory_role_evidence_cutoff_port",
+        staticmethod(lambda _context: _CharacterizationAuthorityPort()),
+    )
+
+
 def _executor(workspace: Path) -> OrchestrationStageExecutor:
     return OrchestrationStageExecutor(workspace)
+
+
+def test_executor_constructor_does_not_bootstrap_fact_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pure executor construction must never provision or maintain FactStream."""
+
+    def _fail_bootstrap(_workspace: Path) -> None:
+        pytest.fail("executor construction must not bootstrap FactStream")
+
+    monkeypatch.setitem(globals(), "_bootstrap_fact_stream_workspace", _fail_bootstrap)
+
+    executor = _executor(Path("."))
+
+    assert isinstance(executor, OrchestrationStageExecutor)
 
 
 def _write_minimal_chief_engineer_plan(executor: OrchestrationStageExecutor) -> None:
@@ -232,6 +332,7 @@ def test_materialize_pm_task_projects_current_factory_workspace_lease(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_fact_stream_workspace(workspace)
     executor = _executor(workspace)
     run_id = "factory-run-lease-current"
     current_lease = _factory_workspace_run_lease(
@@ -359,6 +460,7 @@ def test_materialize_pm_task_never_trusts_task_supplied_workspace_lease(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_fact_stream_workspace(workspace)
     monkeypatch.setattr(
         TaskRuntimeService,
         "_publish_factory_execution_event",
@@ -7508,6 +7610,7 @@ class TestDirectorDispatchLoop:
                     {"provider_id": "p2", "model": "m2", "binding_id": "b2"},
                 ],
                 timeout_seconds=10,
+                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
             ),
             timeout=0.5,
         )
@@ -7580,6 +7683,7 @@ class TestDirectorDispatchLoop:
                 bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
                 timeout_seconds=10,
                 cancel_event=cancel_event,
+                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
             ),
             timeout=0.5,
         )
@@ -7666,6 +7770,7 @@ class TestDirectorDispatchLoop:
                 bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
                 timeout_seconds=10,
                 cancel_event=cancel_event,
+                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
             ),
             timeout=0.5,
         )
@@ -7735,6 +7840,7 @@ class TestDirectorDispatchLoop:
                 base_options={"execution_mode": "parallel", "max_workers": 2},
                 bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
                 timeout_seconds=60,
+                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
             ),
             timeout=1.0,
         )
@@ -7816,6 +7922,7 @@ class TestDirectorDispatchLoop:
                 base_options={"execution_mode": "parallel", "max_workers": 2},
                 bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
                 timeout_seconds=60,
+                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
             ),
             timeout=1.0,
         )
@@ -7869,6 +7976,7 @@ class TestDirectorDispatchLoop:
             base_options={"execution_mode": "parallel", "max_workers": 1},
             bindings=[binding],
             timeout_seconds=10,
+            authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
         )
         result = await executor._execute_director_binding_fanout(
             service=service,
@@ -7877,6 +7985,7 @@ class TestDirectorDispatchLoop:
             base_options={"execution_mode": "parallel", "max_workers": 1},
             bindings=[binding],
             timeout_seconds=10,
+            authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
         )
 
         assert result.status == "failed"
@@ -7934,6 +8043,7 @@ class TestDirectorDispatchLoop:
             base_options={"execution_mode": "parallel", "max_workers": 1},
             bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
             timeout_seconds=10,
+            authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
         )
 
         assert executor.cancel_on_timeout_values == [False]

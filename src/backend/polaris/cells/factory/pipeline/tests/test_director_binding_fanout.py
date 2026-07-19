@@ -39,7 +39,28 @@ async def _canonical_wait_result(
 
 
 def _attach_canonical_wait(executor: Any) -> Any:
+    class _FanoutAuthorityPort:
+        def require_grant_capacity(self, role: str, count: int) -> None:
+            assert role == "director"
+            assert count >= 0
+
+    async def _call_with_test_authority(
+        _authority_port: object,
+        _role: str,
+        operation: Any,
+    ) -> Any:
+        return await operation()
+
+    authority_port = _FanoutAuthorityPort()
+    execute_fanout = executor._execute_director_binding_fanout
+
+    async def _execute_fanout_with_test_authority(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("authority_port", authority_port)
+        return await execute_fanout(*args, **kwargs)
+
     executor._wait_run_completion = _canonical_wait_result
+    executor._call_with_factory_role_evidence_authority = _call_with_test_authority
+    executor._execute_director_binding_fanout = _execute_fanout_with_test_authority
     return executor
 
 

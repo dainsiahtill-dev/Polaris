@@ -25,7 +25,6 @@ from polaris.cells.roles.kernel.internal.transaction.constants import (
     READ_TOOLS,
     RECON_TOOLS,
     SAFE_READ_BOOTSTRAP_TOOLS,
-    TOOL_ALIASES,
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
@@ -46,6 +45,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecision,
     TurnDecisionKind,
 )
+from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 logger = logging.getLogger(__name__)
@@ -1086,11 +1086,7 @@ def batch_write_failure_error_types(batch_receipt: Mapping[str, Any]) -> tuple[s
         payload = item.get("result")
         sources = (item, payload) if isinstance(payload, Mapping) else (item,)
         for source in sources:
-            error_type = str(
-                source.get("error_type")
-                or source.get("handler_error_type")
-                or ""
-            ).strip().lower()
+            error_type = str(source.get("error_type") or source.get("handler_error_type") or "").strip().lower()
             if error_type:
                 error_types.append(error_type)
                 break
@@ -1114,24 +1110,22 @@ def batch_write_failures_require_llm_replan(batch_receipt: Mapping[str, Any]) ->
         return True
     if receipts_have_stale_edit_failure([dict(batch_receipt)]):
         return True
-    return bool(error_types) and all(
-        error_type in _REPLANNABLE_WRITE_ERROR_TYPES for error_type in error_types
-    )
+    return bool(error_types) and all(error_type in _REPLANNABLE_WRITE_ERROR_TYPES for error_type in error_types)
 
 
 def has_successful_recon_execution(tool_executions: list[dict[str, Any]]) -> bool:
     """判定 ledger 工具执行记录中是否存在至少一次成功的侦察工具执行。
 
     recon-required finalize gate（ADR-0091 R1）的核心谓词：
-    - 工具名归一化（小写、``-``→``_``、TOOL_ALIASES 别名映射）后必须命中
+    - 工具名通过 ToolSpecRegistry 唯一别名权威归一化后必须命中
       RECON_TOOLS（与评测侧 unified_judge 共享的 SSOT 集合）；
     - status 必须为 ``"success"``（失败的侦察调用不构成落地证据）。
     """
     for entry in tool_executions:
         if not isinstance(entry, Mapping):
             continue
-        raw_name = str(entry.get("tool_name") or "").strip().lower().replace("-", "_")
-        tool_name = TOOL_ALIASES.get(raw_name, raw_name)
+        raw_name = str(entry.get("tool_name") or "").strip()
+        tool_name = normalize_tool_name(raw_name)
         if tool_name in RECON_TOOLS and str(entry.get("status") or "") == "success":
             return True
     return False

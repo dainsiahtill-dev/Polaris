@@ -671,6 +671,16 @@ class TestToolNameNormalization:
             "command": "npm run build"
         }
 
+    def test_snapshot_normalization_rejects_forged_snapshot_hash(self) -> None:
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        snapshot = ToolSpecRegistry.capture_effective_spec("write_file")
+        object.__setattr__(snapshot, "snapshot_hash", "0" * 64)
+
+        with pytest.raises(ValueError, match="snapshot hash"):
+            normalize_tool_arguments_from_snapshot(snapshot, {"file": "main.py", "content": "x"})
+
 
 class TestRepoReadHeadNormalization:
     """Test repo_read_head weak-model file argument aliases."""

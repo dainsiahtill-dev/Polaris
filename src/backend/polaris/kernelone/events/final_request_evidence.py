@@ -6,12 +6,55 @@ import hashlib
 import json
 import re
 from collections.abc import Iterable, Mapping, MutableMapping
+from dataclasses import asdict, dataclass
 from typing import Any
 
 FINAL_REQUEST_EVIDENCE_SCHEMA = "llm.final_request_evidence.v1"
 FINAL_REQUEST_EVIDENCE_AUTHORITY_SCHEMA = "polaris.final_request_evidence_authority.v1"
 AUDIT_REFS_SCHEMA = "llm.final_request_audit_refs.v1"
 _CONTEXT_SNAPSHOT_HASH_RE = re.compile(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{24})(?![0-9A-Fa-f])")
+_EXACT_CONTEXT_SNAPSHOT_HASH_RE = re.compile(r"^[0-9a-f]{24}$")
+_EXACT_HASH_64_RE = re.compile(r"^[0-9a-f]{64}$")
+_CONTEXT_SNAPSHOT_AUDIT_PIN_FIELDS = frozenset(
+    {
+        "schema_version",
+        "workspace_abs",
+        "runtime_root",
+        "snapshot_logical_path",
+        "snapshot_absolute_path",
+        "snapshot_source",
+        "factory_run_id",
+        "role",
+        "verification_scope",
+        "request_freeze_id",
+        "provider_request_id",
+        "context_snapshot_ref",
+        "storage_identity_token",
+        "snapshot_content_hash",
+        "composite_request_hash",
+        "retention",
+        "pin_hash",
+    }
+)
+_SECRET_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "authorization",
+        "client_secret",
+        "cookie",
+        "credential",
+        "credentials",
+        "password",
+        "proxy_authorization",
+        "refresh_token",
+        "secret",
+        "set_cookie",
+        "token",
+        "x_api_key",
+    }
+)
+_SECRET_KEY_SUFFIXES = ("_access_token", "_api_key", "_credential", "_password", "_secret", "_token")
 _COVERAGE_FLAG_TO_REF = {
     "has_pm_contract": "pm_contract",
     "has_chief_engineer_blueprint": "ce_blueprint",
@@ -1197,3 +1240,891 @@ def attach_final_request_evidence(payload: MutableMapping[str, Any], data: Mappi
     )
     payload["audit_refs"] = audit_refs
     return evidence
+
+
+def canonical_final_request_hash(value: Any) -> str:
+    """Hash one detached JSON-safe evidence value deterministically."""
+
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("final request evidence must be JSON safe") from exc
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+ROLE_FINAL_REQUEST_POLICY_SCHEMA = "polaris.role_final_request_policy.v1"
+ROLE_FINAL_REQUEST_POLICY_FACTS_SCHEMA = "polaris.role_final_request_policy_facts.v1"
+FINAL_REQUEST_EVIDENCE_ANCHOR_SCHEMA = "polaris.final_request_evidence_anchor.v1"
+FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA = "polaris.final_request_evidence_slot.v1"
+ROLE_FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA = "polaris.role_final_request_evidence_slot.v1"
+_ROLE_FINAL_REQUEST_STATES = frozenset({"present", "absent_at_request_time"})
+_ROLE_FINAL_REQUEST_ANCHOR_FIELDS = frozenset(
+    {
+        "schema_version",
+        "ref_kind",
+        "canonical_source_ref",
+        "canonical_ref",
+        "canonical_hash",
+        "source_fact_schema",
+        "source_fact_version",
+        "factory_run_id",
+        "run_id",
+        "role",
+        "request_freeze_id",
+        "cutoff_fact_id",
+        "cutoff_fact_sequence",
+        "cutoff_fact_hash",
+        "source_fact_id",
+        "source_fact_sequence",
+        "source_fact_hash",
+        "source_head_sequence",
+        "source_head_hash",
+        "execution_authority_hash",
+    }
+)
+_ROLE_FINAL_REQUEST_SLOT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "ref_kind",
+        "state",
+        "canonical_source_ref",
+        "source_fact_schema",
+        "source_fact_version",
+        "factory_run_id",
+        "run_id",
+        "role",
+        "request_freeze_id",
+        "cutoff_fact_id",
+        "cutoff_fact_sequence",
+        "cutoff_fact_hash",
+        "source_head_sequence",
+        "source_head_hash",
+        "execution_authority_hash",
+        "items",
+    }
+)
+_ROLE_FINAL_REQUEST_POLICY_FACTS_FIELDS = frozenset({"schema_version", "role", "slots"})
+_ROLE_FINAL_REQUEST_ANCHOR_STRING_FIELDS = (
+    "schema_version",
+    "ref_kind",
+    "canonical_source_ref",
+    "canonical_ref",
+    "canonical_hash",
+    "source_fact_schema",
+    "source_fact_version",
+    "factory_run_id",
+    "run_id",
+    "role",
+    "request_freeze_id",
+    "cutoff_fact_id",
+    "cutoff_fact_hash",
+    "source_fact_id",
+    "source_fact_hash",
+    "source_head_hash",
+    "execution_authority_hash",
+)
+_ROLE_FINAL_REQUEST_SLOT_STRING_FIELDS = (
+    "schema_version",
+    "ref_kind",
+    "state",
+    "canonical_source_ref",
+    "source_fact_schema",
+    "source_fact_version",
+    "factory_run_id",
+    "run_id",
+    "role",
+    "request_freeze_id",
+    "cutoff_fact_id",
+    "cutoff_fact_hash",
+    "source_head_hash",
+    "execution_authority_hash",
+)
+_ROLE_FINAL_REQUEST_POLICY_FACTS_STRING_FIELDS = ("schema_version", "role")
+
+
+def _require_role_final_request_string(field_name: str, value: Any) -> str:
+    """Return an authority string without coercing runtime values."""
+
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name}_must_be_string")
+    return value
+
+
+def _validate_role_final_request_json(value: Any, *, path: str = "$") -> None:
+    """Reject non-JSON and unstable values without repr/default fallbacks."""
+
+    if value is None or isinstance(value, (bool, int, str)):
+        return
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            raise ValueError(f"canonical_json_non_finite_float:{path}")
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"canonical_json_non_string_key:{path}")
+            _validate_role_final_request_json(item, path=f"{path}.{key}")
+        return
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _validate_role_final_request_json(item, path=f"{path}[{index}]")
+        return
+    raise ValueError(f"canonical_json_unsupported_type:{path}:{type(value).__name__}")
+
+
+def canonical_role_final_request_json(value: Any) -> str:
+    """Return strict UTF-8 canonical JSON for provider-visible role facts."""
+
+    _validate_role_final_request_json(value)
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def canonical_role_final_request_hash(value: Any) -> str:
+    """Return SHA-256 of strict role-fact canonical JSON."""
+
+    return hashlib.sha256(canonical_role_final_request_json(value).encode("utf-8")).hexdigest()
+
+
+_ROLE_FINAL_REQUEST_POLICY_FIELDS = frozenset(
+    {"schema_version", "role", "slot_order", "required_present_slots", "policy_hash"}
+)
+_ROLE_FINAL_REQUEST_POLICY_SPECS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "pm": (("pm_raw_intent",), ("pm_raw_intent",)),
+    "architect": (("pm_raw_intent",), ("pm_raw_intent",)),
+    "chief_engineer": (
+        ("pm_contract", "target_files", "workspace_quality"),
+        ("pm_contract", "target_files"),
+    ),
+    "director": (
+        ("pm_contract", "ce_blueprint", "target_files", "failure_feedback", "workspace_quality"),
+        ("pm_contract", "ce_blueprint", "target_files"),
+    ),
+    "qa": (
+        (
+            "pm_contract",
+            "ce_blueprint",
+            "target_files",
+            "verifier_receipts",
+            "failure_feedback",
+            "workspace_quality",
+        ),
+        (
+            "pm_contract",
+            "ce_blueprint",
+            "target_files",
+            "verifier_receipts",
+            "workspace_quality",
+        ),
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class RoleFinalRequestPolicyV1:
+    """Exact ordered evidence policy for one canonical role."""
+
+    schema_version: str
+    role: str
+    slot_order: tuple[str, ...]
+    required_present_slots: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_role_final_request_string("schema_version", self.schema_version)
+        _require_role_final_request_string("role", self.role)
+        if self.schema_version != ROLE_FINAL_REQUEST_POLICY_SCHEMA:
+            raise ValueError("role_final_request_policy_schema_mismatch")
+        expected = _ROLE_FINAL_REQUEST_POLICY_SPECS.get(self.role)
+        if expected is None:
+            raise ValueError(f"role_final_request_policy_unknown_role:{self.role or '<empty>'}")
+        if (self.slot_order, self.required_present_slots) != expected:
+            raise ValueError("role_final_request_policy_definition_mismatch")
+
+    def _hash_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "role": self.role,
+            "slot_order": list(self.slot_order),
+            "required_present_slots": list(self.required_present_slots),
+        }
+
+    @property
+    def policy_hash(self) -> str:
+        return canonical_role_final_request_hash(self._hash_payload())
+
+    def to_record(self) -> dict[str, Any]:
+        return {**self._hash_payload(), "policy_hash": self.policy_hash}
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> RoleFinalRequestPolicyV1:
+        if not isinstance(record, Mapping) or frozenset(record) != _ROLE_FINAL_REQUEST_POLICY_FIELDS:
+            raise ValueError("role_final_request_policy_fields_mismatch")
+        schema_version = _require_role_final_request_string("schema_version", record.get("schema_version"))
+        role = _require_role_final_request_string("role", record.get("role"))
+        policy_hash = _require_role_final_request_string("policy_hash", record.get("policy_hash"))
+        raw_slots = record.get("slot_order")
+        raw_required = record.get("required_present_slots")
+        if not isinstance(raw_slots, (list, tuple)) or not isinstance(raw_required, (list, tuple)):
+            raise ValueError("role_final_request_policy_definition_mismatch")
+        if any(not isinstance(item, str) for item in (*raw_slots, *raw_required)):
+            raise ValueError("role_final_request_policy_definition_mismatch")
+        created = cls(
+            schema_version=schema_version,
+            role=role,
+            slot_order=tuple(raw_slots),
+            required_present_slots=tuple(raw_required),
+        )
+        if policy_hash != created.policy_hash:
+            raise ValueError("role_final_request_policy_hash_mismatch")
+        return created
+
+
+_ROLE_FINAL_REQUEST_POLICIES: dict[str, RoleFinalRequestPolicyV1] = {
+    role: RoleFinalRequestPolicyV1(
+        schema_version=ROLE_FINAL_REQUEST_POLICY_SCHEMA,
+        role=role,
+        slot_order=spec[0],
+        required_present_slots=spec[1],
+    )
+    for role, spec in _ROLE_FINAL_REQUEST_POLICY_SPECS.items()
+}
+_ROLE_FINAL_REQUEST_SOURCE_KEYS: dict[str, tuple[str, ...]] = {
+    "pm_raw_intent": ("pm_raw_intent",),
+    "pm_contract": ("pm_contract", "pm_task_contract", "pm_task_contracts"),
+    "ce_blueprint": ("ce_blueprint", "chief_engineer_blueprint"),
+    "target_files": ("target_files", "scope_paths"),
+    "verifier_receipts": ("verifier_receipts",),
+    "failure_feedback": ("failure_feedback", "failed_gate_evidence"),
+    "workspace_quality": ("workspace_quality", "workspace_quality_evidence"),
+}
+
+
+def role_final_request_policy(role: str) -> RoleFinalRequestPolicyV1:
+    """Return exact policy; unknown roles fail closed."""
+
+    normalized = _require_role_final_request_string("role", role).strip()
+    policy = _ROLE_FINAL_REQUEST_POLICIES.get(normalized)
+    if policy is None:
+        raise ValueError(f"role_final_request_policy_unknown_role:{normalized or '<empty>'}")
+    return policy
+
+
+def role_final_request_source_keys(ref_kind: str) -> tuple[str, ...]:
+    """Return allowlisted structured source keys for one canonical slot."""
+
+    normalized = _require_role_final_request_string("ref_kind", ref_kind).strip()
+    keys = _ROLE_FINAL_REQUEST_SOURCE_KEYS.get(normalized)
+    if keys is None:
+        raise ValueError(f"role_final_request_source_unknown_slot:{normalized or '<empty>'}")
+    return keys
+
+
+@dataclass(frozen=True, slots=True)
+class RoleFinalRequestEvidenceAnchorV1:
+    """One immutable provider-visible item reference; never raw fact payload."""
+
+    schema_version: str
+    ref_kind: str
+    canonical_source_ref: str
+    canonical_ref: str
+    canonical_hash: str
+    source_fact_schema: str
+    source_fact_version: str
+    factory_run_id: str
+    run_id: str
+    role: str
+    request_freeze_id: str
+    cutoff_fact_id: str
+    cutoff_fact_sequence: int
+    cutoff_fact_hash: str
+    source_fact_id: str
+    source_fact_sequence: int
+    source_fact_hash: str
+    source_head_sequence: int
+    source_head_hash: str
+    execution_authority_hash: str
+
+    def __post_init__(self) -> None:
+        for field_name in _ROLE_FINAL_REQUEST_ANCHOR_STRING_FIELDS:
+            _require_role_final_request_string(field_name, getattr(self, field_name))
+        policy = role_final_request_policy(self.role)
+        if self.ref_kind not in policy.slot_order:
+            raise ValueError("role_final_request_anchor_ref_kind_mismatch")
+        text_fields = (
+            self.ref_kind,
+            self.canonical_source_ref,
+            self.canonical_ref,
+            self.source_fact_schema,
+            self.source_fact_version,
+            self.factory_run_id,
+            self.run_id,
+            self.request_freeze_id,
+            self.cutoff_fact_id,
+            self.source_fact_id,
+        )
+        if any(not value.strip() for value in text_fields):
+            raise ValueError("role_final_request_anchor_empty_binding")
+        if isinstance(self.cutoff_fact_sequence, bool) or self.cutoff_fact_sequence <= 0:
+            raise ValueError("cutoff_fact_sequence_must_be_positive")
+        if isinstance(self.source_fact_sequence, bool) or not isinstance(self.source_fact_sequence, int):
+            raise ValueError("source_fact_sequence_must_be_integer")
+        if isinstance(self.source_head_sequence, bool) or not isinstance(self.source_head_sequence, int):
+            raise ValueError("source_head_sequence_must_be_non_negative")
+        if self.source_head_sequence < 0:
+            raise ValueError("source_head_sequence_must_be_non_negative")
+        if not _EXACT_HASH_64_RE.fullmatch(self.source_head_hash):
+            raise ValueError("source_head_hash_must_be_64_lowercase_hex")
+        if self.source_fact_sequence <= 0:
+            raise ValueError("source_fact_sequence_must_be_positive")
+        if self.source_fact_sequence > self.source_head_sequence:
+            raise ValueError("source_fact_sequence_exceeds_head")
+        for field_name, value in (
+            ("canonical_hash", self.canonical_hash),
+            ("cutoff_fact_hash", self.cutoff_fact_hash),
+            ("source_fact_hash", self.source_fact_hash),
+            ("source_head_hash", self.source_head_hash),
+            ("execution_authority_hash", self.execution_authority_hash),
+        ):
+            if not _EXACT_HASH_64_RE.fullmatch(value):
+                raise ValueError(f"{field_name}_must_be_64_lowercase_hex")
+        if self.schema_version != FINAL_REQUEST_EVIDENCE_ANCHOR_SCHEMA:
+            raise ValueError("role_final_request_anchor_schema_mismatch")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        ref_kind: str,
+        canonical_source_ref: str,
+        canonical_ref: str,
+        canonical_hash: str,
+        source_fact_schema: str,
+        source_fact_version: str,
+        factory_run_id: str,
+        run_id: str,
+        role: str,
+        request_freeze_id: str,
+        cutoff_fact_id: str,
+        cutoff_fact_sequence: int,
+        cutoff_fact_hash: str,
+        source_fact_id: str,
+        source_fact_sequence: int,
+        source_fact_hash: str,
+        source_head_sequence: int,
+        source_head_hash: str,
+        execution_authority_hash: str,
+    ) -> RoleFinalRequestEvidenceAnchorV1:
+        return cls(
+            schema_version=FINAL_REQUEST_EVIDENCE_ANCHOR_SCHEMA,
+            ref_kind=_require_role_final_request_string("ref_kind", ref_kind).strip(),
+            canonical_source_ref=_require_role_final_request_string(
+                "canonical_source_ref", canonical_source_ref
+            ).strip(),
+            canonical_ref=_require_role_final_request_string("canonical_ref", canonical_ref).strip(),
+            canonical_hash=_require_role_final_request_string("canonical_hash", canonical_hash).strip(),
+            source_fact_schema=_require_role_final_request_string("source_fact_schema", source_fact_schema).strip(),
+            source_fact_version=_require_role_final_request_string("source_fact_version", source_fact_version).strip(),
+            factory_run_id=_require_role_final_request_string("factory_run_id", factory_run_id).strip(),
+            run_id=_require_role_final_request_string("run_id", run_id).strip(),
+            role=_require_role_final_request_string("role", role).strip(),
+            request_freeze_id=_require_role_final_request_string("request_freeze_id", request_freeze_id).strip(),
+            cutoff_fact_id=_require_role_final_request_string("cutoff_fact_id", cutoff_fact_id).strip(),
+            cutoff_fact_sequence=cutoff_fact_sequence,
+            cutoff_fact_hash=_require_role_final_request_string("cutoff_fact_hash", cutoff_fact_hash).strip(),
+            source_fact_id=_require_role_final_request_string("source_fact_id", source_fact_id).strip(),
+            source_fact_sequence=source_fact_sequence,
+            source_fact_hash=_require_role_final_request_string("source_fact_hash", source_fact_hash).strip(),
+            source_head_sequence=source_head_sequence,
+            source_head_hash=_require_role_final_request_string("source_head_hash", source_head_hash).strip(),
+            execution_authority_hash=_require_role_final_request_string(
+                "execution_authority_hash", execution_authority_hash
+            ).strip(),
+        )
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> RoleFinalRequestEvidenceAnchorV1:
+        if not isinstance(record, Mapping) or frozenset(record) != _ROLE_FINAL_REQUEST_ANCHOR_FIELDS:
+            raise ValueError("role_final_request_anchor_fields_mismatch")
+        string_fields = {
+            field_name: _require_role_final_request_string(field_name, record.get(field_name))
+            for field_name in _ROLE_FINAL_REQUEST_ANCHOR_STRING_FIELDS
+        }
+        cutoff_fact_sequence = record.get("cutoff_fact_sequence")
+        if isinstance(cutoff_fact_sequence, bool) or not isinstance(cutoff_fact_sequence, int):
+            raise ValueError("cutoff_fact_sequence_must_be_positive")
+        source_fact_sequence = record.get("source_fact_sequence")
+        if isinstance(source_fact_sequence, bool) or not isinstance(source_fact_sequence, int):
+            raise ValueError("source_fact_sequence_must_be_integer")
+        source_head_sequence = record.get("source_head_sequence")
+        if isinstance(source_head_sequence, bool) or not isinstance(source_head_sequence, int):
+            raise ValueError("source_head_sequence_must_be_non_negative")
+        return cls(
+            schema_version=string_fields["schema_version"],
+            ref_kind=string_fields["ref_kind"],
+            canonical_source_ref=string_fields["canonical_source_ref"],
+            canonical_ref=string_fields["canonical_ref"],
+            canonical_hash=string_fields["canonical_hash"],
+            source_fact_schema=string_fields["source_fact_schema"],
+            source_fact_version=string_fields["source_fact_version"],
+            factory_run_id=string_fields["factory_run_id"],
+            run_id=string_fields["run_id"],
+            role=string_fields["role"],
+            request_freeze_id=string_fields["request_freeze_id"],
+            cutoff_fact_id=string_fields["cutoff_fact_id"],
+            cutoff_fact_sequence=cutoff_fact_sequence,
+            cutoff_fact_hash=string_fields["cutoff_fact_hash"],
+            source_fact_id=string_fields["source_fact_id"],
+            source_fact_sequence=source_fact_sequence,
+            source_fact_hash=string_fields["source_fact_hash"],
+            source_head_sequence=source_head_sequence,
+            source_head_hash=string_fields["source_head_hash"],
+            execution_authority_hash=string_fields["execution_authority_hash"],
+        )
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "ref_kind": self.ref_kind,
+            "canonical_source_ref": self.canonical_source_ref,
+            "canonical_ref": self.canonical_ref,
+            "canonical_hash": self.canonical_hash,
+            "source_fact_schema": self.source_fact_schema,
+            "source_fact_version": self.source_fact_version,
+            "factory_run_id": self.factory_run_id,
+            "run_id": self.run_id,
+            "role": self.role,
+            "request_freeze_id": self.request_freeze_id,
+            "cutoff_fact_id": self.cutoff_fact_id,
+            "cutoff_fact_sequence": self.cutoff_fact_sequence,
+            "cutoff_fact_hash": self.cutoff_fact_hash,
+            "source_fact_id": self.source_fact_id,
+            "source_fact_sequence": self.source_fact_sequence,
+            "source_fact_hash": self.source_fact_hash,
+            "source_head_sequence": self.source_head_sequence,
+            "source_head_hash": self.source_head_hash,
+            "execution_authority_hash": self.execution_authority_hash,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RoleFinalRequestEvidenceSlotV1:
+    """One policy slot at the Factory-issued source-head cut."""
+
+    schema_version: str
+    ref_kind: str
+    state: str
+    canonical_source_ref: str
+    source_fact_schema: str
+    source_fact_version: str
+    factory_run_id: str
+    run_id: str
+    role: str
+    request_freeze_id: str
+    cutoff_fact_id: str
+    cutoff_fact_sequence: int
+    cutoff_fact_hash: str
+    source_head_sequence: int
+    source_head_hash: str
+    execution_authority_hash: str
+    items: tuple[RoleFinalRequestEvidenceAnchorV1, ...]
+
+    def __post_init__(self) -> None:
+        for field_name in _ROLE_FINAL_REQUEST_SLOT_STRING_FIELDS:
+            _require_role_final_request_string(field_name, getattr(self, field_name))
+        policy = role_final_request_policy(self.role)
+        if self.schema_version != ROLE_FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA:
+            raise ValueError("role_final_request_slot_schema_mismatch")
+        if self.ref_kind not in policy.slot_order:
+            raise ValueError("role_final_request_slot_ref_kind_mismatch")
+        text_fields = (
+            self.ref_kind,
+            self.canonical_source_ref,
+            self.source_fact_schema,
+            self.source_fact_version,
+            self.factory_run_id,
+            self.run_id,
+            self.request_freeze_id,
+            self.cutoff_fact_id,
+        )
+        if any(not value.strip() for value in text_fields):
+            raise ValueError("role_final_request_slot_empty_binding")
+        if isinstance(self.cutoff_fact_sequence, bool) or not isinstance(self.cutoff_fact_sequence, int):
+            raise ValueError("cutoff_fact_sequence_must_be_positive")
+        if self.cutoff_fact_sequence <= 0:
+            raise ValueError("cutoff_fact_sequence_must_be_positive")
+        if isinstance(self.source_head_sequence, bool) or not isinstance(self.source_head_sequence, int):
+            raise ValueError("source_head_sequence_must_be_non_negative")
+        if self.source_head_sequence < 0:
+            raise ValueError("source_head_sequence_must_be_non_negative")
+        for field_name, value in (
+            ("cutoff_fact_hash", self.cutoff_fact_hash),
+            ("source_head_hash", self.source_head_hash),
+            ("execution_authority_hash", self.execution_authority_hash),
+        ):
+            if not _EXACT_HASH_64_RE.fullmatch(value):
+                raise ValueError(f"{field_name}_must_be_64_lowercase_hex")
+        if self.state not in _ROLE_FINAL_REQUEST_STATES:
+            raise ValueError("role_final_request_slot_invalid_state")
+        if not isinstance(self.items, tuple):
+            raise ValueError("role_final_request_slot_items_must_be_tuple")
+        if any(not isinstance(item, RoleFinalRequestEvidenceAnchorV1) for item in self.items):
+            raise ValueError("role_final_request_slot_items_must_be_typed_anchor")
+        if self.state == "present" and not self.items:
+            raise ValueError("present_slot_items_must_not_be_empty")
+        if self.state == "absent_at_request_time" and self.items:
+            raise ValueError("absent_slot_items_must_be_empty")
+        expected_binding = (
+            self.ref_kind,
+            self.canonical_source_ref,
+            self.source_fact_schema,
+            self.source_fact_version,
+            self.factory_run_id,
+            self.run_id,
+            self.role,
+            self.request_freeze_id,
+            self.cutoff_fact_id,
+            self.cutoff_fact_sequence,
+            self.cutoff_fact_hash,
+            self.source_head_sequence,
+            self.source_head_hash,
+            self.execution_authority_hash,
+        )
+        for item in self.items:
+            item_binding = (
+                item.ref_kind,
+                item.canonical_source_ref,
+                item.source_fact_schema,
+                item.source_fact_version,
+                item.factory_run_id,
+                item.run_id,
+                item.role,
+                item.request_freeze_id,
+                item.cutoff_fact_id,
+                item.cutoff_fact_sequence,
+                item.cutoff_fact_hash,
+                item.source_head_sequence,
+                item.source_head_hash,
+                item.execution_authority_hash,
+            )
+            if item_binding != expected_binding:
+                raise ValueError("role_final_request_slot_item_binding_mismatch")
+            if item.source_fact_sequence > self.source_head_sequence:
+                raise ValueError("source_fact_sequence_exceeds_head")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        ref_kind: str,
+        state: str,
+        canonical_source_ref: str,
+        source_fact_schema: str,
+        source_fact_version: str,
+        factory_run_id: str,
+        run_id: str,
+        role: str,
+        request_freeze_id: str,
+        cutoff_fact_id: str,
+        cutoff_fact_sequence: int,
+        cutoff_fact_hash: str,
+        source_head_sequence: int,
+        source_head_hash: str,
+        execution_authority_hash: str,
+        items: tuple[RoleFinalRequestEvidenceAnchorV1, ...],
+    ) -> RoleFinalRequestEvidenceSlotV1:
+        return cls(
+            schema_version=ROLE_FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA,
+            ref_kind=_require_role_final_request_string("ref_kind", ref_kind).strip(),
+            state=_require_role_final_request_string("state", state).strip(),
+            canonical_source_ref=_require_role_final_request_string(
+                "canonical_source_ref", canonical_source_ref
+            ).strip(),
+            source_fact_schema=_require_role_final_request_string("source_fact_schema", source_fact_schema).strip(),
+            source_fact_version=_require_role_final_request_string("source_fact_version", source_fact_version).strip(),
+            factory_run_id=_require_role_final_request_string("factory_run_id", factory_run_id).strip(),
+            run_id=_require_role_final_request_string("run_id", run_id).strip(),
+            role=_require_role_final_request_string("role", role).strip(),
+            request_freeze_id=_require_role_final_request_string("request_freeze_id", request_freeze_id).strip(),
+            cutoff_fact_id=_require_role_final_request_string("cutoff_fact_id", cutoff_fact_id).strip(),
+            cutoff_fact_sequence=cutoff_fact_sequence,
+            cutoff_fact_hash=_require_role_final_request_string("cutoff_fact_hash", cutoff_fact_hash).strip(),
+            source_head_sequence=source_head_sequence,
+            source_head_hash=_require_role_final_request_string("source_head_hash", source_head_hash).strip(),
+            execution_authority_hash=_require_role_final_request_string(
+                "execution_authority_hash", execution_authority_hash
+            ).strip(),
+            items=items,
+        )
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> RoleFinalRequestEvidenceSlotV1:
+        if not isinstance(record, Mapping) or frozenset(record) != _ROLE_FINAL_REQUEST_SLOT_FIELDS:
+            raise ValueError("role_final_request_slot_fields_mismatch")
+        string_fields = {
+            field_name: _require_role_final_request_string(field_name, record.get(field_name))
+            for field_name in _ROLE_FINAL_REQUEST_SLOT_STRING_FIELDS
+        }
+        raw_items = record.get("items")
+        if not isinstance(raw_items, (list, tuple)):
+            raise ValueError("role_final_request_slot_items_must_be_sequence")
+        cutoff_fact_sequence = record.get("cutoff_fact_sequence")
+        if isinstance(cutoff_fact_sequence, bool) or not isinstance(cutoff_fact_sequence, int):
+            raise ValueError("cutoff_fact_sequence_must_be_positive")
+        source_head_sequence = record.get("source_head_sequence")
+        if isinstance(source_head_sequence, bool) or not isinstance(source_head_sequence, int):
+            raise ValueError("source_head_sequence_must_be_non_negative")
+        return cls(
+            schema_version=string_fields["schema_version"],
+            ref_kind=string_fields["ref_kind"],
+            state=string_fields["state"],
+            canonical_source_ref=string_fields["canonical_source_ref"],
+            source_fact_schema=string_fields["source_fact_schema"],
+            source_fact_version=string_fields["source_fact_version"],
+            factory_run_id=string_fields["factory_run_id"],
+            run_id=string_fields["run_id"],
+            role=string_fields["role"],
+            request_freeze_id=string_fields["request_freeze_id"],
+            cutoff_fact_id=string_fields["cutoff_fact_id"],
+            cutoff_fact_sequence=cutoff_fact_sequence,
+            cutoff_fact_hash=string_fields["cutoff_fact_hash"],
+            source_head_sequence=source_head_sequence,
+            source_head_hash=string_fields["source_head_hash"],
+            execution_authority_hash=string_fields["execution_authority_hash"],
+            items=tuple(RoleFinalRequestEvidenceAnchorV1.from_record(item) for item in raw_items),
+        )
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "ref_kind": self.ref_kind,
+            "state": self.state,
+            "canonical_source_ref": self.canonical_source_ref,
+            "source_fact_schema": self.source_fact_schema,
+            "source_fact_version": self.source_fact_version,
+            "factory_run_id": self.factory_run_id,
+            "run_id": self.run_id,
+            "role": self.role,
+            "request_freeze_id": self.request_freeze_id,
+            "cutoff_fact_id": self.cutoff_fact_id,
+            "cutoff_fact_sequence": self.cutoff_fact_sequence,
+            "cutoff_fact_hash": self.cutoff_fact_hash,
+            "source_head_sequence": self.source_head_sequence,
+            "source_head_hash": self.source_head_hash,
+            "execution_authority_hash": self.execution_authority_hash,
+            "items": [item.to_record() for item in self.items],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RoleFinalRequestPolicyFactsV1:
+    """Validated ordered role slots for one frozen provider request."""
+
+    schema_version: str
+    role: str
+    slots: tuple[RoleFinalRequestEvidenceSlotV1, ...]
+
+    def __post_init__(self) -> None:
+        for field_name in _ROLE_FINAL_REQUEST_POLICY_FACTS_STRING_FIELDS:
+            _require_role_final_request_string(field_name, getattr(self, field_name))
+        policy = role_final_request_policy(self.role)
+        if self.schema_version != ROLE_FINAL_REQUEST_POLICY_FACTS_SCHEMA:
+            raise ValueError("role_final_request_policy_facts_schema_mismatch")
+        if not isinstance(self.slots, tuple) or any(
+            not isinstance(slot, RoleFinalRequestEvidenceSlotV1) for slot in self.slots
+        ):
+            raise ValueError("role_final_request_policy_facts_slots_must_be_typed")
+        kinds = tuple(slot.ref_kind for slot in self.slots)
+        if kinds != policy.slot_order:
+            raise ValueError("role_final_request_policy_facts_slot_order_mismatch")
+        first = self.slots[0]
+        for slot in self.slots:
+            if slot.role != self.role:
+                raise ValueError("role_final_request_policy_facts_role_mismatch")
+            if (
+                slot.factory_run_id != first.factory_run_id
+                or slot.run_id != first.run_id
+                or slot.request_freeze_id != first.request_freeze_id
+                or slot.cutoff_fact_id != first.cutoff_fact_id
+                or slot.cutoff_fact_sequence != first.cutoff_fact_sequence
+                or slot.cutoff_fact_hash != first.cutoff_fact_hash
+                or slot.execution_authority_hash != first.execution_authority_hash
+            ):
+                raise ValueError("role_final_request_policy_facts_binding_mismatch")
+        required = frozenset(policy.required_present_slots)
+        absent_required = [
+            slot.ref_kind for slot in self.slots if slot.ref_kind in required and slot.state != "present"
+        ]
+        if absent_required:
+            raise ValueError(f"role_final_request_policy_facts_required_slot_absent:{','.join(absent_required)}")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        role: str,
+        slots: Iterable[RoleFinalRequestEvidenceSlotV1],
+    ) -> RoleFinalRequestPolicyFactsV1:
+        return cls(
+            schema_version=ROLE_FINAL_REQUEST_POLICY_FACTS_SCHEMA,
+            role=_require_role_final_request_string("role", role).strip(),
+            slots=tuple(slots),
+        )
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> RoleFinalRequestPolicyFactsV1:
+        if not isinstance(record, Mapping) or frozenset(record) != _ROLE_FINAL_REQUEST_POLICY_FACTS_FIELDS:
+            raise ValueError("role_final_request_policy_facts_fields_mismatch")
+        string_fields = {
+            field_name: _require_role_final_request_string(field_name, record.get(field_name))
+            for field_name in _ROLE_FINAL_REQUEST_POLICY_FACTS_STRING_FIELDS
+        }
+        raw_slots = record.get("slots")
+        if not isinstance(raw_slots, (list, tuple)):
+            raise ValueError("role_final_request_policy_facts_slots_must_be_sequence")
+        return cls(
+            schema_version=string_fields["schema_version"],
+            role=string_fields["role"],
+            slots=tuple(RoleFinalRequestEvidenceSlotV1.from_record(item) for item in raw_slots),
+        )
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "role": self.role,
+            "slots": [slot.to_record() for slot in self.slots],
+        }
+
+
+def render_role_final_request_policy_facts(facts: RoleFinalRequestPolicyFactsV1) -> str:
+    """Render validated policy facts as one provider-visible canonical JSON block."""
+
+    if not isinstance(facts, RoleFinalRequestPolicyFactsV1):
+        raise ValueError("role_final_request_policy_facts_typed_value_required")
+    return canonical_role_final_request_json(facts.to_record())
+
+
+def redact_provider_transport(value: Any, *, key: str = "") -> Any:
+    """Recursively redact transport secrets while preserving unknown semantics."""
+
+    normalized_key = str(key).strip().lower().replace("-", "_")
+    if normalized_key in _SECRET_KEYS or normalized_key.endswith(_SECRET_KEY_SUFFIXES):
+        return {"redacted": True, "kind": "secret"}
+    if value is None or isinstance(value, (bool, int, float, str)):
+        if key == "endpoint" and isinstance(value, str) and "?" in value:
+            return value.split("?", 1)[0]
+        return value
+    if isinstance(value, Mapping):
+        return {str(item_key): redact_provider_transport(item, key=str(item_key)) for item_key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_provider_transport(item, key=key) for item in value]
+    raise ValueError("provider_config_not_snapshot_safe")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSnapshotAuditPinV1:
+    schema_version: str
+    workspace_abs: str
+    runtime_root: str
+    snapshot_logical_path: str
+    snapshot_absolute_path: str
+    snapshot_source: str
+    factory_run_id: str
+    role: str
+    verification_scope: str
+    request_freeze_id: str
+    provider_request_id: str
+    context_snapshot_ref: str
+    storage_identity_token: str
+    snapshot_content_hash: str
+    composite_request_hash: str
+    retention: str
+    pin_hash: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        workspace_abs: str,
+        runtime_root: str,
+        snapshot_logical_path: str,
+        snapshot_absolute_path: str,
+        snapshot_source: str,
+        factory_run_id: str,
+        role: str,
+        verification_scope: str,
+        request_freeze_id: str,
+        provider_request_id: str,
+        context_snapshot_ref: str,
+        storage_identity_token: str,
+        snapshot_content_hash: str,
+        composite_request_hash: str,
+    ) -> ContextSnapshotAuditPinV1:
+        ref = str(context_snapshot_ref or "").strip()
+        if not _EXACT_CONTEXT_SNAPSHOT_HASH_RE.fullmatch(ref):
+            raise ValueError("context_snapshot_ref must be exactly 24 lowercase hex")
+        payload = {
+            "schema_version": "llm.context_snapshot_audit_pin.v1",
+            "workspace_abs": str(workspace_abs or "").strip(),
+            "runtime_root": str(runtime_root or "").strip(),
+            "snapshot_logical_path": str(snapshot_logical_path or "").strip(),
+            "snapshot_absolute_path": str(snapshot_absolute_path or "").strip(),
+            "snapshot_source": str(snapshot_source or "").strip(),
+            "factory_run_id": str(factory_run_id or "").strip(),
+            "role": str(role or "").strip(),
+            "verification_scope": str(verification_scope or "").strip(),
+            "request_freeze_id": str(request_freeze_id or "").strip(),
+            "provider_request_id": str(provider_request_id or "").strip(),
+            "context_snapshot_ref": ref,
+            "storage_identity_token": str(storage_identity_token or "").strip(),
+            "snapshot_content_hash": str(snapshot_content_hash or "").strip(),
+            "composite_request_hash": str(composite_request_hash or "").strip(),
+            "retention": "pinned_audit_no_delete",
+        }
+        if any(not value for key_name, value in payload.items() if key_name not in {"schema_version", "retention"}):
+            raise ValueError("context snapshot audit pin bindings must be non-empty")
+        for field_name in ("snapshot_content_hash", "composite_request_hash"):
+            if not _EXACT_HASH_64_RE.fullmatch(str(payload[field_name])):
+                raise ValueError(f"{field_name} must be exactly 64 lowercase hex")
+        if not _EXACT_CONTEXT_SNAPSHOT_HASH_RE.fullmatch(str(payload["storage_identity_token"])):
+            raise ValueError("storage_identity_token must be exactly 24 lowercase hex")
+        return cls(**payload, pin_hash=canonical_final_request_hash(payload))
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> ContextSnapshotAuditPinV1:
+        if not isinstance(record, Mapping):
+            raise ValueError("context snapshot audit pin must be a mapping")
+        if frozenset(record) != _CONTEXT_SNAPSHOT_AUDIT_PIN_FIELDS:
+            raise ValueError("context snapshot audit pin fields mismatch")
+        if any(not isinstance(value, str) for value in record.values()):
+            raise ValueError("context snapshot audit pin fields must be strings")
+        created = cls.create(
+            workspace_abs=str(record.get("workspace_abs") or ""),
+            runtime_root=str(record.get("runtime_root") or ""),
+            snapshot_logical_path=str(record.get("snapshot_logical_path") or ""),
+            snapshot_absolute_path=str(record.get("snapshot_absolute_path") or ""),
+            snapshot_source=str(record.get("snapshot_source") or ""),
+            factory_run_id=str(record.get("factory_run_id") or ""),
+            role=str(record.get("role") or ""),
+            verification_scope=str(record.get("verification_scope") or ""),
+            request_freeze_id=str(record.get("request_freeze_id") or ""),
+            provider_request_id=str(record.get("provider_request_id") or ""),
+            context_snapshot_ref=str(record.get("context_snapshot_ref") or ""),
+            storage_identity_token=str(record.get("storage_identity_token") or ""),
+            snapshot_content_hash=str(record.get("snapshot_content_hash") or ""),
+            composite_request_hash=str(record.get("composite_request_hash") or ""),
+        )
+        if record.get("schema_version") != created.schema_version:
+            raise ValueError("context snapshot audit pin schema mismatch")
+        if record.get("retention") != created.retention:
+            raise ValueError("context snapshot audit pin retention mismatch")
+        if record.get("pin_hash") != created.pin_hash:
+            raise ValueError("context snapshot audit pin hash mismatch")
+        return created
+
+    def to_record(self) -> dict[str, Any]:
+        return asdict(self)

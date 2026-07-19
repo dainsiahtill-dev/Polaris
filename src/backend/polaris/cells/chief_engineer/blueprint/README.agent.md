@@ -11,9 +11,9 @@ Generate task-level implementation blueprints and dependency analysis for Direct
 ## Public Contracts
 
 - commands: GenerateTaskBlueprintCommandV1
-- queries: GetBlueprintStatusQueryV1
+- queries: GetBlueprintStatusQueryV1, QueryBlueprintProvenanceV1 (`query_blueprint_provenance`)
 - events: TaskBlueprintGeneratedEventV1
-- results: TaskBlueprintResultV1
+- results: TaskBlueprintResultV1, TaskBlueprintProvenanceSnapshotV1
 - errors: ChiefEngineerBlueprintErrorV1
 
 ## Depends On

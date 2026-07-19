@@ -9,6 +9,11 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.runtime.task_market.internal.errors import FSMTransitionError, StaleLeaseTokenError
 from polaris.cells.runtime.task_market.internal.store import get_store
 from polaris.cells.runtime.task_market.public.contracts import (
@@ -1895,6 +1900,13 @@ def test_outbox_relay_retry_after_mark_sent_failure_is_idempotent(
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="task_market_outbox_idempotency_test_setup",
+        )
+    )
     service = TaskMarketService()
     store = get_store(str(workspace))
     monkeypatch.setattr(service, "_get_store", lambda _workspace: store)
@@ -1923,6 +1935,7 @@ def test_outbox_relay_retry_after_mark_sent_failure_is_idempotent(
     monkeypatch.setattr(store, "mark_outbox_message_sent", flaky_mark_sent)
     first_relay = service.relay_outbox_messages(str(workspace), limit=50)
     assert first_relay["failed"] >= 1
+    assert calls["count"] == 1
 
     monkeypatch.setattr(store, "mark_outbox_message_sent", original_mark_sent)
     second_relay = service.relay_outbox_messages(str(workspace), limit=50)

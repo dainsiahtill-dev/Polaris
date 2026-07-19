@@ -1381,3 +1381,44 @@ Runs:
 - Keep Cell metadata updates after green code and freeze them with two independent
   reviews. Catalog `0` issues is a closure gate. Ordinary AST fences are auxiliary
   audit evidence, never runtime authorization.
+
+## 2026-07-19 - BASE-FS-SEG-001 ordinary-maintenance closure
+
+- Ordinary FactStream provision, enrollment, and workspace bootstrap now reject
+  reserved segmented namespaces before any maintenance-store or KernelOne effect.
+  Coverage includes the three exact reserved roots, suffixed streams, `.segmented`,
+  reserved-only batches, mixed batches, first-illegal projection, and real zero
+  authority/lock-key effects.
+- Dedicated segmented ensure/append/query remains the only enrollment path. It
+  keeps the stricter namespace contract and does not provision missing workspace
+  authority. Factory PM, Chief Engineer, Director, and QA authority tests now
+  provision only base authority before the dedicated path creates the control
+  stream.
+- Fresh main-agent evidence: FactStream `155 passed`, Factory role-evidence
+  `96 passed`, provider-attempt `54 passed`, KernelOne architecture `18 passed`,
+  aggregate KernelOne release gate exit `0`, and Factory Pipeline `1056 passed`
+  with two multiprocessing deprecation warnings. Scoped static gates passed;
+  independent specification review returned `CLEAR` and quality review returned
+  `APPROVED`. FPR=`N/A`; Bench remains `not_schedulable`.
+- Historical dormant ordinary lock keys are explicit cutover inventory debt, not
+  automatically deleted or repaired. Next bucket is `FPR-A-009B3`: every physical
+  PM/Chief Engineer/Director/QA provider attempt, retry, and fallback must qualify
+  its exact final provider request before dispatch.
+
+## 2026-07-19 - A009B3-B3.1 Factory role authority closure
+
+- B3.1 is closed. Factory now mints one runtime-private grant for every
+  Architect, PM initial/recovery, Chief Engineer, Director direct/fanout-child,
+  and QA task seam; fixed attempt budget, grant caps, child/freeze identity,
+  cancellation drain, and recursive capability leak rejection remain enforced.
+- Stage close/revoke and cutoff acquisition use one RLock-backed Condition.
+  Active leases never cross an `await`; authoritative commit and ACK publication
+  each use condition-protected check-and-act linearization. Close/revoke winning
+  first yields no commit or ACK; close waits active synchronous work to drain.
+- Main-agent evidence: five concurrency regressions, authority `119 passed`,
+  cross-layer `310 passed in 124.03s`, FactoryRunService `83 passed in 184.75s`,
+  all scoped static/governance gates green. Independent spec rereview `PASS`;
+  quality/concurrency rereview `APPROVED`; no P0/P1/P2.
+- `FPR=N/A`; no physical provider request was made or qualified. B3.2 is next.
+  Real role provider dispatch and Bench remain `not_schedulable` until B3.2-B3.5
+  and later closure gates pass.

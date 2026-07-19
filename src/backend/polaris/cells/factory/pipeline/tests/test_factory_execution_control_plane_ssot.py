@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.factory.pipeline.internal import (
     factory_run_completion as completion_module,
     factory_stage_executor as executor_module,
@@ -28,6 +33,22 @@ from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.runtime.task_runtime.public.contracts import ObservableTaskRowsProjectionV1
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
+
+
+@pytest.fixture(autouse=True)
+def _bootstrap_real_fact_stream_workspace(request: pytest.FixtureRequest) -> None:
+    """Provision FactStream only for tests that exercise a real temp workspace."""
+
+    if "tmp_path" not in request.fixturenames:
+        return
+    workspace = Path(request.getfixturevalue("tmp_path")).resolve()
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="factory_execution_control_plane_ssot_test_bootstrap",
+        )
+    )
 
 
 def _canonical_projection(

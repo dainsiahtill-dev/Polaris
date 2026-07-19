@@ -8,6 +8,11 @@ from threading import Barrier
 from typing import Any
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
     FactEventAppendedV1,
@@ -210,7 +215,15 @@ class SimulatedConsumerCrashError(RuntimeError):
 
 
 def _workspace(tmp_path: Path) -> str:
-    return str(tmp_path.resolve())
+    workspace = str(tmp_path.resolve())
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=workspace,
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="factory_settlement_consumer_test_bootstrap",
+        )
+    )
+    return workspace
 
 
 def _append_source_fact(

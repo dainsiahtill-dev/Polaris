@@ -11,16 +11,25 @@ Tests cover:
 
 from __future__ import annotations
 
+import asyncio
+import json
+import threading
 import warnings
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from polaris.kernelone.llm.engine.contracts import (
     AIRequest,
     AIResponse,
     ErrorCategory,
+    ModelSpec,
+    PhysicalProviderDispatchPort,
     StreamEventType,
     TaskType,
+    TokenBudgetDecision,
+    Usage,
+    bind_physical_provider_dispatch_port,
+    get_physical_provider_dispatch_port,
 )
 from polaris.kernelone.llm.engine.executor import (
     AIExecutor,
@@ -30,6 +39,50 @@ from polaris.kernelone.llm.engine.executor import (
     reset_executor_manager,
     set_executor,
 )
+from polaris.kernelone.llm.types import InvokeResult
+
+
+class _CapturingProvider:
+    def __init__(self, *, barrier: threading.Barrier | None = None, error: RuntimeError | None = None) -> None:
+        self.barrier = barrier
+        self.error = error
+        self.calls: list[tuple[str, object | None, dict[str, object]]] = []
+
+    def invoke(self, prompt: str, _model: str, config: dict[str, object]) -> InvokeResult:
+        self.calls.append((prompt, get_physical_provider_dispatch_port(), dict(config)))
+        if self.barrier is not None:
+            self.barrier.wait(timeout=5)
+        if self.error is not None:
+            raise self.error
+        return InvokeResult(
+            ok=True,
+            output=f"ok:{prompt}",
+            latency_ms=1,
+            usage=Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        )
+
+
+def _executor_for_provider(provider: _CapturingProvider) -> tuple[AIExecutor, MagicMock]:
+    model_catalog = MagicMock()
+    model_catalog.resolve.return_value = ModelSpec(
+        provider_id="provider-1",
+        provider_type="openai_compat",
+        model="model-1",
+        max_context_tokens=4096,
+        max_output_tokens=512,
+    )
+    token_budget = MagicMock()
+    token_budget.enforce.return_value = TokenBudgetDecision(
+        allowed=True,
+        max_context_tokens=4096,
+        allowed_prompt_tokens=3000,
+        requested_prompt_tokens=8,
+        reserved_output_tokens=64,
+        safety_margin_tokens=64,
+    )
+    manager = MagicMock()
+    manager.get_provider_instance.return_value = provider
+    return AIExecutor(model_catalog=model_catalog, token_budget=token_budget), manager
 
 
 class TestAIExecutorBasic:
@@ -123,7 +176,94 @@ class TestAIExecutorBasic:
 
         assert response.ok is False
         assert response.error_category == ErrorCategory.UNKNOWN
+        assert response.error is not None
         assert "unexpected error" in response.error
+
+
+class TestPhysicalProviderDispatchContext:
+    def test_binder_resets_after_exception(self) -> None:
+        port = MagicMock(spec=PhysicalProviderDispatchPort)
+
+        with pytest.raises(RuntimeError, match="boom"), bind_physical_provider_dispatch_port(port):
+            assert get_physical_provider_dispatch_port() is port
+            raise RuntimeError("boom")
+
+        assert get_physical_provider_dispatch_port() is None
+
+    def test_binder_resets_after_cancellation(self) -> None:
+        port = MagicMock(spec=PhysicalProviderDispatchPort)
+
+        with pytest.raises(asyncio.CancelledError), bind_physical_provider_dispatch_port(port):
+            assert get_physical_provider_dispatch_port() is port
+            raise asyncio.CancelledError
+
+        assert get_physical_provider_dispatch_port() is None
+
+    @pytest.mark.asyncio
+    async def test_executor_binds_port_only_for_provider_to_thread(self) -> None:
+        provider = _CapturingProvider()
+        executor, manager = _executor_for_provider(provider)
+        port = MagicMock(spec=PhysicalProviderDispatchPort)
+        context_store = AsyncMock(return_value=None)
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-1",
+            model="model-1",
+            input="request-one",
+        )
+
+        with (
+            patch.object(executor, "_resolve_provider_model", return_value=("provider-1", "model-1")),
+            patch.object(executor, "_get_provider_config", return_value={"type": "openai_compat"}),
+            patch.object(executor, "_build_invoke_config", return_value={"timeout": 5, "max_tokens": 64}),
+            patch.object(executor, "_store_context_messages", context_store),
+            patch("polaris.kernelone.llm.engine.executor.get_provider_manager", return_value=manager),
+        ):
+            response = await executor.invoke(request, physical_dispatch_port=port)
+
+        assert response.ok is True
+        assert provider.calls[0][1] is port
+        assert get_physical_provider_dispatch_port() is None
+        assert "physical_dispatch_port" not in provider.calls[0][2]
+        assert "physical_dispatch_port" not in request.to_dict()
+        assert context_store.await_args is not None
+        assert "physical_dispatch_port" not in json.dumps(context_store.await_args.kwargs, default=str)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_executor_requests_keep_ports_isolated(self) -> None:
+        provider = _CapturingProvider(barrier=threading.Barrier(2))
+        executor, manager = _executor_for_provider(provider)
+        port_one = MagicMock(spec=PhysicalProviderDispatchPort)
+        port_two = MagicMock(spec=PhysicalProviderDispatchPort)
+
+        def request(prompt: str) -> AIRequest:
+            return AIRequest(
+                task_type=TaskType.DIALOGUE,
+                role="director",
+                provider_id="provider-1",
+                model="model-1",
+                input=prompt,
+            )
+
+        with (
+            patch.object(executor, "_resolve_provider_model", return_value=("provider-1", "model-1")),
+            patch.object(executor, "_get_provider_config", return_value={"type": "openai_compat"}),
+            patch.object(executor, "_build_invoke_config", return_value={"timeout": 5, "max_tokens": 64}),
+            patch.object(executor, "_store_context_messages", AsyncMock(return_value=None)),
+            patch("polaris.kernelone.llm.engine.executor.get_provider_manager", return_value=manager),
+        ):
+            responses = await asyncio.gather(
+                executor.invoke(request("one"), physical_dispatch_port=port_one),
+                executor.invoke(request("two"), physical_dispatch_port=port_two),
+            )
+
+        assert all(response.ok for response in responses)
+        assert {prompt: seen_port for prompt, seen_port, _config in provider.calls} == {
+            "one": port_one,
+            "two": port_two,
+        }
+        assert get_physical_provider_dispatch_port() is None
 
 
 class TestBuildRawPayloadPreservesToolCalls:
@@ -132,12 +272,14 @@ class TestBuildRawPayloadPreservesToolCalls:
     it — doing so flattened nested choices[].message.tool_calls to {redacted,...} and
     broke every native tool call (native_tool_call_decode_failed)."""
 
-    class _Spec:
-        def to_dict(self) -> dict[str, object]:
-            return {"max_context_tokens": 16384}
-
     def test_native_tool_calls_survive_raw_payload_build(self) -> None:
         executor = AIExecutor()
+        model_spec = ModelSpec(
+            provider_id="provider-1",
+            provider_type="openai_compat",
+            model="qwen3.6-27b-int4",
+            max_context_tokens=16384,
+        )
         raw = {
             "model": "qwen3.6-27b-int4",
             "choices": [
@@ -156,7 +298,7 @@ class TestBuildRawPayloadPreservesToolCalls:
                 }
             ],
         }
-        out = executor._build_raw_payload(raw=raw, model_spec=self._Spec(), budget={"requested": 2500})
+        out = executor._build_raw_payload(raw=raw, model_spec=model_spec, budget={"requested": 2500})
         tool_call = out["choices"][0]["message"]["tool_calls"][0]
         # The real function block must survive (NOT redacted to {redacted, sha256, chars}).
         assert tool_call["function"]["name"] == "write_file"
@@ -164,7 +306,7 @@ class TestBuildRawPayloadPreservesToolCalls:
         assert "redacted" not in tool_call
         # Added execution metadata is still attached.
         assert out["token_budget"] == {"requested": 2500}
-        assert out["model_spec"] == {"max_context_tokens": 16384}
+        assert out["model_spec"] == model_spec.to_dict()
 
 
 class TestAIExecutorTimeout:
@@ -237,7 +379,8 @@ class TestAIExecutorTimeout:
             category=ErrorCategory.TIMEOUT,
         )
 
-        async def mock_invoke_with_resilience(request, trace_id):
+        async def mock_invoke_with_resilience(request, trace_id, *, physical_dispatch_port=None):
+            del request, trace_id, physical_dispatch_port
             return timeout_response
 
         with (

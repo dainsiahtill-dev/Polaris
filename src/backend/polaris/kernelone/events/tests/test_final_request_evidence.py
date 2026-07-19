@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
 from polaris.kernelone.events.final_request_evidence import (
     FINAL_REQUEST_EVIDENCE_AUTHORITY_SCHEMA,
     FINAL_REQUEST_EVIDENCE_SCHEMA,
+    RoleFinalRequestEvidenceAnchorV1,
+    RoleFinalRequestEvidenceSlotV1,
+    RoleFinalRequestPolicyFactsV1,
+    RoleFinalRequestPolicyV1,
     attach_final_request_evidence,
     build_final_request_coverage_sources,
     build_final_request_evidence,
     build_final_request_evidence_slots,
     build_final_request_tool_slots,
+    canonical_role_final_request_hash,
+    canonical_role_final_request_json,
     final_request_evidence_ref_for_coverage_flag,
     final_request_evidence_ref_for_requirement,
     final_request_evidence_refs_for_coverage_flags,
@@ -20,8 +29,13 @@ from polaris.kernelone.events.final_request_evidence import (
     looks_like_target_scope_payload,
     looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_coverage,
+    missing_required_refs_from_evidence_slots,
     missing_required_tools_from_evidence_coverage,
     normalize_context_snapshot_ref,
+    redact_provider_transport,
+    render_role_final_request_policy_facts,
+    role_final_request_policy,
+    role_final_request_source_keys,
     structured_context_coverage_flags,
     summarize_target_scope_evidence_payload,
     summarize_workspace_quality_evidence_context_slot,
@@ -476,9 +490,7 @@ def test_workspace_quality_context_slot_uses_structured_payload() -> None:
     }
 
     assert looks_like_workspace_quality_evidence_payload(payload)
-    assert not looks_like_workspace_quality_evidence_payload(
-        {"message": "quality_errors: ['missing README']"}
-    )
+    assert not looks_like_workspace_quality_evidence_payload({"message": "quality_errors: ['missing README']"})
     assert summarize_workspace_quality_evidence_context_slot(payload) == {
         "schema_version": "polaris.workspace_quality_evidence.context_slot.v1",
         "source_schema_version": "polaris.workspace_quality_evidence.v1",
@@ -669,9 +681,7 @@ def test_failed_gate_context_payload_uses_structured_payload() -> None:
     assert looks_like_failed_gate_evidence_context_payload({"failed_required_modalities": ["command"]})
     assert looks_like_failed_gate_evidence_context_payload({"exit_code": 1, "command": "npm test"})
     assert not looks_like_failed_gate_evidence_context_payload("failure_class: TOOL_DISPATCH_DROPPED")
-    assert not looks_like_failed_gate_evidence_context_payload(
-        {"message": "failure_class: TOOL_DISPATCH_DROPPED"}
-    )
+    assert not looks_like_failed_gate_evidence_context_payload({"message": "failure_class: TOOL_DISPATCH_DROPPED"})
     assert not looks_like_failed_gate_evidence_context_payload({"stderr": "test failed"})
     assert not looks_like_failed_gate_evidence_context_payload({"command": "npm test"})
     assert not looks_like_failed_gate_evidence_context_payload({"items": ["failure_class: TOOL_DISPATCH_DROPPED"]})
@@ -723,6 +733,7 @@ def test_build_final_request_evidence_preserves_existing_lightweight_projection(
     assert evidence["missing_required_tools"] == ["repo_tree"]
     assert evidence["final_request_evidence_authority_hash"]
 
+
 def test_context_snapshot_ref_normalizes_hash_and_rejects_invalid_refs() -> None:
     assert normalize_context_snapshot_ref("aabbccddeeff001122334455") == "aabbccddeeff001122334455"
     assert (
@@ -731,3 +742,492 @@ def test_context_snapshot_ref_normalizes_hash_and_rejects_invalid_refs() -> None
     )
     assert normalize_context_snapshot_ref("snapshot://not-a-context-store-hash") == ""
     assert normalize_context_snapshot_ref("runtime/contexts/aa/short.json") == ""
+
+
+def test_provider_transport_redaction_preserves_token_semantics_but_redacts_exact_secrets() -> None:
+    redacted = redact_provider_transport(
+        {
+            "max_tokens": 4096,
+            "token_budget": 8192,
+            "Authorization": "Bearer secret",
+            "provider_api_key": "secret-key",
+        }
+    )
+    assert redacted["max_tokens"] == 4096
+    assert redacted["token_budget"] == 8192
+    assert redacted["Authorization"] == {"redacted": True, "kind": "secret"}
+    assert redacted["provider_api_key"] == {"redacted": True, "kind": "secret"}
+
+
+@pytest.mark.parametrize(
+    ("role", "slots", "required_present"),
+    [
+        ("pm", ("pm_raw_intent",), ("pm_raw_intent",)),
+        ("architect", ("pm_raw_intent",), ("pm_raw_intent",)),
+        (
+            "chief_engineer",
+            ("pm_contract", "target_files", "workspace_quality"),
+            ("pm_contract", "target_files"),
+        ),
+        (
+            "director",
+            ("pm_contract", "ce_blueprint", "target_files", "failure_feedback", "workspace_quality"),
+            ("pm_contract", "ce_blueprint", "target_files"),
+        ),
+        (
+            "qa",
+            (
+                "pm_contract",
+                "ce_blueprint",
+                "target_files",
+                "verifier_receipts",
+                "failure_feedback",
+                "workspace_quality",
+            ),
+            ("pm_contract", "ce_blueprint", "target_files", "verifier_receipts", "workspace_quality"),
+        ),
+    ],
+)
+def test_role_final_request_policy_is_exact(
+    role: str,
+    slots: tuple[str, ...],
+    required_present: tuple[str, ...],
+) -> None:
+    policy = role_final_request_policy(role)
+    assert policy.role == role
+    assert policy.slot_order == slots
+    assert policy.required_present_slots == required_present
+    record = policy.to_record()
+    assert record["policy_hash"] == policy.policy_hash
+    assert type(policy).from_record(record) == policy
+
+
+def test_role_final_request_policy_rejects_unknown_role() -> None:
+    with pytest.raises(ValueError, match="unknown_role"):
+        role_final_request_policy("resident_agi")
+
+    policy = role_final_request_policy("pm")
+    record = policy.to_record()
+    record["slot_order"] = ["pm_raw_intent", "extra"]
+    with pytest.raises(ValueError, match=r"policy.*mismatch"):
+        type(policy).from_record(record)
+    with pytest.raises(ValueError, match=r"policy.*schema"):
+        type(policy)(
+            schema_version="drift.v2",
+            role="pm",
+            slot_order=("pm_raw_intent",),
+            required_present_slots=("pm_raw_intent",),
+        )
+
+
+def test_role_final_request_source_keys_keep_canonical_slot_names() -> None:
+    assert role_final_request_source_keys("failure_feedback") == ("failure_feedback", "failed_gate_evidence")
+    assert role_final_request_source_keys("workspace_quality") == (
+        "workspace_quality",
+        "workspace_quality_evidence",
+    )
+
+
+def test_role_final_request_canonical_json_is_utf8_stable_and_strict() -> None:
+    value = {"text": "质量", "items": [1, True, None]}
+    rendered = canonical_role_final_request_json(value)
+    assert rendered == '{"items":[1,true,null],"text":"质量"}'
+    assert canonical_role_final_request_hash(value) == canonical_role_final_request_hash(
+        {"items": [1, True, None], "text": "质量"}
+    )
+    with pytest.raises(ValueError, match="canonical_json_unsupported_type"):
+        canonical_role_final_request_json({"bad": {"unordered"}})
+    with pytest.raises(ValueError, match="canonical_json_unsupported_type"):
+        canonical_role_final_request_json({"bad": object()})
+
+
+def _anchor(slot: str, *, role: str = "chief_engineer") -> RoleFinalRequestEvidenceAnchorV1:
+    return RoleFinalRequestEvidenceAnchorV1.create(
+        ref_kind=slot,
+        canonical_source_ref=f"factory/sources/{slot}",
+        canonical_ref=f"runtime/facts/{slot}/item-1.json",
+        canonical_hash="e" * 64,
+        source_fact_schema="polaris.test_fact.v1",
+        source_fact_version="1",
+        factory_run_id="factory-run-1",
+        run_id="run-1",
+        role=role,
+        request_freeze_id="freeze-1",
+        cutoff_fact_id="cutoff-1",
+        cutoff_fact_sequence=1,
+        cutoff_fact_hash="a" * 64,
+        source_fact_id=f"fact-{slot}",
+        source_fact_sequence=2,
+        source_fact_hash="c" * 64,
+        source_head_sequence=3,
+        source_head_hash="d" * 64,
+        execution_authority_hash="b" * 64,
+    )
+
+
+def _slot(
+    slot: str,
+    *,
+    role: str = "chief_engineer",
+    state: str = "present",
+) -> RoleFinalRequestEvidenceSlotV1:
+    return RoleFinalRequestEvidenceSlotV1.create(
+        ref_kind=slot,
+        state=state,
+        canonical_source_ref=f"factory/sources/{slot}",
+        source_fact_schema="polaris.test_fact.v1",
+        source_fact_version="1",
+        factory_run_id="factory-run-1",
+        run_id="run-1",
+        role=role,
+        request_freeze_id="freeze-1",
+        cutoff_fact_id="cutoff-1",
+        cutoff_fact_sequence=1,
+        cutoff_fact_hash="a" * 64,
+        source_head_sequence=3,
+        source_head_hash="d" * 64,
+        execution_authority_hash="b" * 64,
+        items=(_anchor(slot, role=role),) if state == "present" else (),
+    )
+
+
+def test_role_final_request_policy_facts_validate_order_absence_and_hashes() -> None:
+    facts = RoleFinalRequestPolicyFactsV1.create(
+        role="chief_engineer",
+        slots=(
+            _slot("pm_contract"),
+            _slot("target_files"),
+            _slot("workspace_quality", state="absent_at_request_time"),
+        ),
+    )
+    rendered = render_role_final_request_policy_facts(facts)
+    assert '"schema_version":"polaris.role_final_request_evidence_slot.v1"' in rendered
+    assert '"schema_version":"polaris.final_request_evidence_anchor.v1"' in rendered
+    assert rendered.count('"ref_kind":"pm_contract"') == 2  # slot + one typed item anchor
+    assert rendered.index('"ref_kind":"pm_contract"') < rendered.index('"ref_kind":"target_files"')
+    assert "stderr" not in rendered
+    assert "secret" not in rendered
+
+    with pytest.raises(ValueError, match="slot_order_mismatch"):
+        RoleFinalRequestPolicyFactsV1.create(
+            role="chief_engineer",
+            slots=(facts.slots[1], facts.slots[0], facts.slots[2]),
+        )
+    with pytest.raises(ValueError, match="required_slot_absent"):
+        RoleFinalRequestPolicyFactsV1.create(
+            role="chief_engineer",
+            slots=(
+                _slot("pm_contract", state="absent_at_request_time"),
+                _slot("target_files"),
+                _slot("workspace_quality", state="absent_at_request_time"),
+            ),
+        )
+
+    record = facts.slots[0].items[0].to_record()
+    record["canonical_hash"] = "0" * 63
+    with pytest.raises(ValueError, match=r"canonical_hash.*64"):
+        RoleFinalRequestEvidenceAnchorV1.from_record(record)
+
+    facts_record = facts.to_record()
+    facts_record["unexpected"] = True
+    with pytest.raises(ValueError, match="fields_mismatch"):
+        RoleFinalRequestPolicyFactsV1.from_record(facts_record)
+
+
+def test_role_slot_schema_is_distinct_from_legacy_generic_slot_contract() -> None:
+    legacy_slots = build_final_request_evidence_slots(
+        coverage_sources=[{"ref_type": "ce_blueprint", "present": False}],
+        required_refs=["ce_blueprint"],
+        included_refs=[],
+        missing_required_refs=["ce_blueprint"],
+    )
+    assert legacy_slots == [
+        {
+            "schema_version": "polaris.final_request_evidence_slot.v1",
+            "ref_type": "ce_blueprint",
+            "required": True,
+            "present": False,
+            "missing": True,
+            "source": "final_provider_request",
+            "confidence": "absent",
+            "freshness": "unknown",
+        }
+    ]
+    assert missing_required_refs_from_evidence_slots({"evidence_slots": legacy_slots}) == ["ce_blueprint"]
+
+    role_slot = _slot("pm_contract")
+    assert role_slot.schema_version == "polaris.role_final_request_evidence_slot.v1"
+    assert missing_required_refs_from_evidence_slots({"evidence_slots": [role_slot.to_record()]}) == []
+
+    with pytest.raises(ValueError, match="role_final_request_slot_fields_mismatch"):
+        RoleFinalRequestEvidenceSlotV1.from_record(legacy_slots[0])
+
+    role_shape_with_legacy_schema = role_slot.to_record()
+    role_shape_with_legacy_schema["schema_version"] = "polaris.final_request_evidence_slot.v1"
+    with pytest.raises(ValueError, match="role_final_request_slot_schema_mismatch"):
+        RoleFinalRequestEvidenceSlotV1.from_record(role_shape_with_legacy_schema)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("schema_version", 7),
+        ("ref_kind", 7),
+        ("canonical_ref", 7),
+        ("source_fact_id", 7),
+        ("role", 7),
+        ("canonical_hash", int("1" * 64)),
+    ],
+)
+def test_anchor_record_rejects_non_string_authority_fields(field_name: str, invalid_value: int) -> None:
+    record = _anchor("pm_contract").to_record()
+    record[field_name] = invalid_value
+    with pytest.raises(ValueError, match=rf"{field_name}_must_be_string"):
+        RoleFinalRequestEvidenceAnchorV1.from_record(record)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("schema_version", 7),
+        ("ref_kind", 7),
+        ("canonical_source_ref", 7),
+        ("cutoff_fact_id", 7),
+        ("role", 7),
+        ("source_head_hash", int("1" * 64)),
+    ],
+)
+def test_slot_record_rejects_non_string_authority_fields(field_name: str, invalid_value: int) -> None:
+    record = _slot("pm_contract").to_record()
+    record[field_name] = invalid_value
+    with pytest.raises(ValueError, match=rf"{field_name}_must_be_string"):
+        RoleFinalRequestEvidenceSlotV1.from_record(record)
+
+
+@pytest.mark.parametrize("field_name", ["schema_version", "role"])
+def test_policy_facts_record_rejects_non_string_authority_fields(field_name: str) -> None:
+    facts = RoleFinalRequestPolicyFactsV1.create(
+        role="chief_engineer",
+        slots=(
+            _slot("pm_contract"),
+            _slot("target_files"),
+            _slot("workspace_quality", state="absent_at_request_time"),
+        ),
+    )
+    record = facts.to_record()
+    record[field_name] = 7
+    with pytest.raises(ValueError, match=rf"{field_name}_must_be_string"):
+        RoleFinalRequestPolicyFactsV1.from_record(record)
+
+
+def test_runtime_role_dataclasses_reject_non_string_fields_when_annotations_are_bypassed() -> None:
+    anchor = _anchor("pm_contract")
+    with pytest.raises(ValueError, match="canonical_ref_must_be_string"):
+        replace(anchor, canonical_ref=7)
+    with pytest.raises(ValueError, match="canonical_hash_must_be_string"):
+        replace(anchor, canonical_hash=int("1" * 64))
+
+    slot = _slot("pm_contract")
+    with pytest.raises(ValueError, match="canonical_source_ref_must_be_string"):
+        replace(slot, canonical_source_ref=7)
+    with pytest.raises(ValueError, match="source_head_hash_must_be_string"):
+        replace(slot, source_head_hash=int("1" * 64))
+
+    facts = RoleFinalRequestPolicyFactsV1.create(
+        role="chief_engineer",
+        slots=(
+            _slot("pm_contract"),
+            _slot("target_files"),
+            _slot("workspace_quality", state="absent_at_request_time"),
+        ),
+    )
+    with pytest.raises(ValueError, match="schema_version_must_be_string"):
+        replace(facts, schema_version=7)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("canonical_ref", 7),
+        ("canonical_hash", int("1" * 64)),
+    ],
+)
+def test_anchor_create_rejects_non_string_authority_fields(field_name: str, invalid_value: int) -> None:
+    kwargs = {
+        "ref_kind": "pm_contract",
+        "canonical_source_ref": "factory/sources/pm_contract",
+        "canonical_ref": "runtime/facts/pm_contract/item-1.json",
+        "canonical_hash": "e" * 64,
+        "source_fact_schema": "polaris.test_fact.v1",
+        "source_fact_version": "1",
+        "factory_run_id": "factory-run-1",
+        "run_id": "run-1",
+        "role": "chief_engineer",
+        "request_freeze_id": "freeze-1",
+        "cutoff_fact_id": "cutoff-1",
+        "cutoff_fact_sequence": 1,
+        "cutoff_fact_hash": "a" * 64,
+        "source_fact_id": "fact-pm-contract",
+        "source_fact_sequence": 2,
+        "source_fact_hash": "c" * 64,
+        "source_head_sequence": 3,
+        "source_head_hash": "d" * 64,
+        "execution_authority_hash": "b" * 64,
+    }
+    kwargs[field_name] = invalid_value
+    with pytest.raises(ValueError, match=rf"{field_name}_must_be_string"):
+        RoleFinalRequestEvidenceAnchorV1.create(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("canonical_source_ref", 7),
+        ("source_head_hash", int("1" * 64)),
+        ("execution_authority_hash", int("1" * 64)),
+    ],
+)
+def test_slot_create_rejects_non_string_authority_fields(field_name: str, invalid_value: int) -> None:
+    kwargs = {
+        "ref_kind": "workspace_quality",
+        "state": "absent_at_request_time",
+        "canonical_source_ref": "factory/sources/workspace_quality",
+        "source_fact_schema": "polaris.test_fact.v1",
+        "source_fact_version": "1",
+        "factory_run_id": "factory-run-1",
+        "run_id": "run-1",
+        "role": "chief_engineer",
+        "request_freeze_id": "freeze-1",
+        "cutoff_fact_id": "cutoff-1",
+        "cutoff_fact_sequence": 1,
+        "cutoff_fact_hash": "a" * 64,
+        "source_head_sequence": 3,
+        "source_head_hash": "d" * 64,
+        "execution_authority_hash": "b" * 64,
+        "items": (),
+    }
+    kwargs[field_name] = invalid_value
+    with pytest.raises(ValueError, match=rf"{field_name}_must_be_string"):
+        RoleFinalRequestEvidenceSlotV1.create(**kwargs)
+
+
+def test_policy_facts_create_rejects_numeric_role() -> None:
+    with pytest.raises(ValueError, match="role_must_be_string"):
+        RoleFinalRequestPolicyFactsV1.create(
+            role=7,
+            slots=(
+                _slot("pm_contract"),
+                _slot("target_files"),
+                _slot("workspace_quality", state="absent_at_request_time"),
+            ),
+        )
+
+
+@pytest.mark.parametrize("field_name", ["schema_version", "role", "policy_hash"])
+def test_role_policy_record_rejects_non_string_authority_fields(field_name: str) -> None:
+    record = role_final_request_policy("chief_engineer").to_record()
+    record[field_name] = int("1" * 64) if field_name == "policy_hash" else 7
+    with pytest.raises(ValueError, match=rf"{field_name}_must_be_string"):
+        RoleFinalRequestPolicyV1.from_record(record)
+
+
+def test_role_policy_runtime_and_lookup_entries_reject_numeric_authority_fields() -> None:
+    policy = role_final_request_policy("chief_engineer")
+    with pytest.raises(ValueError, match="schema_version_must_be_string"):
+        replace(policy, schema_version=7)
+    with pytest.raises(ValueError, match="role_must_be_string"):
+        role_final_request_policy(7)
+    with pytest.raises(ValueError, match="ref_kind_must_be_string"):
+        role_final_request_source_keys(7)
+
+
+def test_slot_rejects_raw_payload_items_and_absent_typed_items() -> None:
+    with pytest.raises(ValueError, match="typed_anchor"):
+        RoleFinalRequestEvidenceSlotV1.create(
+            ref_kind="workspace_quality",
+            state="present",
+            canonical_source_ref="factory/sources/workspace_quality",
+            source_fact_schema="polaris.test_fact.v1",
+            source_fact_version="1",
+            factory_run_id="factory-run-1",
+            run_id="run-1",
+            role="chief_engineer",
+            request_freeze_id="freeze-1",
+            cutoff_fact_id="cutoff-1",
+            cutoff_fact_sequence=1,
+            cutoff_fact_hash="a" * 64,
+            source_head_sequence=3,
+            source_head_hash="d" * 64,
+            execution_authority_hash="b" * 64,
+            items=({"stderr": "secret", "token": "must-not-render"},),
+        )
+    with pytest.raises(ValueError, match="absent_slot_items_must_be_empty"):
+        RoleFinalRequestEvidenceSlotV1.create(
+            ref_kind="workspace_quality",
+            state="absent_at_request_time",
+            canonical_source_ref="factory/sources/workspace_quality",
+            source_fact_schema="polaris.test_fact.v1",
+            source_fact_version="1",
+            factory_run_id="factory-run-1",
+            run_id="run-1",
+            role="chief_engineer",
+            request_freeze_id="freeze-1",
+            cutoff_fact_id="cutoff-1",
+            cutoff_fact_sequence=1,
+            cutoff_fact_hash="a" * 64,
+            source_head_sequence=3,
+            source_head_hash="d" * 64,
+            execution_authority_hash="b" * 64,
+            items=(_anchor("workspace_quality"),),
+        )
+
+
+def test_anchor_source_fact_must_belong_to_captured_source_head() -> None:
+    with pytest.raises(ValueError, match="source_fact_sequence_exceeds_head"):
+        RoleFinalRequestEvidenceAnchorV1.create(
+            ref_kind="pm_contract",
+            canonical_source_ref="factory/sources/pm_contract",
+            canonical_ref="runtime/facts/pm_contract/item-1.json",
+            canonical_hash="e" * 64,
+            source_fact_schema="polaris.test_fact.v1",
+            source_fact_version="1",
+            factory_run_id="factory-run-1",
+            run_id="run-1",
+            role="chief_engineer",
+            request_freeze_id="freeze-1",
+            cutoff_fact_id="cutoff-1",
+            cutoff_fact_sequence=1,
+            cutoff_fact_hash="a" * 64,
+            source_fact_id="fact-pm-contract",
+            source_fact_sequence=4,
+            source_fact_hash="c" * 64,
+            source_head_sequence=3,
+            source_head_hash="d" * 64,
+            execution_authority_hash="b" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "absent_slots"),
+    [
+        ("pm", ()),
+        ("chief_engineer", ("workspace_quality",)),
+        ("director", ("failure_feedback", "workspace_quality")),
+        ("qa", ("failure_feedback",)),
+    ],
+)
+def test_role_final_request_dynamic_state_matrix(role: str, absent_slots: tuple[str, ...]) -> None:
+    policy = role_final_request_policy(role)
+    facts = RoleFinalRequestPolicyFactsV1.create(
+        role=role,
+        slots=tuple(
+            _slot(
+                ref_kind,
+                role=role,
+                state="absent_at_request_time" if ref_kind in absent_slots else "present",
+            )
+            for ref_kind in policy.slot_order
+        ),
+    )
+    assert tuple(slot.ref_kind for slot in facts.slots) == policy.slot_order
+    assert tuple(slot.ref_kind for slot in facts.slots if slot.state == "absent_at_request_time") == absent_slots

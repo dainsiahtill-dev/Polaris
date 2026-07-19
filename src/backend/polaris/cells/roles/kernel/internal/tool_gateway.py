@@ -312,7 +312,10 @@ class RoleToolGateway:
         ):
             return False
         names = frozen_node_to_value(validated.canonical_name_view)
-        return isinstance(names, list) and canonical_tool_name in names
+        aliases = frozen_node_to_value(validated.alias_binding_view)
+        if not isinstance(names, list) or not isinstance(aliases, dict) or canonical_tool_name not in names:
+            return False
+        return aliases.get(validated.raw_tool_name) == canonical_tool_name
 
     @staticmethod
     def _snapshot_tool_category(tool_snapshot: CapturedToolSpecSnapshotV1) -> str | None:

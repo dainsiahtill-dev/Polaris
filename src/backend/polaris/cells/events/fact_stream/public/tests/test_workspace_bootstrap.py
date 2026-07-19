@@ -23,6 +23,7 @@ from polaris.cells.events.fact_stream.public import (
 _BOOTSTRAP_CONCURRENCY = 64
 _THREAD_BARRIER_TIMEOUT_SECONDS = 30
 
+
 def _bootstrap(
     workspace: Path,
     reason: str = "fact_stream_workspace_bootstrap_test",
@@ -76,8 +77,7 @@ def _assert_exact_bootstrap_concurrency_evidence(
     assert len({receipt.storage_identity_token for receipt in receipts}) == 1
     proofs_by_operation = {
         operation: tuple(
-            next(proof for proof in receipt.proofs if proof.operation == operation)
-            for receipt in receipts
+            next(proof for proof in receipt.proofs if proof.operation == operation) for receipt in receipts
         )
         for operation in ("provision_authority", "enroll_stream_lock_keys")
     }
@@ -85,22 +85,25 @@ def _assert_exact_bootstrap_concurrency_evidence(
         verdicts = tuple(proof.verdict for proof in proofs)
         assert verdicts.count("created") == 1, operation
         assert verdicts.count("already_present") == _BOOTSTRAP_CONCURRENCY - 1, operation
-        assert len(
-            {
-                (
-                    proof.storage_identity_token,
-                    proof.runtime_root,
-                    proof.format_revision,
-                    proof.root_identity.device,
-                    proof.root_identity.inode,
-                    proof.anchor_identity.device,
-                    proof.anchor_identity.inode,
-                    proof.realm_identity.device,
-                    proof.realm_identity.inode,
-                )
-                for proof in proofs
-            }
-        ) == 1
+        assert (
+            len(
+                {
+                    (
+                        proof.storage_identity_token,
+                        proof.runtime_root,
+                        proof.format_revision,
+                        proof.root_identity.device,
+                        proof.root_identity.inode,
+                        proof.anchor_identity.device,
+                        proof.anchor_identity.inode,
+                        proof.realm_identity.device,
+                        proof.realm_identity.inode,
+                    )
+                    for proof in proofs
+                }
+            )
+            == 1
+        )
 
     enrollment_proofs = proofs_by_operation["enroll_stream_lock_keys"]
     expected_key_proofs = tuple(
@@ -114,14 +117,63 @@ def _assert_exact_bootstrap_concurrency_evidence(
     )
     assert len(expected_key_proofs) == len(fact_stream_bootstrap_streams())
     for proof in enrollment_proofs:
-        assert tuple(
-            (item.logical_path, item.lock_key, item.identity.device, item.identity.inode)
-            for item in proof.lock_keys
-        ) == expected_key_proofs
+        assert (
+            tuple(
+                (item.logical_path, item.lock_key, item.identity.device, item.identity.inode)
+                for item in proof.lock_keys
+            )
+            == expected_key_proofs
+        )
     for key_index, key_proof in enumerate(expected_key_proofs):
         key_verdicts = tuple(proof.lock_keys[key_index].verdict for proof in enrollment_proofs)
         assert key_verdicts.count("created") == 1, key_proof
         assert key_verdicts.count("already_present") == _BOOTSTRAP_CONCURRENCY - 1, key_proof
+
+
+@pytest.mark.parametrize(
+    "streams, expected_illegal",
+    [
+        (
+            ("roles.kernel.provider_attempts.factory.run-one",),
+            "roles.kernel.provider_attempts.factory.run-one",
+        ),
+        (
+            ("task_runtime.execution", "factory.role_evidence_authority.run-one"),
+            "factory.role_evidence_authority.run-one",
+        ),
+    ],
+)
+def test_bootstrap_rejects_segmented_namespace_before_any_maintenance_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    streams: tuple[str, ...],
+    expected_illegal: str,
+) -> None:
+    maintenance_calls: list[str] = []
+
+    def forbidden_provision(command: object) -> object:
+        maintenance_calls.append(f"provision:{command!r}")
+        raise AssertionError("bootstrap reached authority provisioning")
+
+    def forbidden_enrollment(command: object) -> object:
+        maintenance_calls.append(f"enroll:{command!r}")
+        raise AssertionError("bootstrap reached stream enrollment")
+
+    monkeypatch.setattr(workspace_bootstrap_module, "provision_fact_stream_lock_authority", forbidden_provision)
+    monkeypatch.setattr(workspace_bootstrap_module, "enroll_fact_stream_streams", forbidden_enrollment)
+
+    with pytest.raises(FactStreamError) as rejected:
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=str(tmp_path),
+                streams=streams,
+                maintenance_reason="segmented_namespace_bootstrap_preflight_test",
+            )
+        )
+
+    assert rejected.value.code == "segmented_stream_api_required"
+    assert rejected.value.details == {"stream": expected_illegal}
+    assert maintenance_calls == []
 
 
 def test_bootstrap_is_idempotent_across_exactly_64_threads(tmp_path: Path) -> None:

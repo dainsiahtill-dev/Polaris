@@ -23,6 +23,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -45,6 +46,9 @@ from polaris.cells.chief_engineer.blueprint.public import (
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    bind_factory_role_evidence_authority,
+)
 from polaris.cells.roles.kernel.public.service import QualityChecker
 from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleTaskCommandV1,
@@ -67,12 +71,20 @@ from polaris.kernelone.constants import (
     DEFAULT_DIRECTOR_MAX_PARALLELISM,
     MAX_LLM_PROVIDER_TIMEOUT_SECONDS,
 )
-from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.events.final_request_evidence import canonical_role_final_request_json
+from polaris.kernelone.fs import (
+    GuardedRegularFileSnapshotError,
+    KernelFileSystem,
+    get_default_adapter,
+    guarded_compare_and_replace_regular_file,
+    read_guarded_regular_file_snapshot,
+)
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.llm.budget_policy import (
     FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS,
     chief_engineer_structured_output_tokens,
 )
+from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 from . import factory_stage_helpers as helpers
@@ -86,6 +98,10 @@ from .factory_deadline_policy import (
     resolve_chief_engineer_portfolio_admission,
     resolve_director_dispatch_admission,
 )
+from .factory_role_evidence_authority import (
+    FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY,
+    FactoryRoleEvidenceAuthorityPort,
+)
 from .factory_run_completion import RunCompletionAuthority, RunCompletionWaiter
 from .factory_run_models import (
     _PM_ARCHITECT_DOC_MAX_CHARS,
@@ -95,6 +111,10 @@ from .factory_run_models import (
     _WORKSPACE_VALIDATION_TIMEOUT_SECONDS,
     FactoryRun,
     StageResult,
+)
+from .factory_stage_artifact_bindings import (
+    FactoryStageArtifactBindingError,
+    parse_factory_stage_artifact_json,
 )
 from .factory_workspace_quality import WorkspaceQualityRunner
 from .run_ledger import load_run_ledger_projection
@@ -120,6 +140,7 @@ _LANGUAGE_SOURCE_EXTENSIONS: dict[str, frozenset[str]] = {
 }
 _WORKSPACE_QUALITY_MUTATION_TOKENS = WRITE_TOOLS | frozenset({"create_file", "text_replace"})
 _FACTORY_WORKSPACE_RUN_LEASE_METADATA_KEY = "factory_workspace_run_lease"
+_PM_PLAN_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024
 
 
 def _call_accepts_keyword(callable_obj: Any, keyword: str) -> bool:
@@ -724,6 +745,29 @@ class OrchestrationStageExecutor:
         if handler is None:
             return StageResult(stage=stage, status="skipped", output="No handler for this stage")
         return await handler(run, context)
+
+    @staticmethod
+    def _factory_role_evidence_cutoff_port(context: Mapping[str, Any]) -> FactoryRoleEvidenceAuthorityPort:
+        port = context.get(FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY)
+        if type(port) is not FactoryRoleEvidenceAuthorityPort:
+            raise RuntimeError("factory_role_evidence_live_cutoff_port_required")
+        return port
+
+    @staticmethod
+    async def _call_with_factory_role_evidence_authority(
+        authority_port: FactoryRoleEvidenceAuthorityPort,
+        role: str,
+        operation: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        """Bind one role-task grant and revoke it if task creation raises."""
+
+        authority_binding = authority_port.mint_authority_binding(role)
+        try:
+            with bind_factory_role_evidence_authority(authority_binding):
+                return await operation()
+        except BaseException:
+            authority_port.revoke_authority_binding(authority_binding)
+            raise
 
     def _artifact_path(self, relative_path: str) -> Path:
         return self._artifact_store.artifact_path(relative_path)
@@ -1508,6 +1552,86 @@ class OrchestrationStageExecutor:
                 return tasks
         return []
 
+    def _persist_normalized_pm_plan_validation_contracts(
+        self,
+        relative_path: str = "tasks/plan.json",
+    ) -> dict[str, Any]:
+        """Persist the exact normalized PM tasks consumed by CE provenance.
+
+        Normalization was historically applied only by the in-memory loader,
+        so the CE context could differ from the immutable ``tasks/plan.json``
+        later bound by Factory.  Persisting first makes repeated loads
+        idempotent and gives PM binding/CE ``pm_task_contract`` one exact fact.
+        """
+
+        if relative_path != "tasks/plan.json":
+            raise FactoryStageArtifactBindingError(
+                "factory_stage_artifact_pm_plan_path_invalid",
+                "PM validation-contract normalization only accepts tasks/plan.json",
+            )
+
+        runtime_root = resolve_storage_roots(str(self.workspace)).runtime_root
+        try:
+            source_snapshot = read_guarded_regular_file_snapshot(
+                str(runtime_root),
+                relative_path,
+                _PM_PLAN_ARTIFACT_MAX_BYTES,
+            )
+        except GuardedRegularFileSnapshotError as exc:
+            if exc.code == "guarded_snapshot_missing":
+                return {"changed": False, "task_count": 0}
+            raise
+
+        payload = parse_factory_stage_artifact_json(source_snapshot.content)
+        raw_tasks = payload.get("tasks")
+        if type(raw_tasks) is not list:
+            raise FactoryStageArtifactBindingError(
+                "factory_stage_artifact_pm_tasks_invalid",
+                "PM plan tasks must be an exact JSON list before normalization",
+            )
+        if any(type(item) is not dict for item in raw_tasks):
+            raise FactoryStageArtifactBindingError(
+                "factory_stage_artifact_pm_task_invalid",
+                "Every PM plan task must be an exact JSON object before normalization",
+            )
+
+        task_rows = [deepcopy(item) for item in raw_tasks]
+        normalized = self._normalize_pm_plan_validation_contracts(task_rows)
+        changed = normalized != raw_tasks
+        if changed:
+            updated = deepcopy(payload)
+            updated["tasks"] = normalized
+            replacement = (canonical_role_final_request_json(updated) + "\n").encode("utf-8")
+            committed_snapshot = guarded_compare_and_replace_regular_file(
+                str(runtime_root),
+                source_snapshot,
+                replacement,
+                max_bytes=_PM_PLAN_ARTIFACT_MAX_BYTES,
+            )
+            reread_snapshot = read_guarded_regular_file_snapshot(
+                str(runtime_root),
+                relative_path,
+                _PM_PLAN_ARTIFACT_MAX_BYTES,
+            )
+            if (
+                reread_snapshot.content != replacement
+                or reread_snapshot.content != committed_snapshot.content
+                or reread_snapshot.size != committed_snapshot.size
+                or reread_snapshot.device != committed_snapshot.device
+                or reread_snapshot.inode != committed_snapshot.inode
+            ):
+                raise FactoryStageArtifactBindingError(
+                    "factory_stage_artifact_pm_plan_postread_mismatch",
+                    "PM plan changed after guarded normalization commit",
+                )
+            reread_payload = parse_factory_stage_artifact_json(reread_snapshot.content)
+            if reread_payload.get("tasks") != normalized:
+                raise FactoryStageArtifactBindingError(
+                    "factory_stage_artifact_pm_plan_postread_mismatch",
+                    "Strict PM plan reread does not contain the normalized task vector",
+                )
+        return {"changed": changed, "task_count": len(normalized)}
+
     @staticmethod
     def _pm_plan_tasks_from_payload(payload: Any) -> list[dict[str, Any]]:
         if not isinstance(payload, dict):
@@ -2092,11 +2216,11 @@ class OrchestrationStageExecutor:
         )
 
     def _task_blueprint_context(self, task: dict[str, Any], *, run_id: str, index: int) -> dict[str, Any]:
-        context = dict(task)
+        context = deepcopy(task)
         # Preserve the validated PM task as a named evidence slot. Flattened
         # task fields are useful prompt material, but they are not a provenance
         # reference and cannot satisfy final-request contract coverage.
-        context["pm_task_contract"] = dict(task)
+        context["pm_task_contract"] = deepcopy(task)
         context["source_artifact"] = "tasks/plan.json"
         context["factory_run_id"] = run_id
         context["task_index"] = index
@@ -3090,6 +3214,7 @@ class OrchestrationStageExecutor:
         cancel_event: asyncio.Event | None = None,
         abort_checker: Any = None,
         skipped_bindings: list[dict[str, Any]] | None = None,
+        authority_port: FactoryRoleEvidenceAuthorityPort,
     ) -> CommandResult:
         execution_deadline = (
             float(deadline_monotonic) if deadline_monotonic is not None else _new_monotonic_deadline(timeout_seconds)
@@ -3156,6 +3281,7 @@ class OrchestrationStageExecutor:
                 assigned_tasks_by_key[_binding_key(binding)] = tasks
                 submission_bindings.append(binding)
         active_bindings = submission_bindings
+        authority_port.require_grant_capacity("director", len(active_bindings))
 
         async def _run_binding(binding: dict[str, str]) -> CommandResult:
             binding_tasks = assigned_tasks_by_key.get(_binding_key(binding))
@@ -3176,18 +3302,40 @@ class OrchestrationStageExecutor:
                 "fanout_assigned_tasks": list(binding_tasks or []),
                 "fanout_assigned_task_count": len(binding_tasks or []),
             }
-            return await service.execute_director_run(workspace=workspace, tasks=binding_tasks, options=binding_opts)
-
-        submission_tasks = [asyncio.create_task(_run_binding(binding)) for binding in active_bindings]
-        done_submissions: set[asyncio.Task[CommandResult]] = set()
-        pending_submissions: set[asyncio.Task[CommandResult]] = set(submission_tasks)
-        if submission_tasks:
-            done_submissions, pending_submissions = await asyncio.wait(
-                submission_tasks,
-                timeout=_remaining_monotonic_seconds(execution_deadline),
+            return cast(
+                CommandResult,
+                await self._call_with_factory_role_evidence_authority(
+                    authority_port,
+                    "director",
+                    lambda: service.execute_director_run(
+                        workspace=workspace,
+                        tasks=binding_tasks,
+                        options=binding_opts,
+                    ),
+                ),
             )
-        for task in pending_submissions:
-            task.cancel()
+
+        submission_tasks: list[asyncio.Task[CommandResult]] = []
+        done_submissions: set[asyncio.Task[CommandResult]] = set()
+        try:
+            for binding in active_bindings:
+                pending_coroutine = _run_binding(binding)
+                try:
+                    submission_tasks.append(asyncio.create_task(pending_coroutine))
+                except BaseException:
+                    pending_coroutine.close()
+                    raise
+            if submission_tasks:
+                done_submissions, _pending_submissions = await asyncio.wait(
+                    submission_tasks,
+                    timeout=_remaining_monotonic_seconds(execution_deadline),
+                )
+        finally:
+            for task in submission_tasks:
+                if not task.done():
+                    task.cancel()
+            if submission_tasks:
+                await asyncio.gather(*submission_tasks, return_exceptions=True)
 
         for idx, task in enumerate(submission_tasks):
             if task not in done_submissions:
@@ -3780,15 +3928,23 @@ class OrchestrationStageExecutor:
     async def _execute_docs_generation(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing docs generation for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
+        authority_port = self._factory_role_evidence_cutoff_port(context)
 
         service = self._build_orchestration_service(context)
-        command_result = await service.execute_pm_run(
-            workspace=str(self.workspace),
-            run_type="architect",
-            options={
-                "directive": context.get("directive", "Generate project documentation"),
-                "run_director": False,
-            },
+        command_result = cast(
+            CommandResult,
+            await self._call_with_factory_role_evidence_authority(
+                authority_port,
+                "architect",
+                lambda: service.execute_pm_run(
+                    workspace=str(self.workspace),
+                    run_type="architect",
+                    options={
+                        "directive": context.get("directive", "Generate project documentation"),
+                        "run_director": False,
+                    },
+                ),
+            ),
         )
         final_result = await self._wait_run_completion(
             service,
@@ -3855,6 +4011,7 @@ class OrchestrationStageExecutor:
     async def _execute_pm_planning(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing PM planning for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
+        authority_port = self._factory_role_evidence_cutoff_port(context)
         planning_directive = self._build_pm_planning_directive(
             context.get("directive", "Plan implementation tasks"),
         )
@@ -3882,10 +4039,17 @@ class OrchestrationStageExecutor:
         }
         if pm_run_metadata:
             pm_run_options["metadata"] = pm_run_metadata
-        command_result = await service.execute_pm_run(
-            workspace=str(self.workspace),
-            run_type="pm",
-            options=pm_run_options,
+        command_result = cast(
+            CommandResult,
+            await self._call_with_factory_role_evidence_authority(
+                authority_port,
+                "pm",
+                lambda: service.execute_pm_run(
+                    workspace=str(self.workspace),
+                    run_type="pm",
+                    options=pm_run_options,
+                ),
+            ),
         )
         final_result = await self._wait_run_completion(
             service,
@@ -3929,6 +4093,7 @@ class OrchestrationStageExecutor:
                 planning_directive=planning_directive,
                 context=context,
                 abort_checker=abort_checker,
+                authority_port=authority_port,
             )
             if recovery_result.status in {"completed", "success"} or self._artifact_exists(
                 "tasks/plan.json", min_chars=1
@@ -3972,6 +4137,16 @@ class OrchestrationStageExecutor:
                         "Merged catalog delivery depth contract and project declared target union into PM task contracts."
                     ),
                     **enrichment_summary,
+                }
+            )
+        normalization_summary = self._persist_normalized_pm_plan_validation_contracts("tasks/plan.json")
+        if int(normalization_summary.get("task_count") or 0) > 0:
+            stage_signals.append(
+                {
+                    "code": "pm.plan_validation_contracts_persisted",
+                    "severity": "info",
+                    "detail": ("Persisted the exact PM validation contracts consumed by Chief Engineer provenance."),
+                    **normalization_summary,
                 }
             )
         contract_issue = self._validate_pm_plan_contract("tasks/plan.json")
@@ -4066,20 +4241,28 @@ class OrchestrationStageExecutor:
         planning_directive: str,
         context: dict[str, Any],
         abort_checker: Callable[[], Awaitable[str | None]] | None,
+        authority_port: FactoryRoleEvidenceAuthorityPort,
     ) -> CommandResult:
         recovery_timeout = int(context.get("pm_recovery_timeout", 120))
-        command_result = await service.execute_pm_run(
-            workspace=str(self.workspace),
-            run_type="pm",
-            options={
-                "directive": planning_directive,
-                "run_director": False,
-                "metadata": {
-                    "deterministic_pm_contracts": True,
-                    "factory_recovery": "pm_timeout_without_plan",
-                    "timeout_seconds": recovery_timeout,
-                },
-            },
+        command_result = cast(
+            CommandResult,
+            await self._call_with_factory_role_evidence_authority(
+                authority_port,
+                "pm",
+                lambda: service.execute_pm_run(
+                    workspace=str(self.workspace),
+                    run_type="pm",
+                    options={
+                        "directive": planning_directive,
+                        "run_director": False,
+                        "metadata": {
+                            "deterministic_pm_contracts": True,
+                            "factory_recovery": "pm_timeout_without_plan",
+                            "timeout_seconds": recovery_timeout,
+                        },
+                    },
+                ),
+            ),
         )
         return await self._wait_run_completion(
             service,
@@ -4686,6 +4869,7 @@ class OrchestrationStageExecutor:
         """Create one CE project portfolio and project task-level handoffs."""
 
         logger.info("Executing Chief Engineer project review for run %s", run.id)
+        authority_port = self._factory_role_evidence_cutoff_port(context)
         synced_plan_source = self._ensure_pm_plan_contract_available()
         self._enrich_pm_plan_contract_artifact("tasks/plan.json")
         stage_signals: list[dict[str, Any]] = []
@@ -4855,7 +5039,14 @@ class OrchestrationStageExecutor:
                         },
                     )
                     llm_call_count = 1
-                    ce_result = await RoleRuntimeService().execute_role_task(command)
+                    ce_result = cast(
+                        RoleExecutionResultV1,
+                        await self._call_with_factory_role_evidence_authority(
+                            authority_port,
+                            "chief_engineer",
+                            lambda: RoleRuntimeService().execute_role_task(command),
+                        ),
+                    )
                 except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
                     stage_signals.append(
                         {
@@ -5296,6 +5487,7 @@ class OrchestrationStageExecutor:
     async def _execute_director_dispatch(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing Director dispatch for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
+        authority_port = self._factory_role_evidence_cutoff_port(context)
 
         synced_plan_source = self._ensure_pm_plan_contract_available()
         self._enrich_pm_plan_contract_artifact("tasks/plan.json")
@@ -5749,6 +5941,7 @@ class OrchestrationStageExecutor:
                         abort_checker=abort_checker,
                         skipped_bindings=director_binding_skips,
                         deadline_monotonic=execution_deadline_monotonic,
+                        authority_port=authority_port,
                     )
                     last_command_result = command_result
                     director_result = command_result
@@ -5788,10 +5981,15 @@ class OrchestrationStageExecutor:
                     submission_remaining_seconds = _remaining_monotonic_seconds(execution_deadline_monotonic)
                     try:
                         command_result = await asyncio.wait_for(
-                            service.execute_director_run(
-                                workspace=str(self.workspace),
-                                tasks=round_requested_task_ids,
-                                options=base_options,
+                            self._call_with_factory_role_evidence_authority(
+                                authority_port,
+                                "director",
+                                partial(
+                                    service.execute_director_run,
+                                    workspace=str(self.workspace),
+                                    tasks=round_requested_task_ids,
+                                    options=base_options,
+                                ),
                             ),
                             timeout=submission_remaining_seconds,
                         )
@@ -7947,6 +8145,7 @@ class OrchestrationStageExecutor:
     async def _execute_quality_gate(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing quality gate for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
+        authority_port = self._factory_role_evidence_cutoff_port(context)
 
         abort_reason = await self._quality_gate_abort_reason(abort_checker)
         if abort_reason:
@@ -8004,12 +8203,19 @@ class OrchestrationStageExecutor:
             )
 
         service = self._build_orchestration_service(context)
-        command_result = await service.execute_qa_run(
-            workspace=str(self.workspace),
-            target=context.get("qa_target", "Quality gate"),
-            options={
-                "input": qa_input,
-            },
+        command_result = cast(
+            CommandResult,
+            await self._call_with_factory_role_evidence_authority(
+                authority_port,
+                "qa",
+                lambda: service.execute_qa_run(
+                    workspace=str(self.workspace),
+                    target=context.get("qa_target", "Quality gate"),
+                    options={
+                        "input": qa_input,
+                    },
+                ),
+            ),
         )
         final_result = await self._wait_run_completion(
             service,

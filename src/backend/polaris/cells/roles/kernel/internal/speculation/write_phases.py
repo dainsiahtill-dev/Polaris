@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from typing import Mapping
 
 from polaris.cells.roles.kernel.internal.speculation.contracts import SyntheticShadowToolKeyV1
@@ -19,7 +18,6 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 _PREPARE_SHADOW_TOOL = "__prepare_shadow__"
 _VALIDATE_SHADOW_TOOL = "__validate_shadow__"
 _PREPARE_SHADOW_EXECUTION_TOOL = "file_exists"
-_CONTENT_DIGEST_DOMAIN = b"polaris.synthetic_shadow.write_content.v1\x00utf8\x00"
 
 
 class WriteToolPhases:
@@ -49,8 +47,6 @@ class WriteToolPhases:
         return cls._build_write_shadow_key(
             source_tool_call_id=str(invocation.call_id),
             canonical_tool_name=_PREPARE_SHADOW_TOOL,
-            arguments=invocation.arguments,
-            mode="prepare",
         )
 
     @classmethod
@@ -63,8 +59,6 @@ class WriteToolPhases:
         return cls._build_write_shadow_key(
             source_tool_call_id=str(invocation.call_id),
             canonical_tool_name=_VALIDATE_SHADOW_TOOL,
-            arguments=invocation.arguments,
-            mode="validate",
         )
 
     @classmethod
@@ -78,8 +72,6 @@ class WriteToolPhases:
         return cls._build_write_shadow_key(
             source_tool_call_id=source_call_id,
             canonical_tool_name=_PREPARE_SHADOW_TOOL,
-            arguments=arguments,
-            mode="prepare",
         )
 
     @classmethod
@@ -88,65 +80,13 @@ class WriteToolPhases:
         *,
         source_tool_call_id: str,
         canonical_tool_name: str,
-        arguments: Mapping[str, object],
-        mode: str,
     ) -> SyntheticShadowToolKeyV1:
-        """Build the private semantic identity shared by start and resolve paths."""
-        semantic_arguments: dict[str, object] = {
-            "mode": mode,
-            "validate_content": mode == "validate" and "content" in arguments,
-            "content": cls._canonical_content_identity(arguments),
-        }
-        canonical_path = cls.prepare_shadow_normalized_args(arguments)
-        if canonical_path:
-            semantic_arguments["canonical_path"] = canonical_path
-
+        """Build the private call-bound identity shared by start and resolve paths."""
         return SyntheticShadowToolKeyV1.build(
             source_tool_call_id=source_tool_call_id,
             canonical_tool_name=canonical_tool_name,
             shadow_phase="write_phase",
-            arguments=semantic_arguments,
         )
-
-    @staticmethod
-    def _canonical_content_identity(arguments: Mapping[str, object]) -> dict[str, object]:
-        """Return content identity without retaining raw content in the shadow key."""
-        if "content" not in arguments:
-            return {"presence": "missing"}
-
-        content = arguments["content"]
-        if not isinstance(content, str):
-            content_type = type(content)
-            return {
-                "presence": "present",
-                "type": f"{content_type.__module__}.{content_type.__qualname__}",
-                "content_length": 0,
-            }
-
-        content_digest, content_length = WriteToolPhases._canonical_utf8_content_digest(content)
-        return {
-            "presence": "present",
-            "type": "utf8_text",
-            "utf8_sha256": content_digest,
-            "content_length": content_length,
-        }
-
-    @staticmethod
-    def _canonical_utf8_content_digest(content: str) -> tuple[str, int]:
-        """Digest newline-canonical UTF-8 content in O(n) time and O(1) extra space."""
-        digest = hashlib.sha256(_CONTENT_DIGEST_DOMAIN)
-        content_length = 0
-        index = 0
-        while index < len(content):
-            character = content[index]
-            if character == "\r":
-                character = "\n"
-                if index + 1 < len(content) and content[index + 1] == "\n":
-                    index += 1
-            digest.update(character.encode("utf-8", "surrogatepass"))
-            content_length += 1
-            index += 1
-        return digest.hexdigest(), content_length
 
     @classmethod
     def prepare_shadow_normalized_args(cls, arguments: Mapping[str, object]) -> dict[str, object]:

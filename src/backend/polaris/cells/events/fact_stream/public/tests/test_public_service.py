@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import inspect
+import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields
 from typing import TYPE_CHECKING, Callable, get_args, get_type_hints
 
 import pytest
+from polaris.cells.events.fact_stream.public import service as fact_stream_service_module
 from polaris.cells.events.fact_stream.public.contracts import (
     AppendFactEventCommandV1,
     AppendIfGuardedSnapshotCommandV1,
+    AppendSegmentedFactEventCommandV1,
     BootstrapFactStreamWorkspaceCommandV1,
     EnrollFactStreamStreamsCommandV1,
+    EnsureSegmentedFactLedgerCommandV1,
     FactStreamMaintenanceReceiptV1,
     ProvisionFactStreamLockAuthorityCommandV1,
+    QuerySegmentedFactEventsV1,
+    QuerySegmentedFactLedgerHeadV1,
 )
 from polaris.cells.events.fact_stream.public.service import (
     FactStreamError,
@@ -22,13 +28,18 @@ from polaris.cells.events.fact_stream.public.service import (
     QueryFactStreamHeadV1,
     append_fact_event,
     append_if_guarded_snapshot,
+    append_segmented_fact_event,
     enroll_fact_stream_streams,
+    ensure_segmented_fact_ledger,
     provision_fact_stream_lock_authority,
     query_fact_events,
     query_fact_stream_head,
+    query_segmented_fact_events,
+    query_segmented_fact_ledger_head,
 )
 from polaris.cells.events.fact_stream.public.workspace_bootstrap import bootstrap_fact_stream_workspace
 from polaris.kernelone.events.sourcing import (
+    EventEnvelope,
     ExpectedSequenceDriftError,
     IdempotencyConflictError,
     JsonlEventStore,
@@ -58,6 +69,260 @@ def _bootstrap_workspace(workspace: Path, *streams: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "reserved",
+    [
+        "roles.kernel.provider_attempts.factory.",
+        "roles.kernel.provider_attempts.session.",
+        "factory.role_evidence_authority.",
+        "roles.kernel.provider_attempts.factory.run-one",
+        "roles.kernel.provider_attempts.session.session-one",
+        "factory.role_evidence_authority.run-one",
+        "custom.segmented.audit",
+    ],
+)
+@pytest.mark.parametrize("operation", ["provision", "enroll"])
+@pytest.mark.parametrize("stream_shape", ["reserved_only", "mixed"])
+def test_ordinary_maintenance_rejects_reserved_namespace_before_store_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reserved: str,
+    operation: str,
+    stream_shape: str,
+) -> None:
+    store_calls: list[tuple[object, ...]] = []
+
+    def forbidden_store_access(*args: object, **kwargs: object) -> object:
+        store_calls.append((*args, kwargs))
+        raise AssertionError("ordinary segmented namespace reached maintenance storage")
+
+    monkeypatch.setattr(fact_stream_service_module, "_maintenance_store", forbidden_store_access)
+    streams = (reserved,) if stream_shape == "reserved_only" else ("task_runtime.execution", reserved)
+
+    with pytest.raises(FactStreamError) as rejected:
+        if operation == "provision":
+            provision_fact_stream_lock_authority(
+                ProvisionFactStreamLockAuthorityCommandV1(
+                    workspace=str(tmp_path),
+                    streams=streams,
+                    maintenance_reason="reserved_namespace_preflight_test",
+                )
+            )
+        else:
+            enroll_fact_stream_streams(
+                EnrollFactStreamStreamsCommandV1(
+                    workspace=str(tmp_path),
+                    streams=streams,
+                    maintenance_reason="reserved_namespace_preflight_test",
+                )
+            )
+
+    assert rejected.value.code == "segmented_stream_api_required"
+    assert rejected.value.details == {"stream": reserved}
+    assert store_calls == []
+
+
+@pytest.mark.parametrize(
+    "namespace_root",
+    [
+        "roles.kernel.provider_attempts.factory.",
+        "roles.kernel.provider_attempts.session.",
+        "factory.role_evidence_authority.",
+    ],
+)
+def test_dedicated_segmented_api_rejects_exact_namespace_root(
+    tmp_path: Path,
+    namespace_root: str,
+) -> None:
+    with pytest.raises(FactStreamError) as rejected:
+        ensure_segmented_fact_ledger(
+            EnsureSegmentedFactLedgerCommandV1(
+                workspace=str(tmp_path),
+                logical_stream=namespace_root,
+                maintenance_reason="dedicated_namespace_root_rejection_test",
+            )
+        )
+
+    assert rejected.value.code == "segmented_stream_namespace_required"
+    assert rejected.value.details == {"stream": namespace_root}
+
+
+def test_rejected_mixed_provision_leaves_fresh_workspace_without_authority(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    protected = "roles.kernel.provider_attempts.factory.run-one"
+
+    with pytest.raises(FactStreamError) as rejected:
+        provision_fact_stream_lock_authority(
+            ProvisionFactStreamLockAuthorityCommandV1(
+                workspace=str(workspace),
+                streams=("task_runtime.execution", protected),
+                maintenance_reason="mixed_provision_zero_effect_test",
+            )
+        )
+    assert rejected.value.code == "segmented_stream_api_required"
+    assert rejected.value.details == {"stream": protected}
+
+    with pytest.raises(FactStreamError) as missing_authority:
+        enroll_fact_stream_streams(
+            EnrollFactStreamStreamsCommandV1(
+                workspace=str(workspace),
+                streams=("task_runtime.execution",),
+                maintenance_reason="prove_rejected_provision_wrote_nothing",
+            )
+        )
+    assert missing_authority.value.code == "lock_authority_missing"
+
+
+def test_rejected_mixed_enrollment_has_zero_partial_stream_effect(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    provision_fact_stream_lock_authority(
+        ProvisionFactStreamLockAuthorityCommandV1(
+            workspace=str(workspace),
+            streams=(),
+            maintenance_reason="mixed_enrollment_zero_effect_test",
+        )
+    )
+    protected = "factory.role_evidence_authority.run-one"
+
+    with pytest.raises(FactStreamError) as rejected:
+        enroll_fact_stream_streams(
+            EnrollFactStreamStreamsCommandV1(
+                workspace=str(workspace),
+                streams=("task_runtime.execution", protected),
+                maintenance_reason="mixed_enrollment_zero_effect_test",
+            )
+        )
+    assert rejected.value.code == "segmented_stream_api_required"
+    assert rejected.value.details == {"stream": protected}
+
+    with pytest.raises(FactStreamError) as missing_stream:
+        query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(workspace),
+                stream="task_runtime.execution",
+                strict_integrity=True,
+            )
+        )
+    assert missing_stream.value.code == "stream_lock_missing"
+
+
+def test_protected_segmented_namespace_rejects_ordinary_api(tmp_path: Path) -> None:
+    protected = "roles.kernel.provider_attempts.factory.run-one"
+
+    with pytest.raises(FactStreamError) as append_error:
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=str(tmp_path),
+                stream=protected,
+                event_type="provider_attempt.started",
+                source="test",
+                payload={"provider_request_id": "req-1"},
+            )
+        )
+    assert append_error.value.code == "segmented_stream_api_required"
+    assert append_error.value.details == {"stream": protected}
+
+    with pytest.raises(FactStreamError) as query_error:
+        query_fact_events(QueryFactEventsV1(workspace=str(tmp_path), stream=protected))
+    assert query_error.value.code == "segmented_stream_api_required"
+    assert query_error.value.details == {"stream": protected}
+
+    with pytest.raises(FactStreamError) as head_error:
+        query_fact_stream_head(QueryFactStreamHeadV1(workspace=str(tmp_path), stream=protected))
+    assert head_error.value.code == "segmented_stream_api_required"
+    assert head_error.value.details == {"stream": protected}
+
+
+def test_segmented_fact_ledger_roundtrip_uses_dynamic_enrolled_authority(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace, "task_runtime.execution")
+    logical_stream = "roles.kernel.provider_attempts.factory.run-one"
+
+    ready = ensure_segmented_fact_ledger(
+        EnsureSegmentedFactLedgerCommandV1(
+            workspace=str(workspace),
+            logical_stream=logical_stream,
+            maintenance_reason="provider_attempt_run_start",
+        )
+    )
+    assert ready.logical_stream == logical_stream
+    assert ready.retention == "pinned_audit_no_delete"
+
+    appended = append_segmented_fact_event(
+        AppendSegmentedFactEventCommandV1(
+            workspace=str(workspace),
+            logical_stream=logical_stream,
+            event_type="provider_attempt.started",
+            source="roles.kernel",
+            payload={"provider_request_id": "request-1"},
+            idempotency_key="request-1:start",
+            expected_global_seq=1,
+        )
+    )
+    assert appended.global_seq == 1
+    assert appended.event_hash
+
+    replay = append_segmented_fact_event(
+        AppendSegmentedFactEventCommandV1(
+            workspace=str(workspace),
+            logical_stream=logical_stream,
+            event_type="provider_attempt.started",
+            source="roles.kernel",
+            payload={"provider_request_id": "request-1"},
+            idempotency_key="request-1:start",
+            require_idempotency_replay=True,
+        )
+    )
+    assert replay.event_id == appended.event_id
+
+    with pytest.raises(FactStreamError) as missing_replay:
+        append_segmented_fact_event(
+            AppendSegmentedFactEventCommandV1(
+                workspace=str(workspace),
+                logical_stream=logical_stream,
+                event_type="provider_attempt.started",
+                source="roles.kernel",
+                payload={"provider_request_id": "request-missing"},
+                idempotency_key="request-missing:start",
+                require_idempotency_replay=True,
+            )
+        )
+    assert missing_replay.value.code == "idempotency_replay_missing"
+
+    head = query_segmented_fact_ledger_head(
+        QuerySegmentedFactLedgerHeadV1(workspace=str(workspace), logical_stream=logical_stream)
+    )
+    assert head.global_seq == 1
+    assert head.total_count == 1
+    assert head.next_expected_global_seq == 2
+
+    result = query_segmented_fact_events(
+        QuerySegmentedFactEventsV1(workspace=str(workspace), logical_stream=logical_stream)
+    )
+    assert result.captured_head == head
+    assert len(result.events) == 1
+    assert result.events[0]["payload"]["provider_request_id"] == "request-1"
+
+
+def test_segmented_fact_ledger_ensure_without_base_authority_fails_closed(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with pytest.raises(FactStreamError) as missing_authority:
+        ensure_segmented_fact_ledger(
+            EnsureSegmentedFactLedgerCommandV1(
+                workspace=str(workspace),
+                logical_stream="roles.kernel.provider_attempts.factory.run-one",
+                maintenance_reason="prove_dedicated_ensure_requires_base_authority",
+            )
+        )
+
+    assert missing_authority.value.code == "lock_authority_missing"
+
+
 def test_maintenance_receipts_are_non_authoritative_and_services_revalidate_physical_state(
     tmp_path: Path,
 ) -> None:
@@ -80,10 +345,7 @@ def test_maintenance_receipts_are_non_authoritative_and_services_revalidate_phys
 
     for command_type in command_types:
         command_hints = get_type_hints(command_type)
-        assert all(
-            not _annotation_references_maintenance_receipt(annotation)
-            for annotation in command_hints.values()
-        )
+        assert all(not _annotation_references_maintenance_receipt(annotation) for annotation in command_hints.values())
         assert all(field_info.name != "maintenance_receipt" for field_info in fields(command_type))
 
     for service_function in service_functions:
@@ -766,6 +1028,96 @@ def test_strict_fact_stream_public_append_and_query_preserve_utf8(tmp_path: Path
     assert appended.appended_seq == 1
     assert queried.events[0]["payload"]["message"] == "中文"
     assert head.next_expected_seq == 2
+
+
+def test_strict_query_returns_exact_envelope_and_preserves_stored_digest(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace, "strict.exact.public")
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="strict.exact.public",
+            event_type="recorded",
+            source="test",
+            run_id="run-exact",
+            task_id="task-exact",
+            payload={"run_id": "run-exact", "message": "canonical"},
+            durability="fsync",
+            strict_integrity=True,
+        )
+    )
+
+    queried = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="strict.exact.public",
+            strict_integrity=True,
+        )
+    )
+    record = queried.events[0]
+    store = JsonlEventStore(str(workspace))
+    path = store._kernel_fs.resolve_path(store.stream_logical_path("strict.exact.public"))
+    stored = json.loads(path.read_text(encoding="utf-8"))
+
+    assert "run_id" not in record
+    assert "task_id" not in record
+    assert record["metadata"]["run_id"] == "run-exact"
+    assert record["metadata"]["task_id"] == "task-exact"
+    assert record == stored
+    assert record["integrity_digest"]
+    assert EventEnvelope.integrity_digest_for_record(record) == record["integrity_digest"]
+
+
+def test_non_strict_query_keeps_compatibility_run_and_task_fields(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace, "compat.public")
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="compat.public",
+            event_type="recorded",
+            source="test",
+            run_id="run-compat",
+            task_id="task-compat",
+            payload={"message": "compatibility"},
+        )
+    )
+
+    queried = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream="compat.public"))
+
+    assert queried.events[0]["run_id"] == "run-compat"
+    assert queried.events[0]["task_id"] == "task-compat"
+
+
+def test_strict_query_rejects_non_strict_record_without_digest(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace, "strict.missing-digest.public")
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="strict.missing-digest.public",
+            event_type="recorded",
+            source="test",
+            payload={"message": "legacy"},
+        )
+    )
+
+    with pytest.raises(FactStreamError) as caught:
+        query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(workspace),
+                stream="strict.missing-digest.public",
+                strict_integrity=True,
+            )
+        )
+
+    assert caught.value.code == "strict_stream_corruption"
+    assert caught.value.details["strict_failure_code"] == "missing_integrity_digest"
 
 
 def test_strict_fact_stream_public_query_exposes_torn_tail_evidence(tmp_path: Path) -> None:

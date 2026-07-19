@@ -32,18 +32,308 @@ are intact.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import time
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from pathlib import Path
+from typing import Any
 
+from polaris.kernelone.events.final_request_evidence import ContextSnapshotAuditPinV1
+from polaris.kernelone.fs import LockedRegularFileError, LockedRegularFileSetV1
+from polaris.kernelone.fs.locked_regular_file import default_platform_lock_root
 from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 logger = logging.getLogger(__name__)
 
 SWEEP_STATE_FILENAME = ".sweep_state.json"
+_CONTEXT_REF_RE = re.compile(r"^[0-9a-f]{24}$")
+_PROVIDER_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_AUDIT_LOCK_LOGICAL_PATH = "runtime/contexts/context_snapshot_audit.control"
+
+
+class ContextSnapshotAuditPinError(RuntimeError):
+    """Pinned ContextOS state is missing, corrupt, or bound elsewhere."""
+
+
+class ContextSnapshotAuditPinRepository:
+    """Workspace-bound immutable snapshot/pin store and deletion preflight."""
+
+    def __init__(self, *, workspace: str, runtime_root: str | None = None) -> None:
+        identity = resolve_workspace_runtime_identity(workspace)
+        selected_runtime_root = os.path.realpath(runtime_root or identity.runtime_root)
+        self.workspace_abs = os.path.realpath(identity.workspace_abs)
+        self.workspace_key = identity.workspace_key
+        self.runtime_root = selected_runtime_root
+        self.storage_identity_token = self._storage_token(
+            workspace_abs=self.workspace_abs,
+            workspace_key=self.workspace_key,
+            runtime_root=self.runtime_root,
+        )
+        self.contexts_root = os.path.join(self.runtime_root, "contexts")
+        self._lock_logical_path = _AUDIT_LOCK_LOGICAL_PATH
+        self._platform_lock_root = default_platform_lock_root()
+
+    @property
+    def lock_logical_path(self) -> str:
+        """Registered KernelOne lock key shared by producers and retention."""
+
+        return self._lock_logical_path
+
+    @staticmethod
+    def canonical_snapshot(snapshot: Mapping[str, Any]) -> tuple[str, str]:
+        try:
+            content = json.dumps(dict(snapshot), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            raise ContextSnapshotAuditPinError("context snapshot must be JSON safe") from exc
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        return content, content_hash[:24]
+
+    def snapshot_path(self, context_snapshot_ref: str) -> str:
+        ref = self._validated_ref(context_snapshot_ref)
+        return os.path.join(self.contexts_root, ref[:2], ref)
+
+    def pin_path(self, context_snapshot_ref: str, provider_request_id: str) -> str:
+        ref = self._validated_ref(context_snapshot_ref)
+        provider_id = str(provider_request_id or "").strip()
+        if not _PROVIDER_REQUEST_ID_RE.fullmatch(provider_id):
+            raise ContextSnapshotAuditPinError("provider_request_id is not path safe")
+        return os.path.join(self.contexts_root, "pins", ref[:2], ref, f"{provider_id}.json")
+
+    def persist_snapshot_and_pin(
+        self,
+        *,
+        snapshot: Mapping[str, Any],
+        factory_run_id: str,
+        role: str,
+        verification_scope: str,
+        request_freeze_id: str,
+        provider_request_id: str,
+        composite_request_hash: str,
+        snapshot_source: str,
+    ) -> ContextSnapshotAuditPinV1:
+        content, context_ref = self.canonical_snapshot(snapshot)
+        content_bytes = content.encode("utf-8")
+        content_hash = hashlib.sha256(content_bytes).hexdigest()
+        snapshot_path = self.snapshot_path(context_ref)
+        snapshot_logical_path = f"runtime/contexts/{context_ref[:2]}/{context_ref}"
+        pin = ContextSnapshotAuditPinV1.create(
+            workspace_abs=self.workspace_abs,
+            runtime_root=self.runtime_root,
+            snapshot_logical_path=snapshot_logical_path,
+            snapshot_absolute_path=snapshot_path,
+            snapshot_source=snapshot_source,
+            factory_run_id=factory_run_id,
+            role=role,
+            verification_scope=verification_scope,
+            request_freeze_id=request_freeze_id,
+            provider_request_id=provider_request_id,
+            context_snapshot_ref=context_ref,
+            storage_identity_token=self.storage_identity_token,
+            snapshot_content_hash=content_hash,
+            composite_request_hash=composite_request_hash,
+        )
+        pin_content = json.dumps(pin.to_record(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        pin_bytes = pin_content.encode("utf-8")
+        pin_path = self.pin_path(context_ref, provider_request_id)
+
+        with self._exclusive_lock():
+            self._assert_current_identity()
+            pin_directory = os.path.dirname(pin_path)
+            if os.path.exists(pin_directory):
+                self._query_snapshot_pins_locked(context_ref)
+            self._write_immutable(snapshot_path, content_bytes, kind="snapshot")
+            self._write_immutable(pin_path, pin_bytes, kind="pin")
+            pins = self._query_snapshot_pins_locked(context_ref)
+            for persisted in pins:
+                if persisted.provider_request_id == provider_request_id:
+                    if persisted != pin:
+                        raise ContextSnapshotAuditPinError("persisted pin binding mismatch")
+                    return persisted
+            raise ContextSnapshotAuditPinError("durable pin reread did not return the provider request")
+
+    def query_snapshot_pins(self, context_snapshot_ref: str) -> tuple[ContextSnapshotAuditPinV1, ...]:
+        ref = self._validated_ref(context_snapshot_ref)
+        with self._exclusive_lock():
+            self._assert_current_identity()
+            return self._query_snapshot_pins_locked(ref)
+
+    def remove_snapshot_if_unpinned(self, snapshot_path: str) -> bool:
+        candidate = os.path.realpath(snapshot_path)
+        with self._exclusive_lock():
+            self._assert_current_identity()
+            if not self._is_snapshot_path(candidate):
+                raise ContextSnapshotAuditPinError("snapshot deletion path is outside the ContextOS store")
+            ref = os.path.basename(candidate)
+            if _CONTEXT_REF_RE.fullmatch(ref):
+                pins = self._query_snapshot_pins_locked(ref)
+                if pins:
+                    return False
+            try:
+                os.remove(candidate)
+            except FileNotFoundError:
+                return False
+            return True
+
+    def _query_snapshot_pins_locked(self, context_snapshot_ref: str) -> tuple[ContextSnapshotAuditPinV1, ...]:
+        ref = self._validated_ref(context_snapshot_ref)
+        pin_directory = os.path.dirname(self.pin_path(ref, "probe"))
+        if not os.path.exists(pin_directory):
+            return ()
+        if not os.path.isdir(pin_directory):
+            raise ContextSnapshotAuditPinError("context snapshot pin state is not a directory")
+        try:
+            with os.scandir(pin_directory) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name)
+        except OSError as exc:
+            raise ContextSnapshotAuditPinError("context snapshot pin directory is unreadable") from exc
+        if not entries:
+            raise ContextSnapshotAuditPinError("context snapshot pin directory is present but empty")
+        pins: list[ContextSnapshotAuditPinV1] = []
+        for entry in entries:
+            if not entry.is_file(follow_symlinks=False) or not entry.name.endswith(".json"):
+                raise ContextSnapshotAuditPinError("context snapshot pin directory contains an invalid entry")
+            try:
+                raw = json.loads(self._read_bytes(entry.path).decode("utf-8"))
+                pin = ContextSnapshotAuditPinV1.from_record(raw)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ContextSnapshotAuditPinError("context snapshot pin is corrupt or unreadable") from exc
+            self._validate_pin_binding(pin, entry.path)
+            pins.append(pin)
+        snapshot_bytes = self._read_snapshot_bytes_for_pins(ref, pins)
+        actual_hash = hashlib.sha256(snapshot_bytes).hexdigest()
+        if any(pin.snapshot_content_hash != actual_hash for pin in pins):
+            raise ContextSnapshotAuditPinError("pinned context snapshot content hash mismatch")
+        return tuple(pins)
+
+    def _validate_pin_binding(self, pin: ContextSnapshotAuditPinV1, pin_path: str) -> None:
+        expected_snapshot_path = self.snapshot_path(pin.context_snapshot_ref)
+        expected_logical_path = f"runtime/contexts/{pin.context_snapshot_ref[:2]}/{pin.context_snapshot_ref}"
+        expected_pin_path = self.pin_path(pin.context_snapshot_ref, pin.provider_request_id)
+        if os.path.realpath(pin_path) != os.path.realpath(expected_pin_path):
+            raise ContextSnapshotAuditPinError("context snapshot pin filename/provider binding mismatch")
+        if (
+            os.path.realpath(pin.workspace_abs) != self.workspace_abs
+            or os.path.realpath(pin.runtime_root) != self.runtime_root
+            or pin.storage_identity_token != self.storage_identity_token
+        ):
+            raise ContextSnapshotAuditPinError("context snapshot pin workspace/storage identity mismatch")
+        if pin.snapshot_logical_path != expected_logical_path or os.path.realpath(
+            pin.snapshot_absolute_path
+        ) != os.path.realpath(expected_snapshot_path):
+            raise ContextSnapshotAuditPinError("context snapshot pin path/source binding mismatch")
+
+    def _read_snapshot_bytes_for_pins(
+        self,
+        context_snapshot_ref: str,
+        pins: list[ContextSnapshotAuditPinV1],
+    ) -> bytes:
+        if not pins:
+            raise ContextSnapshotAuditPinError("context snapshot pins are required")
+        snapshot_path = self.snapshot_path(context_snapshot_ref)
+        try:
+            content = self._read_bytes(snapshot_path)
+        except OSError as exc:
+            raise ContextSnapshotAuditPinError("pinned context snapshot is missing or unreadable") from exc
+        if hashlib.sha256(content).hexdigest()[:24] != context_snapshot_ref:
+            raise ContextSnapshotAuditPinError("pinned context snapshot ref/content mismatch")
+        return content
+
+    def _write_immutable(self, path: str, expected: bytes, *, kind: str) -> None:
+        if os.path.exists(path):
+            try:
+                existing = self._read_bytes(path)
+            except OSError as exc:
+                raise ContextSnapshotAuditPinError(f"existing {kind} is unreadable") from exc
+            if existing != expected:
+                raise ContextSnapshotAuditPinError(f"pinned {kind} is immutable and content differs")
+        else:
+            write_text_atomic(path, expected.decode("utf-8"), encoding="utf-8")
+        self._fsync_and_verify(path, expected)
+
+    def _fsync_and_verify(self, path: str, expected: bytes) -> None:
+        descriptor = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        parent_descriptor = os.open(os.path.dirname(path), os.O_RDONLY)
+        try:
+            os.fsync(parent_descriptor)
+        finally:
+            os.close(parent_descriptor)
+        if self._read_bytes(path) != expected:
+            raise OSError("context snapshot or audit pin durable reread mismatch")
+
+    @staticmethod
+    def _read_bytes(path: str) -> bytes:
+        with open(path, "rb") as handle:
+            return handle.read()
+
+    @contextmanager
+    def _exclusive_lock(self) -> Iterator[None]:
+        """Hold the registered KernelOne lock authority for all pin state I/O."""
+
+        try:
+            LockedRegularFileSetV1.provision_authority(
+                platform_lock_root=self._platform_lock_root,
+                storage_identity_token=self.storage_identity_token,
+                runtime_root=self.runtime_root,
+            )
+            LockedRegularFileSetV1.enroll_stream_lock_keys(
+                platform_lock_root=self._platform_lock_root,
+                storage_identity_token=self.storage_identity_token,
+                runtime_root=self.runtime_root,
+                logical_paths=(self._lock_logical_path,),
+            )
+            with LockedRegularFileSetV1.acquire(
+                runtime_root=self.runtime_root,
+                storage_identity_token=self.storage_identity_token,
+                logical_paths=(self._lock_logical_path,),
+                platform_lock_root=self._platform_lock_root,
+            ):
+                yield
+        except LockedRegularFileError as exc:
+            raise ContextSnapshotAuditPinError(f"context snapshot audit lock unavailable: {exc.code}") from exc
+
+    def _assert_current_identity(self) -> None:
+        current = resolve_workspace_runtime_identity(self.workspace_abs)
+        expected_token = self._storage_token(
+            workspace_abs=os.path.realpath(current.workspace_abs),
+            workspace_key=current.workspace_key,
+            runtime_root=self.runtime_root,
+        )
+        if (
+            os.path.realpath(current.workspace_abs) != self.workspace_abs
+            or current.workspace_key != self.workspace_key
+            or expected_token != self.storage_identity_token
+        ):
+            raise ContextSnapshotAuditPinError("context snapshot storage identity changed")
+
+    def _is_snapshot_path(self, path: str) -> bool:
+        try:
+            relative = Path(path).relative_to(Path(self.contexts_root))
+        except ValueError:
+            return False
+        return len(relative.parts) == 2 and relative.parts[0] != "pins"
+
+    @staticmethod
+    def _validated_ref(value: str) -> str:
+        ref = str(value or "").strip()
+        if not _CONTEXT_REF_RE.fullmatch(ref):
+            raise ContextSnapshotAuditPinError("context_snapshot_ref must be exactly 24 lowercase hex")
+        return ref
+
+    @staticmethod
+    def _storage_token(*, workspace_abs: str, workspace_key: str, runtime_root: str) -> str:
+        token_source = "\x00".join((workspace_abs, workspace_key, runtime_root)).encode("utf-8")
+        return hashlib.sha256(token_source).hexdigest()[:24]
 
 
 @dataclass
@@ -146,6 +436,10 @@ class ContextStoreRetention:
         self._contexts_root = str(contexts_root.resolve())
         self._runtime_root = str(runtime_root.resolve())
         self._sweep_state_path = os.path.join(self._contexts_root, SWEEP_STATE_FILENAME)
+        self._pin_repository = ContextSnapshotAuditPinRepository(
+            workspace=self._workspace,
+            runtime_root=self._runtime_root,
+        )
 
     # ------------------------------------------------------------------
     # Properties
@@ -165,6 +459,12 @@ class ContextStoreRetention:
     @property
     def sweep_state_path(self) -> str:
         return self._sweep_state_path
+
+    @property
+    def pin_repository(self) -> ContextSnapshotAuditPinRepository:
+        """Return the generic typed audit-pin repository used by retention."""
+
+        return self._pin_repository
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -381,7 +681,7 @@ class ContextStoreRetention:
         max_bytes = int(self._config.max_total_bytes)
         kept_count = len(candidates)
 
-        def _remove(idx: int) -> None:
+        def _remove(idx: int) -> bool:
             nonlocal removed, removed_bytes, kept_count
             _mtime, path, size = candidates[idx]
             try:
@@ -390,20 +690,30 @@ class ContextStoreRetention:
                         "context_retention: refusing to remove out-of-root path %s",
                         path,
                     )
-                    return
-                os.remove(path)
+                    return False
+                if not self._pin_repository.remove_snapshot_if_unpinned(path):
+                    return False
                 removed += 1
                 removed_bytes += size
                 kept_count -= 1
+                return True
             except FileNotFoundError:
                 # Already gone — counting as not-removed is fine.
-                pass
+                return False
+            except ContextSnapshotAuditPinError as exc:
+                logger.warning(
+                    "context_retention: keeping %s because audit-pin state failed closed: %s",
+                    path,
+                    exc,
+                )
+                return False
             except OSError as exc:
                 logger.warning(
                     "context_retention: failed to remove %s: %s",
                     path,
                     exc,
                 )
+                return False
 
         # Phase 1: TTL
         ttl_fired = False
@@ -432,12 +742,12 @@ class ContextStoreRetention:
         if len(candidates) > max_files:
             if "max_files" not in triggers:
                 triggers.append("max_files")
-            excess = len(candidates) - max_files
-            for _i in range(excess):
-                _remove(0)
-                candidates.pop(0)
-                if not candidates:
-                    break
+            candidate_index = 0
+            while len(candidates) > max_files and candidate_index < len(candidates):
+                if _remove(candidate_index):
+                    candidates.pop(candidate_index)
+                else:
+                    candidate_index += 1
 
         # Phase 3: max_total_bytes cap
         if candidates:
@@ -452,11 +762,13 @@ class ContextStoreRetention:
                         # Race: already gone, drop from candidate list.
                         candidates.pop(idx)
                         continue
-                    _remove(idx)
-                    candidates.pop(idx)
-                    total_bytes -= size
-                    if not candidates:
-                        break
+                    if _remove(idx):
+                        candidates.pop(idx)
+                        total_bytes -= size
+                        if not candidates:
+                            break
+                    else:
+                        idx += 1
 
         kept_bytes_after = sum(size for _mtime, _path, size in candidates)
         kept_count = len(candidates)

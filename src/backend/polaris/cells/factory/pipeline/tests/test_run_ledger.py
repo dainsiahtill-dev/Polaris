@@ -12,6 +12,11 @@ from polaris.cells.control_plane.verifier_policy.public import (
     UpdateVerifierPolicyCommandV1,
     update_verifier_policy,
 )
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.factory.pipeline.internal.bench_gates import build_real_run_gate
 from polaris.cells.factory.pipeline.internal.run_ledger import (
     RunLedger,
@@ -24,6 +29,20 @@ from polaris.cells.factory.pipeline.internal.run_ledger import (
     summarize_run_ledger_meta,
     summarize_run_ledger_projection,
 )
+
+
+@pytest.fixture(autouse=True)
+def _bootstrap_real_fact_stream_workspace(request: pytest.FixtureRequest) -> None:
+    if "tmp_path" not in request.fixturenames:
+        return
+    workspace = Path(request.getfixturevalue("tmp_path")).resolve()
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="factory_run_ledger_test_bootstrap",
+        )
+    )
 
 
 def test_legacy_missing_required_modalities_does_not_treat_failed_present_evidence_as_missing() -> None:

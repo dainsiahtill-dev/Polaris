@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Literal
+
+_PROVENANCE_MAX_IDENTITY_BYTES = 256
+_PROVENANCE_MAX_PATH_BYTES = 1024
+_PROVENANCE_MAX_TARGET_FILES = 512
+_PROVENANCE_BLUEPRINT_SCHEMA = "chief_engineer.blueprint.v1"
+_PROVENANCE_SNAPSHOT_SCHEMA = "chief_engineer.blueprint_provenance.v1"
+_PROVENANCE_HASH_SCHEME = "chief_engineer.blueprint_hash.v1"
 
 
 def _require_non_empty(name: str, value: str) -> str:
@@ -12,6 +21,77 @@ def _require_non_empty(name: str, value: str) -> str:
     if not normalized:
         raise ValueError(f"{name} must be a non-empty string")
     return normalized
+
+
+def _require_exact_non_empty(name: str, value: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{name} must be an exact non-empty string")
+    return value
+
+
+def _require_provenance_text(name: str, value: object, *, max_utf8_bytes: int) -> str:
+    if type(value) is not str:
+        raise TypeError(f"{name} must be a string")
+    if not value or value != value.strip():
+        raise ValueError(f"{name} must be an exact non-empty string")
+    if unicodedata.normalize("NFC", value) != value:
+        raise ValueError(f"{name} must be NFC-normalized")
+    if any(unicodedata.category(character).startswith("C") for character in value):
+        raise ValueError(f"{name} must not contain control characters")
+    if len(value.encode("utf-8")) > max_utf8_bytes:
+        raise ValueError(f"{name} exceeds {max_utf8_bytes} UTF-8 bytes")
+    return value
+
+
+def _require_provenance_identity(name: str, value: object) -> str:
+    return _require_provenance_text(name, value, max_utf8_bytes=_PROVENANCE_MAX_IDENTITY_BYTES)
+
+
+def _require_provenance_blueprint_id(name: str, value: object) -> str:
+    token = _require_provenance_identity(name, value)
+    if token in {".", ".."} or "/" in token or "\\" in token:
+        raise ValueError(f"{name} must be a safe filename token")
+    return token
+
+
+def _require_provenance_path(name: str, value: object) -> str:
+    path = _require_provenance_text(name, value, max_utf8_bytes=_PROVENANCE_MAX_PATH_BYTES)
+    if "\\" in path:
+        raise ValueError(f"{name} must use POSIX separators")
+    windows_path = PureWindowsPath(path)
+    posix_path = PurePosixPath(path)
+    if windows_path.drive or windows_path.root or posix_path.is_absolute():
+        raise ValueError(f"{name} must be a relative POSIX path")
+    parts = path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"{name} must not contain empty, dot, or parent components")
+    if PurePosixPath(*parts).as_posix() != path:
+        raise ValueError(f"{name} must be a canonical POSIX path")
+    return path
+
+
+def _require_provenance_sha256(name: str, value: object) -> str:
+    token = _require_provenance_text(name, value, max_utf8_bytes=64)
+    if len(token) != 64 or any(character not in "0123456789abcdef" for character in token):
+        raise ValueError(f"{name} must be lower-case 64-hex")
+    return token
+
+
+def _strict_provenance_target_paths(
+    name: str,
+    value: object,
+    *,
+    require_list: bool,
+) -> tuple[str, ...]:
+    expected_type = list if require_list else tuple
+    if type(value) is not expected_type:
+        raise TypeError(f"{name} must be a {expected_type.__name__}")
+    if len(value) > _PROVENANCE_MAX_TARGET_FILES:
+        raise ValueError(f"{name} must contain at most {_PROVENANCE_MAX_TARGET_FILES} paths")
+    paths = tuple(_require_provenance_path(f"{name}[{index}]", item) for index, item in enumerate(value))
+    if len(set(paths)) != len(paths):
+        raise ValueError(f"{name} must not contain duplicate paths")
+    return paths
 
 
 def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -679,6 +759,43 @@ class GetBlueprintStatusQueryV1:
 
 
 @dataclass(frozen=True)
+class QueryBlueprintProvenanceV1:
+    """Validate one already-captured blueprint mapping without storage access."""
+
+    blueprint: Mapping[str, Any]
+    expected_pm_task: Mapping[str, Any]
+    expected_factory_run_id: str
+    expected_task_id: str
+    expected_blueprint_id: str
+    expected_logical_path: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.blueprint, Mapping):
+            raise TypeError("blueprint must be a mapping")
+        if not isinstance(self.expected_pm_task, Mapping) or not self.expected_pm_task:
+            raise ValueError("expected_pm_task must be a non-empty mapping")
+        object.__setattr__(self, "blueprint", deepcopy(dict(self.blueprint)))
+        object.__setattr__(self, "expected_pm_task", deepcopy(dict(self.expected_pm_task)))
+        object.__setattr__(
+            self,
+            "expected_factory_run_id",
+            _require_provenance_identity("expected_factory_run_id", self.expected_factory_run_id),
+        )
+        object.__setattr__(
+            self,
+            "expected_task_id",
+            _require_provenance_identity("expected_task_id", self.expected_task_id),
+        )
+        blueprint_id = _require_provenance_blueprint_id("expected_blueprint_id", self.expected_blueprint_id)
+        object.__setattr__(self, "expected_blueprint_id", blueprint_id)
+        object.__setattr__(
+            self,
+            "expected_logical_path",
+            _require_provenance_path("expected_logical_path", self.expected_logical_path),
+        )
+
+
+@dataclass(frozen=True)
 class TaskBlueprintGeneratedEventV1:
     event_id: str
     task_id: str
@@ -824,6 +941,77 @@ class TaskBlueprintResultV1:
             tuple(dict(item) for item in self.existing_target_files if isinstance(item, Mapping)),
         )
         object.__setattr__(self, "module_interface_contract", _to_dict_copy(self.module_interface_contract))
+
+
+@dataclass(frozen=True)
+class TaskBlueprintProvenanceSnapshotV1:
+    """Pure provenance verdict for one exact Chief Engineer blueprint payload."""
+
+    logical_path: str
+    factory_run_id: str
+    task_id: str
+    blueprint_id: str
+    embedded_blueprint_hash: str
+    recomputed_blueprint_hash: str
+    matches: bool
+    pm_contract_hash: str
+    recomputed_pm_contract_hash: str
+    pm_task_canonical_hash: str
+    target_files: tuple[str, ...] = field(default_factory=tuple)
+    blueprint_schema_version: str = "chief_engineer.blueprint.v1"
+    schema_version: str = "chief_engineer.blueprint_provenance.v1"
+    hash_scheme: str = "chief_engineer.blueprint_hash.v1"
+
+    def __post_init__(self) -> None:
+        logical_path = _require_provenance_path("logical_path", self.logical_path)
+        factory_run_id = _require_provenance_identity("factory_run_id", self.factory_run_id)
+        task_id = _require_provenance_identity("task_id", self.task_id)
+        blueprint_id = _require_provenance_blueprint_id("blueprint_id", self.blueprint_id)
+        if logical_path != f"runtime/blueprints/{blueprint_id}.json":
+            raise ValueError("logical_path must match blueprint_id")
+        object.__setattr__(self, "logical_path", logical_path)
+        object.__setattr__(self, "factory_run_id", factory_run_id)
+        object.__setattr__(self, "task_id", task_id)
+        object.__setattr__(self, "blueprint_id", blueprint_id)
+        for field_name in (
+            "embedded_blueprint_hash",
+            "recomputed_blueprint_hash",
+            "pm_contract_hash",
+            "recomputed_pm_contract_hash",
+            "pm_task_canonical_hash",
+        ):
+            object.__setattr__(self, field_name, _require_provenance_sha256(field_name, getattr(self, field_name)))
+        if type(self.matches) is not bool:
+            raise TypeError("matches must be a bool")
+        if self.blueprint_schema_version != _PROVENANCE_BLUEPRINT_SCHEMA:
+            raise ValueError(f"blueprint_schema_version must equal {_PROVENANCE_BLUEPRINT_SCHEMA!r}")
+        if self.schema_version != _PROVENANCE_SNAPSHOT_SCHEMA:
+            raise ValueError(f"schema_version must equal {_PROVENANCE_SNAPSHOT_SCHEMA!r}")
+        if self.hash_scheme != _PROVENANCE_HASH_SCHEME:
+            raise ValueError(f"hash_scheme must equal {_PROVENANCE_HASH_SCHEME!r}")
+        object.__setattr__(
+            self,
+            "target_files",
+            _strict_provenance_target_paths("target_files", self.target_files, require_list=False),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "blueprint_schema_version": self.blueprint_schema_version,
+            "hash_scheme": self.hash_scheme,
+            "logical_path": self.logical_path,
+            "factory_run_id": self.factory_run_id,
+            "task_id": self.task_id,
+            "blueprint_id": self.blueprint_id,
+            "embedded_blueprint_hash": self.embedded_blueprint_hash,
+            "recomputed_blueprint_hash": self.recomputed_blueprint_hash,
+            "matches": self.matches,
+            "pm_contract_hash": self.pm_contract_hash,
+            "recomputed_pm_contract_hash": self.recomputed_pm_contract_hash,
+            "pm_task_canonical_hash": self.pm_task_canonical_hash,
+            "target_files": list(self.target_files),
+        }
 
 
 class ChiefEngineerBlueprintErrorV1(RuntimeError):  # noqa: N818
@@ -1941,6 +2129,7 @@ __all__ = [
     "PostMortemRecordV1",
     "PostMortemStatus",
     "QualityGateResultV1",
+    "QueryBlueprintProvenanceV1",
     "RegisterADRCommandV1",
     "RegisterPostMortemCommandV1",
     "RegisterRiskCommandV1",
@@ -1956,6 +2145,7 @@ __all__ = [
     "RollbackStrategy",
     "StackPolicyViolationV1",
     "TaskBlueprintGeneratedEventV1",
+    "TaskBlueprintProvenanceSnapshotV1",
     "TaskBlueprintResultV1",
     "TechDebtEventV1",
     "TechDebtRecordV1",

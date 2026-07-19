@@ -54,6 +54,7 @@ depends_on:
 - orchestration.pm_dispatch
 - chief_engineer.blueprint
 - roles.kernel
+- events.fact_stream
 - storage.layout
 - roles.adapters
 - control_plane.run_ledger
@@ -87,7 +88,17 @@ verification:
   - polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py
   - polaris/cells/factory/pipeline/tests/test_projection_http_resources.py
   - polaris/cells/factory/pipeline/tests/test_projection_reproject.py
+  - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_admission.py
+  - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py
+  - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_run_service.py
+  - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_provenance.py
+  - polaris/cells/factory/pipeline/tests/test_factory_event_chain.py
+  - polaris/cells/factory/pipeline/tests/test_factory_stage_persistence.py
+  - polaris/cells/factory/pipeline/tests/test_factory_stage_persistence_service.py
   gaps:
   - Composite child-cell split for planner/director/qa paths is pending.
+  - Provider-visible Factory role evidence remains disabled until A009B3
+    B3.2-B3.5 injection, dispatch, physical-attempt, and snapshot qualification
+    gates close.
   smoke_commands: []
 generated_artifacts: []

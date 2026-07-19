@@ -2,11 +2,66 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from typing import Any, AsyncContextManager
+
+import pytest
 import requests
 from polaris.infrastructure.llm.providers import provider_helpers
-from polaris.infrastructure.llm.providers.provider_helpers import invoke_with_retry
+from polaris.infrastructure.llm.providers.provider_helpers import CircuitBreaker, invoke_with_retry
 from polaris.kernelone.common.clock import MockClock
-from polaris.kernelone.llm.engine.contracts import Usage
+from polaris.kernelone.llm.engine.contracts import Usage, bind_physical_provider_dispatch_port
+
+
+class _Http200Response:
+    ok = True
+    status_code = 200
+    text = '{"choices":[{"message":{"content":"ok"}}]}'
+    headers: dict[str, str] = {}
+
+    def json(self) -> dict[str, Any]:
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+
+class _RecordingSyncDispatchPort:
+    def __init__(self) -> None:
+        self.wire_requests: list[dict[str, Any]] = []
+
+    def dispatch_sync(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        send: Callable[[Mapping[str, Any]], Any],
+    ) -> Any:
+        self.wire_requests.append(dict(wire_request))
+        return send(wire_request)
+
+
+class _AsyncOnlyDispatchPort:
+    async def dispatch_async(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        send: Callable[[Mapping[str, Any]], Awaitable[Any]],
+    ) -> Any:
+        return await send(wire_request)
+
+    async def dispatch_blocking_async(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        send: Callable[[Mapping[str, Any]], Any],
+    ) -> Any:
+        return send(wire_request)
+
+    def dispatch_stream_async(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        open_stream: Callable[[Mapping[str, Any]], AsyncContextManager[Any]],
+        consume: Callable[[Any], AsyncIterator[Any]],
+    ) -> AsyncIterator[Any]:
+        raise AssertionError("stream dispatch is not expected")
 
 
 class _Http500Response:
@@ -28,23 +83,112 @@ class _Http429Response:
         raise requests.HTTPError("429 Client Error: Too Many Requests")
 
 
-class _CircuitBreakerProbe:
+class _CircuitBreakerProbe(CircuitBreaker):
     def __init__(self) -> None:
+        super().__init__()
         self.before_calls = 0
         self.failures = 0
 
     def before_call(self) -> None:
         self.before_calls += 1
+        super().before_call()
 
     def on_failure(self) -> None:
         self.failures += 1
-
-    def on_success(self) -> None:
-        pass
+        super().on_failure()
 
 
 def _usage(_prompt: str, _output: str, _data: dict[str, object]) -> Usage:
-    return Usage(input_tokens=0, output_tokens=0, total_tokens=0)
+    return Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+
+
+def _extract(data: dict[str, Any]) -> str:
+    return str(data["choices"][0]["message"]["content"])
+
+
+def test_explicit_sync_dispatch_port_wins_over_context_binding(monkeypatch) -> None:
+    bound = _RecordingSyncDispatchPort()
+    explicit = _RecordingSyncDispatchPort()
+    monkeypatch.setattr(provider_helpers, "_blocking_http_post", lambda *_args, **_kwargs: _Http200Response())
+
+    with bind_physical_provider_dispatch_port(bound):
+        result = invoke_with_retry(
+            "https://example.test/invoke",
+            headers={},
+            payload={"messages": []},
+            timeout=1,
+            retries=0,
+            prompt="prompt",
+            extract_output=_extract,
+            usage_from_response=_usage,
+            physical_dispatch_port=explicit,
+        )
+
+    assert result.ok is True
+    assert len(explicit.wire_requests) == 1
+    assert bound.wire_requests == []
+
+
+def test_bound_sync_dispatch_port_wraps_each_physical_retry(monkeypatch) -> None:
+    port = _RecordingSyncDispatchPort()
+    responses: list[object] = [requests.ConnectionError("retry"), _Http200Response()]
+
+    def _post(*_args: object, **_kwargs: object) -> _Http200Response:
+        response = responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        assert isinstance(response, _Http200Response)
+        return response
+
+    monkeypatch.setattr(provider_helpers, "_blocking_http_post", _post)
+
+    with bind_physical_provider_dispatch_port(port):
+        result = invoke_with_retry(
+            "https://example.test/invoke",
+            headers={},
+            payload={"messages": []},
+            timeout=1,
+            retries=1,
+            prompt="prompt",
+            extract_output=_extract,
+            usage_from_response=_usage,
+            backoff_base_seconds=0,
+            backoff_max_seconds=0,
+        )
+
+    assert result.ok is True
+    assert len(port.wire_requests) == 2
+
+
+def test_bound_async_only_port_fails_closed_before_raw_sync_post(monkeypatch) -> None:
+    raw_posts = 0
+
+    def _post(*_args: object, **_kwargs: object) -> _Http200Response:
+        nonlocal raw_posts
+        raw_posts += 1
+        return _Http200Response()
+
+    monkeypatch.setattr(provider_helpers, "_blocking_http_post", _post)
+
+    with (
+        bind_physical_provider_dispatch_port(_AsyncOnlyDispatchPort()),
+        pytest.raises(
+            RuntimeError,
+            match="dispatch_sync",
+        ),
+    ):
+        invoke_with_retry(
+            "https://example.test/invoke",
+            headers={},
+            payload={"messages": []},
+            timeout=1,
+            retries=0,
+            prompt="prompt",
+            extract_output=_extract,
+            usage_from_response=_usage,
+        )
+
+    assert raw_posts == 0
 
 
 def test_http_5xx_returns_retryable_failure_without_local_backoff(monkeypatch) -> None:

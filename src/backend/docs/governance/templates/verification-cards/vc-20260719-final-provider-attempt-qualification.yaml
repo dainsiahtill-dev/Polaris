@@ -1,0 +1,187 @@
+card_id: vc-20260719-final-provider-attempt-qualification
+bug_summary: >-
+  Factory role context is reconstructed but production role calls still stop at
+  cutoff-not-enabled. The current typed binding is a post-cutoff proof carrier,
+  so using it at the Factory seam would invert causality; no distinct pre-cutoff
+  authority carrier yet feeds the live cutoff port into request preparation,
+  and no single authority qualifies every physical provider retry, fallback,
+  structured, or stream attempt.
+classification: structural
+bug_path:
+  file: polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py
+  method: RequestPreparer.prepare
+  symptom: >-
+    A live Factory binding raises factory_role_evidence_cutoff_not_enabled;
+    enabling it without full dispatch propagation would allow unaudited physical
+    provider attempts.
+assumptions:
+  - id: A1
+    statement: I assume the existing typed Factory role binding is a post-cutoff proof carrier and cannot truthfully be constructed at a pre-cutoff role seam.
+    status: verified_true
+    evidence: >-
+      FactoryRoleEvidenceBindingV1 requires cutoff_fact_id/sequence/hash,
+      source_head_vector and policy_facts. RequestPreparer reads it before the
+      semantic candidate exists, and the repository has no production
+      constructor or bind_factory_role_evidence call.
+  - id: A2
+    statement: I assume RequestPreparer deliberately prevents live activation today.
+    status: verified_true
+    evidence: >-
+      request_preparer.py validates the current binding and then raises
+      factory_role_evidence_cutoff_not_enabled.
+  - id: A3
+    statement: I assume one logical prepared request can cause multiple physical provider attempts.
+    status: verified_true
+    evidence: >-
+      invoker.py contains sync, structured and fallback executor calls;
+      stream_engine.py has a separate stream executor call; provider helpers own
+      transport retry loops.
+  - id: A4
+    statement: I assume KernelOne already provides a provider-neutral runtime-private dispatch port.
+    status: verified_true
+    evidence: >-
+      kernelone/llm/engine/contracts.py defines the typed ContextVar binding and
+      executor.py can bind a supplied physical_dispatch_port around invocation.
+  - id: A5
+    statement: I assume the existing cutoff and final-attempt infrastructure can be reused without a second authority.
+    status: verified_true
+    evidence: >-
+      final_request_evidence_cutoff.py and final_provider_attempt_gate.py already
+      expose typed cutoff, freeze, lifecycle and snapshot primitives; focused
+      provider-attempt gates passed before A009B3.
+  - id: A6
+    statement: I assume serializing the dispatch port in AIRequest context would be unsafe and unnecessary.
+    status: verified_true
+    evidence: >-
+      the KernelOne contract exposes the port as runtime capability state and
+      the executor accepts it as a separate argument; provider payloads require
+      only serializable request data.
+  - id: A7
+    statement: I assume a distinct pre-cutoff runtime-private carrier is required before Factory role binding can be implemented without fabricated evidence.
+    status: verified_true
+    evidence: >-
+      FactoryRunService supplies a live FactoryRoleEvidenceAuthorityPort before
+      stage logic, while the durable cutoff ACK exists only after
+      RequestPreparer builds the semantic candidate and calls that port. The
+      pre-cutoff carrier must therefore precede and remain distinct from the
+      existing post-cutoff proof binding.
+  - id: A8
+    statement: I assume Factory cannot legally import a pre-cutoff carrier that exists only under roles.kernel.internal.
+    status: verified_true
+    evidence: >-
+      factory.pipeline depends on roles.kernel, but both Cell manifests and the
+      architecture standard require cross-Cell dependencies to use public
+      contracts. The runtime-private carrier therefore needs a narrow public
+      binder while remaining non-serializable.
+  - id: A9
+    statement: I assume an arbitrary 64-hex execution_authority_hash supplied by RequestPreparer would not prove Factory authorization.
+    status: verified_true
+    evidence: >-
+      FactoryRoleEvidenceAuthorityPort currently persists the request field but
+      does not compare it with the captured stage claim. Factory must mint a
+      canonical stage/claim/role/budget-bound hash and reject any mismatch
+      before cutoff persistence.
+  - id: A10
+    statement: I assume docs-generation architect is a real physical role call and cannot be governed under the PM identity.
+    status: verified_true
+    evidence: >-
+      Factory executes docs_generation through execute_pm_run(run_type=architect),
+      and OrchestrationCommandService selects role_id=architect. The stage runs
+      before PM planning, so its only causally available required Factory source
+      is the admission-time pm_raw_intent. The current role policy rejects
+      architect and must gain an explicit architect policy rather than an alias.
+  - id: A11
+    statement: I assume a stage/role/budget hash without a unique Factory grant identity permits PM recovery or Director fanout siblings to share authority and reset accounting.
+    status: verified_true
+    evidence: >-
+      The same stage claim, role, and budget are identical for sibling logical
+      calls. Factory must add a private random grant nonce, keep its registry
+      row private, expose only the opaque execution_authority_hash, and account
+      the fixed 32-attempt budget by that hash across semantic freezes.
+  - id: A12
+    statement: I assume grant validation after ledger or source access would allow a forged or stale request to create authority-adjacent effects.
+    status: verified_true
+    evidence: >-
+      Grant/hash/role/budget/open-state plus current-run and live-stage-claim
+      checks must precede ledger creation, source resolution, FactStream append,
+      and ACK. The first valid request may then bind one controlled child run id.
+  - id: A13
+    statement: I assume cancelling fanout children without awaiting them can leak inherited runtime authority beyond stage settlement.
+    status: verified_true
+    evidence: >-
+      asyncio task context is inherited at create_task. Pending children must be
+      cancelled and gathered with return_exceptions=True before the stage-local
+      registry closes and the claim is released.
+pre_mortem:
+  failure_point: >-
+    The most likely incorrect fix would qualify the prepared semantic request
+    once, then let a provider retry, fallback, stream, or inherited fanout child
+    dispatch without an independent exact-wire-request gate.
+  risk_zone:
+    - polaris/cells/factory/pipeline/internal/factory_run_service.py
+    - polaris/cells/factory/pipeline/internal/factory_stage_executor.py
+    - polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py
+    - polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py
+    - polaris/cells/roles/kernel/internal/llm_caller/invoker.py
+    - polaris/cells/roles/kernel/internal/llm_caller/stream_engine.py
+    - polaris/kernelone/llm/engine
+    - polaris/infrastructure/llm/providers
+verification_plan:
+  unit_tests:
+    - file: polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py
+      description: '[B3.2] Prove distinct pre-cutoff authority and post-cutoff proof carriers, exact-type binding, ContextVar isolation, and non-serialization.'
+      expected: A live cutoff port can be carried before ACK without fabricated proof fields; cleanup restores prior context on success and failure.
+      status: existing_fix
+    - file: polaris/cells/roles/kernel/tests/test_final_provider_attempt_gate.py
+      description: Prove one independent qualification and lifecycle per physical attempt.
+      expected: Retries and fallbacks cannot reuse PASS and failures cause zero transport calls.
+      status: existing_fix
+    - file: polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py
+      description: '[B3.2] Prove locator-only ACK resolution, detached proof validation, semantic cutoff injection, recomputation, and strict fail-closed validation.'
+      expected: Canonical anchors are provider-visible and stale or wrong-role evidence fails.
+      status: existing_fix
+    - file: polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py
+      description: '[B3.2] Prove Factory-owned strict cutoff persistence and exact public proof reconstruction from the ACK locator.'
+      expected: Source heads and policy facts are re-read from committed authority; drift, ACK mismatch, and replay conflict fail closed.
+      status: existing_fix
+    - file: polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py
+      description: '[B3.2] Prove complete role-specific evidence policy projection before semantic request freezing.'
+      expected: Architect, PM, Chief Engineer, Director, and QA receive their exact ordered required/optional evidence slots without role aliasing.
+      status: existing_fix
+    - file: polaris/cells/roles/kernel/tests/test_llm_caller_components.py
+      description: '[B3.2] Prove RequestPreparer canonical evidence-block placement, post-injection recomputation, immutability, and ordinary-call compatibility.'
+      expected: Factory semantic requests freeze exact canonical JSON and hashes; duplicate, stale, mutable, or wrong-role inputs fail before dispatch.
+      status: existing_fix
+    - file: polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py
+      description: Cover sync, structured, and role-binding fallback dispatch-port propagation.
+      expected: Every executor path receives the same runtime-private port for the current semantic freeze.
+      status: existing_fix
+    - file: polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py
+      description: Cover stream-path dispatch qualification and ContextVar cleanup.
+      expected: Stream transport is gated per attempt and cancellation leaks no capability.
+      status: existing_fix
+    - file: polaris/cells/factory/pipeline/tests/test_factory_role_evidence_run_service.py
+      description: Cover PM, architect, CE, Director, fanout-child, QA, recovery binding seams, and Factory-minted role/budget/hash authority.
+      expected: Each controlled role has a unique isolated grant; PM recovery and fanout siblings cannot share authority; 1/2/1/512/1 cardinality, fixed budget 32, wrong role/budget/hash/child, stale or closed authority, cancellation drain, and recovery without authority all fail before persistent effects or provider I/O.
+      status: existing_fix
+  integration_tests:
+    - description: Focused B3.2 semantic cutoff and proof-resolution suite; this gate does not authorize Provider or Bench.
+      command: python -m pytest -q polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py polaris/cells/roles/kernel/tests/test_llm_caller_components.py
+      status: existing_fix
+    - description: Complete Factory Pipeline regression suite.
+      command: python -m pytest -q polaris/cells/factory/pipeline/tests
+      status: existing_fix
+    - description: KernelOne architecture and aggregate release gates.
+      command: python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+      status: existing_fix
+  manual_check:
+    - Confirm B3.2 ends at an immutable semantic request freeze and performs no physical provider dispatch.
+    - Inspect every physical provider transport seam and prove a bound gate is consumed immediately before I/O.
+    - Read each persisted context_snapshot_ref through the same-workspace final-request query.
+    - Confirm no runtime capability port appears in serialized provider requests, events, or snapshots.
+    - Confirm no PM-to-Director bypass and no Bench dependency was introduced.
+related_adrs:
+  - ADR-0098
+sign_off:
+  completed_by: Codex /root
+  completed_at: '2026-07-19'

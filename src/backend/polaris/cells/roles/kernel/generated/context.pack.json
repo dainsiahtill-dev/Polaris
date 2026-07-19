@@ -1,0 +1,97 @@
+{
+  "id": "roles.kernel",
+  "title": "Roles Kernel",
+  "kind": "capability",
+  "purpose": "Provide the shared role execution kernel and the typed semantic final-request evidence cutoff contract used by Factory role flows.",
+  "summary": "Canonical generated context for roles.kernel, including the B3.2 cutoff proof-resolution surface while physical provider-attempt qualification remains guarded.",
+  "owned_paths": [
+    "polaris/cells/roles/kernel/**"
+  ],
+  "public_contracts": {
+    "commands": [
+      "BuildRolePromptCommandV1",
+      "ParseRoleOutputCommandV1",
+      "CheckRoleQualityCommandV1",
+      "ExecuteRoleKernelTurnCommandV1",
+      "FactoryRoleEvidenceCutoffRequestV1"
+    ],
+    "queries": [
+      "ClassifyKernelErrorQueryV1",
+      "ResolveRetryPolicyQueryV1",
+      "FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof"
+    ],
+    "events": [
+      "RoleKernelPromptBuiltEventV1",
+      "RoleKernelParsedOutputEventV1",
+      "RoleKernelQualityCheckedEventV1"
+    ],
+    "results": [
+      "RoleKernelResultV1",
+      "FactoryRoleEvidenceCutoffAckV1",
+      "FactoryRoleEvidenceCutoffSourceHeadV1",
+      "FactoryRoleEvidenceCutoffProofV1",
+      "FactoryRoleSemanticRequestIdentityV1",
+      "FactoryRoleSemanticCandidateV1",
+      "FactoryRoleFrozenSemanticRequestV1"
+    ],
+    "errors": [
+      "RoleKernelErrorV1"
+    ]
+  },
+  "neighbors": [
+    "context.engine",
+    "llm.control_plane",
+    "policy.permission",
+    "audit.evidence",
+    "control_plane.run_ledger",
+    "director.runtime",
+    "director.execution",
+    "roles.profile",
+    "roles.session",
+    "runtime.execution_broker",
+    "runtime.task_runtime",
+    "factory.cognitive_runtime",
+    "storage.layout",
+    "events.fact_stream",
+    "roles.scout"
+  ],
+  "state_owners": [],
+  "effects_allowed": [
+    "fs.read:workspace/**",
+    "ws.outbound:runtime/*",
+    "llm.invoke:roles/*",
+    "process.spawn:roles/*"
+  ],
+  "invariants": [
+    "Cross-Cell callers use only roles.kernel public contracts; no external caller imports roles.kernel internal modules.",
+    "FactoryRoleEvidenceCutoffAckV1 remains locator-only; resolve_cutoff_proof strictly reconstructs a detached FactoryRoleEvidenceCutoffProofV1 from committed authority facts.",
+    "B3.2 freezes the provider-visible semantic request after evidence injection but does not authorize or dispatch any physical provider attempt.",
+    "Runtime-only cutoff authority ports never enter serializable provider requests, events, snapshots, or context packs.",
+    "B3.3-B3.5 must qualify every role, retry, fallback, structured, stream, and Director fanout physical attempt before provider I/O.",
+    "All text file reads and writes use explicit UTF-8."
+  ],
+  "hotspots": [
+    "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
+    "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py",
+    "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+  ],
+  "test_targets": [
+    "polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py",
+    "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py",
+    "polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py",
+    "polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py",
+    "polaris/cells/roles/kernel/tests/test_llm_caller_components.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "generated/verify.pack.json",
+      "public/final_request_evidence_cutoff.py",
+      "internal/llm_caller/request_preparer.py",
+      "internal/llm_caller/invoker.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}
