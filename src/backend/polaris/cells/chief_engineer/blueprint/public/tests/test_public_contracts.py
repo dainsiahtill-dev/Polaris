@@ -1871,6 +1871,130 @@ class TestChiefEngineerBlueprintPublicService:
         assert semantic_alignment["blockers"] == []
         assert any("CE blueprint overlay" in item for item in semantic_alignment["advisory"])
 
+    def test_generate_task_blueprint_blocks_zero_match_despite_partial_overlay(self, tmp_path) -> None:
+        """Zero-match planning text must still block even if the overlay mentions a domain term.
+
+        The union escape only applies when the PM-scoped planning text itself
+        carries at least one domain term; a completely off-domain objective
+        (PM scoped the wrong task) must stay blocked so the gate keeps its
+        PM-contract-teeth. Uses NON-support-boundary target files so the
+        semantic gate (not the structural support-boundary exemption) decides.
+        """
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-GO-OFFDOMAIN",
+            workspace=str(tmp_path),
+            objective="Implement flavor recipe planner",
+            context={
+                "task_title": "Flavor recipe planner",
+                "language": "go",
+                "target_files": ["engine/flavor.go", "engine/recipe.go"],
+                "scope_paths": ["engine/flavor.go", "engine/recipe.go"],
+                "acceptance_criteria": ["cargo test passes"],
+                "execution_checklist": ["Implement flavor and recipe models."],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "product_summary": {
+                        "intent": "Deliver a pirate treasure budget planner.",
+                        "core_terms": ["treasure", "budget", "port", "reef"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "product_intent": {
+                        "subject": "pirate treasure budget planner",
+                        "primary_entities": ["treasure", "budget", "port", "reef"],
+                    },
+                },
+            },
+            llm_blueprint={
+                "construction_plan": {
+                    "notes": ["Domain alignment for treasure budget happens downstream."],
+                },
+                "scope_for_apply": ["engine/flavor.go"],
+                "risk_flags": [],
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["contract_completeness"]["handoff_ready"] is False
+        assert persisted["handoff_ready"] is False
+        semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
+        assert semantic_alignment["planning_text_matches"] == []
+        assert semantic_alignment["support_boundary"] is False
+        assert persisted["contract_completeness"]["semantic_blockers"]
+        governance = persisted["governance"]["quality_gate"]
+        assert governance["passed"] is False
+        assert any("contract semantic blocker" in item for item in governance["blockers"])
+
+    def test_generate_task_blueprint_allows_mixed_manifest_boundary_structural(self, tmp_path) -> None:
+        """A manifest+entrypoint+test boundary is structurally exempt via support boundary.
+
+        Regression for the L1-04 TASK-2-foundation block: a sub-task scoped to
+        "project manifest and build contract only" targets go.mod (language-
+        neutral manifest, now a support file), main.go (entrypoint, already a
+        support file), and behavior_test.go (a behavior test). Such a boundary
+        carries no domain implementation, so the semantic gate defers to the
+        delivery context instead of demanding domain-term similarity.
+        """
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-GO-MANIFEST-FOUNDATION",
+            workspace=str(tmp_path),
+            objective="实现 ASCII 魔法宠物终端 的解锁规则、谜语验证、展厅布局和可执行 Go 入口。 Scope this task to project manifest and build contract only.",
+            context={
+                "task_title": "实现 ASCII 魔法宠物终端 Go 规则引擎与 CLI 入口 - project manifest and build contract",
+                "language": "go",
+                "target_files": ["go.mod", "main.go", "behavior_test.go"],
+                "scope_paths": ["go.mod", "behavior_test.go"],
+                "acceptance_criteria": [
+                    "verify go.mod exists",
+                    "package/test/build scripts and module settings are internally consistent.",
+                ],
+                "execution_checklist": ["Materialize only the listed target files."],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "language": "go",
+                    "product_summary": {
+                        "core_terms": ["pet", "spell", "mood", "ascii"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "language": "go",
+                    "product_intent": {
+                        "subject": "ASCII 魔法宠物终端",
+                        "primary_entities": ["pet", "spell", "mood", "ascii"],
+                    },
+                },
+            },
+            llm_blueprint={
+                "construction_plan": {
+                    "contract_alignment": {
+                        "summary": "Anchor the Go module path so downstream packages can import the pet and spell models consistently.",
+                    },
+                    "manifest_materialization": {
+                        "target_file": "go.mod",
+                        "director_command": "go mod init example/pet",
+                    },
+                },
+                "scope_for_apply": ["go.mod"],
+                "risk_flags": [],
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["contract_completeness"]["handoff_ready"] is True
+        semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
+        assert semantic_alignment["support_boundary"] is True
+        assert semantic_alignment["blockers"] == []
+
     def test_generate_task_blueprint_blocks_domain_mismatched_planning_text(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(
             task_id="TASK-L2-RUST-MISMATCHED-PLAN",

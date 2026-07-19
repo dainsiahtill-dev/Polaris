@@ -981,6 +981,15 @@ _SEMANTIC_SUPPORT_BOUNDARY_FILENAMES = frozenset(
         "requirements.txt",
         "tsconfig.json",
         "yarn.lock",
+        # Language-neutral build/module manifests. A sub-task scoped to a
+        # manifest boundary (e.g. "project manifest and build contract only")
+        # is a STRUCTURAL support boundary, not a semantic domain task, so its
+        # generic planning text must not be judged by domain-term similarity.
+        # Aligned with the PM language gate's _LANGUAGE_NEUTRAL_FILENAMES.
+        "go.mod",
+        "go.sum",
+        "cmakelists.txt",
+        "cargo.toml",
     }
 )
 _SEMANTIC_SUPPORT_BOUNDARY_SUFFIXES = (
@@ -1001,7 +1010,21 @@ def _is_semantic_support_boundary_path(path: str) -> bool:
     basename = normalized.rsplit("/", 1)[-1]
     if basename in _SEMANTIC_SUPPORT_BOUNDARY_FILENAMES:
         return True
-    return basename.endswith(_SEMANTIC_SUPPORT_BOUNDARY_SUFFIXES)
+    if basename.endswith(_SEMANTIC_SUPPORT_BOUNDARY_SUFFIXES):
+        return True
+    # Behavior/test files are structural support: they verify domain behavior
+    # rather than implement it, so a boundary scoped to a manifest plus its
+    # behavior test carries no domain implementation. Mirrors the path test in
+    # _path_looks_like_test (defined later in this module) without a forward ref.
+    return bool(
+        normalized.startswith("tests/")
+        or "/tests/" in normalized
+        or ".test." in basename
+        or ".spec." in basename
+        or basename.startswith("test_")
+        or "_test." in basename
+        or basename.endswith("test.java")
+    )
 
 
 def _is_semantic_support_boundary(*path_groups: list[str]) -> bool:
@@ -1070,6 +1093,22 @@ def _semantic_alignment_audit(
             advisory.append(
                 "semantic_alignment.plan_text deferred to delivery context for support boundary: "
                 f"matched {len(planning_matches)}/{required_term_count} required domain terms"
+            )
+        elif planning_matches and len(set(planning_matches) | set(blueprint_matches)) >= required_term_count:
+            # Partial coverage in both PM-scoped planning text and the CE overlay:
+            # neither layer covers the domain alone, but their DISTINCT terms
+            # together do. The planning text is correct-but-generic for its
+            # boundary (e.g. a manifest/go.mod or entrypoint/main.go sub-task
+            # whose objective is intentionally scoped to "project manifest and
+            # build contract only"), and the CE overlay supplies the remaining
+            # domain terms from upstream interface contracts. Use the UNION of
+            # distinct matched terms, not the sum, so a term present in both
+            # layers is not double-counted into a false pass. Blocking here
+            # would punish a correct decomposed plan; a zero-match planning
+            # text still blocks.
+            advisory.append(
+                "semantic_alignment.plan_text partially covered with CE blueprint overlay: "
+                f"matched {len(planning_matches)}+{len(blueprint_matches)}/{required_term_count} required domain terms"
             )
         else:
             blockers.append(
