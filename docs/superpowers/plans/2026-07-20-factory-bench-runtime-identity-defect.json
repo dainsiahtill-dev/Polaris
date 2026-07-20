@@ -1,0 +1,64 @@
+{
+  "schema_version": "polaris.defect-manifest.v1",
+  "defect_id": "P0-FACTORY-BENCH-RUNTIME-IDENTITY-DRIFT-20260720",
+  "status": "REMEDIATED_verified_pre_bench_not_schedulable",
+  "severity": "P0",
+  "classification": "structural",
+  "symptom": {
+    "error": "event stream lock or descriptor capability failed",
+    "cause": "stream_identity_drift",
+    "runtime_root": "/home/dains/.cache/kernelone/.polaris/projects/l1-04-66ad094c7ae0/runtime",
+    "authority_token": "f3018f69fe780038ecd794b3",
+    "expected_device": 2096,
+    "expected_inode": 5149286,
+    "actual_device": 2096,
+    "actual_inode": 5580745
+  },
+  "root_cause": "factory_bench removed a runtime root after isolated-backend authority enrollment; same-path recreation changed the inode while the immutable authority remained bound to the old identity",
+  "decision": "preserve KernelOne fail-closed authority semantics; allocate a unique fresh project workspace before isolated launch and remove destructive runtime purge from normal Bench execution",
+  "authorized_files": [
+    "src/backend/scripts/factory_bench/run_factory_bench.py",
+    "src/backend/scripts/factory_bench/test_run_factory_bench.py",
+    "src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py",
+    "src/backend/docs/blueprints/FACTORY_BENCH_FRESH_WORKSPACE_IDENTITY_BLUEPRINT_20260720.md",
+    "src/backend/docs/governance/templates/verification-cards/vc-20260720-factory-bench-fresh-workspace-identity.yaml"
+  ],
+  "forbidden_actions": [
+    "weaken stream_identity_drift checks",
+    "silently rebind or rotate lock authority",
+    "delete existing authority evidence",
+    "modify generated target-project business code",
+    "run Provider or fresh Bench before scheduling gates close"
+  ],
+  "required_tests": [
+    "fresh allocations are unique and below the authorized Bench root",
+    "repeated isolated launches use distinct physical workspace/runtime-root identities",
+    "fresh Factory and legacy chain paths perform no runtime-root purge",
+    "director_resume preserves one exact identity-bound workspace and rejects legacy metadata",
+    "same-path inode replacement still fails closed",
+    "Provider-free isolated backend reaches /v2/runtime/fingerprint with matching instance/workspace identity",
+    "sanitized raw identities cannot collide",
+    "catalog metadata is exclusive and inode-bound",
+    "resume rejects multiple exact candidates",
+    "launch receipt rejects same-path inode replacement before and after receipt issue",
+    "intermediate symlink traversal creates no external directory",
+    "ancestor relocation plus symlink substitution cannot mint a launch receipt",
+    "launch validation rejects a missing, mutated, or unhashed workspace catalog",
+    "static purge audit detects nested shell deletion commands and custom destructive helpers"
+  ],
+  "verification": {
+    "workspace_lifecycle_focused": "26 passed",
+    "kernelone_same_path_inode_replacement": "7 passed",
+    "ruff": "passed",
+    "mypy_runner": "passed",
+    "provider_free_isolated_identity_smoke": "passed: /v2/runtime/fingerprint 200; instance/workspace matched; no drift/startup markers",
+    "full_runner_suite": "163 passed",
+    "standalone_runner_suite": "4 passed",
+    "independent_security_review": "PASS: P0=0 P1=0 P2=0"
+  },
+  "pre_bench_blockers": [
+    "complete final-provider-request audit for every PM/Chief Engineer/Director/QA call: readable context_snapshot_ref, role identity, messages, tools, tool_choice, response_format, final request tokens/window, coverage flags",
+    "close B3.4, B3.5, B3.6 and pre-bench gate"
+  ],
+  "residual_risk": "old failed runtime roots and authorities require future explicit offline retirement and receipt-backed legacy workspace migration protocols; they are preserved and rejected as evidence in this bucket"
+}

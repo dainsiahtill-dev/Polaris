@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import inspect
 import json
 import os
 import subprocess
@@ -17,13 +19,20 @@ from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     append_run_ledger_event,
 )
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench.run_factory_bench import (
+    _allocate_fresh_project_workspace,
     _desktop_backend_info_path,
     _extract_feature_keywords,
     _fallback_audit_bundle_from_workspace,
     _is_local_backend_url,
     _next_immutable_json_path,
+    _project_workspace_for_run,
     _read_desktop_backend_info,
     _resolve_backend_token,
     _resolve_backend_url,
@@ -48,7 +57,19 @@ _LAST_FACTORY_START_PAYLOAD: dict[str, Any] = {}
 def _isolate_instance_registry(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(tmp_path / "instances-home"))
     monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "observed")
+    monkeypatch.setattr(bench, "persist_real_run_gate_ledger", lambda *_args, **_kwargs: {"ok": True})
     bench.configure_bench_backend("", "", "")
+
+
+def _bootstrap_test_fact_stream(workspace: Path) -> None:
+    workspace.mkdir(parents=True, exist_ok=True)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="factory_bench_runner_unit_test",
+        )
+    )
 
 
 def test_default_launcher_instance_mode_is_isolated(monkeypatch: Any) -> None:
@@ -69,9 +90,399 @@ def test_launcher_instance_mode_invalid_env_falls_back_to_isolated(monkeypatch: 
     assert bench._default_launcher_instance_mode() == "isolated"
 
 
+def test_fresh_project_workspace_allocations_have_distinct_physical_identities(tmp_path: Path) -> None:
+    first = _allocate_fresh_project_workspace(
+        tmp_path,
+        project_id="L1-04",
+        run_id="run-identity",
+    )
+    second = _allocate_fresh_project_workspace(
+        tmp_path,
+        project_id="L1-04",
+        run_id="run-identity",
+    )
+
+    assert first != second
+    assert first.is_dir()
+    assert second.is_dir()
+    assert first.is_relative_to(tmp_path.resolve())
+    assert second.is_relative_to(tmp_path.resolve())
+    first_roots = bench.resolve_storage_roots(first)
+    second_roots = bench.resolve_storage_roots(second)
+    assert first_roots.workspace_key != second_roots.workspace_key
+    assert first_roots.runtime_root != second_roots.runtime_root
+
+
+def test_workspace_identity_component_preserves_sanitized_collisions() -> None:
+    first = bench._identity_workspace_component("run/a", fallback="run")
+    second = bench._identity_workspace_component("run:a", fallback="run")
+
+    assert first != second
+    assert first.startswith("run-a-")
+    assert second.startswith("run-a-")
+
+
+def test_workspace_catalog_metadata_is_immutable(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    payload = {"run_id": "run-identity", "project_id": "L1-04"}
+
+    first = bench._write_workspace_catalog_meta_exclusive(tmp_path, workspace, payload)
+
+    with pytest.raises(FileExistsError):
+        bench._write_workspace_catalog_meta_exclusive(tmp_path, workspace, payload)
+    persisted = json.loads((workspace / ".catalog_meta.json").read_text(encoding="utf-8"))
+    assert persisted == first
+
+
+def test_workspace_catalog_metadata_rejects_symlink_file(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    external = tmp_path / "external.json"
+    external.write_text('{"run_id":"run-identity","project_id":"L1-04"}', encoding="utf-8")
+    (workspace / ".catalog_meta.json").symlink_to(external)
+
+    assert not bench._workspace_catalog_meta_matches(
+        tmp_path,
+        workspace,
+        run_id="run-identity",
+        project_id="L1-04",
+    )
+    with pytest.raises(RuntimeError, match="metadata is missing or invalid"):
+        bench._require_workspace_catalog_meta(
+            tmp_path,
+            workspace,
+            {"run_id": "run-identity", "project_id": "L1-04"},
+        )
+
+
+def test_director_resume_rejects_legacy_workspace_without_explicit_migration(tmp_path: Path) -> None:
+    legacy = tmp_path / "L1-04"
+    legacy.mkdir()
+    (legacy / ".catalog_meta.json").write_text(
+        json.dumps({"run_id": "run-identity", "project_id": "L1-04"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="explicit migration is required"):
+        _project_workspace_for_run(
+            tmp_path,
+            project_id="L1-04",
+            run_id="run-identity",
+            resume_director=True,
+        )
+    fresh = _project_workspace_for_run(
+        tmp_path,
+        project_id="L1-04",
+        run_id="run-identity",
+        resume_director=False,
+    )
+
+    assert fresh != legacy
+    assert fresh.is_relative_to(tmp_path.resolve())
+
+
+def test_director_resume_resolves_one_run_scoped_fresh_workspace(tmp_path: Path) -> None:
+    fresh = _allocate_fresh_project_workspace(
+        tmp_path,
+        project_id="L1-04",
+        run_id="run-identity",
+    )
+    bench._write_workspace_catalog_meta_exclusive(
+        tmp_path,
+        fresh,
+        {"run_id": "run-identity", "project_id": "L1-04"},
+    )
+
+    resumed = _project_workspace_for_run(
+        tmp_path,
+        project_id="L1-04",
+        run_id="run-identity",
+        resume_director=True,
+    )
+
+    assert resumed == fresh
+
+
+def test_director_resume_rejects_ambiguous_fresh_workspaces(tmp_path: Path) -> None:
+    for _ in range(2):
+        fresh = _allocate_fresh_project_workspace(
+            tmp_path,
+            project_id="L1-04",
+            run_id="run-identity",
+        )
+        bench._write_workspace_catalog_meta_exclusive(
+            tmp_path,
+            fresh,
+            {"run_id": "run-identity", "project_id": "L1-04"},
+        )
+
+    with pytest.raises(RuntimeError, match="workspace is ambiguous"):
+        _project_workspace_for_run(
+            tmp_path,
+            project_id="L1-04",
+            run_id="run-identity",
+            resume_director=True,
+        )
+
+
+def test_director_resume_rejects_legacy_even_when_fresh_workspace_exists(tmp_path: Path) -> None:
+    legacy = tmp_path / "L1-04"
+    legacy.mkdir()
+    bench._write_workspace_catalog_meta_exclusive(
+        tmp_path,
+        legacy,
+        {"run_id": "run-identity", "project_id": "L1-04"},
+    )
+    fresh = _allocate_fresh_project_workspace(
+        tmp_path,
+        project_id="L1-04",
+        run_id="run-identity",
+    )
+    bench._write_workspace_catalog_meta_exclusive(
+        tmp_path,
+        fresh,
+        {"run_id": "run-identity", "project_id": "L1-04"},
+    )
+
+    with pytest.raises(RuntimeError, match="explicit migration is required"):
+        _project_workspace_for_run(
+            tmp_path,
+            project_id="L1-04",
+            run_id="run-identity",
+            resume_director=True,
+        )
+
+
+def test_fresh_project_workspace_rejects_symlinked_parent_escape(tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    run_component = bench._identity_workspace_component("run-identity", fallback="run")
+    project_component = bench._identity_workspace_component("L1-04", fallback="project")
+    run_workspace = tmp_path / "workspaces" / run_component
+    run_workspace.mkdir(parents=True)
+    (run_workspace / project_component).symlink_to(outside, target_is_directory=True)
+
+    try:
+        with pytest.raises(RuntimeError, match="not a physical directory"):
+            _allocate_fresh_project_workspace(
+                tmp_path,
+                project_id="L1-04",
+                run_id="run-identity",
+            )
+    finally:
+        outside.rmdir()
+
+
+def test_fresh_project_workspace_rejects_intermediate_symlink_without_external_write(tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-intermediate-outside"
+    outside.mkdir()
+    run_component = bench._identity_workspace_component("run-identity", fallback="run")
+    project_component = bench._identity_workspace_component("L1-04", fallback="project")
+    workspaces = tmp_path / "workspaces"
+    workspaces.mkdir()
+    (workspaces / run_component).symlink_to(outside, target_is_directory=True)
+
+    try:
+        with pytest.raises(RuntimeError, match="not a physical directory"):
+            _allocate_fresh_project_workspace(
+                tmp_path,
+                project_id="L1-04",
+                run_id="run-identity",
+            )
+        assert not (outside / project_component).exists()
+    finally:
+        outside.rmdir()
+
+
+def test_isolated_launch_receipt_rejects_relocated_workspace_ancestor(tmp_path: Path, monkeypatch: Any) -> None:
+    """A moved ancestor plus symlink at the old path must not preserve launch authority."""
+    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    workspace = _allocate_fresh_project_workspace(tmp_path, project_id="L1-04", run_id="run-identity")
+    catalog_meta = _write_test_workspace_catalog(
+        tmp_path,
+        workspace,
+        run_id="run-identity",
+        project_id="L1-04",
+    )
+    project_parent = workspace.parent
+    relocated_parent = tmp_path.parent / f"{tmp_path.name}-relocated-project"
+    project_parent.rename(relocated_parent)
+    project_parent.symlink_to(relocated_parent, target_is_directory=True)
+
+    try:
+        with pytest.raises(RuntimeError, match=r"physical directory|metadata is missing or invalid"):
+            bench._new_isolated_bench_launch_receipt(
+                bench_session_id="bench-session",
+                run_id="run-identity",
+                project_id="L1-04",
+                requested_project_id="L1-04",
+                canonical_project_id="L1-04",
+                bench_workspace=tmp_path,
+                project_workspace=str(workspace),
+                workspace_catalog_meta=catalog_meta,
+            )
+    finally:
+        project_parent.unlink()
+        relocated_parent.rename(project_parent)
+
+
+def _factory_chain_destructive_findings(
+    module_source: str,
+    protected_names: set[str],
+) -> tuple[list[str], list[str], set[str], str]:
+    """Audit every module-local helper reachable from protected Factory entrypoints."""
+    module_tree = ast.parse(module_source)
+    module_functions = {
+        node.name: node for node in module_tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    missing = protected_names.difference(module_functions)
+    assert not missing, f"protected Factory entrypoints missing: {sorted(missing)}"
+
+    reachable_names: set[str] = set()
+    pending = list(protected_names)
+    while pending:
+        function_name = pending.pop()
+        if function_name in reachable_names:
+            continue
+        reachable_names.add(function_name)
+        for node in ast.walk(module_functions[function_name]):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            called_name = node.func.id
+            if called_name in module_functions and called_name not in reachable_names:
+                pending.append(called_name)
+
+    destructive_names = {"rmtree", "rmdir", "unlink", "remove", "removedirs"}
+    destructive_aliases = set(destructive_names)
+    for node in module_tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for alias in node.names:
+            if alias.name in destructive_names:
+                destructive_aliases.add(alias.asname or alias.name)
+    destructive_calls: list[str] = []
+    subprocess_deletions: list[str] = []
+    reachable_source: list[str] = []
+
+    def _looks_destructive_shell(command: str) -> bool:
+        normalized = " ".join(command.lower().replace("\\", "/").split())
+        return any(
+            token in normalized
+            for token in (
+                "rm -rf",
+                "rm -fr",
+                "rm -r ",
+                "rmdir ",
+                "remove-item -recurse",
+                "remove-item -r ",
+            )
+        )
+
+    for function_name in sorted(reachable_names):
+        function_node = module_functions[function_name]
+        reachable_source.append(ast.get_source_segment(module_source, function_node) or "")
+        for node in ast.walk(function_node):
+            if not isinstance(node, ast.Call):
+                continue
+            call_name = ""
+            if isinstance(node.func, ast.Attribute):
+                call_name = node.func.attr
+                if call_name in destructive_names:
+                    destructive_calls.append(call_name)
+            elif isinstance(node.func, ast.Name):
+                call_name = node.func.id
+                if call_name in destructive_aliases:
+                    destructive_calls.append(call_name)
+            lowered_call_name = call_name.lower()
+            if any(
+                action in lowered_call_name for action in ("purge", "cleanup", "delete", "remove", "destroy")
+            ) and any(target in lowered_call_name for target in ("runtime", "workspace", "project")):
+                destructive_calls.append(call_name)
+            literal_fragments: list[str] = []
+            for expression in (*node.args, *(keyword.value for keyword in node.keywords)):
+                literal_fragments.extend(
+                    str(child.value)
+                    for child in ast.walk(expression)
+                    if isinstance(child, ast.Constant) and isinstance(child.value, str)
+                )
+            literal_command = " ".join(literal_fragments)
+            if _looks_destructive_shell(literal_command):
+                subprocess_deletions.append(literal_command)
+    return destructive_calls, subprocess_deletions, reachable_names, "\n".join(reachable_source)
+
+
+def test_factory_chain_paths_never_purge_enrolled_runtime_roots() -> None:
+    module_source = inspect.getsource(bench)
+    protected_names = {
+        "_allocate_fresh_project_workspace",
+        "_project_workspace_for_run",
+        "run_factory_chain",
+        "run_chain",
+        "main",
+    }
+    destructive_calls, subprocess_deletions, reachable_names, reachable_source = _factory_chain_destructive_findings(
+        module_source, protected_names
+    )
+
+    assert destructive_calls == []
+    assert subprocess_deletions == []
+    assert protected_names.issubset(reachable_names)
+    assert reachable_source
+    assert not hasattr(bench, "purge_project_runtime")
+
+
+def test_factory_chain_purge_audit_follows_wrappers_and_dynamic_shell_literals() -> None:
+    wrapped_delete = """
+import shutil
+def _wipe(path):
+    shutil.rmtree(path)
+def main():
+    _wipe(project_workspace)
+"""
+    destructive_calls, subprocess_deletions, reachable_names, _source = _factory_chain_destructive_findings(
+        wrapped_delete,
+        {"main"},
+    )
+    assert destructive_calls == ["rmtree"]
+    assert subprocess_deletions == []
+    assert reachable_names == {"main", "_wipe"}
+
+    dynamic_shell_delete = """
+import subprocess
+def _wipe(path):
+    subprocess.run(["bash", "-lc", "rm " + "-rf " + path], check=True)
+def main():
+    _wipe(project_workspace)
+"""
+    destructive_calls, subprocess_deletions, reachable_names, _source = _factory_chain_destructive_findings(
+        dynamic_shell_delete,
+        {"main"},
+    )
+    assert destructive_calls == []
+    assert subprocess_deletions == ["bash -lc rm  -rf "]
+    assert reachable_names == {"main", "_wipe"}
+
+
+def _write_test_workspace_catalog(
+    bench_workspace: Path,
+    workspace: Path,
+    *,
+    run_id: str,
+    project_id: str,
+) -> dict[str, Any]:
+    return bench._write_workspace_catalog_meta_exclusive(
+        bench_workspace,
+        workspace,
+        {"run_id": run_id, "project_id": project_id},
+    )
+
+
 def test_isolated_launch_receipts_are_unique_and_auditable(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
     workspace = tmp_path / "factory-bench-same-workdir" / "L1-01"
+    workspace.mkdir(parents=True)
+    catalog_meta = _write_test_workspace_catalog(workspace.parent, workspace, run_id="run-identity", project_id="L1-01")
 
     first = bench._new_isolated_bench_launch_receipt(
         bench_session_id="bench-session",
@@ -81,6 +492,7 @@ def test_isolated_launch_receipts_are_unique_and_auditable(monkeypatch: Any, tmp
         canonical_project_id="L1-01",
         bench_workspace=workspace.parent,
         project_workspace=str(workspace),
+        workspace_catalog_meta=catalog_meta,
     )
     second = bench._new_isolated_bench_launch_receipt(
         bench_session_id="bench-session",
@@ -90,6 +502,7 @@ def test_isolated_launch_receipts_are_unique_and_auditable(monkeypatch: Any, tmp
         canonical_project_id="L1-01",
         bench_workspace=workspace.parent,
         project_workspace=str(workspace),
+        workspace_catalog_meta=catalog_meta,
     )
 
     assert first["requested_instance_id"] == second["requested_instance_id"]
@@ -105,12 +518,38 @@ def test_isolated_launch_receipts_are_unique_and_auditable(monkeypatch: Any, tmp
     assert first["run_id"] == "run-identity"
 
 
+def test_isolated_launch_receipt_rejects_prelaunch_same_path_replacement(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    workspace = _allocate_fresh_project_workspace(tmp_path, project_id="L1-01", run_id="run-identity")
+    catalog_meta = _write_test_workspace_catalog(tmp_path, workspace, run_id="run-identity", project_id="L1-01")
+    displaced = workspace.with_name(f"{workspace.name}-displaced")
+    workspace.rename(displaced)
+    workspace.mkdir()
+
+    with pytest.raises(RuntimeError, match="metadata is missing or invalid"):
+        bench._new_isolated_bench_launch_receipt(
+            bench_session_id="bench-session",
+            run_id="run-identity",
+            project_id="L1-01",
+            requested_project_id="L1-01",
+            canonical_project_id="L1-01",
+            bench_workspace=tmp_path,
+            project_workspace=str(workspace),
+            workspace_catalog_meta=catalog_meta,
+        )
+
+
 def test_isolated_launch_forwards_fresh_receipt_to_supervisor(monkeypatch: Any, tmp_path: Path) -> None:
     from polaris.cells.instances.internal.service import InstanceSupervisor
 
     monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
     monkeypatch.setattr(bench, "_wait_backend_health", lambda *_args, **_kwargs: True)
     workspace = tmp_path / "factory-bench-same-workdir" / "L1-01"
+    workspace.mkdir(parents=True)
+    catalog_meta = _write_test_workspace_catalog(workspace.parent, workspace, run_id="run-identity", project_id="L1-01")
     receipt = bench._new_isolated_bench_launch_receipt(
         bench_session_id="bench-session",
         run_id="run-identity",
@@ -119,6 +558,7 @@ def test_isolated_launch_forwards_fresh_receipt_to_supervisor(monkeypatch: Any, 
         canonical_project_id="L1-01",
         bench_workspace=workspace.parent,
         project_workspace=str(workspace),
+        workspace_catalog_meta=catalog_meta,
     )
     captured: dict[str, Any] = {}
 
@@ -185,6 +625,13 @@ def test_isolated_launch_reports_registry_corruption_as_platform_failure(
     monkeypatch.setattr(instance_service, "allocate_port", _unexpected_allocate)
     monkeypatch.setattr(instance_service.InstanceSupervisor, "_start_backend", _unexpected_spawn)
     workspace = tmp_path / "factory-bench-corrupt" / "L1-01"
+    workspace.mkdir(parents=True)
+    catalog_meta = _write_test_workspace_catalog(
+        workspace.parent,
+        workspace,
+        run_id="run-corrupt",
+        project_id="L1-01",
+    )
     receipt = bench._new_isolated_bench_launch_receipt(
         bench_session_id="bench-corrupt",
         run_id="run-corrupt",
@@ -193,6 +640,7 @@ def test_isolated_launch_reports_registry_corruption_as_platform_failure(
         canonical_project_id="L1-01",
         bench_workspace=workspace.parent,
         project_workspace=str(workspace),
+        workspace_catalog_meta=catalog_meta,
     )
 
     result = bench._start_isolated_bench_project_instance(
@@ -265,6 +713,13 @@ def test_shared_reporting_overrides_isolated_default() -> None:
 
 def test_isolated_launch_receipts_get_new_run_scoped_instance_ids(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(bench, "compute_source_fingerprint", lambda _root: "source-fingerprint")
+    first_workspace = _allocate_fresh_project_workspace(tmp_path, project_id="L1-01", run_id="run-001")
+    first_meta = _write_test_workspace_catalog(
+        tmp_path,
+        first_workspace,
+        run_id="run-001",
+        project_id="L1-01",
+    )
     first = bench._new_isolated_bench_launch_receipt(
         bench_session_id="bench-reused",
         run_id="run-001",
@@ -272,7 +727,15 @@ def test_isolated_launch_receipts_get_new_run_scoped_instance_ids(tmp_path: Path
         requested_project_id="L1-01",
         canonical_project_id="L1-01",
         bench_workspace=tmp_path,
-        project_workspace=str(tmp_path / "L1-01"),
+        project_workspace=str(first_workspace),
+        workspace_catalog_meta=first_meta,
+    )
+    second_workspace = _allocate_fresh_project_workspace(tmp_path, project_id="L1-01", run_id="run-002")
+    second_meta = _write_test_workspace_catalog(
+        tmp_path,
+        second_workspace,
+        run_id="run-002",
+        project_id="L1-01",
     )
     second = bench._new_isolated_bench_launch_receipt(
         bench_session_id="bench-reused",
@@ -281,7 +744,8 @@ def test_isolated_launch_receipts_get_new_run_scoped_instance_ids(tmp_path: Path
         requested_project_id="L1-01",
         canonical_project_id="L1-01",
         bench_workspace=tmp_path,
-        project_workspace=str(tmp_path / "L1-01"),
+        project_workspace=str(second_workspace),
+        workspace_catalog_meta=second_meta,
     )
 
     assert first["requested_instance_id"] == second["requested_instance_id"]
@@ -293,7 +757,16 @@ def test_isolated_launch_receipts_get_new_run_scoped_instance_ids(tmp_path: Path
 def _matching_isolated_launch_identity(
     tmp_path: Path,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    workspace = tmp_path / "L1-01"
+    workspace.mkdir()
+    catalog_meta = _write_test_workspace_catalog(
+        tmp_path,
+        workspace,
+        run_id="run-001",
+        project_id="L1-01",
+    )
     receipt = {
+        "schema_version": "factory_bench.isolated_launch_receipt.v1",
         "launch_scope": "run-001:L1-01:nonce",
         "launch_nonce": "nonce",
         "run_id": "run-001",
@@ -302,7 +775,11 @@ def _matching_isolated_launch_identity(
         "canonical_project_id": "L1-01",
         "requested_instance_id": "bench-l1-01",
         "instance_id": "bench-l1-01-run-run-001-nonce",
-        "workspace": str((tmp_path / "L1-01").resolve()),
+        "bench_workspace": str(tmp_path.absolute()),
+        "workspace": str(workspace.resolve()),
+        "workspace_device": catalog_meta["workspace_device"],
+        "workspace_inode": catalog_meta["workspace_inode"],
+        "workspace_catalog_hash": bench._workspace_catalog_hash(catalog_meta),
         "runtime_root": str((tmp_path / "L1-01" / "runtime").resolve()),
         "expected_backend_root": str(bench._BACKEND_ROOT),
         "expected_source_fingerprint": "expected-source",
@@ -384,6 +861,69 @@ def test_isolated_launch_validation_fails_closed_for_source_mismatch(tmp_path: P
     assert validation["ok"] is False
     assert validation["error"] == "measurement_contaminated"
     assert "actual_source_fingerprint_mismatch" in validation["reasons"]
+
+
+def test_isolated_launch_validation_rejects_same_path_inode_replacement(tmp_path: Path) -> None:
+    receipt, instance, backend_context = _matching_isolated_launch_identity(tmp_path)
+    workspace = Path(str(receipt["workspace"]))
+    displaced = workspace.with_name(f"{workspace.name}-displaced")
+    workspace.rename(displaced)
+    workspace.mkdir()
+
+    validation = bench._validate_isolated_bench_launch(
+        instance=instance,
+        receipt=receipt,
+        backend_context=backend_context,
+    )
+
+    assert validation["ok"] is False
+    assert "workspace_inode_mismatch" in validation["reasons"]
+
+
+def test_isolated_launch_validation_requires_catalog_hash(tmp_path: Path) -> None:
+    receipt, instance, backend_context = _matching_isolated_launch_identity(tmp_path)
+    receipt["workspace_catalog_hash"] = ""
+    instance["metadata"]["instance_launch_receipt"] = dict(receipt)
+
+    validation = bench._validate_isolated_bench_launch(
+        instance=instance,
+        receipt=receipt,
+        backend_context=backend_context,
+    )
+
+    assert validation["ok"] is False
+    assert "launch_receipt_workspace_catalog_hash_missing" in validation["reasons"]
+    assert "launch_receipt_workspace_catalog_hash_invalid" in validation["reasons"]
+
+
+def test_isolated_launch_validation_rejects_missing_catalog(tmp_path: Path) -> None:
+    receipt, instance, backend_context = _matching_isolated_launch_identity(tmp_path)
+    (Path(str(receipt["workspace"])) / ".catalog_meta.json").unlink()
+
+    validation = bench._validate_isolated_bench_launch(
+        instance=instance,
+        receipt=receipt,
+        backend_context=backend_context,
+    )
+
+    assert validation["ok"] is False
+    assert "workspace_catalog_unavailable" in validation["reasons"]
+
+
+def test_isolated_launch_validation_rejects_mutated_catalog(tmp_path: Path) -> None:
+    receipt, instance, backend_context = _matching_isolated_launch_identity(tmp_path)
+    catalog_path = Path(str(receipt["workspace"])) / ".catalog_meta.json"
+    catalog_path.write_text('{"run_id":"impostor"}\n', encoding="utf-8")
+
+    validation = bench._validate_isolated_bench_launch(
+        instance=instance,
+        receipt=receipt,
+        backend_context=backend_context,
+    )
+
+    assert validation["ok"] is False
+    assert "workspace_catalog_hash_mismatch" in validation["reasons"]
+    assert "workspace_catalog_run_id_mismatch" in validation["reasons"]
 
 
 def test_bench_observation_posts_use_short_timeout(monkeypatch: Any) -> None:
@@ -594,6 +1134,7 @@ def _ok_run_ledger_projection(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
 def test_bench_reads_authoritative_task_boundary_without_appending(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    _bootstrap_test_fact_stream(workspace)
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=str(workspace),
@@ -1368,6 +1909,7 @@ def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback
 
 
 def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
     completed: list[dict[str, Any]] = []
 
     monkeypatch.setattr(
@@ -1732,6 +2274,7 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
             "summary_json": {"director": {"total": 1, "successes": 1, "failures": 0, "blocked": 0}},
         },
     )
+    _bootstrap_test_fact_stream(workspace)
     _write_director_resume_evidence(workspace)
     task_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.json"))
     task_path.write_text(
@@ -1791,6 +2334,7 @@ def test_director_resume_rehydrates_taskboard_from_legacy_runtime(
 
     workspace = tmp_path / "factory-bench" / "L1-01"
     workspace.mkdir(parents=True)
+    _bootstrap_test_fact_stream(workspace)
     (workspace / "requirements.md").write_text("bench input requirements", encoding="utf-8")
     current_runtime_projects = tmp_path / "kernelone-projects"
     legacy_runtime_projects = tmp_path / "polaris-projects"
@@ -2257,6 +2801,7 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
         lambda **_kwargs: _successful_audit_record(),
     )
     monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(bench, "persist_real_run_gate_ledger", lambda *_args, **_kwargs: {"ok": True})
     monkeypatch.setattr(
         bench,
         "build_real_run_gate",
@@ -2300,6 +2845,8 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
     assert launch_receipts[0]["requested_instance_id"] == launch_receipts[1]["requested_instance_id"]
     assert launch_receipts[0]["instance_id"] != launch_receipts[1]["instance_id"]
     assert launch_receipts[0]["launch_scope"] != launch_receipts[1]["launch_scope"]
+    assert launch_receipts[0]["workspace"] != launch_receipts[1]["workspace"]
+    assert launch_receipts[0]["runtime_root"] != launch_receipts[1]["runtime_root"]
     assert captured_chain == {
         "backend_url": "http://127.0.0.1:60011",
         "backend_token": "isolated-token",
@@ -3286,6 +3833,7 @@ def test_main_event_wait_timeout_marks_non_terminal_and_skips_real_run_gate(
 ) -> None:
     """When runtime.v2 never delivers a terminal event, main must not run
     build/test/start against a workspace the backend may still be mutating."""
+    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
     captured_records: list[dict[str, Any]] = []
     taxonomy_records: list[dict[str, Any]] = []
 
@@ -3387,6 +3935,7 @@ def test_main_runner_exception_marks_audit_as_non_terminal(
 ) -> None:
     """When the runner raises an exception, the audit record must be
     marked as non_terminal."""
+    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
     captured_records: list[dict[str, Any]] = []
 
     def _capture_build(**kwargs: Any) -> dict[str, Any]:
@@ -3800,10 +4349,10 @@ def test_runner_audit_includes_catalog_hash_and_schema_version(monkeypatch: Any,
         json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()[:16]
 
-    # Verify .catalog_meta.json was written into the project workspace
-    project_ws = tmp_path / "L1-01"
-    catalog_meta_path = project_ws / ".catalog_meta.json"
-    assert catalog_meta_path.exists(), ".catalog_meta.json must be written"
+    # Verify .catalog_meta.json was written into the unique fresh workspace.
+    catalog_meta_paths = list((tmp_path / "workspaces").rglob(".catalog_meta.json"))
+    assert len(catalog_meta_paths) == 1, "one identity-bound .catalog_meta.json must be written"
+    catalog_meta_path = catalog_meta_paths[0]
     catalog_meta = json.loads(catalog_meta_path.read_text(encoding="utf-8"))
     assert catalog_meta["catalog_schema_version"] == "factory-bench/2"
     assert catalog_meta["catalog_hash"] == expected_hash

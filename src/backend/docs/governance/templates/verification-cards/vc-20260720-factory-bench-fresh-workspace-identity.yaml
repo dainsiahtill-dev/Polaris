@@ -1,0 +1,93 @@
+card_id: vc-20260720-factory-bench-fresh-workspace-identity
+bug_summary: >-
+  factory_bench deleted an already-enrolled runtime root, recreated the same
+  path with a new inode, and deterministically caused stream_identity_drift
+  during settlement wake replay.
+classification: structural
+status: implementation_verified_pre_bench_blocked
+bench_status: not_schedulable
+bug_path:
+  file: scripts/factory_bench/run_factory_bench.py
+  method: purge_project_runtime / run_factory_chain / main
+  symptom: >-
+    Isolated backend startup or settlement replay fails with event stream lock
+    or descriptor capability failed because actual runtime-root inode differs
+    from the immutable lock-authority binding.
+assumptions:
+  - id: A1
+    statement: KernelOne authority binding must remain immutable during ordinary acquire.
+    status: verified_true
+    evidence: LockedRegularFileSetV1 rejects same-path inode replacement with stream_identity_drift.
+  - id: A2
+    statement: Fresh Bench isolation can be obtained without deleting runtime state.
+    status: verified_true
+    evidence: A unique physical workspace produces a unique workspace key and runtime root before backend launch.
+  - id: A3
+    statement: director_resume must preserve one explicitly identity-bound workspace.
+    status: verified_true
+    evidence: Exact fresh metadata resumes; legacy metadata is rejected pending explicit receipt-backed migration.
+  - id: A4
+    statement: Sanitized path components cannot alias different raw run or project identities.
+    status: verified_true
+    evidence: Full raw identities are SHA-256-bound; collision regression passes.
+  - id: A5
+    statement: Workspace metadata and launch receipts bind one physical directory identity.
+    status: verified_true
+    evidence: Exclusive no-follow metadata plus device/inode receipt validation rejects same-path replacement.
+pre_mortem:
+  failure_point: >-
+    A partial fix might remove one purge call while another chain path or the
+    main loop still reuses and deletes the same physical workspace.
+  risk_zone:
+    - scripts/factory_bench/run_factory_bench.py
+    - polaris/tests/unit/scripts/test_factory_bench_runner.py
+    - polaris/kernelone/fs/locked_regular_file.py
+verification_plan:
+  unit_tests:
+    - description: Fresh allocator returns distinct existing paths below the Bench root.
+      status: passed
+    - description: Repeated isolated main runs receive distinct workspace/runtime-root identities.
+      status: passed
+    - description: Fresh chain execution performs no runtime-root purge.
+      status: passed
+    - description: Resume preserves one exact identity-bound workspace and rejects legacy metadata.
+      status: passed
+    - description: Same-path inode replacement remains fail-closed in KernelOne.
+      status: passed
+    - description: Sanitized identity collisions remain distinct.
+      status: passed
+    - description: Catalog metadata cannot be overwritten and binds nonce/device/inode.
+      status: passed
+    - description: Legacy plus fresh resume candidates fail closed as ambiguous.
+      status: passed
+    - description: Launch receipt rejects same-path inode replacement.
+      status: passed
+  static_gates:
+    - ruff check
+    - ruff format --check
+    - mypy --no-incremental
+    - compileall
+  runtime_smoke:
+    description: >-
+      Provider-free isolated backend on a newly allocated workspace reaches
+      /v2/runtime/fingerprint with matching instance/workspace identity and no drift/startup markers.
+    status: passed
+  focused_result: 26 passed
+  kernelone_identity_result: 7 passed
+  full_runner_result: 163 passed
+  standalone_runner_result: 4 passed
+  independent_security_review: "PASS: P0=0 P1=0 P2=0"
+pre_bench_blockers:
+  - id: final_provider_request_matrix
+    status: open
+    requirement: >-
+      For every PM, Chief Engineer, Director, and QA call, resolve the 24-hex
+      context_snapshot_ref and audit the final provider request system identity,
+      messages, tools, tool_choice, response_format, final token/window values,
+      and required coverage flags.
+  - id: broader_pre_bench_gates
+    status: open
+    requirement: Close B3.4, B3.5, B3.6 and the pre-bench gate before scheduling Provider/Bench.
+sign_off:
+  completed_by: Codex /root
+  completed_at: "2026-07-20"

@@ -30,6 +30,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -118,6 +119,334 @@ def _resolve_bench_work_dir(raw_work_dir: str) -> Path:
     if resolved == _REPO_ROOT:
         raise ValueError("--work-dir must not resolve to the Polaris repository root")
     return resolved
+
+
+def _bench_workspace_component(raw: str, *, fallback: str) -> str:
+    """Return one bounded, non-traversing Bench workspace path component."""
+    component = _sanitize_run_id(raw)[:96]
+    return fallback if component in {"", ".", ".."} else component
+
+
+def _identity_workspace_component(raw: str, *, fallback: str) -> str:
+    """Return a readable path component bound to the complete raw identity."""
+    normalized = str(raw or "").strip()
+    slug = _bench_workspace_component(normalized or fallback, fallback=fallback)[:72]
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"{slug}-{digest}"
+
+
+def _workspace_physical_identity(workspace: Path) -> dict[str, int]:
+    """Return one non-symlink directory identity or fail closed."""
+    resolved = workspace.expanduser().absolute()
+    snapshot = os.lstat(resolved)
+    if stat.S_ISLNK(snapshot.st_mode) or not stat.S_ISDIR(snapshot.st_mode):
+        raise RuntimeError(f"Bench workspace is not a physical directory: {resolved}")
+    return {"device": int(snapshot.st_dev), "inode": int(snapshot.st_ino)}
+
+
+def _workspace_relative_components(bench_workspace: Path, workspace: Path) -> tuple[Path, tuple[str, ...]]:
+    """Return one lexical workspace locator rooted at the authorized Bench directory."""
+    root = bench_workspace.expanduser().absolute()
+    candidate = workspace.expanduser().absolute()
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError("Bench workspace escaped the authorized root") from exc
+    components = tuple(relative.parts)
+    if not components:
+        raise RuntimeError("Bench workspace must not equal the authorized root")
+    return root, components
+
+
+def _workspace_catalog_hash(payload: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _write_workspace_catalog_meta_exclusive(
+    bench_workspace: Path,
+    workspace: Path,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind immutable UTF-8 catalog metadata through a root-anchored capability."""
+    root, components = _workspace_relative_components(bench_workspace, workspace)
+    directory_fd = _open_bench_directory_hierarchy(root, components, create=False)
+    try:
+        held = os.fstat(directory_fd)
+        bound_payload = {
+            **dict(payload),
+            "workspace_nonce": components[-1],
+            "workspace_device": int(held.st_dev),
+            "workspace_inode": int(held.st_ino),
+        }
+        encoded = (json.dumps(bound_payload, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        file_fd = os.open(".catalog_meta.json", file_flags, 0o600, dir_fd=directory_fd)
+        try:
+            view = memoryview(encoded)
+            while view:
+                written = os.write(file_fd, view)
+                if written <= 0:
+                    raise OSError("catalog metadata write made no progress")
+                view = view[written:]
+            os.fsync(file_fd)
+        finally:
+            os.close(file_fd)
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    verification_fd = _open_bench_directory_hierarchy(root, components, create=False)
+    try:
+        observed_after = os.fstat(verification_fd)
+        if (held.st_dev, held.st_ino) != (observed_after.st_dev, observed_after.st_ino):
+            raise RuntimeError("Bench workspace identity changed during catalog metadata write")
+    finally:
+        os.close(verification_fd)
+    return bound_payload
+
+
+def _read_workspace_catalog_meta_bound(
+    bench_workspace: Path,
+    workspace: Path,
+) -> tuple[dict[str, Any], dict[str, int], str]:
+    """Read catalog metadata through a root-anchored no-follow capability."""
+    root, components = _workspace_relative_components(bench_workspace, workspace)
+    directory_fd = _open_bench_directory_hierarchy(root, components, create=False)
+    try:
+        held = os.fstat(directory_fd)
+        file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        file_fd = os.open(".catalog_meta.json", file_flags, dir_fd=directory_fd)
+        try:
+            file_before = os.fstat(file_fd)
+            if not stat.S_ISREG(file_before.st_mode):
+                raise RuntimeError("Bench workspace catalog metadata is not a regular file")
+            chunks: list[bytes] = []
+            while chunk := os.read(file_fd, 65536):
+                chunks.append(chunk)
+            file_after = os.fstat(file_fd)
+            if (
+                file_before.st_dev,
+                file_before.st_ino,
+                file_before.st_size,
+                file_before.st_mtime_ns,
+            ) != (
+                file_after.st_dev,
+                file_after.st_ino,
+                file_after.st_size,
+                file_after.st_mtime_ns,
+            ):
+                raise RuntimeError("Bench workspace catalog metadata changed during read")
+        finally:
+            os.close(file_fd)
+    finally:
+        os.close(directory_fd)
+    verification_fd = _open_bench_directory_hierarchy(root, components, create=False)
+    try:
+        observed_after = os.fstat(verification_fd)
+        if (held.st_dev, held.st_ino) != (observed_after.st_dev, observed_after.st_ino):
+            raise RuntimeError("Bench workspace identity changed during catalog metadata read")
+    finally:
+        os.close(verification_fd)
+    payload = json.loads(b"".join(chunks).decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("Bench workspace catalog metadata must be an object")
+    return payload, {"device": int(held.st_dev), "inode": int(held.st_ino)}, _workspace_catalog_hash(payload)
+
+
+def _workspace_catalog_meta_matches(
+    bench_workspace: Path,
+    workspace: Path,
+    *,
+    run_id: str,
+    project_id: str,
+) -> bool:
+    """Check exact raw identity, nonce, and physical directory binding."""
+    try:
+        payload, identity, _catalog_hash = _read_workspace_catalog_meta_bound(bench_workspace, workspace)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return bool(
+        payload.get("run_id") == run_id
+        and payload.get("project_id") == project_id
+        and payload.get("workspace_nonce") == workspace.name
+        and payload.get("workspace_device") == identity["device"]
+        and payload.get("workspace_inode") == identity["inode"]
+    )
+
+
+def _require_workspace_catalog_meta(
+    bench_workspace: Path,
+    workspace: Path,
+    expected: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return exact immutable metadata or reject resume before launch."""
+    try:
+        payload, identity, _catalog_hash = _read_workspace_catalog_meta_bound(bench_workspace, workspace)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError("director-resume workspace metadata is missing or invalid") from exc
+    mismatches = [key for key, value in expected.items() if payload.get(key) != value]
+    if payload.get("workspace_nonce") != workspace.name:
+        mismatches.append("workspace_nonce")
+    if payload.get("workspace_device") != identity["device"]:
+        mismatches.append("workspace_device")
+    if payload.get("workspace_inode") != identity["inode"]:
+        mismatches.append("workspace_inode")
+    if mismatches:
+        raise RuntimeError(f"director-resume workspace metadata mismatch: {sorted(set(mismatches))}")
+    return payload
+
+
+def _open_bench_directory_hierarchy(
+    root: Path,
+    components: tuple[str, ...],
+    *,
+    create: bool,
+) -> int:
+    """Open one physical directory hierarchy without following symlinks."""
+    root_path = root.expanduser().absolute()
+    root_identity = _workspace_physical_identity(root_path)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    current_fd = os.open(root_path, directory_flags)
+    try:
+        root_held = os.fstat(current_fd)
+        if (root_held.st_dev, root_held.st_ino) != (root_identity["device"], root_identity["inode"]):
+            raise RuntimeError("authorized Bench root identity changed before traversal")
+        for component in components:
+            if component in {"", ".", ".."} or "/" in component or os.sep in component:
+                raise RuntimeError("invalid Bench workspace hierarchy component")
+            if create:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(component, mode=0o700, dir_fd=current_fd)
+            try:
+                child_fd = os.open(component, directory_flags, dir_fd=current_fd)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                raise RuntimeError("Bench workspace hierarchy disappeared during creation") from None
+            except OSError as exc:
+                raise RuntimeError("Bench workspace hierarchy is not a physical directory") from exc
+            child_held = os.fstat(child_fd)
+            child_observed = os.stat(component, dir_fd=current_fd, follow_symlinks=False)
+            if not stat.S_ISDIR(child_held.st_mode) or not stat.S_ISDIR(child_observed.st_mode):
+                os.close(child_fd)
+                raise RuntimeError("Bench workspace hierarchy component is not a directory")
+            if (child_held.st_dev, child_held.st_ino) != (child_observed.st_dev, child_observed.st_ino):
+                os.close(child_fd)
+                raise RuntimeError("Bench workspace hierarchy identity changed during traversal")
+            os.close(current_fd)
+            current_fd = child_fd
+        return current_fd
+    except BaseException:
+        os.close(current_fd)
+        raise
+
+
+def _allocate_fresh_project_workspace(
+    bench_workspace: Path,
+    *,
+    project_id: str,
+    run_id: str,
+    max_attempts: int = 32,
+) -> Path:
+    """Allocate a never-reused physical workspace before isolated launch.
+
+    KernelOne lock authority is permanently bound to the enrolled runtime-root
+    inode. Freshness must therefore come from a new workspace identity, never
+    from deleting and recreating an already-enrolled runtime directory.
+    """
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive")
+    root = bench_workspace.expanduser().absolute()
+    run_component = _identity_workspace_component(run_id, fallback="run")
+    project_component = _identity_workspace_component(project_id, fallback="project")
+    parent = root / "workspaces" / run_component / project_component
+    parent_fd = _open_bench_directory_hierarchy(
+        root,
+        ("workspaces", run_component, project_component),
+        create=True,
+    )
+    try:
+        for _attempt in range(max_attempts):
+            nonce = secrets.token_hex(12)
+            try:
+                os.mkdir(nonce, mode=0o700, dir_fd=parent_fd)
+            except FileExistsError:
+                continue
+            created = os.stat(nonce, dir_fd=parent_fd, follow_symlinks=False)
+            if not stat.S_ISDIR(created.st_mode):
+                raise RuntimeError("fresh project workspace allocation was not a directory")
+            candidate = parent / nonce
+            observed = os.lstat(candidate)
+            if (created.st_dev, created.st_ino) != (observed.st_dev, observed.st_ino):
+                raise RuntimeError("fresh project workspace identity changed during allocation")
+            return candidate
+    finally:
+        os.close(parent_fd)
+    raise RuntimeError("unable to allocate a unique fresh project workspace")
+
+
+def _project_workspace_for_run(
+    bench_workspace: Path,
+    *,
+    project_id: str,
+    run_id: str,
+    resume_director: bool,
+) -> Path:
+    """Resolve the physical workspace identity before any backend is started."""
+    if not resume_director:
+        return _allocate_fresh_project_workspace(
+            bench_workspace,
+            project_id=project_id,
+            run_id=run_id,
+        )
+    root = bench_workspace.expanduser().absolute()
+    _workspace_physical_identity(root)
+    legacy_component = _bench_workspace_component(project_id, fallback="project")
+    legacy_workspace = root / legacy_component
+    try:
+        os.lstat(legacy_workspace)
+    except FileNotFoundError:
+        pass
+    else:
+        raise RuntimeError("legacy director-resume workspace is not identity-bound; explicit migration is required")
+    candidates: list[Path] = []
+
+    run_component = _identity_workspace_component(run_id, fallback="run")
+    project_component = _identity_workspace_component(project_id, fallback="project")
+    fresh_parent = root / "workspaces" / run_component / project_component
+    try:
+        fresh_parent_fd = _open_bench_directory_hierarchy(
+            root,
+            ("workspaces", run_component, project_component),
+            create=False,
+        )
+    except FileNotFoundError:
+        fresh_parent_fd = -1
+    if fresh_parent_fd >= 0:
+        try:
+            entry_names = sorted(os.listdir(fresh_parent_fd))
+            for entry_name in entry_names:
+                snapshot = os.stat(entry_name, dir_fd=fresh_parent_fd, follow_symlinks=False)
+                if stat.S_ISLNK(snapshot.st_mode):
+                    raise RuntimeError("director-resume candidate must not be a symlink")
+                if not stat.S_ISDIR(snapshot.st_mode):
+                    continue
+                candidate = (fresh_parent / entry_name).absolute()
+                if _workspace_catalog_meta_matches(root, candidate, run_id=run_id, project_id=project_id):
+                    candidates.append(candidate)
+        finally:
+            os.close(fresh_parent_fd)
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise FileNotFoundError(
+            f"director-resume workspace not found for run_id={run_component!r} project_id={project_component!r}"
+        )
+    raise RuntimeError(
+        f"director-resume workspace is ambiguous for run_id={run_component!r} "
+        f"project_id={project_component!r}: {len(candidates)} candidates"
+    )
 
 
 def _load_json_object(path: Path) -> dict[str, Any]:
@@ -1666,6 +1995,7 @@ def _new_isolated_bench_launch_receipt(
     canonical_project_id: str,
     bench_workspace: Path,
     project_workspace: str,
+    workspace_catalog_meta: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Create the immutable identity claim for one isolated bench launch."""
     nonce = secrets.token_hex(8)
@@ -1681,7 +2011,12 @@ def _new_isolated_bench_launch_receipt(
         run_id=run_id,
         launch_nonce=nonce,
     )
-    workspace = str(Path(project_workspace).resolve())
+    workspace_path = Path(project_workspace).expanduser().absolute()
+    persisted_catalog = _require_workspace_catalog_meta(bench_workspace, workspace_path, workspace_catalog_meta)
+    workspace = str(workspace_path)
+    workspace_device = int(persisted_catalog["workspace_device"])
+    workspace_inode = int(persisted_catalog["workspace_inode"])
+    catalog_receipt_hash = _workspace_catalog_hash(persisted_catalog)
     return {
         "schema_version": "factory_bench.isolated_launch_receipt.v1",
         "launch_nonce": nonce,
@@ -1693,8 +2028,12 @@ def _new_isolated_bench_launch_receipt(
         "canonical_project_id": canonical_project_id,
         "requested_instance_id": requested_instance_id,
         "instance_id": instance_id,
+        "bench_workspace": str(bench_workspace.expanduser().absolute()),
         "workspace": workspace,
-        "runtime_root": str((Path(workspace) / "runtime").resolve()),
+        "workspace_device": workspace_device,
+        "workspace_inode": workspace_inode,
+        "workspace_catalog_hash": catalog_receipt_hash,
+        "runtime_root": str((workspace_path / "runtime").absolute()),
         "expected_backend_root": str(_BACKEND_ROOT),
         "expected_source_fingerprint": compute_source_fingerprint(_BACKEND_ROOT),
         "issued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1714,7 +2053,11 @@ def _validate_isolated_bench_launch(
     persisted_raw = metadata.get("instance_launch_receipt")
     persisted = persisted_raw if isinstance(persisted_raw, Mapping) else {}
     expected_instance_id = str(receipt.get("instance_id") or "")
+    expected_bench_workspace = str(receipt.get("bench_workspace") or "")
     expected_workspace = str(receipt.get("workspace") or "")
+    expected_workspace_device = receipt.get("workspace_device")
+    expected_workspace_inode = receipt.get("workspace_inode")
+    expected_catalog_hash = str(receipt.get("workspace_catalog_hash") or "")
     expected_runtime_root = str(receipt.get("runtime_root") or "")
     expected_backend_root = str(receipt.get("expected_backend_root") or "")
     expected_fingerprint = str(receipt.get("expected_source_fingerprint") or "")
@@ -1722,9 +2065,8 @@ def _validate_isolated_bench_launch(
         errors.append("instance_id_mismatch")
     if str(instance.get("workspace") or "") != expected_workspace:
         errors.append("workspace_mismatch")
-    if str(instance.get("runtime_root") or "") != expected_runtime_root:
-        errors.append("runtime_root_mismatch")
-    for field in (
+    required_text_fields = (
+        "schema_version",
         "launch_scope",
         "launch_nonce",
         "run_id",
@@ -1733,7 +2075,65 @@ def _validate_isolated_bench_launch(
         "canonical_project_id",
         "requested_instance_id",
         "instance_id",
+        "bench_workspace",
         "workspace",
+        "workspace_catalog_hash",
+        "runtime_root",
+        "expected_backend_root",
+        "expected_source_fingerprint",
+    )
+    for field in required_text_fields:
+        if not str(receipt.get(field) or "").strip():
+            errors.append(f"launch_receipt_{field}_missing")
+    if not isinstance(expected_workspace_device, int) or isinstance(expected_workspace_device, bool):
+        errors.append("launch_receipt_workspace_device_missing")
+    if not isinstance(expected_workspace_inode, int) or isinstance(expected_workspace_inode, bool):
+        errors.append("launch_receipt_workspace_inode_missing")
+    if re.fullmatch(r"[0-9a-f]{64}", expected_catalog_hash) is None:
+        errors.append("launch_receipt_workspace_catalog_hash_invalid")
+    try:
+        catalog_payload, current_workspace_identity, current_catalog_hash = _read_workspace_catalog_meta_bound(
+            Path(expected_bench_workspace),
+            Path(expected_workspace),
+        )
+    except (OSError, RuntimeError, ValueError):
+        catalog_payload = {}
+        current_workspace_identity = {}
+        current_catalog_hash = ""
+        errors.append("workspace_catalog_unavailable")
+    if current_workspace_identity.get("device") != expected_workspace_device:
+        errors.append("workspace_device_mismatch")
+    if current_workspace_identity.get("inode") != expected_workspace_inode:
+        errors.append("workspace_inode_mismatch")
+    if current_catalog_hash != expected_catalog_hash:
+        errors.append("workspace_catalog_hash_mismatch")
+    if catalog_payload.get("run_id") != receipt.get("run_id"):
+        errors.append("workspace_catalog_run_id_mismatch")
+    if catalog_payload.get("project_id") != receipt.get("project_id"):
+        errors.append("workspace_catalog_project_id_mismatch")
+    if catalog_payload.get("workspace_nonce") != Path(expected_workspace).name:
+        errors.append("workspace_catalog_nonce_mismatch")
+    if catalog_payload.get("workspace_device") != expected_workspace_device:
+        errors.append("workspace_catalog_device_mismatch")
+    if catalog_payload.get("workspace_inode") != expected_workspace_inode:
+        errors.append("workspace_catalog_inode_mismatch")
+    if str(instance.get("runtime_root") or "") != expected_runtime_root:
+        errors.append("runtime_root_mismatch")
+    for field in (
+        "schema_version",
+        "launch_scope",
+        "launch_nonce",
+        "run_id",
+        "project_id",
+        "requested_project_id",
+        "canonical_project_id",
+        "requested_instance_id",
+        "instance_id",
+        "bench_workspace",
+        "workspace",
+        "workspace_device",
+        "workspace_inode",
+        "workspace_catalog_hash",
         "runtime_root",
         "expected_backend_root",
         "expected_source_fingerprint",
@@ -1830,18 +2230,14 @@ def _start_isolated_bench_project_instance(
         }
 
     token = backend_token or _DEFAULT_LOCAL_BACKEND_TOKEN
-    receipt = dict(
-        launch_receipt
-        or _new_isolated_bench_launch_receipt(
-            bench_session_id=bench_session_id,
-            run_id="local",
-            project_id=project_id,
-            requested_project_id=project_id,
-            canonical_project_id=project_id,
-            bench_workspace=bench_workspace,
-            project_workspace=project_workspace,
-        )
-    )
+    if launch_receipt is None:
+        return {
+            "ok": False,
+            "error": "isolated_launch_receipt_required",
+            "error_type": "MissingLaunchReceiptError",
+            "error_detail": "isolated Bench launch requires an inode-bound catalog receipt",
+        }
+    receipt = dict(launch_receipt)
     try:
         receipt_backend_root = resolve_backend_source_root(str(receipt.get("expected_backend_root") or ""))
         if receipt_backend_root != _BACKEND_ROOT:
@@ -2626,26 +3022,6 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
     )
 
 
-def purge_project_runtime(workspace: Path) -> None:
-    """Remove this project's keyed runtime dirs before a fresh run.
-
-    Benchmark memory-isolation (adr-0092 principle): a prior run's runtime
-    state ("上次 PM 任务"/plan.md/sessions) otherwise leaks into the next run's
-    planning prompt — live 2026-06-12: a residual calculator contract steered
-    a tic-tac-toe rerun straight back to calculator tasks.
-    """
-    import shutil as _shutil
-
-    key_prefix = workspace.name.lower() + "-"
-    for base in _RUNTIME_PROJECT_BASES:
-        try:
-            for entry in base.iterdir():
-                if entry.is_dir() and entry.name.startswith(key_prefix):
-                    _shutil.rmtree(entry, ignore_errors=True)
-        except OSError:
-            continue
-
-
 def _extract_feature_keywords(project: dict[str, Any]) -> list[str]:
     """Extract feature keywords from content_any checks in the project catalog.
 
@@ -2800,8 +3176,6 @@ def run_factory_chain(
     api_start_from = "director_resume" if normalized_start_from == "director_resume" else normalized_start_from
     if api_start_from == "director_resume":
         _prepare_director_resume_workspace(workspace)
-    else:
-        purge_project_runtime(workspace)
     workflow_mode = str(director_workflow_execution_mode or "parallel").strip().lower()
     if workflow_mode not in {"serial", "parallel"}:
         raise ValueError(f"unsupported director workflow execution mode: {director_workflow_execution_mode!r}")
@@ -3018,7 +3392,6 @@ def run_chain(
     The exact invocation is centralized here; see factory-bench recon notes in
     the capability-amplification blueprint for the entrypoint decision.
     """
-    purge_project_runtime(workspace)
     requirements_path = workspace.parent / f"{project['id']}.requirements.md"
     requirements_doc = build_requirements_doc(project)
     requirements_path.write_text(requirements_doc, encoding="utf-8")
@@ -3391,34 +3764,42 @@ def main() -> int:
         pid = project["id"]
         canonical_pid = str(project.get("canonical_catalog_project_id") or pid)
         requested_pid = str(project.get("requested_project_id") or pid)
-        workspace = base / pid
-        # Purge project directory completely to prevent stale contamination
-        import shutil as _shutil
-
         resume_director = str(args.start_from or "pm").strip().lower() == "director_resume"
-        if workspace.exists() and not resume_director:
-            _shutil.rmtree(workspace, ignore_errors=True)
-        workspace.mkdir(parents=True, exist_ok=True)
+        # Resolve the physical workspace identity before isolated backend
+        # startup. Fresh attempts always get a new path; resume is the sole
+        # explicit reuse path. Never delete an enrolled runtime root here.
+        workspace = _project_workspace_for_run(
+            base,
+            project_id=str(pid),
+            run_id=run_id,
+            resume_director=resume_director,
+        )
         log_path = base / f"{pid}.chain.log"
-        # Write catalog metadata for audit traceability
-        catalog_meta = {
+        # Bind catalog identity before launch. Fresh metadata is exclusive;
+        # resume validates the existing immutable record and never overwrites.
+        catalog_identity = {
             "catalog_schema_version": catalog_schema_version,
             "catalog_hash": catalog_hash,
             "run_id": run_id,
             "project_id": pid,
             "requested_project_id": requested_pid,
             "canonical_catalog_project_id": canonical_pid,
-            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        (workspace / ".catalog_meta.json").write_text(
-            json.dumps(catalog_meta, ensure_ascii=False, indent=1) + "\n",
-            encoding="utf-8",
-        )
+        if resume_director:
+            catalog_meta = _require_workspace_catalog_meta(base, workspace, catalog_identity)
+        else:
+            catalog_meta = _write_workspace_catalog_meta_exclusive(
+                base,
+                workspace,
+                {
+                    **catalog_identity,
+                    "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                },
+            )
         print(f"[factory-bench] === {pid} {project['title']} ===", flush=True)
         project_level = int(project.get("level") or 0)
         project_title = str(project.get("title") or "")
-        workspace.mkdir(parents=True, exist_ok=True)
-        project_workspace = str(workspace.resolve())
+        project_workspace = str(workspace.absolute())
         project_backend_url = backend_url
         project_backend_token = backend_token
         project_backend_audit_context = backend_audit_context
@@ -3432,6 +3813,7 @@ def main() -> int:
                 canonical_project_id=canonical_pid,
                 bench_workspace=base,
                 project_workspace=project_workspace,
+                workspace_catalog_meta=catalog_meta,
             )
             # Preserve the requested identity in the report if the supervisor
             # rejects or cannot start it; this never mutates an older record.
