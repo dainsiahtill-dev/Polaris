@@ -299,6 +299,7 @@ class FactoryWorkspaceRunAdmission:
         acquire_if_available: bool,
         expected_fencing_token: int | None,
         lease_ttl_seconds: float | None = None,
+        allow_expired_owner: bool = False,
     ) -> FactoryWorkspaceRunLeaseV1:
         """Atomically acquire workspace authority and one lifecycle mutation.
 
@@ -311,12 +312,23 @@ class FactoryWorkspaceRunAdmission:
         normalized_run_id = _normalize_run_id(run_id)
         normalized_operation = _normalize_run_id(operation)
         normalized_nonce = _normalize_run_id(nonce)
+        if type(allow_expired_owner) is not bool:
+            raise TypeError("allow_expired_owner must be a bool")
+        if allow_expired_owner and normalized_operation != "recover_stale_workspace_owner":
+            raise ValueError("expired owner lifecycle claim is reserved for stale-owner recovery")
         ttl = self._ttl(lease_ttl_seconds)
         with _stable_exclusive_lock(self.lock_path):
             now = self._now()
             current = self._read_locked()
             acquired_workspace = False
             if current is None or current.state.value == "released":
+                if allow_expired_owner:
+                    self._raise_conflict(
+                        "Factory stale-owner recovery requires an expired owner",
+                        code="factory_workspace_run_owner_not_stale",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
                 if current is not None and current.lifecycle_operation_claim is not None:
                     self._raise_conflict(
                         "Released Factory workspace still has a lifecycle claim",
@@ -378,7 +390,15 @@ class FactoryWorkspaceRunAdmission:
                     run_id=normalized_run_id,
                     fencing_token=expected_fencing_token,
                     now=now,
+                    allow_expired=allow_expired_owner,
                 )
+                if allow_expired_owner and not self._is_expired(current, now):
+                    self._raise_conflict(
+                        "Factory stale-owner recovery requires an expired owner",
+                        code="factory_workspace_run_owner_not_stale",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
 
             existing = current.lifecycle_operation_claim
             if existing is not None:
@@ -626,6 +646,88 @@ class FactoryWorkspaceRunAdmission:
             )
             self._write_locked(claimed)
             return claimed
+
+    @contextmanager
+    def hold_active_lifecycle_operation_claim(
+        self,
+        run_id: str,
+        *,
+        fencing_token: int,
+        operation: str,
+        sequence: int,
+        nonce: str,
+        allow_expired_owner: bool = False,
+    ) -> Iterator[Callable[[], FactoryWorkspaceRunLeaseV1]]:
+        """Hold the exact lifecycle claim as a replay/mutation fence.
+
+        The hold is deliberately read-only: it neither renews the workspace
+        lease nor changes the lifecycle claim.  Recovery callers use the
+        yielded callback immediately before every replay read/CAS write so a
+        stale, expired, released, or superseded claim cannot authorize a
+        reconstructed physical-attempt coordinator.
+        """
+
+        normalized_run_id = _normalize_run_id(run_id)
+        normalized_operation = _normalize_run_id(operation)
+        normalized_nonce = _normalize_run_id(nonce)
+        if type(allow_expired_owner) is not bool:
+            raise TypeError("allow_expired_owner must be a bool")
+        if allow_expired_owner and normalized_operation != "recover_stale_workspace_owner":
+            raise ValueError("expired owner lifecycle hold is reserved for stale-owner recovery")
+        if isinstance(fencing_token, bool) or not isinstance(fencing_token, int) or fencing_token < 1:
+            raise ValueError("fencing_token must be an int >= 1")
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+            raise ValueError("sequence must be an int >= 1")
+        with _stable_exclusive_lock(self.lock_path):
+
+            def revalidate() -> FactoryWorkspaceRunLeaseV1:
+                now = self._now()
+                current = self._require_owned_locked(
+                    run_id=normalized_run_id,
+                    fencing_token=fencing_token,
+                    now=now,
+                    allow_expired=allow_expired_owner,
+                )
+                valid_state = current.state.value in ({"active", "draining"} if allow_expired_owner else {"active"})
+                if not valid_state:
+                    self._raise_conflict(
+                        "Factory physical-attempt replay requires an ACTIVE workspace lease",
+                        code="factory_workspace_run_not_active",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                if allow_expired_owner and not self._is_expired(current, now):
+                    self._raise_conflict(
+                        "Factory stale-owner replay requires an expired owner",
+                        code="factory_workspace_run_owner_not_stale",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                claim = current.lifecycle_operation_claim
+                if claim is None:
+                    self._raise_conflict(
+                        "Factory physical-attempt replay requires a lifecycle operation claim",
+                        code="factory_lifecycle_operation_claim_missing",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                assert claim is not None
+                if (
+                    claim.run_id != normalized_run_id
+                    or claim.operation != normalized_operation
+                    or claim.sequence != sequence
+                    or claim.nonce != normalized_nonce
+                ):
+                    self._raise_conflict(
+                        "Factory physical-attempt replay lifecycle claim has been fenced",
+                        code="factory_lifecycle_operation_fenced",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                return current
+
+            revalidate()
+            yield revalidate
 
     @contextmanager
     def hold_active_stage_claim(
@@ -915,12 +1017,14 @@ class FactoryWorkspaceRunAdmission:
         run_id: str,
         *,
         fencing_token: int,
+        operation_nonce: str,
         settlement_evidence: FactoryWorkspaceReleaseEvidenceV1,
         reason: str,
     ) -> FactoryWorkspaceRunLeaseV1:
-        """Fence and release one expired owner after external child proof."""
+        """Release one expired owner under its exact recovery claim."""
 
         normalized_run_id = _normalize_run_id(run_id)
+        normalized_nonce = _normalize_run_id(operation_nonce)
         with _stable_exclusive_lock(self.lock_path):
             now = self._now()
             current = self._require_owned_locked(
@@ -935,6 +1039,19 @@ class FactoryWorkspaceRunAdmission:
                 self._raise_conflict(
                     "Factory stale-owner recovery requires an expired lease",
                     code="factory_workspace_run_owner_not_stale",
+                    run_id=normalized_run_id,
+                    current=current,
+                )
+            claim = current.lifecycle_operation_claim
+            if (
+                claim is None
+                or claim.run_id != normalized_run_id
+                or claim.operation != "recover_stale_workspace_owner"
+                or claim.nonce != normalized_nonce
+            ):
+                self._raise_conflict(
+                    "Factory stale-owner release requires its exact lifecycle claim",
+                    code="factory_lifecycle_operation_fenced",
                     run_id=normalized_run_id,
                     current=current,
                 )

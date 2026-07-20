@@ -1,9 +1,9 @@
 {
   "version": 1,
   "cell_id": "roles.kernel",
-  "generated_at": "2026-07-19T09:30:14Z",
+  "generated_at": "2026-07-19T14:21:24Z",
   "status": "guarded",
-  "summary": "roles.kernel metadata now records the B3.2 locator-only cutoff ACK, strict proof-resolution query, detached proof DTOs, and semantic request freeze tests; B3.3-B3.5 physical provider-attempt qualification and snapshot closure remain guarded.",
+  "summary": "roles.kernel metadata records the closed B3.2 semantic freeze and B3.3 zero-transport dispatch-propagation contracts; B3.4-B3.5 physical-attempt parity, full-request qualification, and snapshot closure remain guarded.",
   "verify_targets": {
     "tests": [
       {
@@ -52,7 +52,23 @@
       },
       {
         "path": "polaris/cells/roles/kernel/tests/test_llm_caller_components.py",
-        "purpose": "Protect B3.2 RequestPreparer evidence block placement, recomputation, immutability, replay conflict, and ordinary-call compatibility."
+        "purpose": "Protect B3.2 RequestPreparer evidence freezing and B3.3 retry re-cutoff, stale-attempt cleanup, zero-transport, and ordinary-call compatibility."
+      },
+      {
+        "path": "polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py",
+        "purpose": "Protect B3.3 private sync dispatch-seam exact-port identity, semantic retry ordering, and public-call zero-transport behavior."
+      },
+      {
+        "path": "polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py",
+        "purpose": "Protect B3.3 role-binding fallback re-preparation, fresh semantic freeze/port identity, and provider/model binding integrity."
+      },
+      {
+        "path": "polaris/kernelone/llm/engine/stream/tests/test_executor.py",
+        "purpose": "Protect B3.3 per-anext port binding, nested prior-token restoration, cross-task aclose, and exact cleanup identity."
+      },
+      {
+        "path": "polaris/kernelone/llm/engine/tests/test_executor.py",
+        "purpose": "Protect B3.3 AIExecutor propagation and immediate closure of the owned StreamExecutor generator."
       },
       {
         "path": "polaris/cells/roles/kernel/tests/test_transcript_leak_guard.py",
@@ -82,8 +98,8 @@
       "FactoryRoleEvidenceCutoffAckV1 is locator-only; FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof must strictly re-read committed authority facts and return an exact FactoryRoleEvidenceCutoffProofV1.",
       "FactoryRoleEvidenceCutoffSourceHeadV1 and FactoryRoleEvidenceCutoffProofV1 are detached proof DTOs; runtime authority ports never enter provider requests, snapshots, events, or metadata assets.",
       "FactoryRoleSemanticRequestIdentityV1, FactoryRoleSemanticCandidateV1, and FactoryRoleFrozenSemanticRequestV1 are immutable result/value DTOs exported by the public cutoff module; they are not commands or queries.",
-      "B3.2 freezes the semantic request after canonical provider-visible evidence injection and stops before physical provider dispatch.",
-      "B3.3-B3.5 remain required for every role, retry, fallback, structured, stream, and Director fanout physical provider attempt."
+      "B3.2 freezes the semantic request after canonical provider-visible evidence injection; B3.3 propagates the exact runtime-private port through private sync, structured/manual, retry/fallback, and stream/reconnect seams while stopping before physical provider dispatch.",
+      "B3.4-B3.5 remain required to independently budget, conserve, snapshot, and qualify every role, retry, fallback, structured, stream, and Director fanout physical provider attempt."
     ]
   },
   "governance_artifacts": {
@@ -112,6 +128,6 @@
     "raw_content remains string-backed by design, but execution parser entrypoints now require AssistantRawContent and structural tests fence compatibility wrappers from authorization paths.",
     "internal/transcript_ir.py is now a compatibility re-export shim; new code must import from public/transcript_ir.py to be compliant with Chief Architect Ruling #3.",
     "Session continuity packs still use deterministic heuristics today; future tuning must preserve the single continuity-memory data model instead of adding a second memory path.",
-    "B3.3-B3.5 have not yet proven one independent qualification and readable final provider-request snapshot for every role, retry, fallback, structured, stream, and Director fanout physical attempt; Provider and Bench remain unauthorized."
+    "B3.4-B3.5 have not yet proven one independent budget-conserved qualification and readable final provider-request snapshot for every role, retry, fallback, structured, stream, and Director fanout physical attempt; Provider and Bench remain unauthorized."
   ]
 }

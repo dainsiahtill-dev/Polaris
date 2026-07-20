@@ -22,6 +22,16 @@ from polaris.cells.events.fact_stream.public import (
     provision_fact_stream_lock_authority,
     query_segmented_fact_events,
 )
+from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
+    FactoryPhysicalAttemptLiveControlPort,
+    canonical_factory_physical_attempt_composite_hash,
+)
+from polaris.cells.factory.pipeline.internal.factory_physical_attempt_replay import (
+    FACTORY_PHYSICAL_ATTEMPT_REPLAY_FENCE_SCHEMA,
+    FactoryPhysicalAttemptReplayError,
+    FactoryPhysicalAttemptReplayFenceV1,
+    build_factory_physical_attempt_replay_candidate,
+)
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
     FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET,
     FACTORY_ROLE_EVIDENCE_CUTOFF_EVENT_TYPE,
@@ -29,6 +39,7 @@ from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority imp
     FactoryRoleEvidenceAuthorityError,
     FactoryRoleEvidenceAuthorityPort,
     FactoryRoleEvidenceCutoffBodyV1,
+    FactoryRoleEvidenceReplaySnapshotV1,
     FactoryRoleEvidenceResolvedCutV1,
     FactoryRoleEvidenceSourceHeadV1,
     FactoryRoleEvidenceSourceItemV1,
@@ -39,6 +50,7 @@ from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority imp
     _CutoffCommitManifest,
     _CutoffFragmentPayload,
     _fragment_cutoff_body,
+    query_factory_role_evidence_replay_snapshot,
 )
 from polaris.cells.factory.pipeline.internal.factory_run_admission import FactoryWorkspaceRunAdmission
 from polaris.cells.factory.pipeline.internal.factory_run_models import (
@@ -56,6 +68,23 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleEvidenceAuthorityBindingV1,
     FactoryRoleEvidenceCutoffAckV1,
     FactoryRoleEvidenceCutoffRequestV1,
+)
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    FACTORY_PHYSICAL_ATTEMPT_CUTOFF_VIEW_SCHEMA,
+    FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+    PROVIDER_ATTEMPT_TERMINAL_RECEIPT_SCHEMA,
+    SETTLE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+    FactoryPhysicalAttemptCutoffViewV1,
+    FactoryPhysicalAttemptGrantViewV1,
+    ProviderAttemptTerminalReceiptV1,
+    SettleFactoryPhysicalAttemptV1,
+)
+from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import (
+    FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_FACT_SCHEMA,
+    FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SNAPSHOT_SCHEMA,
+    FactoryProviderAttemptLifecycleReplayFactV1,
+    FactoryProviderAttemptLifecycleReplaySnapshotV1,
+    factory_provider_attempt_lifecycle_stream,
 )
 from polaris.kernelone.events.final_request_evidence import (
     canonical_role_final_request_hash,
@@ -503,6 +532,7 @@ def _authority(
     run_loader: Callable[[], Awaitable[FactoryRun | None]] | None = None,
     authority_type: type[FactoryRoleEvidenceStageAuthorityV1] = FactoryRoleEvidenceStageAuthorityV1,
     mutate_authority: Callable[[FactoryRoleEvidenceStageAuthorityV1], None] | None = None,
+    physical_attempt_coordinator: FactoryPhysicalAttemptLiveControlPort | None = None,
 ) -> tuple[FactoryRoleEvidenceAuthorityPort, FactoryWorkspaceRunAdmission, _Resolver, _MemoryFactStream]:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -536,6 +566,9 @@ def _authority(
 
     resolved = resolver if resolver is not None else _Resolver()
     fact_stream = facts or _MemoryFactStream()
+    attempt_coordinator = physical_attempt_coordinator or FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id=factory_run_id
+    )
     port = FactoryRoleEvidenceAuthorityPort(
         workspace=workspace,
         authority=captured,
@@ -544,7 +577,9 @@ def _authority(
         admission=admission,
         source_authority=resolved,  # type: ignore[arg-type]
         fact_stream=fact_stream,
+        physical_attempt_coordinator=attempt_coordinator,
     )
+    port._test_physical_attempt_coordinator = attempt_coordinator
     return port, admission, resolved, fact_stream  # type: ignore[return-value]
 
 
@@ -577,6 +612,10 @@ def test_port_mints_exact_factory_owned_stage_role_budget_grant(tmp_path: Path) 
     assert first.factory_run_id == "factory-run-1"
     assert first.role == "director"
     assert first.cutoff_port is port
+    assert first.physical_attempt_control_port is port._test_physical_attempt_coordinator
+    budget_state = port._test_physical_attempt_coordinator.budget_state(first.execution_authority_hash)
+    assert budget_state.registered is True
+    assert budget_state.factory_run_id == first.factory_run_id
     # 2 logical/structured branches x 5 minimum rate-limit transports x
     # 3 route/fallback heads = 30; Factory rounds upward to the immutable 32 cap.
     assert first.attempt_budget == FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET == 32
@@ -765,6 +804,10 @@ async def test_close_revokes_existing_grants_and_rejects_new_mints_without_effec
     request = _authorized_request(port)
 
     port.close_authority()
+
+    closed_budget = port._test_physical_attempt_coordinator.budget_state(request.execution_authority_hash)
+    assert closed_budget.closed is True
+    assert closed_budget.revoked is True
 
     with pytest.raises(FactoryRoleEvidenceAuthorityError) as acquire_error:
         await port.acquire_cutoff(request)
@@ -1036,6 +1079,9 @@ def test_revoke_wins_commit_linearization_without_commit_or_ack(tmp_path: Path) 
     acquisition_thread.start()
     assert commit_precheck_passed.wait(timeout=5)
     port.revoke_authority_binding(binding)
+
+    revoked_budget = port._test_physical_attempt_coordinator.budget_state(binding.execution_authority_hash)
+    assert revoked_budget.revoked is True
     release_commit.set()
     acquisition_thread.join(timeout=5)
 
@@ -1821,6 +1867,244 @@ async def test_cutoff_uses_run_scoped_pinned_fsync_fact_and_strict_reread(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_replay_snapshot_reuses_strict_cutoff_codec_without_live_grant_capability(tmp_path: Path) -> None:
+    port, _, _, facts = _authority(tmp_path=tmp_path)
+    ack = await port.acquire_cutoff(_authorized_request(port))
+
+    replay = query_factory_role_evidence_replay_snapshot(
+        workspace=tmp_path / "workspace",
+        factory_run_id="factory-run-1",
+        fact_stream=facts,
+    )
+
+    assert type(replay) is FactoryRoleEvidenceReplaySnapshotV1
+    assert replay.captured_head.total_count == len(facts.events)
+    assert len(replay.cutoffs) == 1
+    cutoff = replay.cutoffs[0]
+    assert cutoff.cutoff_fact_id == ack.cutoff_fact_id
+    assert cutoff.cutoff_sequence == ack.cutoff_fact_sequence
+    assert cutoff.cutoff_event_hash == ack.cutoff_fact_hash
+    assert cutoff.body.request.request_freeze_id == "freeze-1"
+    assert not hasattr(cutoff, "reserve")
+    assert not hasattr(replay, "physical_attempt_control_port")
+
+
+@pytest.mark.asyncio
+async def test_replay_snapshot_rejects_partial_cutoff_fragments(tmp_path: Path) -> None:
+    port, _, _, facts = _authority(tmp_path=tmp_path)
+    await port.acquire_cutoff(_authorized_request(port))
+    facts.events.pop()
+
+    with pytest.raises(FactoryRoleEvidenceAuthorityError, match="factory_role_evidence_replay_partial_cutoff"):
+        query_factory_role_evidence_replay_snapshot(
+            workspace=tmp_path / "workspace",
+            factory_run_id="factory-run-1",
+            fact_stream=facts,
+        )
+
+
+@pytest.mark.asyncio
+async def test_physical_attempt_replay_candidate_matches_cutoff_and_never_exposes_admission(tmp_path: Path) -> None:
+    port, _, _, facts = _authority(tmp_path=tmp_path)
+    request = _authorized_request(port)
+    await port.acquire_cutoff(request)
+    role_replay = query_factory_role_evidence_replay_snapshot(
+        workspace=tmp_path / "workspace",
+        factory_run_id="factory-run-1",
+        fact_stream=facts,
+    )
+    cutoff = role_replay.cutoffs[0]
+    authority = cutoff.body.authority
+    grant = FactoryPhysicalAttemptGrantViewV1(
+        schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+        verification_scope="factory",
+        factory_run_id="factory-run-1",
+        role=request.role,
+        stage=authority.stage,
+        workspace_fencing_token=authority.workspace_fencing_token,
+        stage_claim_attempt=authority.stage_claim_attempt,
+        stage_claim_nonce=authority.stage_claim_nonce,
+        execution_authority_hash=request.execution_authority_hash,
+        attempt_budget=request.attempt_budget,
+    )
+    cutoff_view = FactoryPhysicalAttemptCutoffViewV1(
+        schema_version=FACTORY_PHYSICAL_ATTEMPT_CUTOFF_VIEW_SCHEMA,
+        grant=grant,
+        run_id=request.run_id,
+        turn_id=request.turn_id,
+        call_id=request.call_id,
+        request_freeze_id=request.request_freeze_id,
+        provider="test-provider",
+        model="test-model",
+        semantic_request_hash=request.semantic_candidate_hash,
+        physical_wire_hash="c" * 64,
+    )
+    composite_hash = canonical_factory_physical_attempt_composite_hash(cutoff_view, 1)
+    start = FactoryProviderAttemptLifecycleReplayFactV1(
+        schema_version=FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_FACT_SCHEMA,
+        phase="start",
+        lifecycle_event_id="lifecycle-start-1",
+        logical_sequence=1,
+        event_hash="d" * 64,
+        factory_run_id="factory-run-1",
+        scope_id="factory-run-1",
+        run_id=request.run_id,
+        role=request.role,
+        turn_id=request.turn_id,
+        call_id=request.call_id,
+        request_freeze_id=request.request_freeze_id,
+        execution_authority_hash=request.execution_authority_hash,
+        attempt_budget=request.attempt_budget,
+        provider="test-provider",
+        model="test-model",
+        semantic_request_hash=request.semantic_candidate_hash,
+        physical_wire_hash="c" * 64,
+        composite_request_hash=composite_hash,
+        reservation_id="reservation-1",
+        provider_request_id="provider-request-1",
+        authority_attempt_ordinal=1,
+        start_permit_id="start-permit-1",
+        context_snapshot_ref="e" * 24,
+        pin_hash="f" * 64,
+    )
+    lifecycle_stream = factory_provider_attempt_lifecycle_stream("factory-run-1")
+    lifecycle_head = SegmentedFactLedgerHeadV1(
+        workspace=str((tmp_path / "workspace").resolve()),
+        logical_stream=lifecycle_stream,
+        storage_prefix="segmented/provider-attempt-replay",
+        total_count=1,
+        segment_count=1,
+        global_seq=1,
+        next_expected_global_seq=2,
+        tail_segment_index=0,
+        tail_local_seq=1,
+        head_hash="1" * 64,
+        storage_bytes=1,
+    )
+    lifecycle_replay = FactoryProviderAttemptLifecycleReplaySnapshotV1(
+        schema_version=FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SNAPSHOT_SCHEMA,
+        workspace=str((tmp_path / "workspace").resolve()),
+        factory_run_id="factory-run-1",
+        logical_stream=lifecycle_stream,
+        captured_head=lifecycle_head,
+        facts=(start,),
+    )
+    fence = FactoryPhysicalAttemptReplayFenceV1(
+        schema_version=FACTORY_PHYSICAL_ATTEMPT_REPLAY_FENCE_SCHEMA,
+        factory_run_id="factory-run-1",
+        factory_stage_head_sequence=7,
+        factory_stage_head_hash="2" * 64,
+        workspace_fencing_token=authority.workspace_fencing_token,
+        current_stage=authority.stage,
+        fence_kind="stage_claim",
+        fence_sequence=authority.stage_claim_attempt,
+        fence_nonce=authority.stage_claim_nonce,
+        replay_fenced=True,
+        live_mutation_forbidden=True,
+    )
+
+    candidate = build_factory_physical_attempt_replay_candidate(
+        fence=fence,
+        role_evidence=role_replay,
+        lifecycle=lifecycle_replay,
+    )
+
+    assert candidate.permanently_dead_for_admission is True
+    assert candidate.outbound_count == 0
+    assert len(candidate.records) == 1
+    assert candidate.records[0].recovery_terminal_required is True
+    assert not hasattr(candidate, "reserve")
+    coordinator, recovery_work = FactoryPhysicalAttemptLiveControlPort.from_replay_candidate(candidate)
+    state = coordinator.budget_state(request.execution_authority_hash)
+    assert state.closed is True
+    assert state.revoked is True
+    assert state.committed_count == 1
+    assert state.recovered_count == 1
+    assert state.terminal_count == 0
+    assert state.settled is False
+    assert coordinator.drain_snapshot().settled is False
+    assert len(recovery_work) == 1
+    work = recovery_work[0]
+    recovered_terminal = ProviderAttemptTerminalReceiptV1(
+        schema_version=PROVIDER_ATTEMPT_TERMINAL_RECEIPT_SCHEMA,
+        verification_scope=work.lease.verification_scope,
+        factory_run_id=work.lease.factory_run_id,
+        run_id=work.lease.run_id,
+        role=work.lease.role,
+        turn_id=work.lease.turn_id,
+        call_id=work.lease.call_id,
+        request_freeze_id=work.lease.request_freeze_id,
+        execution_authority_hash=work.lease.execution_authority_hash,
+        attempt_budget=work.lease.attempt_budget,
+        provider=work.lease.provider,
+        model=work.lease.model,
+        semantic_request_hash=work.lease.semantic_request_hash,
+        physical_wire_hash=work.lease.physical_wire_hash,
+        composite_request_hash=work.lease.composite_request_hash,
+        reservation_id=work.lease.reservation_id,
+        provider_request_id=work.lease.provider_request_id,
+        authority_attempt_ordinal=work.lease.authority_attempt_ordinal,
+        start_permit_id=work.lease.start_permit_id,
+        lease_id=work.lease.lease_id,
+        lifecycle_event_id="recovered-terminal-1",
+        logical_sequence=2,
+        event_hash="4" * 64,
+        phase="terminal",
+        durability_acked=True,
+        terminal_status="cancelled",
+    )
+    settled = coordinator.settle(
+        SettleFactoryPhysicalAttemptV1(
+            schema_version=SETTLE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+            lease=work.lease,
+            terminal_receipt=recovered_terminal,
+        )
+    )
+    assert settled.recovered_count == 1
+    assert settled.terminal_count == 1
+    assert settled.settled is True
+    recovered_terminal_fact = replace(
+        start,
+        phase="terminal",
+        lifecycle_event_id="recovered-terminal-1",
+        logical_sequence=2,
+        event_hash="4" * 64,
+        lease_id=work.lease.lease_id,
+        terminal_status="cancelled",
+        error="recovered unmatched durable start; physical redispatch forbidden",
+    )
+    paired_candidate = build_factory_physical_attempt_replay_candidate(
+        fence=fence,
+        role_evidence=role_replay,
+        lifecycle=replace(
+            lifecycle_replay,
+            captured_head=replace(
+                lifecycle_head,
+                total_count=2,
+                global_seq=2,
+                next_expected_global_seq=3,
+                tail_local_seq=2,
+                head_hash="4" * 64,
+                storage_bytes=2,
+            ),
+            facts=(start, recovered_terminal_fact),
+        ),
+    )
+    restarted, restarted_work = FactoryPhysicalAttemptLiveControlPort.from_replay_candidate(paired_candidate)
+    restarted_state = restarted.budget_state(request.execution_authority_hash)
+    assert restarted_work == ()
+    assert restarted_state.recovered_count == 1
+    assert restarted_state.terminal_count == 1
+    assert restarted_state.settled is True
+    with pytest.raises(FactoryPhysicalAttemptReplayError, match="composite_hash_mismatch"):
+        build_factory_physical_attempt_replay_candidate(
+            fence=fence,
+            role_evidence=role_replay,
+            lifecycle=replace(lifecycle_replay, facts=(replace(start, composite_request_hash="3" * 64),)),
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["director", "qa", "chief_engineer", "pm", "architect"])
 async def test_real_segmented_fact_stream_fragments_cutoff_under_4k_and_replays_on_live_grant(
     tmp_path: Path,
@@ -1866,6 +2150,7 @@ async def test_real_segmented_fact_stream_fragments_cutoff_under_4k_and_replays_
         return run
 
     resolver = _Resolver(_resolved_cut(role))
+    attempt_coordinator = FactoryPhysicalAttemptLiveControlPort(factory_run_id=factory_run_id)
     port = FactoryRoleEvidenceAuthorityPort(
         workspace=workspace,
         authority=authority,
@@ -1873,6 +2158,7 @@ async def test_real_segmented_fact_stream_fragments_cutoff_under_4k_and_replays_
         run_loader=load_run,
         admission=admission,
         source_authority=resolver,
+        physical_attempt_coordinator=attempt_coordinator,
     )
     binding = port.mint_authority_binding(role)
     request = _request(

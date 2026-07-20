@@ -205,6 +205,7 @@ class StreamEngine:
         turn_round: int,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run the streaming execution after request preparation."""
+        prepared.__post_init__()
         runtime_cfg = resolve_stream_runtime_config(context)
         max_reconnects = int(runtime_cfg.get("max_reconnects", 1))
         retry_backoff_seconds = float(runtime_cfg.get("retry_backoff_seconds", 0.35))
@@ -443,9 +444,23 @@ class StreamEngine:
             should_retry = False
             retry_error_message = ""
             retry_error_category = "unknown"
+            provider_stream: Any | None = None
 
             try:
-                async for chunk in executor.invoke_stream(active_request):
+                prepared.__post_init__()
+                if prepared.factory_dispatch_port is not None:
+                    if active_request is not prepared.ai_request:
+                        raise RuntimeError("factory_role_semantic_retry_refreeze_required")
+                    prepared.factory_dispatch_port.validate_frozen_identity(
+                        prepared.factory_semantic_request,
+                    )
+                    provider_stream = executor.invoke_stream(
+                        active_request,
+                        physical_dispatch_port=prepared.factory_dispatch_port,
+                    )
+                else:
+                    provider_stream = executor.invoke_stream(active_request)
+                async for chunk in provider_stream:
                     stream_event_count += 1
                     if first_event_latency_ms is None:
                         first_event_latency_ms = (time.perf_counter() - start_time) * 1000
@@ -637,6 +652,9 @@ class StreamEngine:
                         "iteration": turn_round,
                     }
                     return
+            finally:
+                if provider_stream is not None:
+                    await provider_stream.aclose()
 
             if should_retry:
                 reconnect_count += 1

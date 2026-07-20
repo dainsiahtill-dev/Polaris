@@ -17,6 +17,9 @@ from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Protocol, cast, runtime_checkable
 
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    FactoryPhysicalAttemptControlPort,
+)
 from polaris.kernelone.events.final_request_evidence import (
     RoleFinalRequestPolicyFactsV1,
     canonical_role_final_request_hash,
@@ -235,6 +238,7 @@ class FactoryRoleEvidenceAuthorityBindingV1:
     factory_run_id: str
     role: str
     cutoff_port: FactoryRoleEvidenceCutoffPort
+    physical_attempt_control_port: FactoryPhysicalAttemptControlPort
     attempt_budget: int
     execution_authority_hash: str
 
@@ -251,6 +255,8 @@ class FactoryRoleEvidenceAuthorityBindingV1:
         object.__setattr__(self, "role", _canonical_role(self.role))
         if not isinstance(self.cutoff_port, FactoryRoleEvidenceCutoffPort):
             raise TypeError("factory_role_evidence_cutoff_port_required")
+        if not isinstance(self.physical_attempt_control_port, FactoryPhysicalAttemptControlPort):
+            raise TypeError("factory_physical_attempt_control_port_required")
         object.__setattr__(self, "attempt_budget", _positive_int("attempt_budget", self.attempt_budget))
         object.__setattr__(
             self,
@@ -895,6 +901,8 @@ def contains_factory_role_evidence_runtime_authority(value: object) -> bool:
         if type(candidate) is FactoryRoleEvidenceAuthorityBindingV1:
             return True
         if isinstance(candidate, FactoryRoleEvidenceCutoffPort):
+            return True
+        if isinstance(candidate, FactoryPhysicalAttemptControlPort):
             return True
         if depth > max_depth or visited_nodes >= max_nodes:
             return True

@@ -1419,6 +1419,54 @@ Runs:
   cross-layer `310 passed in 124.03s`, FactoryRunService `83 passed in 184.75s`,
   all scoped static/governance gates green. Independent spec rereview `PASS`;
   quality/concurrency rereview `APPROVED`; no P0/P1/P2.
-- `FPR=N/A`; no physical provider request was made or qualified. B3.2 is next.
-  Real role provider dispatch and Bench remain `not_schedulable` until B3.2-B3.5
-  and later closure gates pass.
+- `FPR=N/A`; no physical provider request was made or qualified. At B3.1
+  closure B3.2 was next; B3.2 has since closed. Real role provider dispatch and
+  Bench remain `not_schedulable` until B3.3-B3.5 and later closure gates pass.
+
+## 2026-07-19 - A009B3-B3.2 semantic cutoff closure
+
+- B3.2 is closed. `roles.kernel` now exposes one strict ACK-to-proof resolver;
+  Invoker owns run/turn/call/freeze identity; RequestPreparer injects one
+  canonical role evidence block into the first system message, recomputes every
+  final semantic projection, and stores one immutable frozen request authority.
+- One exact authority snapshot spans gateway, cutoff acquisition, ACK and proof
+  resolution. Deterministic barriers reproduced valid-carrier and valid-port
+  swaps across each await, including cross-port acquire/resolve splitting;
+  current code rejects every drift before proof resolution. Sync, structured
+  and stream calls stop before snapshot/cache/executor/fallback/transport.
+- Main-agent evidence: focused `382 passed`, affected LLM `299 passed`, metadata
+  `569 passed`, catalog `0` issues/mismatches, complete Factory Pipeline
+  `1116 passed in 567.71s`; Ruff, format, scoped mypy, compileall, UTF-8 and diff
+  checks passed. A broad test-only autouse fake-green was rejected, replaced by
+  31 explicit direct-stage contexts, 29 explicit fanout authorities and four
+  missing-port fail-before-role-call regressions.
+- Independent specification, correctness/concurrency and final fixture reviews
+  all passed with P0/P1/P2 zero. `FPR=N/A`: B3.2 performs no provider I/O and
+  cannot count as complete-context PASS. B3.3 is next; Provider and Bench remain
+  `not_schedulable` until B3.3-B3.6 and later pre-bench gates close.
+
+## 2026-07-19 - A009B3-B3.3 dispatch propagation closure
+
+- B3.3 is closed. One exact runtime-private propagation port now follows each
+  Factory semantic freeze through the private sync seam, structured/manual
+  fallback, semantic retries, role-binding fallback, initial stream and
+  reconnect. Public Factory `call()` retains the B3.2 zero-transport barrier;
+  ordinary non-Factory executor call signatures remain unchanged.
+- Semantic-changing retries re-prepare, re-cutoff, re-freeze and mint a new
+  exact port. Fresh metadata/request/audit projection ids agree; prior source
+  ids remain explicit; snake_case and camelCase snapshot, degraded and attempt
+  receipt references are cleared before the retry is audited. Factory cache and
+  Instructor direct-SDK bypasses remain denied.
+- Stream binding covers per-`anext` execution and three-level owned-generator
+  cleanup across roles.kernel, AIExecutor and StreamExecutor. Nested prior-token
+  restoration, cancellation, `GeneratorExit`, cross-task `aclose`, concurrent
+  tasks and `to_thread` isolation are covered.
+- Main-agent related gate: `333 passed` with two existing experimental-stream
+  deprecation warnings. Ruff, format, seven-source mypy `--no-incremental`,
+  compileall and diff checks passed. Independent specification and
+  quality/security reviews both returned `CLEAR`; P0/P1/P2 all zero.
+- `FPR=N/A`: B3.3 made no provider request and is not complete-context proof.
+  B3.4 per-physical-attempt parity/budget is next. B3.5 still owns the complete
+  final provider request and readable-snapshot qualification for every role and
+  every physical attempt. Provider/Bench remain forbidden; Bench is
+  `not_schedulable` until B3.4-B3.6, integration and pre-bench gates close.

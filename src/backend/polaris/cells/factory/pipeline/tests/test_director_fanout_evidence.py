@@ -62,6 +62,27 @@ class _FakeAuthorityPort:
         del ack
         raise AssertionError("fanout seam test must not resolve cutoff proof")
 
+    def reserve(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def begin_start(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def commit_started(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def abort_reservation(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def mark_start_ambiguous(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def settle(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def terminal_persistence_failed(self, command: object) -> object:
+        raise AssertionError(command)
+
     def require_grant_capacity(self, role: str, count: int) -> None:
         assert role == self.role
         if len(self.minted) + count > self.cap:
@@ -75,6 +96,7 @@ class _FakeAuthorityPort:
             factory_run_id="fanout-test-run",
             role=role,
             cutoff_port=self,
+            physical_attempt_control_port=self,
             attempt_budget=32,
             execution_authority_hash=hashlib.sha256(f"fanout-grant-{len(self.minted)}".encode()).hexdigest(),
         )

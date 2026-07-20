@@ -8,6 +8,7 @@ Owns provider request construction and fallback request shaping for
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -28,6 +29,9 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleSemanticCandidateV1,
     FactoryRoleSemanticRequestIdentityV1,
     get_factory_role_evidence_authority_binding,
+)
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    FactoryPhysicalAttemptControlPort,
 )
 from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
 from polaris.kernelone.context.context_os.decision_log import build_context_result_id
@@ -53,6 +57,7 @@ from .error_handling import (
     append_runtime_fallback_instruction,
     build_text_response_fallback_instruction,
 )
+from .factory_dispatch_propagation import FactorySemanticDispatchPropagationPort
 from .factory_role_evidence_binding import (
     FactoryRoleEvidenceBindingV1,
     get_factory_role_evidence_binding,
@@ -136,6 +141,7 @@ class _FactoryAuthorityEntrySnapshot:
     factory_run_id: str
     role: str
     cutoff_port: FactoryRoleEvidenceCutoffPort
+    physical_attempt_control_port: FactoryPhysicalAttemptControlPort
     attempt_budget: int
     execution_authority_hash: str
 
@@ -154,6 +160,7 @@ def _snapshot_factory_authority(
         factory_run_id=typed_authority.factory_run_id,
         role=typed_authority.role,
         cutoff_port=typed_authority.cutoff_port,
+        physical_attempt_control_port=typed_authority.physical_attempt_control_port,
         attempt_budget=typed_authority.attempt_budget,
         execution_authority_hash=typed_authority.execution_authority_hash,
     )
@@ -175,6 +182,7 @@ def _revalidate_factory_authority_before_cutoff(
         typed_authority.execution_authority_hash,
     )
     raw_cutoff_port = typed_authority.cutoff_port
+    raw_physical_attempt_control_port = typed_authority.physical_attempt_control_port
     typed_authority.__post_init__()
     entry_projection = (
         snapshot.schema_version,
@@ -188,8 +196,75 @@ def _revalidate_factory_authority_before_cutoff(
         typed_authority is not snapshot.carrier
         or raw_projection != entry_projection
         or raw_cutoff_port is not snapshot.cutoff_port
+        or raw_physical_attempt_control_port is not snapshot.physical_attempt_control_port
     ):
         raise RuntimeError("factory_role_evidence_authority_binding_drift")
+
+
+async def _acquire_factory_evidence_binding(
+    *,
+    authority: FactoryRoleEvidenceAuthorityBindingV1,
+    authority_snapshot: _FactoryAuthorityEntrySnapshot,
+    identity: FactoryRoleSemanticRequestIdentityV1,
+    candidate: FactoryRoleSemanticCandidateV1,
+    role: str,
+) -> FactoryRoleEvidenceBindingV1:
+    """One strict cutoff/ack/proof/binding path for initial and retry preparation."""
+
+    _revalidate_factory_authority_before_cutoff(authority, authority_snapshot)
+    cutoff_request = FactoryRoleEvidenceCutoffRequestV1(
+        schema_version=FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
+        run_id=identity.run_id,
+        role=role,
+        turn_id=identity.turn_id,
+        call_id=identity.call_id,
+        request_freeze_id=identity.request_freeze_id,
+        semantic_candidate_hash=candidate.semantic_candidate_hash,
+        attempt_budget=authority_snapshot.attempt_budget,
+        execution_authority_hash=authority_snapshot.execution_authority_hash,
+        candidate_refs=(),
+    )
+    cutoff_ack = await authority_snapshot.cutoff_port.acquire_cutoff(cutoff_request)
+    _revalidate_factory_authority_before_cutoff(authority, authority_snapshot)
+    if type(cutoff_ack) is not FactoryRoleEvidenceCutoffAckV1:
+        raise RuntimeError("factory_role_evidence_cutoff_ack_exact_type_required")
+    FactoryRoleEvidenceCutoffAckV1.__post_init__(cutoff_ack)
+    expected_ack_projection = (
+        authority_snapshot.factory_run_id,
+        cutoff_request.run_id,
+        cutoff_request.role,
+        cutoff_request.turn_id,
+        cutoff_request.call_id,
+        cutoff_request.request_freeze_id,
+        cutoff_request.semantic_candidate_hash,
+        cutoff_request.attempt_budget,
+        cutoff_request.execution_authority_hash,
+    )
+    actual_ack_projection = (
+        cutoff_ack.factory_run_id,
+        cutoff_ack.run_id,
+        cutoff_ack.role,
+        cutoff_ack.turn_id,
+        cutoff_ack.call_id,
+        cutoff_ack.request_freeze_id,
+        cutoff_ack.semantic_candidate_hash,
+        cutoff_ack.attempt_budget,
+        cutoff_ack.execution_authority_hash,
+    )
+    if actual_ack_projection != expected_ack_projection:
+        raise RuntimeError("factory_role_evidence_cutoff_ack_request_mismatch")
+    cutoff_proof = await authority_snapshot.cutoff_port.resolve_cutoff_proof(cutoff_ack)
+    _revalidate_factory_authority_before_cutoff(authority, authority_snapshot)
+    if type(cutoff_proof) is not FactoryRoleEvidenceCutoffProofV1:
+        raise RuntimeError("factory_role_evidence_cutoff_proof_exact_type_required")
+    FactoryRoleEvidenceCutoffProofV1.__post_init__(cutoff_proof)
+    if cutoff_proof.ack != cutoff_ack:
+        raise RuntimeError("factory_role_evidence_cutoff_proof_ack_mismatch")
+    binding = FactoryRoleEvidenceBindingV1.from_cutoff_proof(cutoff_proof)
+    binding_error = binding.validation_error(expected_role=role)
+    if binding_error:
+        raise RuntimeError(f"factory_role_evidence_binding_malformed:{binding_error}")
+    return binding
 
 
 def is_reasoning_truncation_error(error: str) -> bool:
@@ -321,6 +396,43 @@ def _inject_factory_evidence_block(
     injected = [dict(message) for message in messages]
     injected[0]["content"] = f"{first_content.rstrip()}\n\n{evidence_block}"
     return injected
+
+
+def _strip_factory_evidence_block_for_retry(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove the one runtime-injected evidence frame before a fresh cutoff."""
+
+    stripped = [dict(message) for message in messages]
+    if not stripped or stripped[0].get("role") != "system":
+        raise RuntimeError("factory_role_retry_first_system_required")
+    content = str(stripped[0].get("content") or "")
+    begin_count = content.count(_FACTORY_EVIDENCE_BEGIN)
+    end_count = content.count(_FACTORY_EVIDENCE_END)
+    if begin_count != 1 or end_count != 1:
+        raise RuntimeError("factory_role_retry_evidence_frame_invalid")
+    begin_index = content.index(_FACTORY_EVIDENCE_BEGIN)
+    end_index = content.index(_FACTORY_EVIDENCE_END, begin_index) + len(_FACTORY_EVIDENCE_END)
+    if content[end_index:].strip():
+        raise RuntimeError("factory_role_retry_evidence_frame_not_terminal")
+    stripped[0]["content"] = content[:begin_index].rstrip()
+    return stripped
+
+
+def _strip_stale_factory_retry_attempt_context(context: dict[str, Any]) -> None:
+    """Remove evidence that belongs to the prior physical-attempt projection."""
+
+    for key in tuple(context):
+        normalized = str(key or "").strip().lower()
+        is_snapshot_projection = normalized in {
+            "context_snapshot_ref",
+            "contextsnapshotref",
+            "context_snapshot_degraded",
+            "contextsnapshotdegraded",
+            "context_snapshot_degraded_reason",
+            "contextsnapshotdegradedreason",
+        }
+        is_attempt_receipt_ref = "attempt" in normalized and "receipt" in normalized and "ref" in normalized
+        if is_snapshot_projection or is_attempt_receipt_ref:
+            context.pop(key, None)
 
 
 def _tool_surface_explicitly_disabled(override: dict[str, Any]) -> bool:
@@ -1088,64 +1200,13 @@ class LLMRequestPreparer:
                 max_tokens=request_options.get("max_tokens"),
                 stream=stream,
             )
-            cutoff_request = FactoryRoleEvidenceCutoffRequestV1(
-                schema_version=FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
-                run_id=factory_semantic_identity.run_id,
+            resolved_factory_binding = await _acquire_factory_evidence_binding(
+                authority=factory_authority,
+                authority_snapshot=factory_authority_snapshot,
+                identity=factory_semantic_identity,
+                candidate=factory_semantic_candidate,
                 role=canonical_role,
-                turn_id=factory_semantic_identity.turn_id,
-                call_id=factory_semantic_identity.call_id,
-                request_freeze_id=factory_semantic_identity.request_freeze_id,
-                semantic_candidate_hash=factory_semantic_candidate.semantic_candidate_hash,
-                attempt_budget=factory_authority_snapshot.attempt_budget,
-                execution_authority_hash=factory_authority_snapshot.execution_authority_hash,
-                candidate_refs=(),
             )
-            cutoff_ack = await factory_authority_snapshot.cutoff_port.acquire_cutoff(cutoff_request)
-            _revalidate_factory_authority_before_cutoff(
-                factory_authority,
-                factory_authority_snapshot,
-            )
-            if type(cutoff_ack) is not FactoryRoleEvidenceCutoffAckV1:
-                raise RuntimeError("factory_role_evidence_cutoff_ack_exact_type_required")
-            FactoryRoleEvidenceCutoffAckV1.__post_init__(cutoff_ack)
-            expected_ack_projection = (
-                factory_authority_snapshot.factory_run_id,
-                cutoff_request.run_id,
-                cutoff_request.role,
-                cutoff_request.turn_id,
-                cutoff_request.call_id,
-                cutoff_request.request_freeze_id,
-                cutoff_request.semantic_candidate_hash,
-                cutoff_request.attempt_budget,
-                cutoff_request.execution_authority_hash,
-            )
-            actual_ack_projection = (
-                cutoff_ack.factory_run_id,
-                cutoff_ack.run_id,
-                cutoff_ack.role,
-                cutoff_ack.turn_id,
-                cutoff_ack.call_id,
-                cutoff_ack.request_freeze_id,
-                cutoff_ack.semantic_candidate_hash,
-                cutoff_ack.attempt_budget,
-                cutoff_ack.execution_authority_hash,
-            )
-            if actual_ack_projection != expected_ack_projection:
-                raise RuntimeError("factory_role_evidence_cutoff_ack_request_mismatch")
-            cutoff_proof = await factory_authority_snapshot.cutoff_port.resolve_cutoff_proof(cutoff_ack)
-            _revalidate_factory_authority_before_cutoff(
-                factory_authority,
-                factory_authority_snapshot,
-            )
-            if type(cutoff_proof) is not FactoryRoleEvidenceCutoffProofV1:
-                raise RuntimeError("factory_role_evidence_cutoff_proof_exact_type_required")
-            FactoryRoleEvidenceCutoffProofV1.__post_init__(cutoff_proof)
-            if cutoff_proof.ack != cutoff_ack:
-                raise RuntimeError("factory_role_evidence_cutoff_proof_ack_mismatch")
-            resolved_factory_binding = FactoryRoleEvidenceBindingV1.from_cutoff_proof(cutoff_proof)
-            binding_error = resolved_factory_binding.validation_error(expected_role=canonical_role)
-            if binding_error:
-                raise RuntimeError(f"factory_role_evidence_binding_malformed:{binding_error}")
             messages = _inject_factory_evidence_block(
                 messages,
                 role=canonical_role,
@@ -1293,6 +1354,7 @@ class LLMRequestPreparer:
             },
         )
         frozen_factory_request: FactoryRoleFrozenSemanticRequestV1 | None = None
+        factory_dispatch_port: FactorySemanticDispatchPropagationPort | None = None
         if factory_semantic_candidate is not None and resolved_factory_binding is not None:
             frozen_factory_request = FactoryRoleFrozenSemanticRequestV1.create(
                 candidate=factory_semantic_candidate,
@@ -1305,6 +1367,19 @@ class LLMRequestPreparer:
                 temperature=request_options.get("temperature"),
                 max_tokens=request_options.get("max_tokens"),
                 stream=stream,
+            )
+            if factory_authority is None:
+                raise RuntimeError("factory_role_evidence_authority_binding_missing_after_freeze")
+            if factory_authority_snapshot is None:
+                raise RuntimeError("factory_role_evidence_authority_snapshot_missing_after_freeze")
+            _revalidate_factory_authority_before_cutoff(
+                factory_authority,
+                factory_authority_snapshot,
+            )
+            factory_dispatch_port = FactorySemanticDispatchPropagationPort(
+                authority=factory_authority,
+                binding=resolved_factory_binding,
+                frozen=frozen_factory_request,
             )
         return PreparedLLMRequest(
             messages=messages,
@@ -1321,6 +1396,178 @@ class LLMRequestPreparer:
             context_os_audit=context_os_audit,
             capability_profile=capability_profile,
             factory_semantic_request=frozen_factory_request,
+            factory_dispatch_port=factory_dispatch_port,
+        )
+
+    async def _reprepare_factory_semantic_retry_request(
+        self,
+        *,
+        prepared: PreparedLLMRequest,
+        request: AIRequest,
+        profile: RoleProfile,
+    ) -> PreparedLLMRequest:
+        """Re-cutoff and re-freeze one semantic-changing Factory retry."""
+
+        prepared.__post_init__()
+        if prepared.factory_dispatch_port is None:
+            return prepared
+        if request is prepared.ai_request:
+            return prepared
+        frozen = prepared.factory_semantic_request
+        if frozen is None:
+            raise RuntimeError("factory_role_semantic_request_required_for_retry")
+        prepared.factory_dispatch_port.validate_frozen_identity(frozen)
+        authority = get_factory_role_evidence_authority_binding()
+        if authority is None:
+            raise RuntimeError("factory_role_evidence_authority_binding_missing_for_retry")
+        authority_snapshot = _snapshot_factory_authority(authority)
+        _revalidate_factory_authority_before_cutoff(authority, authority_snapshot)
+        canonical_role = str(getattr(profile, "role_id", "") or "").strip()
+        if authority_snapshot.role != canonical_role:
+            raise RuntimeError("factory_role_evidence_authority_binding_role_mismatch")
+        if type(frozen) is not FactoryRoleFrozenSemanticRequestV1:
+            raise RuntimeError("factory_role_semantic_request_required_for_retry")
+        frozen = cast(FactoryRoleFrozenSemanticRequestV1, frozen)
+        old_identity = frozen.identity
+        retry_identity = FactoryRoleSemanticRequestIdentityV1(
+            run_id=old_identity.run_id,
+            turn_id=old_identity.turn_id,
+            call_id=old_identity.call_id,
+            request_freeze_id=uuid.uuid4().hex,
+        )
+        request_context = dict(request.context if isinstance(request.context, dict) else {})
+        _strip_stale_factory_retry_attempt_context(request_context)
+        raw_messages = request_context.get("chat_messages")
+        if not isinstance(raw_messages, list):
+            raise RuntimeError("factory_role_retry_chat_messages_required")
+        messages = _strip_factory_evidence_block_for_retry(
+            [dict(message) for message in raw_messages if isinstance(message, dict)]
+        )
+        request_options = dict(request.options if isinstance(request.options, dict) else {})
+        tools = request_options.get("tools")
+        tool_choice = request_options.get("tool_choice")
+        native_tool_schemas = (
+            [dict(item) for item in tools if isinstance(item, dict)] if isinstance(tools, list) else []
+        )
+        native_tool_mode = (
+            "native_tools" if native_tool_schemas and str(tool_choice or "").strip().lower() != "none" else "disabled"
+        )
+        native_response_format = request_options.get("response_format")
+        response_format_mode = str(request_context.get("response_format_mode") or "plain_text")
+        capabilities = self._resolve_provider_capabilities(profile)
+        capability_profile = resolve_actor_capability_profile(
+            profile=profile,
+            model_catalog=self._model_catalog,
+            provider_capabilities=capabilities,
+            request_options=request_options,
+            native_tool_mode=native_tool_mode,
+            response_format_mode=response_format_mode,
+        ).to_dict()
+        candidate = FactoryRoleSemanticCandidateV1.create(
+            identity=retry_identity,
+            role=canonical_role,
+            provider_id=str(getattr(profile, "provider_id", "") or ""),
+            model=str(getattr(profile, "model", "") or ""),
+            interaction_mode=native_tool_mode,
+            capability_profile=capability_profile,
+            messages=messages,
+            tools=tools if isinstance(tools, list) else [],
+            tool_choice=tool_choice,
+            response_format=native_response_format,
+            temperature=request_options.get("temperature"),
+            max_tokens=request_options.get("max_tokens"),
+            stream=False,
+        )
+        binding = await _acquire_factory_evidence_binding(
+            authority=authority,
+            authority_snapshot=authority_snapshot,
+            identity=retry_identity,
+            candidate=candidate,
+            role=canonical_role,
+        )
+        messages = _inject_factory_evidence_block(messages, role=canonical_role, binding=binding)
+        input_text = messages_to_input(
+            messages,
+            format_type="auto",
+            provider_id=str(getattr(profile, "provider_id", "") or ""),
+        )
+        if prepared.context_result is None:
+            raise RuntimeError("factory_role_retry_context_result_required")
+        context_metadata = dict(getattr(prepared.context_result, "metadata", {}) or {})
+        source_projection_id = str(context_metadata.get("projection_id") or "").strip()
+        source_context_result_id = str(context_metadata.get("context_result_id") or "").strip()
+        context_metadata["capability_profile"] = capability_profile
+        context_result = replace(
+            prepared.context_result,
+            messages=tuple(
+                {"role": str(message.get("role", "")), "content": str(message.get("content", ""))}
+                for message in messages
+            ),
+            token_estimate=max(0, len(input_text) // 4),
+            metadata=context_metadata,
+        )
+        context_sources = tuple(str(item) for item in (getattr(context_result, "context_sources", ()) or ()))
+        context_os_audit = audit_context_os_prompt_messages(
+            messages=messages,
+            context_sources=context_sources,
+            metadata=context_metadata,
+            current_user_instruction=str(messages[-1].get("content") or "") if messages else "",
+            expected=True,
+        )
+        final_prompt_digest = str(context_os_audit.get("prompt_digest") or "").strip()
+        if not final_prompt_digest:
+            raise RuntimeError("role_identity_final_projection_digest_missing")
+        fresh_context_result_id = build_context_result_id(final_prompt_digest)
+        if source_projection_id and source_projection_id != final_prompt_digest:
+            context_metadata["source_projection_id"] = source_projection_id
+        if source_context_result_id and source_context_result_id != fresh_context_result_id:
+            context_metadata["source_context_result_id"] = source_context_result_id
+        context_metadata["projection_id"] = final_prompt_digest
+        context_metadata["context_result_id"] = fresh_context_result_id
+        context_result = replace(context_result, metadata=context_metadata)
+        request_context["chat_messages"] = messages
+        request_context["context_os_audit"] = context_os_audit
+        request_context["context_projection_id"] = final_prompt_digest
+        request_context["context_result_id"] = fresh_context_result_id
+        request.input = input_text
+        request.options = request_options
+        request.context = request_context
+        request.provider_id = str(getattr(profile, "provider_id", "") or "")
+        request.model = str(getattr(profile, "model", "") or "")
+        frozen_request_type = cast(Any, FactoryRoleFrozenSemanticRequestV1)
+        frozen_retry = frozen_request_type.create(
+            candidate=candidate,
+            signed_factory_binding_ref=binding.signed_factory_binding_ref,
+            signed_factory_binding_hash=binding.signed_factory_binding_hash,
+            messages=messages,
+            tools=request_options.get("tools", []),
+            tool_choice=request_options.get("tool_choice"),
+            response_format=request_options.get("response_format"),
+            temperature=request_options.get("temperature"),
+            max_tokens=request_options.get("max_tokens"),
+            stream=False,
+        )
+        dispatch_port = FactorySemanticDispatchPropagationPort(
+            authority=authority,
+            binding=binding,
+            frozen=frozen_retry,
+        )
+        return replace(
+            prepared,
+            messages=messages,
+            input_text=input_text,
+            context_result=context_result,
+            context_summary=compute_context_summary(input_text),
+            request_options=request_options,
+            ai_request=request,
+            native_tool_schemas=native_tool_schemas,
+            native_tool_mode=native_tool_mode,
+            native_response_format=native_response_format,
+            response_format_mode=response_format_mode,
+            context_os_audit=context_os_audit,
+            capability_profile=capability_profile,
+            factory_semantic_request=frozen_retry,
+            factory_dispatch_port=dispatch_port,
         )
 
     def _build_structured_fallback_request(

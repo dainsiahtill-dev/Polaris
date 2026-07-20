@@ -9,20 +9,12 @@ from dataclasses import dataclass
 
 from polaris.kernelone.llm.engine.contracts import (
     FrozenFinalProviderAttemptV1,
+    ProviderAttemptDrainError,
     ProviderAttemptDrainResultV1,
     ProviderAttemptTerminalFailureV1,
 )
 
 _SUPPORTED_SCOPES = frozenset({"factory", "role_session"})
-
-
-class ProviderAttemptDrainError(RuntimeError):
-    """A scoped drain failed closed with typed in-flight diagnostics."""
-
-    def __init__(self, message: str, *, code: str, result: ProviderAttemptDrainResultV1) -> None:
-        super().__init__(message)
-        self.code = code
-        self.result = result
 
 
 @dataclass(frozen=True, slots=True)

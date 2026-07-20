@@ -44,8 +44,10 @@ from ..contracts import (
     AIStreamGenerator,
     ErrorCategory,
     ModelSpec,
+    PhysicalProviderDispatchRuntimePort,
     StreamEventType,
     Usage,
+    bind_physical_provider_dispatch_port,
 )
 from ..model_catalog import ModelCatalog
 from ..normalizer import ResponseNormalizer
@@ -517,11 +519,18 @@ class StreamExecutor:
         return payload
 
     async def invoke_stream_with_fallback(
-        self, request: AIRequest, fallback_fn: Any | None = None
+        self,
+        request: AIRequest,
+        fallback_fn: Any | None = None,
+        *,
+        physical_dispatch_port: PhysicalProviderDispatchRuntimePort | None = None,
     ) -> AIStreamGenerator:
         """Streaming call with fallback."""
         try:
-            async for event in self.invoke_stream(request):
+            async for event in self.invoke_stream(
+                request,
+                physical_dispatch_port=physical_dispatch_port,
+            ):
                 yield event
         except (asyncio.CancelledError, asyncio.TimeoutError):
             raise
@@ -536,7 +545,28 @@ class StreamExecutor:
             else:
                 yield AIStreamEvent.error_event(f"Stream failed and no fallback: {exc}")
 
-    async def invoke_stream(self, request: AIRequest) -> AIStreamGenerator:
+    async def invoke_stream(
+        self,
+        request: AIRequest,
+        *,
+        physical_dispatch_port: PhysicalProviderDispatchRuntimePort | None = None,
+    ) -> AIStreamGenerator:
+        """Bind one runtime sidecar for the complete lazy stream lifecycle."""
+
+        bound_stream = self._invoke_stream_bound(request)
+        try:
+            while True:
+                try:
+                    with bind_physical_provider_dispatch_port(physical_dispatch_port):
+                        event = await anext(bound_stream)
+                except StopAsyncIteration:
+                    break
+                yield event
+        finally:
+            with bind_physical_provider_dispatch_port(physical_dispatch_port):
+                await bound_stream.aclose()
+
+    async def _invoke_stream_bound(self, request: AIRequest) -> AIStreamGenerator:
         """Execute streaming AI call."""
         trace_id = get_trace_id()
         start_time = time.time()

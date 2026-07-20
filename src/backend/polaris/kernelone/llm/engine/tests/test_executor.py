@@ -21,6 +21,7 @@ import pytest
 from polaris.kernelone.llm.engine.contracts import (
     AIRequest,
     AIResponse,
+    AIStreamEvent,
     ErrorCategory,
     ModelSpec,
     PhysicalProviderDispatchPort,
@@ -263,6 +264,50 @@ class TestPhysicalProviderDispatchContext:
             "one": port_one,
             "two": port_two,
         }
+        assert get_physical_provider_dispatch_port() is None
+
+    @pytest.mark.asyncio
+    async def test_b33_provider_internal_retries_observe_same_exact_port(self) -> None:
+        class _InternallyRetryingProvider(_CapturingProvider):
+            def invoke(self, prompt: str, _model: str, config: dict[str, object]) -> InvokeResult:
+                for attempt in range(3):
+                    self.calls.append(
+                        (
+                            f"{prompt}:{attempt}",
+                            get_physical_provider_dispatch_port(),
+                            dict(config),
+                        )
+                    )
+                return InvokeResult(
+                    ok=True,
+                    output="ok",
+                    latency_ms=1,
+                    usage=Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                )
+
+        provider = _InternallyRetryingProvider()
+        executor, manager = _executor_for_provider(provider)
+        port = MagicMock(spec=PhysicalProviderDispatchPort)
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-1",
+            model="model-1",
+            input="retry-me",
+        )
+
+        with (
+            patch.object(executor, "_resolve_provider_model", return_value=("provider-1", "model-1")),
+            patch.object(executor, "_get_provider_config", return_value={"type": "openai_compat"}),
+            patch.object(executor, "_build_invoke_config", return_value={"timeout": 5, "max_tokens": 64}),
+            patch.object(executor, "_store_context_messages", AsyncMock(return_value=None)),
+            patch("polaris.kernelone.llm.engine.executor.get_provider_manager", return_value=manager),
+        ):
+            response = await executor.invoke(request, physical_dispatch_port=port)
+
+        assert response.ok is True
+        assert [seen_port for _prompt, seen_port, _config in provider.calls] == [port, port, port]
+        assert all("physical_dispatch_port" not in config for _prompt, _seen_port, config in provider.calls)
         assert get_physical_provider_dispatch_port() is None
 
 
@@ -523,6 +568,36 @@ class TestAIExecutorExperimentalInterfaces:
 
 class TestAIExecutorInvokeStream:
     """Tests for invoke_stream functionality."""
+
+    @pytest.mark.asyncio
+    async def test_outer_aclose_immediately_closes_owned_stream_executor_generator(self) -> None:
+        cleanup: list[str] = []
+
+        class _OwnedStreamExecutor:
+            def __init__(self, **_kwargs: object) -> None:
+                pass
+
+            async def invoke_stream(self, _request: AIRequest, *, physical_dispatch_port: object | None = None):
+                del physical_dispatch_port
+                try:
+                    yield AIStreamEvent.chunk_event("ok")
+                    await asyncio.Event().wait()
+                finally:
+                    cleanup.append("closed")
+
+        executor = AIExecutor()
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            input="close-owned-stream",
+        )
+
+        with patch("polaris.kernelone.llm.engine.stream.StreamExecutor", _OwnedStreamExecutor):
+            stream = executor.invoke_stream(request)
+            _ = await anext(stream)
+            await stream.aclose()
+
+        assert cleanup == ["closed"]
 
     @pytest.mark.asyncio
     async def test_invoke_stream_yields_error_on_exception(self) -> None:

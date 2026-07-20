@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,8 @@ from polaris.kernelone.llm.engine.contracts import (
     ModelSpec,
     TaskType,
     TokenBudgetDecision,
+    bind_physical_provider_dispatch_port,
+    get_physical_provider_dispatch_port,
 )
 from polaris.kernelone.llm.engine.stream import (
     StreamExecutor,
@@ -112,6 +115,245 @@ class TestStreamExecutorInit:
 
 class TestStreamExecutorInvokeStreamErrors:
     """Tests for invoke_stream error handling."""
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_binds_exact_port_for_iteration_and_resets(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """B3.3 sidecar lives through lazy iteration, then resets in finally."""
+
+        seen: list[object | None] = []
+        port = object()
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                seen.append(get_physical_provider_dispatch_port())
+                yield "ok"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+                assert provider_type == "fake"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(model_catalog=_ModelCatalog(), token_budget=_BudgetManager())
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake"})
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-a",
+            model="model-a",
+            input="hello",
+        )
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                request,
+                physical_dispatch_port=port,
+            )
+        ]
+
+        assert any(event.type.value == "complete" for event in events)
+        assert seen == [port]
+        assert get_physical_provider_dispatch_port() is None
+
+    @pytest.mark.asyncio
+    async def test_stream_binding_nested_aclose_restores_prior_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cleanup: list[object | None] = []
+
+        async def _bound(request: AIRequest):
+            del request
+            try:
+                yield AIStreamEvent.chunk_event("ok")
+                await asyncio.Event().wait()
+            finally:
+                cleanup.append(get_physical_provider_dispatch_port())
+
+        executor = StreamExecutor()
+        monkeypatch.setattr(executor, "_invoke_stream_bound", _bound)
+
+        def _request(text: str) -> AIRequest:
+            return AIRequest(
+                task_type=TaskType.DIALOGUE,
+                role="director",
+                provider_id="provider-a",
+                model="model-a",
+                input=text,
+            )
+
+        outer_port = object()
+        inner_port = object()
+        sentinel = object()
+        with bind_physical_provider_dispatch_port(sentinel):
+            outer = executor.invoke_stream(_request("outer"), physical_dispatch_port=outer_port)
+            await anext(outer)
+            assert get_physical_provider_dispatch_port() is sentinel
+            inner = executor.invoke_stream(_request("inner"), physical_dispatch_port=inner_port)
+            await anext(inner)
+            assert get_physical_provider_dispatch_port() is sentinel
+            await inner.aclose()
+            assert get_physical_provider_dispatch_port() is sentinel
+            await outer.aclose()
+            assert get_physical_provider_dispatch_port() is sentinel
+
+        assert get_physical_provider_dispatch_port() is None
+        assert cleanup == [inner_port, outer_port]
+
+    @pytest.mark.asyncio
+    async def test_stream_binding_cross_task_aclose_is_safe_and_cleanup_sees_port(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cleanup: list[object | None] = []
+
+        async def _bound(request: AIRequest):
+            del request
+            try:
+                yield AIStreamEvent.chunk_event("ok")
+                await asyncio.Event().wait()
+            finally:
+                cleanup.append(get_physical_provider_dispatch_port())
+
+        executor = StreamExecutor()
+        monkeypatch.setattr(executor, "_invoke_stream_bound", _bound)
+        port = object()
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-a",
+            model="model-a",
+            input="cross-task-close",
+        )
+        stream = executor.invoke_stream(request, physical_dispatch_port=port)
+
+        _ = await asyncio.create_task(anext(stream))
+        assert get_physical_provider_dispatch_port() is None
+        await asyncio.create_task(stream.aclose())
+
+        assert cleanup == [port]
+        assert get_physical_provider_dispatch_port() is None
+
+    @pytest.mark.asyncio
+    async def test_stream_binding_concurrent_tasks_and_to_thread_are_isolated(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        seen: list[tuple[str, object | None, object | None]] = []
+
+        async def _bound(request: AIRequest):
+            seen.append(
+                (
+                    str(request.input),
+                    get_physical_provider_dispatch_port(),
+                    await asyncio.to_thread(get_physical_provider_dispatch_port),
+                )
+            )
+            await asyncio.sleep(0)
+            yield AIStreamEvent.chunk_event("ok")
+
+        executor = StreamExecutor()
+        monkeypatch.setattr(executor, "_invoke_stream_bound", _bound)
+        port_one = object()
+        port_two = object()
+
+        async def _consume(text: str, port: object) -> None:
+            request = AIRequest(
+                task_type=TaskType.DIALOGUE,
+                role="director",
+                provider_id="provider-a",
+                model="model-a",
+                input=text,
+            )
+            _ = [
+                event
+                async for event in executor.invoke_stream(
+                    request,
+                    physical_dispatch_port=port,
+                )
+            ]
+            assert get_physical_provider_dispatch_port() is None
+
+        await asyncio.gather(
+            _consume("one", port_one),
+            _consume("two", port_two),
+        )
+
+        assert sorted((prompt, id(bound), id(thread_bound)) for prompt, bound, thread_bound in seen) == sorted(
+            [("one", id(port_one), id(port_one)), ("two", id(port_two), id(port_two))]
+        )
+        assert get_physical_provider_dispatch_port() is None
+
+    @pytest.mark.asyncio
+    async def test_stream_binding_resets_after_error_and_cancellation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cleanup: list[object | None] = []
+        started = asyncio.Event()
+
+        async def _cancelled_bound(request: AIRequest):
+            del request
+            try:
+                started.set()
+                await asyncio.Event().wait()
+                if False:
+                    yield AIStreamEvent.chunk_event("unreachable")
+            finally:
+                cleanup.append(get_physical_provider_dispatch_port())
+
+        executor = StreamExecutor()
+        monkeypatch.setattr(executor, "_invoke_stream_bound", _cancelled_bound)
+        port = object()
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-a",
+            model="model-a",
+            input="cancel",
+        )
+
+        async def _consume() -> None:
+            _ = [
+                event
+                async for event in executor.invoke_stream(
+                    request,
+                    physical_dispatch_port=port,
+                )
+            ]
+
+        task = asyncio.create_task(_consume())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert cleanup == [port]
+        assert get_physical_provider_dispatch_port() is None
+
+        async def _error_bound(request: AIRequest):
+            del request
+            raise RuntimeError("stream failed")
+            if False:
+                yield AIStreamEvent.chunk_event("unreachable")
+
+        monkeypatch.setattr(executor, "_invoke_stream_bound", _error_bound)
+        with pytest.raises(RuntimeError, match="stream failed"):
+            _ = [
+                event
+                async for event in executor.invoke_stream(
+                    request,
+                    physical_dispatch_port=port,
+                )
+            ]
+        assert get_physical_provider_dispatch_port() is None
 
     @pytest.mark.asyncio
     async def test_invoke_stream_error_on_invalid_provider(self) -> None:

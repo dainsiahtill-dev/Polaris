@@ -12,6 +12,8 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleFrozenSemanticRequestV1,
 )
 
+from .factory_dispatch_propagation import FactorySemanticDispatchPropagationPort
+
 
 @dataclass
 class LLMResponse:
@@ -121,6 +123,26 @@ class PreparedLLMRequest:
     context_os_audit: dict[str, Any] = field(default_factory=dict)
     capability_profile: dict[str, Any] = field(default_factory=dict)
     factory_semantic_request: FactoryRoleFrozenSemanticRequestV1 | None = None
+    factory_dispatch_port: FactorySemanticDispatchPropagationPort | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        frozen = self.factory_semantic_request
+        port = self.factory_dispatch_port
+        if frozen is None and port is None:
+            return
+        if frozen is None:
+            raise RuntimeError("factory_role_semantic_request_required_for_dispatch_port")
+        if port is None:
+            raise RuntimeError("factory_role_semantic_request_dispatch_port_required")
+        if type(frozen) is not FactoryRoleFrozenSemanticRequestV1:
+            raise TypeError("factory_role_frozen_semantic_request_exact_type_required")
+        if type(port) is not FactorySemanticDispatchPropagationPort:
+            raise TypeError("factory_role_semantic_dispatch_port_exact_type_required")
+        port.validate_frozen_identity(frozen)
 
 
 @dataclass

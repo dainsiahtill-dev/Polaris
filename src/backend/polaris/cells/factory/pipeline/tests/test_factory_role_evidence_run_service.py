@@ -85,6 +85,7 @@ class _CutoffProbeExecutor:
             "chief_engineer_review": "chief_engineer",
         }[stage]
         binding = port.mint_authority_binding(role)
+        assert binding.physical_attempt_control_port is port._physical_attempt_coordinator
         self.requests.append(
             FactoryRoleEvidenceCutoffRequestV1(
                 schema_version=FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
@@ -123,6 +124,7 @@ class _LeakingCutoffPortExecutor:
             admission=port._admission,
             source_authority=port._source_authority,
             fact_stream=port._facts,
+            physical_attempt_coordinator=port._physical_attempt_coordinator,
         )
         metadata: dict[object, object]
         artifacts: list[object]
@@ -319,6 +321,11 @@ async def test_run_service_overwrites_private_key_with_new_fenced_canonical_sour
     assert second.metadata == {"probe": "ok"}
     assert len(executor.ports) == 2
     assert executor.ports[0] is not executor.ports[1]
+    assert (
+        executor.ports[0]._physical_attempt_coordinator
+        is executor.ports[1]._physical_attempt_coordinator
+        is service._physical_attempt_coordinator(run.id)
+    )
     assert executor.captured_authorities[0][3] == 1
     assert executor.captured_authorities[1][3] == 2
     assert executor.captured_authorities[0][4] != executor.captured_authorities[1][4]
@@ -413,6 +420,7 @@ async def test_run_service_rejects_nested_caller_carried_authority_before_stage_
         factory_run_id=run.id,
         role="pm",
         cutoff_port=fake_port,  # type: ignore[arg-type]
+        physical_attempt_control_port=service._physical_attempt_coordinator(run.id),
         attempt_budget=32,
         execution_authority_hash="a" * 64,
     )

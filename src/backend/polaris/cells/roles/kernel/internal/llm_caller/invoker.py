@@ -94,8 +94,65 @@ class _FactorySemanticDispatchNotEnabledError(RuntimeError):
 
 
 def _enforce_factory_semantic_zero_transport(prepared: PreparedLLMRequest) -> None:
+    prepared.__post_init__()
     if prepared.factory_semantic_request is not None:
         raise _FactorySemanticDispatchNotEnabledError(_FACTORY_SEMANTIC_DISPATCH_NOT_ENABLED)
+
+
+def _physical_dispatch_port_for_request(
+    prepared: PreparedLLMRequest,
+    request: Any,
+) -> Any | None:
+    """Return exact sidecar only for unchanged frozen semantics.
+
+    Semantic-changing fallback requests need a fresh cutoff/freeze/sidecar.
+    B3.3 has no lawful shortcut, so these paths remain fail-closed.
+    """
+
+    prepared.__post_init__()
+    port = prepared.factory_dispatch_port
+    if port is None:
+        return None
+    if request is not prepared.ai_request:
+        raise RuntimeError("factory_role_semantic_retry_refreeze_required")
+    frozen = prepared.factory_semantic_request
+    if frozen is None:
+        raise RuntimeError("factory_role_semantic_request_required_for_dispatch_port")
+    port.validate_frozen_identity(frozen)
+    return port
+
+
+async def _invoke_executor_with_factory_dispatch(
+    *,
+    executor: Any,
+    prepared: PreparedLLMRequest,
+    request: Any,
+) -> Any:
+    """Preserve the legacy executor call shape for ordinary requests."""
+
+    port = _physical_dispatch_port_for_request(prepared, request)
+    if port is None:
+        return await executor.invoke(request)
+    return await executor.invoke(request, physical_dispatch_port=port)
+
+
+async def _reprepare_semantic_retry(
+    *,
+    request_preparer: LLMRequestPreparer,
+    prepared: PreparedLLMRequest,
+    request: Any,
+    profile: Any,
+) -> tuple[PreparedLLMRequest, Any]:
+    """Mint a new Factory freeze/port before snapshot/audit of changed semantics."""
+
+    if prepared.factory_dispatch_port is not None and request is not prepared.ai_request:
+        prepared = await request_preparer._reprepare_factory_semantic_retry_request(
+            prepared=prepared,
+            request=request,
+            profile=profile,
+        )
+        request = prepared.ai_request
+    return prepared, request
 
 
 def _invoker_owned_factory_semantic_identity(
@@ -427,6 +484,8 @@ _CONTEXT_SNAPSHOT_CONTEXT_KEYS = (
     "contextSnapshotRef",
     "context_snapshot_degraded",
     "contextSnapshotDegraded",
+    "context_snapshot_degraded_reason",
+    "contextSnapshotDegradedReason",
 )
 
 
@@ -899,6 +958,16 @@ class LLMInvoker:
                         profile=fallback_profile,
                         error_message="required_tool_not_called: required_tools=" + ",".join(fallback_required_tools),
                     )
+                    if (
+                        fallback_prepared.factory_dispatch_port is not None
+                        and fallback_active_request is not fallback_prepared.ai_request
+                    ):
+                        fallback_prepared = await request_preparer._reprepare_factory_semantic_retry_request(
+                            prepared=fallback_prepared,
+                            request=fallback_active_request,
+                            profile=fallback_profile,
+                        )
+                        fallback_active_request = fallback_prepared.ai_request
                     await self._emit_required_tool_retry_request_audit(
                         prepared=fallback_prepared,
                         request=fallback_active_request,
@@ -914,6 +983,7 @@ class LLMInvoker:
                     )
                     fallback_response = await self._invoke_with_profile_binding(
                         executor=executor,
+                        prepared=fallback_prepared,
                         request=fallback_active_request,
                         profile=fallback_profile,
                         role_id=role_id,
@@ -974,6 +1044,7 @@ class LLMInvoker:
                 )
                 fallback_response = await self._invoke_with_profile_binding(
                     executor=executor,
+                    prepared=fallback_prepared,
                     request=fallback_prepared.ai_request,
                     profile=fallback_profile,
                     role_id=role_id,
@@ -1025,6 +1096,7 @@ class LLMInvoker:
         self,
         *,
         executor: Any,
+        prepared: PreparedLLMRequest,
         request: Any,
         profile: RoleProfile,
         role_id: str,
@@ -1048,7 +1120,11 @@ class LLMInvoker:
             with contextlib.suppress(AttributeError, TypeError):
                 request.model = model
         try:
-            return await executor.invoke(request)
+            return await _invoke_executor_with_factory_dispatch(
+                executor=executor,
+                prepared=prepared,
+                request=request,
+            )
         finally:
             with contextlib.suppress(AttributeError, TypeError):
                 request.provider_id = previous_request_provider
@@ -1146,9 +1222,15 @@ class LLMInvoker:
                 profile=profile,
                 error_message=response_error,
             )
-            await self._emit_required_tool_retry_request_audit(
+            prepared, active_request = await _reprepare_semantic_retry(
+                request_preparer=request_preparer,
                 prepared=prepared,
                 request=retry_request,
+                profile=profile,
+            )
+            await self._emit_required_tool_retry_request_audit(
+                prepared=prepared,
+                request=active_request,
                 request_profile=profile,
                 role_id=role_id,
                 run_id=run_id,
@@ -1159,13 +1241,11 @@ class LLMInvoker:
                 event_emitter=event_emitter,
                 retry_decision="required_tool_text_fallback",
             )
-            response = await self._invoke_with_profile_binding(
+            response = await _invoke_executor_with_factory_dispatch(
                 executor=executor,
-                request=retry_request,
-                profile=profile,
-                role_id=role_id,
+                prepared=prepared,
+                request=active_request,
             )
-            active_request = retry_request
             native_tool_fallback = True
             logger.warning("[invoker] required-tool text fallback: provider cannot force native tool_choice")
             is_response_ok, response_error = read_response_status(response)
@@ -1185,9 +1265,15 @@ class LLMInvoker:
                 profile=profile,
                 error_message=response_error,
             )
-            await self._emit_required_tool_retry_request_audit(
+            prepared, active_request = await _reprepare_semantic_retry(
+                request_preparer=request_preparer,
                 prepared=prepared,
                 request=retry_request,
+                profile=profile,
+            )
+            await self._emit_required_tool_retry_request_audit(
+                prepared=prepared,
+                request=active_request,
                 request_profile=profile,
                 role_id=role_id,
                 run_id=run_id,
@@ -1198,13 +1284,11 @@ class LLMInvoker:
                 event_emitter=event_emitter,
                 retry_decision="required_tool_not_called_retry",
             )
-            response = await self._invoke_with_profile_binding(
+            response = await _invoke_executor_with_factory_dispatch(
                 executor=executor,
-                request=retry_request,
-                profile=profile,
-                role_id=role_id,
+                prepared=prepared,
+                request=active_request,
             )
-            active_request = retry_request
             logger.warning("[invoker] required-tool re-ask: provider returned prose without required tool call")
             is_response_ok, response_error = read_response_status(response)
             if is_response_ok:
@@ -1693,8 +1777,18 @@ class LLMInvoker:
             active_request = request_preparer._build_structured_fallback_request(
                 prepared=prepared, profile=profile, response_model=response_model or dict, mode="chat"
             )
+            prepared, active_request = await _reprepare_semantic_retry(
+                request_preparer=request_preparer,
+                prepared=prepared,
+                request=active_request,
+                profile=profile,
+            )
             await emit_fallback_request_audit("response_format_text_fallback", active_request, profile)
-            response = await executor.invoke(active_request)
+            response = await _invoke_executor_with_factory_dispatch(
+                executor=executor,
+                prepared=prepared,
+                request=active_request,
+            )
             native_response_fallback = True
             is_response_ok, response_error = read_response_status(response)
 
@@ -1712,8 +1806,18 @@ class LLMInvoker:
             active_request = request_preparer._build_reasoning_truncation_retry_request(
                 prepared=prepared, profile=profile
             )
+            prepared, active_request = await _reprepare_semantic_retry(
+                request_preparer=request_preparer,
+                prepared=prepared,
+                request=active_request,
+                profile=profile,
+            )
             await emit_fallback_request_audit("reasoning_truncation_retry", active_request, profile)
-            response = await executor.invoke(active_request)
+            response = await _invoke_executor_with_factory_dispatch(
+                executor=executor,
+                prepared=prepared,
+                request=active_request,
+            )
             logger.warning(
                 "[invoker] reasoning-truncation re-ask: reserved output budget + minimal-reasoning directive"
             )
@@ -1850,6 +1954,8 @@ class LLMInvoker:
         fingerprint is supplied, the turn is not cache-eligible, or the cache
         lookup misses.
         """
+        if prepared.factory_dispatch_port is not None:
+            return None
         if not (self._enable_cache and prompt_fingerprint and cache_eligible):
             return None
         cached = cache.get(
@@ -2174,7 +2280,11 @@ class LLMInvoker:
             executor = self._get_executor()
             native_tool_fallback = False
             allow_native_tool_text_fallback = False
-            response = await executor.invoke(active_request)
+            response = await _invoke_executor_with_factory_dispatch(
+                executor=executor,
+                prepared=prepared,
+                request=active_request,
+            )
             native_response_fallback = False
 
             is_response_ok, response_error = read_response_status(response)
@@ -2640,7 +2750,11 @@ class LLMInvoker:
             return None
         try:
             executor = self._get_executor()
-            response = await executor.invoke(prepared.ai_request)
+            response = await _invoke_executor_with_factory_dispatch(
+                executor=executor,
+                prepared=prepared,
+                request=prepared.ai_request,
+            )
             if bool(getattr(response, "ok", True)):
                 content = str(getattr(response, "output", "") or "")
                 if not content.strip() and isinstance(getattr(response, "raw", None), dict):
@@ -2770,6 +2884,8 @@ class LLMInvoker:
         warned ``RuntimeError``) to fall through to the deterministic fallback.
         """
         try:
+            if prepared.factory_dispatch_port is not None:
+                raise RuntimeError("factory_role_instructor_direct_sdk_not_enabled")
             provider = resolve_tool_call_provider(
                 provider_id=str(getattr(profile, "provider_id", "") or ""), model=model
             )
@@ -2870,7 +2986,30 @@ class LLMInvoker:
             prepared=prepared, profile=profile, response_model=response_model
         )
         executor = self._get_executor()
-        response = await executor.invoke(ai_request)
+        prepared, ai_request = await _reprepare_semantic_retry(
+            request_preparer=request_preparer,
+            prepared=prepared,
+            request=ai_request,
+            profile=profile,
+        )
+        await self._emit_required_tool_retry_request_audit(
+            prepared=prepared,
+            request=ai_request,
+            request_profile=profile,
+            role_id=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=model,
+            call_id=call_id,
+            event_emitter=event_emitter,
+            retry_decision="structured_text_fallback",
+        )
+        response = await _invoke_executor_with_factory_dispatch(
+            executor=executor,
+            prepared=prepared,
+            request=ai_request,
+        )
         is_response_ok, response_error = read_response_status(response)
         response_format_mode = ""
         if isinstance(getattr(ai_request, "context", None), dict):
@@ -3637,6 +3776,8 @@ class LLMInvoker:
         response_model: type | None,
     ) -> bool:
         """Cache is only safe for plain-text, no-tools turns."""
+        if prepared.factory_dispatch_port is not None:
+            return False
         if response_model is not None:
             return False
         if prepared.native_tool_mode != "disabled":

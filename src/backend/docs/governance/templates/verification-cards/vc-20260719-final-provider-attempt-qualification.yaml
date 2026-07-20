@@ -1,19 +1,20 @@
 card_id: vc-20260719-final-provider-attempt-qualification
 bug_summary: >-
-  Factory role context is reconstructed but production role calls still stop at
-  cutoff-not-enabled. The current typed binding is a post-cutoff proof carrier,
-  so using it at the Factory seam would invert causality; no distinct pre-cutoff
-  authority carrier yet feeds the live cutoff port into request preparation,
-  and no single authority qualifies every physical provider retry, fallback,
-  structured, or stream attempt.
+  B3.2 now reconstructs, injects, recomputes and freezes one exact semantic
+  request for every Factory role while stopping before physical transport.
+  B3.3-B3.5 still must propagate that immutable authority to every provider
+  retry, fallback, structured, fanout-child and stream attempt, qualify the
+  exact provider-visible request immediately before I/O, and persist a readable
+  same-workspace snapshot and lifecycle proof.
 classification: structural
 bug_path:
-  file: polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py
-  method: RequestPreparer.prepare
+  file: polaris/cells/roles/kernel/internal/llm_caller/invoker.py
+  method: LLMInvoker.call / call_structured / call_stream
   symptom: >-
-    A live Factory binding raises factory_role_evidence_cutoff_not_enabled;
-    enabling it without full dispatch propagation would allow unaudited physical
-    provider attempts.
+    A qualified Factory semantic request deliberately raises
+    factory_role_semantic_request_frozen_physical_dispatch_not_enabled before
+    snapshot, cache, executor, fallback, stream or transport. Removing that stop
+    before B3.3-B3.5 would allow unaudited physical provider attempts.
 assumptions:
   - id: A1
     statement: I assume the existing typed Factory role binding is a post-cutoff proof carrier and cannot truthfully be constructed at a pre-cutoff role seam.
@@ -24,11 +25,13 @@ assumptions:
       semantic candidate exists, and the repository has no production
       constructor or bind_factory_role_evidence call.
   - id: A2
-    statement: I assume RequestPreparer deliberately prevents live activation today.
+    statement: I assume B3.2 deliberately stops a qualified semantic request before every physical provider path.
     status: verified_true
     evidence: >-
-      request_preparer.py validates the current binding and then raises
-      factory_role_evidence_cutoff_not_enabled.
+      invoker.py checks the exact Factory frozen semantic request in sync,
+      structured and stream paths before snapshot, cache, executor, fallback or
+      transport and raises
+      factory_role_semantic_request_frozen_physical_dispatch_not_enabled.
   - id: A3
     statement: I assume one logical prepared request can cause multiple physical provider attempts.
     status: verified_true
@@ -153,12 +156,12 @@ verification_plan:
       expected: Factory semantic requests freeze exact canonical JSON and hashes; duplicate, stale, mutable, or wrong-role inputs fail before dispatch.
       status: existing_fix
     - file: polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py
-      description: Cover sync, structured, and role-binding fallback dispatch-port propagation.
-      expected: Every executor path receives the same runtime-private port for the current semantic freeze.
+      description: '[B3.3] Cover sync, structured, retry, and role-binding fallback propagation of the fail-closed runtime-private sidecar.'
+      expected: Every executor seam receives the exact port for its current semantic freeze; semantic-changing or role-binding fallback obtains a new freeze/port, and outbound transport remains zero.
       status: existing_fix
-    - file: polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py
-      description: Cover stream-path dispatch qualification and ContextVar cleanup.
-      expected: Stream transport is gated per attempt and cancellation leaks no capability.
+    - file: polaris/kernelone/llm/engine/stream/tests/test_executor.py
+      description: '[B3.3] Cover initial/reconnect stream-sidecar propagation and ContextVar cleanup across async-generator lifetime.'
+      expected: Stream iteration, cancellation, GeneratorExit and aclose restore the prior binding; no transport is enabled in B3.3.
       status: existing_fix
     - file: polaris/cells/factory/pipeline/tests/test_factory_role_evidence_run_service.py
       description: Cover PM, architect, CE, Director, fanout-child, QA, recovery binding seams, and Factory-minted role/budget/hash authority.

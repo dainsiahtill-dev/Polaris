@@ -50,6 +50,9 @@ from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
     FactoryDeadlineDispositionV1,
     build_task_dependency_schedule,
 )
+from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
+    FactoryRoleEvidenceAuthorityPort,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
@@ -57,9 +60,6 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRun,
     FactoryRunStatus,
     OrchestrationStageExecutor,
-)
-from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
-    FactoryRoleEvidenceAuthorityPort,
 )
 from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
@@ -85,7 +85,7 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
 
-def _CharacterizationAuthorityPort() -> FactoryRoleEvidenceAuthorityPort:
+def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
     """Return an exact production port type with test-only grant behavior."""
 
     port = object.__new__(FactoryRoleEvidenceAuthorityPort)
@@ -99,6 +99,9 @@ def _CharacterizationAuthorityPort() -> FactoryRoleEvidenceAuthorityPort:
         del ack
         raise AssertionError("characterization test must not resolve cutoff proof")
 
+    def reject_physical_attempt(command: object) -> object:
+        raise AssertionError(command)
+
     def require_grant_capacity(role: str, count: int) -> None:
         assert role == "director"
         assert len(bindings) + count <= 512
@@ -110,6 +113,7 @@ def _CharacterizationAuthorityPort() -> FactoryRoleEvidenceAuthorityPort:
             factory_run_id="characterization-run",
             role=role,
             cutoff_port=port,
+            physical_attempt_control_port=port,
             attempt_budget=32,
             execution_authority_hash=hashlib.sha256(f"grant-{len(bindings)}".encode()).hexdigest(),
         )
@@ -121,10 +125,25 @@ def _CharacterizationAuthorityPort() -> FactoryRoleEvidenceAuthorityPort:
 
     port.acquire_cutoff = acquire_cutoff  # type: ignore[method-assign]
     port.resolve_cutoff_proof = resolve_cutoff_proof  # type: ignore[method-assign]
+    port.reserve = reject_physical_attempt  # type: ignore[attr-defined]
+    port.begin_start = reject_physical_attempt  # type: ignore[attr-defined]
+    port.commit_started = reject_physical_attempt  # type: ignore[attr-defined]
+    port.abort_reservation = reject_physical_attempt  # type: ignore[attr-defined]
+    port.mark_start_ambiguous = reject_physical_attempt  # type: ignore[attr-defined]
+    port.settle = reject_physical_attempt  # type: ignore[attr-defined]
+    port.terminal_persistence_failed = reject_physical_attempt  # type: ignore[attr-defined]
     port.require_grant_capacity = require_grant_capacity  # type: ignore[method-assign]
     port.mint_authority_binding = mint_authority_binding  # type: ignore[method-assign]
     port.revoke_authority_binding = revoke_authority_binding  # type: ignore[method-assign]
     return port
+
+
+def _factory_stage_context(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Explicitly bind an exact test cutoff port for one direct stage call."""
+
+    result = dict(context or {})
+    result[stage_executor_module.FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY] = _characterization_authority_port()
+    return result
 
 
 def _bootstrap_fact_stream_workspace(workspace: Path) -> None:
@@ -146,17 +165,6 @@ def _bootstrap_real_fact_stream_workspace(request: pytest.FixtureRequest) -> Non
     _bootstrap_fact_stream_workspace(Path(request.getfixturevalue("tmp_path")))
 
 
-@pytest.fixture(autouse=True)
-def _install_exact_test_factory_role_evidence_port(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give direct stage-unit calls the exact live-port runtime type B3.2 requires."""
-
-    monkeypatch.setattr(
-        OrchestrationStageExecutor,
-        "_factory_role_evidence_cutoff_port",
-        staticmethod(lambda _context: _CharacterizationAuthorityPort()),
-    )
-
-
 def _executor(workspace: Path) -> OrchestrationStageExecutor:
     return OrchestrationStageExecutor(workspace)
 
@@ -174,6 +182,45 @@ def test_executor_constructor_does_not_bootstrap_fact_stream(
     executor = _executor(Path("."))
 
     assert isinstance(executor, OrchestrationStageExecutor)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stage",
+    ("pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"),
+)
+async def test_direct_stage_missing_cutoff_port_fails_before_service_or_role_call(
+    stage: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every role stage must reject missing live authority before dispatch."""
+
+    executor = _executor(tmp_path)
+    run = FactoryRun(
+        id=f"missing-authority-{stage}",
+        config=FactoryConfig(name="missing-authority", stages=[stage]),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-07-19T00:00:00+00:00",
+    )
+    service_or_role_calls: list[str] = []
+
+    def unexpected_service(_context: dict[str, Any]) -> object:
+        service_or_role_calls.append("service")
+        raise AssertionError("service dispatch must not run without cutoff authority")
+
+    class _UnexpectedRoleRuntimeService:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            service_or_role_calls.append("role")
+            raise AssertionError("role dispatch must not run without cutoff authority")
+
+    monkeypatch.setattr(executor, "_build_orchestration_service", unexpected_service)
+    monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _UnexpectedRoleRuntimeService)
+
+    with pytest.raises(RuntimeError, match=r"^factory_role_evidence_live_cutoff_port_required$"):
+        await executor.execute(stage, run, {})
+
+    assert service_or_role_calls == []
 
 
 def _write_minimal_chief_engineer_plan(executor: OrchestrationStageExecutor) -> None:
@@ -759,7 +806,10 @@ async def test_quality_gate_authority_ignores_report_and_workspace_display_statu
     monkeypatch.setattr(executor, "_wait_run_completion", _wait)
     monkeypatch.setattr(executor, "_canonical_factory_projection", lambda _run, _context: projection)
 
-    result = await executor._execute_quality_gate(run, {"qa_target": "Quality gate"})
+    result = await executor._execute_quality_gate(
+        run,
+        _factory_stage_context({"qa_target": "Quality gate"}),
+    )
 
     assert result.status == "success"
     assert "canonical_authorized=True" in str(result.output)
@@ -1448,7 +1498,7 @@ class TestChiefEngineerHandoffGuards:
             created_at="2026-06-25T00:00:00+00:00",
         )
 
-        result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
         assert result.status == "success"
         review_path = Path(resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run.review.json"))
@@ -1676,7 +1726,7 @@ class TestChiefEngineerHandoffGuards:
             created_at="2026-06-25T00:00:00+00:00",
         )
 
-        result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
         assert result.status == "success"
         assert len(keepers) == 1
@@ -1755,7 +1805,7 @@ class TestChiefEngineerHandoffGuards:
         )
 
         with caplog.at_level(logging.ERROR, logger=stage_executor_module.__name__):
-            result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+            result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
         assert result.status == "success"
         assert "code=chief_engineer.execution_attempt_heartbeat_failed" in caplog.text
@@ -1927,7 +1977,7 @@ class TestChiefEngineerHandoffGuards:
             caplog.at_level(logging.ERROR, logger=stage_executor_module.__name__),
             pytest.raises(asyncio.CancelledError) as raised,
         ):
-            asyncio.run(executor._execute_chief_engineer_review(run, {}))
+            asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
         assert raised.value is cancellation
         assert "heartbeat_failed_before_cancellation" in caplog.text
@@ -2051,7 +2101,7 @@ class TestChiefEngineerHandoffGuards:
             created_at="2026-06-25T00:00:00+00:00",
         )
 
-        result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
         assert result.status == "success"
         assert len(calls) == 1
@@ -2143,7 +2193,7 @@ class TestChiefEngineerHandoffGuards:
             created_at="2026-06-25T00:00:00+00:00",
         )
 
-        result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
         assert result.status == "failed"
         review_path = Path(
@@ -2184,7 +2234,7 @@ class TestChiefEngineerHandoffGuards:
         )
 
         with pytest.raises(asyncio.CancelledError, match="test CE cancellation"):
-            asyncio.run(executor._execute_chief_engineer_review(run, {}))
+            asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
         task_runtime = TaskRuntimeService(str(tmp_path))
         task = task_runtime.get_task(f"CE-PORTFOLIO-{run.id}")
@@ -2247,7 +2297,7 @@ class TestChiefEngineerHandoffGuards:
             caplog.at_level(logging.ERROR, logger=stage_executor_module.__name__),
             pytest.raises(asyncio.CancelledError) as raised,
         ):
-            asyncio.run(executor._execute_chief_engineer_review(run, {}))
+            asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
         assert raised.value is cancellation
         assert len(settlement_calls) == 1
@@ -2337,11 +2387,13 @@ class TestChiefEngineerHandoffGuards:
         result = asyncio.run(
             executor._execute_chief_engineer_review(
                 run,
-                {
-                    "factory_run_deadline_epoch_seconds": deadline_epoch,
-                    "director_first_materialization_min_budget_seconds": 60,
-                    "quality_gate_reserved_budget_seconds": 20,
-                },
+                _factory_stage_context(
+                    {
+                        "factory_run_deadline_epoch_seconds": deadline_epoch,
+                        "director_first_materialization_min_budget_seconds": 60,
+                        "quality_gate_reserved_budget_seconds": 20,
+                    }
+                ),
             )
         )
 
@@ -4274,14 +4326,16 @@ class TestQualityGateDeadlineHandling:
 
         result = await executor._execute_director_dispatch(
             run,
-            {
-                "director_max_rounds": 1,
-                "execution_mode": "parallel",
-                "max_workers": 1,
-                "factory_run_deadline_epoch_seconds": deadline_epoch,
-                "director_first_materialization_min_budget_seconds": 90,
-                "quality_gate_reserved_budget_seconds": 60,
-            },
+            _factory_stage_context(
+                {
+                    "director_max_rounds": 1,
+                    "execution_mode": "parallel",
+                    "max_workers": 1,
+                    "factory_run_deadline_epoch_seconds": deadline_epoch,
+                    "director_first_materialization_min_budget_seconds": 90,
+                    "quality_gate_reserved_budget_seconds": 60,
+                }
+            ),
         )
 
         assert result.status == "failed"
@@ -4323,12 +4377,14 @@ class TestQualityGateDeadlineHandling:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 1.0
         result = await executor._execute_quality_gate(
             run,
-            {
-                "qa_target": "Quality gate",
-                "factory_run_deadline_epoch_seconds": deadline_epoch,
-                "factory_run_timeout_seconds": 540.0,
-                "factory_run_deadline_source": "test",
-            },
+            _factory_stage_context(
+                {
+                    "qa_target": "Quality gate",
+                    "factory_run_deadline_epoch_seconds": deadline_epoch,
+                    "factory_run_timeout_seconds": 540.0,
+                    "factory_run_deadline_source": "test",
+                }
+            ),
         )
 
         assert result.status == "failed"
@@ -4439,12 +4495,14 @@ class TestQualityGateDeadlineHandling:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 44.4
         result = await executor._execute_quality_gate(
             run,
-            {
-                "qa_target": "Quality gate",
-                "factory_run_deadline_epoch_seconds": deadline_epoch,
-                "factory_run_timeout_seconds": 540.0,
-                "factory_run_deadline_source": "test",
-            },
+            _factory_stage_context(
+                {
+                    "qa_target": "Quality gate",
+                    "factory_run_deadline_epoch_seconds": deadline_epoch,
+                    "factory_run_timeout_seconds": 540.0,
+                    "factory_run_deadline_source": "test",
+                }
+            ),
         )
 
         assert result.status == "success"
@@ -4481,7 +4539,10 @@ class TestQualityGateDeadlineHandling:
         monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: FakeQAService())
         monkeypatch.setattr(executor, "_wait_run_completion", fake_wait_run_completion)
 
-        result = await executor._execute_quality_gate(run, {"qa_target": "Quality gate"})
+        result = await executor._execute_quality_gate(
+            run,
+            _factory_stage_context({"qa_target": "Quality gate"}),
+        )
 
         assert result.status == "failed"
         assert "canonical_reason=task_runtime_tasks_missing" in result.output
@@ -4553,7 +4614,10 @@ class TestQualityGateDeadlineHandling:
         monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
         monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: _CapturingQaService())
 
-        result = await executor._execute_quality_gate(run, {"qa_target": "Quality gate"})
+        result = await executor._execute_quality_gate(
+            run,
+            _factory_stage_context({"qa_target": "Quality gate"}),
+        )
 
         assert result.status == "failed"
         assert "workspace_checks_diagnostic=False" in result.output
@@ -7610,7 +7674,7 @@ class TestDirectorDispatchLoop:
                     {"provider_id": "p2", "model": "m2", "binding_id": "b2"},
                 ],
                 timeout_seconds=10,
-                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
+                authority_port=_characterization_authority_port(),
             ),
             timeout=0.5,
         )
@@ -7683,7 +7747,7 @@ class TestDirectorDispatchLoop:
                 bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
                 timeout_seconds=10,
                 cancel_event=cancel_event,
-                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
+                authority_port=_characterization_authority_port(),
             ),
             timeout=0.5,
         )
@@ -7770,7 +7834,7 @@ class TestDirectorDispatchLoop:
                 bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
                 timeout_seconds=10,
                 cancel_event=cancel_event,
-                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
+                authority_port=_characterization_authority_port(),
             ),
             timeout=0.5,
         )
@@ -7840,7 +7904,7 @@ class TestDirectorDispatchLoop:
                 base_options={"execution_mode": "parallel", "max_workers": 2},
                 bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
                 timeout_seconds=60,
-                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
+                authority_port=_characterization_authority_port(),
             ),
             timeout=1.0,
         )
@@ -7922,7 +7986,7 @@ class TestDirectorDispatchLoop:
                 base_options={"execution_mode": "parallel", "max_workers": 2},
                 bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
                 timeout_seconds=60,
-                authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
+                authority_port=_characterization_authority_port(),
             ),
             timeout=1.0,
         )
@@ -7976,7 +8040,7 @@ class TestDirectorDispatchLoop:
             base_options={"execution_mode": "parallel", "max_workers": 1},
             bindings=[binding],
             timeout_seconds=10,
-            authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
+            authority_port=_characterization_authority_port(),
         )
         result = await executor._execute_director_binding_fanout(
             service=service,
@@ -7985,7 +8049,7 @@ class TestDirectorDispatchLoop:
             base_options={"execution_mode": "parallel", "max_workers": 1},
             bindings=[binding],
             timeout_seconds=10,
-            authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
+            authority_port=_characterization_authority_port(),
         )
 
         assert result.status == "failed"
@@ -8043,7 +8107,7 @@ class TestDirectorDispatchLoop:
             base_options={"execution_mode": "parallel", "max_workers": 1},
             bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
             timeout_seconds=10,
-            authority_port=_CharacterizationAuthorityPort(),  # type: ignore[arg-type]
+            authority_port=_characterization_authority_port(),
         )
 
         assert executor.cancel_on_timeout_values == [False]
@@ -8157,7 +8221,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+            _factory_stage_context(
+                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+            ),
         )
 
         assert result.status == "success"
@@ -8181,7 +8247,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 3, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+            _factory_stage_context(
+                {"director_max_rounds": 3, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+            ),
         )
 
         assert result.status == "success"
@@ -8288,7 +8356,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+            _factory_stage_context(
+                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+            ),
         )
 
         assert result.status == "failed"
@@ -8418,7 +8488,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1},
+            _factory_stage_context(
+                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1}
+            ),
         )
 
         assert result.status == "failed"
@@ -8565,7 +8637,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1},
+            _factory_stage_context(
+                {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1}
+            ),
         )
 
         assert result.status == "failed"
@@ -8722,7 +8796,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "serial", "max_workers": 1},
+            _factory_stage_context(
+                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "serial", "max_workers": 1}
+            ),
         )
 
         assert result.status == "failed"
@@ -8845,7 +8921,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1},
+            _factory_stage_context(
+                {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1}
+            ),
         )
 
         assert result.status == "failed"
@@ -9013,7 +9091,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+            _factory_stage_context(
+                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+            ),
         )
 
         assert result.status == "failed"
@@ -9199,7 +9279,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+            _factory_stage_context(
+                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+            ),
         )
 
         assert result.status == "failed"
@@ -9294,7 +9376,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 2, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+            _factory_stage_context(
+                {"director_max_rounds": 2, "timeout": 1, "execution_mode": "parallel", "max_workers": 2}
+            ),
         )
 
         assert result.status == "failed"
@@ -9390,7 +9474,7 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"timeout": 1, "execution_mode": "parallel", "max_workers": 1},
+            _factory_stage_context({"timeout": 1, "execution_mode": "parallel", "max_workers": 1}),
         )
 
         assert result.status == "success"
@@ -9453,7 +9537,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1},
+            _factory_stage_context(
+                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1}
+            ),
         )
 
         assert result.status == "failed"
@@ -9524,7 +9610,9 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1},
+            _factory_stage_context(
+                {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1}
+            ),
         )
 
         assert result.status == "failed"
@@ -9680,13 +9768,15 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {
-                "director_max_rounds": 2,
-                "timeout": 2,
-                "execution_mode": "parallel",
-                "max_workers": 1,
-                "director_dispatch_timeout_settle_grace_seconds": 1,
-            },
+            _factory_stage_context(
+                {
+                    "director_max_rounds": 2,
+                    "timeout": 2,
+                    "execution_mode": "parallel",
+                    "max_workers": 1,
+                    "director_dispatch_timeout_settle_grace_seconds": 1,
+                }
+            ),
         )
 
         assert result.status == "success"
@@ -9819,12 +9909,14 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {
-                "director_max_rounds": 2,
-                "execution_mode": "serial",
-                "max_workers": 1,
-                "director_dispatch_timeout_settle_grace_seconds": 5,
-            },
+            _factory_stage_context(
+                {
+                    "director_max_rounds": 2,
+                    "execution_mode": "serial",
+                    "max_workers": 1,
+                    "director_dispatch_timeout_settle_grace_seconds": 5,
+                }
+            ),
         )
 
         assert result.status == "success"
@@ -9929,12 +10021,14 @@ class TestDirectorDispatchLoop:
 
         result = await executor._execute_director_dispatch(
             run,
-            {
-                "director_max_rounds": 2,
-                "execution_mode": "serial",
-                "max_workers": 1,
-                "director_dispatch_timeout_settle_grace_seconds": 5,
-            },
+            _factory_stage_context(
+                {
+                    "director_max_rounds": 2,
+                    "execution_mode": "serial",
+                    "max_workers": 1,
+                    "director_dispatch_timeout_settle_grace_seconds": 5,
+                }
+            ),
         )
 
         assert result.status == "failed"

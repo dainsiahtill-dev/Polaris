@@ -16,6 +16,7 @@ import gc
 import hashlib
 import time
 import warnings
+from dataclasses import fields
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -47,6 +48,8 @@ from polaris.cells.roles.kernel.internal.llm_caller.event_emitter import LLMEven
 from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import (
     LLMInvoker,
+    _clear_context_snapshot_context,
+    _physical_dispatch_port_for_request,
     _profile_lacks_forced_tool_choice,
     _required_tool_not_called_error,
 )
@@ -153,6 +156,32 @@ class _B32IdentityCutoffPort:
         raise AssertionError("identity tests stop before proof resolution")
 
 
+class _B32PhysicalAttemptControlPort:
+    def reserve(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def begin_start(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def commit_started(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def abort_reservation(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def mark_start_ambiguous(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def settle(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def terminal_persistence_failed(self, command: object) -> object:
+        raise AssertionError(command)
+
+
+_B32_PHYSICAL_ATTEMPT_CONTROL_PORT = _B32PhysicalAttemptControlPort()
+
+
 class _B32CountingCutoffPort:
     def __init__(self) -> None:
         self.acquire_count = 0
@@ -216,6 +245,7 @@ def _b32_identity_authority() -> FactoryRoleEvidenceAuthorityBindingV1:
         factory_run_id="factory-run-identity",
         role="director",
         cutoff_port=_B32IdentityCutoffPort(),
+        physical_attempt_control_port=_B32_PHYSICAL_ATTEMPT_CONTROL_PORT,
         attempt_budget=3,
         execution_authority_hash="a" * 64,
     )
@@ -274,6 +304,12 @@ def _b32_semantic_identity() -> FactoryRoleSemanticRequestIdentityV1:
         ("verification_scope", "other", ValueError, "verification_scope_mismatch"),
         ("factory_run_id", "", ValueError, "factory_run_id_missing"),
         ("cutoff_port", object(), TypeError, "factory_role_evidence_cutoff_port_required"),
+        (
+            "physical_attempt_control_port",
+            object(),
+            TypeError,
+            "factory_physical_attempt_control_port_required",
+        ),
         ("attempt_budget", 0, ValueError, "attempt_budget_invalid"),
         ("execution_authority_hash", "0", ValueError, "execution_authority_hash_invalid"),
     ],
@@ -292,6 +328,7 @@ async def test_factory_authority_mutation_after_bind_fails_before_cutoff(
         factory_run_id="factory-run-mutation",
         role="director",
         cutoff_port=port,
+        physical_attempt_control_port=_B32_PHYSICAL_ATTEMPT_CONTROL_PORT,
         attempt_budget=3,
         execution_authority_hash="a" * 64,
     )
@@ -327,6 +364,7 @@ async def test_factory_authority_subclass_fails_before_cutoff(
         factory_run_id="factory-run-subclass",
         role="director",
         cutoff_port=port,
+        physical_attempt_control_port=_B32_PHYSICAL_ATTEMPT_CONTROL_PORT,
         attempt_budget=3,
         execution_authority_hash="a" * 64,
     )
@@ -387,6 +425,7 @@ async def test_factory_authority_valid_drift_during_context_await_fails_before_c
         factory_run_id="factory-run-before-await",
         role="director",
         cutoff_port=old_port,
+        physical_attempt_control_port=_B32_PHYSICAL_ATTEMPT_CONTROL_PORT,
         attempt_budget=3,
         execution_authority_hash="a" * 64,
     )
@@ -430,6 +469,7 @@ async def test_factory_authority_port_drift_during_acquire_fails_before_resolve(
         factory_run_id=factory_run_id,
         role="director",
         cutoff_port=old_port,
+        physical_attempt_control_port=_B32_PHYSICAL_ATTEMPT_CONTROL_PORT,
         attempt_budget=3,
         execution_authority_hash="a" * 64,
     )
@@ -458,6 +498,45 @@ async def test_factory_authority_port_drift_during_acquire_fails_before_resolve(
     assert new_port.resolve_count == 0
 
 
+@pytest.mark.asyncio
+async def test_factory_physical_attempt_control_port_drift_during_acquire_fails_before_resolve() -> None:
+    factory_run_id = "factory-run-physical-port-await"
+    cutoff_port = _B32AcquireBarrierCutoffPort(factory_run_id=factory_run_id)
+    original_physical_port = _B32PhysicalAttemptControlPort()
+    replacement_physical_port = _B32PhysicalAttemptControlPort()
+    authority = FactoryRoleEvidenceAuthorityBindingV1(
+        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
+        verification_scope="factory",
+        factory_run_id=factory_run_id,
+        role="director",
+        cutoff_port=cutoff_port,
+        physical_attempt_control_port=original_physical_port,
+        attempt_budget=3,
+        execution_authority_hash="a" * 64,
+    )
+
+    with bind_factory_role_evidence_authority(authority):
+        prepare_task = asyncio.create_task(
+            LLMRequestPreparer(workspace=".")._prepare_llm_request(
+                profile=_b32_profile(),
+                system_prompt="You are Director.",
+                context=_b32_context(),
+                temperature=0.2,
+                max_tokens=4000,
+                stream=False,
+                factory_semantic_identity=_b32_semantic_identity(),
+            )
+        )
+        await cutoff_port.acquire_started.wait()
+        object.__setattr__(authority, "physical_attempt_control_port", replacement_physical_port)
+        cutoff_port.acquire_release.set()
+        with pytest.raises(RuntimeError, match="factory_role_evidence_authority_binding_drift"):
+            await prepare_task
+
+    assert cutoff_port.acquire_count == 1
+    assert cutoff_port.resolve_count == 0
+
+
 def test_existing_factory_role_marker_must_be_terminal_and_canonical() -> None:
     messages = [
         {
@@ -475,7 +554,7 @@ def test_existing_factory_role_marker_must_be_terminal_and_canonical() -> None:
         )
 
 
-def _b32_prepared_factory_request() -> PreparedLLMRequest:
+def _b32_prepared_factory_request() -> Any:
     messages = [
         {
             "role": "system",
@@ -490,7 +569,7 @@ def _b32_prepared_factory_request() -> PreparedLLMRequest:
         provider_id="provider-a",
         model="kimi-for-coding",
     )
-    return PreparedLLMRequest(
+    return SimpleNamespace(
         messages=messages,
         input_text="Implement.",
         context_result=SimpleNamespace(
@@ -503,13 +582,600 @@ def _b32_prepared_factory_request() -> PreparedLLMRequest:
         request_options={},
         ai_request=ai_request,
         factory_semantic_request=Mock(),
+        factory_dispatch_port=Mock(),
+        __post_init__=lambda: None,
+    )
+
+
+def test_context_snapshot_clear_removes_snake_and_camel_projection_keys() -> None:
+    request = SimpleNamespace(
+        context={
+            "context_snapshot_ref": "a" * 24,
+            "contextSnapshotRef": "b" * 24,
+            "context_snapshot_degraded": {"code": "old"},
+            "contextSnapshotDegraded": {"code": "old-camel"},
+            "context_snapshot_degraded_reason": "old",
+            "contextSnapshotDegradedReason": "old-camel",
+            "keep": "value",
+        }
+    )
+
+    result = _clear_context_snapshot_context(request)
+
+    assert result == {"keep": "value"}
+    assert request.context == {"keep": "value"}
+
+
+def test_b33_prepared_factory_freeze_requires_exact_dispatch_sidecar() -> None:
+    """A Factory semantic freeze without its runtime sidecar must fail closed."""
+
+    with pytest.raises(
+        RuntimeError,
+        match="factory_role_semantic_request_dispatch_port_required",
+    ):
+        PreparedLLMRequest(
+            messages=[],
+            input_text="",
+            context_result=None,
+            context_summary="",
+            request_options={},
+            ai_request=SimpleNamespace(),
+            factory_semantic_request=Mock(),
+        )
+
+
+def test_b33_prepared_bundle_declares_runtime_private_dispatch_sidecar() -> None:
+    """Sync seams need one explicit sidecar slot beside, never inside, AIRequest."""
+
+    assert "factory_dispatch_port" in {item.name for item in fields(PreparedLLMRequest)}
+
+
+@pytest.mark.asyncio
+async def test_b33_sync_profile_binding_passes_exact_port_identity() -> None:
+    request = SimpleNamespace(provider_id="provider-a", model="model-a")
+    frozen = object()
+    port = Mock()
+    prepared = SimpleNamespace(
+        ai_request=request,
+        factory_semantic_request=frozen,
+        factory_dispatch_port=port,
+        __post_init__=Mock(),
+    )
+    executor = SimpleNamespace(invoke=AsyncMock(return_value=SimpleNamespace(ok=True)))
+    profile = SimpleNamespace(provider_id="provider-a", model="model-a")
+
+    result = await LLMInvoker(workspace="/ws")._invoke_with_profile_binding(
+        executor=executor,
+        prepared=prepared,
+        request=request,
+        profile=profile,
+        role_id="director",
+    )
+
+    assert result.ok is True
+    assert executor.invoke.await_args.kwargs["physical_dispatch_port"] is port
+    prepared.__post_init__.assert_called_once_with()
+    port.validate_frozen_identity.assert_called_once_with(frozen)
+
+
+def test_b33_semantic_changing_retry_requires_new_freeze_and_port() -> None:
+    original_request = object()
+    prepared = SimpleNamespace(
+        ai_request=original_request,
+        factory_semantic_request=object(),
+        factory_dispatch_port=Mock(),
+        __post_init__=Mock(),
+    )
+
+    with pytest.raises(RuntimeError, match="factory_role_semantic_retry_refreeze_required"):
+        _physical_dispatch_port_for_request(prepared, object())
+
+
+def _b33_propagating_prepared(*, native_response_format: bool = False) -> SimpleNamespace:
+    request = SimpleNamespace(provider_id="provider-a", model="model-a", context={}, options={})
+    return SimpleNamespace(
+        ai_request=request,
+        messages=[],
+        request_options={},
+        context_summary="summary",
+        context_os_audit={},
+        context_result=SimpleNamespace(
+            token_estimate=1,
+            compression_applied=False,
+            compression_strategy=None,
+        ),
+        factory_semantic_request=object(),
+        factory_dispatch_port=Mock(),
+        native_response_format=native_response_format,
+        native_tool_mode="disabled",
+        native_tool_schemas=[],
+        response_format_mode="plain_text",
+        __post_init__=Mock(),
+    )
+
+
+def test_b33_factory_cache_cannot_satisfy_governed_call() -> None:
+    prepared = _b33_propagating_prepared()
+    invoker = LLMInvoker(workspace="/ws", enable_cache=True)
+    cache = Mock()
+    cache.get.return_value = "stale cached response"
+
+    assert LLMInvoker._is_cache_eligible(prepared=prepared, response_model=None) is False
+    hit = invoker._try_cache_hit(
+        cache=cache,
+        prepared=prepared,
+        context_result=prepared.context_result,
+        cache_eligible=True,
+        prompt_fingerprint="fingerprint",
+        temperature=0.2,
+        model="model-a",
+        profile=SimpleNamespace(provider_id="provider-a", model="model-a"),
+        role_id="director",
+        run_id="run-1",
+        task_id=None,
+        attempt=0,
+        turn_round=0,
+        call_id="call-1",
+        event_emitter=None,
+        start_time=time.perf_counter(),
+    )
+
+    assert hit is None
+    cache.get.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("case_id", "native_response_format", "response_error", "builder_name"),
+    [
+        (
+            "response_format",
+            True,
+            "unsupported parameter: response_format",
+            "_build_structured_fallback_request",
+        ),
+        (
+            "reasoning_truncation",
+            False,
+            "empty visible output: reasoning truncated finish_reason=length",
+            "_build_reasoning_truncation_retry_request",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_b33_fallback_ladder_semantic_change_refreezes_with_new_port(
+    case_id: str,
+    native_response_format: bool,
+    response_error: str,
+    builder_name: str,
+) -> None:
+    del case_id
+    prepared = _b33_propagating_prepared(native_response_format=native_response_format)
+    changed_request = object()
+    retry_prepared = _b33_propagating_prepared()
+    retry_prepared.ai_request = changed_request
+    retry_prepared.factory_dispatch_port = Mock()
+    order: list[str] = []
+
+    async def _reprepare(**_kwargs):
+        order.append("reprepare")
+        return retry_prepared
+
+    async def _invoke(*_args, **_kwargs):
+        order.append("invoke")
+        return SimpleNamespace(ok=True, error=None)
+
+    async def _snapshot(**_kwargs):
+        order.append("snapshot")
+
+    def _audit(payload, **_kwargs):
+        order.append("audit")
+        return payload
+
+    request_preparer = SimpleNamespace(
+        _build_structured_fallback_request=Mock(return_value=changed_request),
+        _build_reasoning_truncation_retry_request=Mock(return_value=changed_request),
+        _reprepare_factory_semantic_retry_request=AsyncMock(side_effect=_reprepare),
+    )
+    executor = SimpleNamespace(invoke=AsyncMock(side_effect=_invoke))
+    invoker = LLMInvoker(workspace="/ws")
+    profile = SimpleNamespace(provider_id="provider-a", model="model-a")
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_active_request_context_snapshot",
+            AsyncMock(side_effect=_snapshot),
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._with_final_request_context_audit",
+            side_effect=_audit,
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._required_tool_not_called_error",
+            return_value="",
+        ),
+    ):
+        result = await invoker._run_fallback_ladder(
+            request_preparer=request_preparer,
+            executor=executor,
+            prepared=prepared,
+            profile=profile,
+            context=SimpleNamespace(),
+            response=SimpleNamespace(ok=False, error=response_error),
+            active_request=prepared.ai_request,
+            response_model=dict,
+            response_error=response_error,
+            is_response_ok=False,
+            allow_native_tool_text_fallback=False,
+            native_tool_fallback=False,
+            native_response_fallback=False,
+            system_prompt="system",
+            temperature=0.2,
+            effective_max_tokens=128,
+            platform_retry_max=0,
+            role_id="director",
+            run_id="run-1",
+            task_id=None,
+            attempt=0,
+            model="model-a",
+            call_id="call-1",
+            event_emitter=None,
+            factory_semantic_identity=_b32_semantic_identity(),
+        )
+
+    getattr(request_preparer, builder_name).assert_called_once()
+    request_preparer._reprepare_factory_semantic_retry_request.assert_awaited_once_with(
+        prepared=prepared,
+        request=changed_request,
+        profile=profile,
+    )
+    assert result.prepared is retry_prepared
+    assert executor.invoke.await_args.kwargs["physical_dispatch_port"] is retry_prepared.factory_dispatch_port
+    assert order == ["reprepare", "snapshot", "audit", "invoke"]
+
+
+@pytest.mark.parametrize("text_fallback", [False, True], ids=["native", "text"])
+@pytest.mark.asyncio
+async def test_b33_required_tool_retry_semantic_change_refreezes_with_new_port(
+    text_fallback: bool,
+) -> None:
+    prepared = _b33_propagating_prepared()
+    changed_request = object()
+    retry_prepared = _b33_propagating_prepared()
+    retry_prepared.ai_request = changed_request
+    retry_prepared.factory_dispatch_port = Mock()
+    order: list[str] = []
+
+    async def _reprepare(**_kwargs):
+        order.append("reprepare")
+        return retry_prepared
+
+    async def _invoke(*_args, **_kwargs):
+        order.append("invoke")
+        return SimpleNamespace(ok=True, error=None)
+
+    async def _snapshot(**_kwargs):
+        order.append("snapshot")
+
+    def _audit(payload, **_kwargs):
+        order.append("audit")
+        return payload
+
+    request_preparer = SimpleNamespace(
+        _build_required_tool_retry_request=Mock(return_value=changed_request),
+        _build_required_tool_text_fallback_request=Mock(return_value=changed_request),
+        _reprepare_factory_semantic_retry_request=AsyncMock(side_effect=_reprepare),
+    )
+    executor = SimpleNamespace(invoke=AsyncMock(side_effect=_invoke))
+    invoker = LLMInvoker(workspace="/ws")
+    profile = SimpleNamespace(provider_id="provider-a", model="model-a")
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._profile_lacks_forced_tool_choice",
+            return_value=text_fallback,
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_active_request_context_snapshot",
+            AsyncMock(side_effect=_snapshot),
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._with_final_request_context_audit",
+            side_effect=_audit,
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._required_tool_not_called_error",
+            return_value="",
+        ),
+    ):
+        result = await invoker._retry_required_tool_if_missing(
+            request_preparer=request_preparer,
+            executor=executor,
+            prepared=prepared,
+            profile=profile,
+            response=SimpleNamespace(ok=False),
+            active_request=prepared.ai_request,
+            response_error="required_tool_not_called: required_tools=write_file",
+            is_response_ok=False,
+            native_tool_fallback=False,
+            role_id="director",
+            run_id="run-1",
+            task_id=None,
+            attempt=0,
+            model="model-a",
+            call_id="call-1",
+            event_emitter=None,
+        )
+
+    expected_builder = (
+        request_preparer._build_required_tool_text_fallback_request
+        if text_fallback
+        else request_preparer._build_required_tool_retry_request
+    )
+    expected_builder.assert_called_once()
+    request_preparer._reprepare_factory_semantic_retry_request.assert_awaited_once_with(
+        prepared=prepared,
+        request=changed_request,
+        profile=profile,
+    )
+    assert result[0] is retry_prepared
+    assert executor.invoke.await_args.kwargs["physical_dispatch_port"] is retry_prepared.factory_dispatch_port
+    assert order == ["reprepare", "snapshot", "audit", "invoke"]
+
+
+@pytest.mark.asyncio
+async def test_b33_structured_native_passes_exact_port_identity() -> None:
+    prepared = _b33_propagating_prepared(native_response_format=True)
+    executor = SimpleNamespace(
+        invoke=AsyncMock(
+            return_value=SimpleNamespace(
+                ok=False,
+                error="unsupported parameter: response_format",
+            )
+        )
+    )
+    invoker = LLMInvoker(workspace="/ws", executor=executor)
+    request_preparer = SimpleNamespace(_build_structured_fallback_request=Mock(return_value=object()))
+    profile = SimpleNamespace(provider_id="provider-a", model="model-a")
+
+    with (
+        patch.object(LLMInvoker, "_emit_call_retry_event"),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._with_final_request_context_audit",
+            side_effect=lambda payload, **_kwargs: payload,
+        ),
+    ):
+        result = await invoker._try_native_response_format_structured(
+            request_preparer=request_preparer,
+            prepared=prepared,
+            profile=profile,
+            response_model=dict,
+            model="model-a",
+            prompt_tokens=1,
+            turn_round=0,
+            role_id="director",
+            run_id="run-1",
+            task_id=None,
+            attempt=0,
+            call_id="call-1",
+            event_emitter=None,
+            start_time=time.perf_counter(),
+        )
+
+    assert result is None
+    assert executor.invoke.await_args.kwargs["physical_dispatch_port"] is prepared.factory_dispatch_port
+    prepared.factory_dispatch_port.validate_frozen_identity.assert_called_once_with(prepared.factory_semantic_request)
+
+
+@pytest.mark.asyncio
+async def test_b33_structured_instructor_direct_sdk_is_denied_before_client_creation() -> None:
+    prepared = _b33_propagating_prepared()
+    invoker = LLMInvoker(workspace="/ws")
+
+    with patch("polaris.cells.roles.kernel.internal.llm_caller.invoker.create_structured_client") as create_client:
+        result = await invoker._try_instructor_structured(
+            prepared=prepared,
+            profile=SimpleNamespace(provider_id="provider-a"),
+            messages=[],
+            response_model=dict,
+            model="model-a",
+            temperature=0.2,
+            max_tokens=128,
+            max_retries=3,
+            prompt_tokens=1,
+            turn_round=0,
+            role_id="director",
+            run_id="run-1",
+            task_id=None,
+            attempt=0,
+            call_id="call-1",
+            event_emitter=None,
+            start_time=time.perf_counter(),
+        )
+
+    assert result is None
+    create_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_b33_structured_manual_fallback_refreezes_with_new_port() -> None:
+    prepared = _b33_propagating_prepared()
+    changed_request = object()
+    retry_prepared = _b33_propagating_prepared()
+    retry_prepared.ai_request = changed_request
+    retry_prepared.factory_dispatch_port = Mock()
+    order: list[str] = []
+
+    async def _reprepare(**_kwargs):
+        order.append("reprepare")
+        return retry_prepared
+
+    async def _invoke(*_args, **_kwargs):
+        order.append("invoke")
+        raise RuntimeError("stop-after-new-port")
+
+    async def _snapshot(**_kwargs):
+        order.append("snapshot")
+
+    def _audit(payload, **_kwargs):
+        order.append("audit")
+        return payload
+
+    executor = SimpleNamespace(invoke=AsyncMock(side_effect=_invoke))
+    invoker = LLMInvoker(workspace="/ws", executor=executor)
+    request_preparer = SimpleNamespace(
+        _build_structured_fallback_request=Mock(return_value=changed_request),
+        _reprepare_factory_semantic_retry_request=AsyncMock(side_effect=_reprepare),
+    )
+
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_active_request_context_snapshot",
+            AsyncMock(side_effect=_snapshot),
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._with_final_request_context_audit",
+            side_effect=_audit,
+        ),
+        pytest.raises(RuntimeError, match="stop-after-new-port"),
+    ):
+        await invoker._run_structured_fallback(
+            request_preparer=request_preparer,
+            prepared=prepared,
+            profile=SimpleNamespace(provider_id="provider-a", model="model-a"),
+            response_model=dict,
+            model="model-a",
+            prompt_tokens=1,
+            turn_round=0,
+            role_id="director",
+            run_id="run-1",
+            task_id=None,
+            attempt=0,
+            call_id="call-1",
+            event_emitter=None,
+            start_time=time.perf_counter(),
+        )
+
+    request_preparer._reprepare_factory_semantic_retry_request.assert_awaited_once_with(
+        prepared=prepared,
+        request=changed_request,
+        profile=SimpleNamespace(provider_id="provider-a", model="model-a"),
+    )
+    assert executor.invoke.await_args.kwargs["physical_dispatch_port"] is retry_prepared.factory_dispatch_port
+    assert order == ["reprepare", "snapshot", "audit", "invoke"]
+
+
+@pytest.mark.asyncio
+async def test_b33_role_binding_fallback_refreezes_and_uses_new_exact_port() -> None:
+    original_identity = _b32_semantic_identity()
+    new_prepared = _b33_propagating_prepared()
+    new_prepared.factory_dispatch_port = Mock()
+    request_preparer = SimpleNamespace(_prepare_llm_request=AsyncMock(return_value=new_prepared))
+    executor = SimpleNamespace(invoke=AsyncMock(return_value=SimpleNamespace(ok=True, error=None)))
+    invoker = LLMInvoker(workspace="/ws")
+    fallback_profile = SimpleNamespace(provider_id="provider-b", model="model-b")
+
+    with (
+        patch.object(LLMInvoker, "_mark_profile_binding_unhealthy"),
+        patch.object(
+            LLMInvoker,
+            "_fallback_slots_for_role",
+            return_value=[SimpleNamespace(provider_id="provider-b", model="model-b", binding_id="binding-b")],
+        ),
+        patch.object(LLMInvoker, "_profile_for_binding", return_value=fallback_profile),
+        patch.object(LLMInvoker, "_emit_call_retry_event"),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker.build_final_request_context_audit_for_request",
+            return_value={},
+        ),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_active_request_context_snapshot",
+            AsyncMock(),
+        ),
+        patch("polaris.cells.roles.kernel.internal.llm_caller.invoker.get_role_binding_override", return_value=None),
+        patch("polaris.cells.roles.kernel.internal.llm_caller.invoker.get_role_provider_override", return_value=None),
+        patch("polaris.cells.roles.kernel.internal.llm_caller.invoker.set_role_binding_override"),
+        patch("polaris.cells.roles.kernel.internal.llm_caller.invoker.set_role_provider_override"),
+        patch("polaris.cells.roles.kernel.internal.llm_caller.invoker.clear_role_provider_override"),
+    ):
+        result = await invoker._try_role_binding_fallback(
+            request_preparer=request_preparer,
+            profile=SimpleNamespace(provider_id="provider-a", model="model-a"),
+            system_prompt="system",
+            context=SimpleNamespace(),
+            temperature=0.2,
+            max_tokens=128,
+            response_model=None,
+            platform_retry_max=0,
+            executor=executor,
+            role_id="director",
+            run_id="run-1",
+            task_id=None,
+            attempt=0,
+            model="model-a",
+            call_id="call-1",
+            event_emitter=None,
+            original_error="429 rate limited",
+            factory_semantic_identity=original_identity,
+        )
+
+    assert result is not None
+    refrozen = request_preparer._prepare_llm_request.await_args.kwargs["factory_semantic_identity"]
+    assert refrozen is not original_identity
+    assert refrozen.request_freeze_id != original_identity.request_freeze_id
+    assert (refrozen.run_id, refrozen.turn_id, refrozen.call_id) == (
+        original_identity.run_id,
+        original_identity.turn_id,
+        original_identity.call_id,
+    )
+    assert executor.invoke.await_args.kwargs["physical_dispatch_port"] is new_prepared.factory_dispatch_port
+    new_prepared.factory_dispatch_port.validate_frozen_identity.assert_called_once_with(
+        new_prepared.factory_semantic_request
     )
 
 
 @pytest.mark.asyncio
-async def test_factory_semantic_call_stops_before_executor_and_retry_fallback(
+async def test_b33_retryable_exception_routes_only_through_refreezing_role_fallback() -> None:
+    invoker = LLMInvoker(workspace="/ws")
+    identity = _b32_semantic_identity()
+    fallback = AsyncMock(return_value=None)
+
+    with patch.object(LLMInvoker, "_try_role_binding_fallback", fallback):
+        result = await invoker._try_retryable_exception_role_binding_fallback(
+            exc=RuntimeError("429 rate limited"),
+            request_preparer=Mock(),
+            executor=Mock(),
+            prepared=_b33_propagating_prepared(),
+            active_request=object(),
+            profile=SimpleNamespace(provider_id="provider-a", model="model-a"),
+            context=SimpleNamespace(),
+            system_prompt="system",
+            temperature=0.2,
+            effective_max_tokens=128,
+            response_model=None,
+            platform_retry_max=0,
+            model="model-a",
+            role_id="director",
+            run_id="run-1",
+            task_id=None,
+            attempt=0,
+            turn_round=0,
+            call_id="call-1",
+            event_emitter=None,
+            prompt_tokens=1,
+            start_time=time.perf_counter(),
+            factory_semantic_identity=identity,
+        )
+
+    assert result is None
+    assert fallback.await_args.kwargs["factory_semantic_identity"] is identity
+
+
+@pytest.mark.asyncio
+async def test_b33_public_factory_call_zero_transport_stops_before_executor_and_retry_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Public Factory calls cannot enter the private dispatch seam until B3.4/B3.5."""
+
     invoker = LLMInvoker(workspace="/ws")
     profile = _b32_profile()
     prepared = _b32_prepared_factory_request()
@@ -2986,6 +3652,78 @@ class TestStreamEngineInit:
 class TestStreamEngineRunStream:
     """测试 StreamEngine.run_stream."""
 
+    async def test_b33_stream_initial_and_reconnect_keep_same_exact_port(self) -> None:
+        seen_ports: list[object] = []
+        closed_attempts: list[int] = []
+        prepared = _b33_propagating_prepared()
+        context = SimpleNamespace(
+            context_override={
+                "stream_max_reconnects": 1,
+                "stream_retry_backoff_seconds": 0,
+            },
+            stream_cancelled=False,
+            temperature=0.2,
+            max_tokens=128,
+        )
+
+        class _Executor:
+            async def invoke_stream(self, _request: object, *, physical_dispatch_port: object):
+                seen_ports.append(physical_dispatch_port)
+                current_attempt = len(seen_ports)
+                try:
+                    if current_attempt == 1:
+                        yield {"type": "error", "error": "429 rate limited"}
+                    else:
+                        yield {"type": "chunk", "content": "ok"}
+                finally:
+                    closed_attempts.append(current_attempt)
+
+        engine = StreamEngine(
+            workspace="/ws",
+            get_executor=lambda: _Executor(),
+            allow_native_tool_text_fallback_fn=Mock(return_value=False),
+            emit_call_start_event=Mock(),
+            emit_call_error_event=Mock(),
+            emit_call_end_event=Mock(),
+            emit_call_retry_event=Mock(),
+        )
+
+        with (
+            patch(
+                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine.build_final_request_context_audit_for_request",
+                return_value={"final_request_token_estimate": 1},
+            ),
+            patch(
+                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine.enforce_final_request_evidence_coverage"
+            ),
+        ):
+            events = [
+                event
+                async for event in engine.run_stream(
+                    profile=SimpleNamespace(provider_id="provider-a", role_id="director"),
+                    prepared=prepared,
+                    context=context,
+                    start_time=time.perf_counter(),
+                    role_id="director",
+                    run_id="run-1",
+                    task_id=None,
+                    attempt=0,
+                    model="model-a",
+                    call_id="call-1",
+                    event_emitter=None,
+                    turn_round=0,
+                )
+            ]
+
+        assert any(event.get("content") == "ok" for event in events)
+        assert seen_ports == [prepared.factory_dispatch_port, prepared.factory_dispatch_port]
+        assert closed_attempts == [1, 2]
+        assert prepared.factory_dispatch_port.validate_frozen_identity.call_count == 2
+        assert all(
+            call.args == (prepared.factory_semantic_request,)
+            for call in prepared.factory_dispatch_port.validate_frozen_identity.call_args_list
+        )
+
     async def test_cancel_before_invoke(self) -> None:
         """取消标志设置时应立即抛出 CancelledError."""
         engine = StreamEngine(
@@ -3005,6 +3743,8 @@ class TestStreamEngineRunStream:
         profile.role_id = "director"
 
         prepared = Mock()
+        prepared.factory_dispatch_port = None
+        prepared.__post_init__ = Mock()
         prepared.messages = []
         prepared.ai_request = Mock()
         prepared.native_tool_mode = "disabled"
@@ -3048,6 +3788,8 @@ class TestStreamEngineRunStream:
         profile.role_id = "director"
 
         prepared = Mock()
+        prepared.factory_dispatch_port = None
+        prepared.__post_init__ = Mock()
         prepared.messages = []
         prepared.ai_request = Mock()
         prepared.native_tool_mode = "disabled"
@@ -3109,6 +3851,8 @@ class TestStreamEngineRunStream:
         profile.provider_id = "provider-stream"
 
         prepared = Mock()
+        prepared.factory_dispatch_port = None
+        prepared.__post_init__ = Mock()
         prepared.messages = [{"role": "user", "content": "create files"}]
         prepared.ai_request = Mock()
         prepared.native_tool_mode = "native_tools_streaming"
@@ -3117,7 +3861,8 @@ class TestStreamEngineRunStream:
 
         mock_executor = Mock()
 
-        async def _tool_stream(_request):
+        async def _tool_stream(_request, *, physical_dispatch_port=None):
+            assert physical_dispatch_port is None
             yield {
                 "type": "tool_call",
                 "tool_call": {
@@ -3209,6 +3954,8 @@ class TestStreamEngineRunStream:
             {"role": "user", "content": "build a thing"},
         ]
         prepared = Mock()
+        prepared.factory_dispatch_port = None
+        prepared.__post_init__ = Mock()
         prepared.messages = prepared_messages
         # Use a real dict-backed context so we can prove the hash is written
         # into prepared.ai_request.context AND read back via
@@ -3222,7 +3969,8 @@ class TestStreamEngineRunStream:
 
         mock_executor = Mock()
 
-        async def _empty_stream(_request):
+        async def _empty_stream(_request, *, physical_dispatch_port=None):
+            assert physical_dispatch_port is None
             return
             yield  # pragma: no cover -- intentional empty generator
 
@@ -3314,6 +4062,8 @@ class TestStreamEngineRunStream:
         context_result.compression_applied = False
 
         prepared = Mock()
+        prepared.factory_dispatch_port = None
+        prepared.__post_init__ = Mock()
         prepared.messages = [{"role": "user", "content": "hi"}]
         prepared.ai_request = Mock()
         prepared.ai_request.context = {
@@ -3326,7 +4076,8 @@ class TestStreamEngineRunStream:
         prepared.context_result = context_result
         prepared.context_os_audit = {}
 
-        async def _empty_stream(_request):
+        async def _empty_stream(_request, *, physical_dispatch_port=None):
+            assert physical_dispatch_port is None
             return
             yield  # pragma: no cover -- intentional empty generator
 
@@ -3394,6 +4145,8 @@ class TestStreamEngineRunStream:
 
         audit = {"ok": True, "prompt_digest": "audit1234"}
         prepared = Mock()
+        prepared.factory_dispatch_port = None
+        prepared.__post_init__ = Mock()
         prepared.messages = [{"role": "user", "content": "hello"}]
         prepared.ai_request = Mock()
         prepared.native_tool_mode = "disabled"
@@ -3403,7 +4156,8 @@ class TestStreamEngineRunStream:
 
         mock_executor = Mock()
 
-        async def _empty_stream(_request):
+        async def _empty_stream(_request, *, physical_dispatch_port=None):
+            assert physical_dispatch_port is None
             return
             yield
 

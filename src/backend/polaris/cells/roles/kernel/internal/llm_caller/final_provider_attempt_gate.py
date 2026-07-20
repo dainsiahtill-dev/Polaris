@@ -9,13 +9,39 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
 from typing import Any, AsyncContextManager, Literal, TypeVar
 
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    ABORT_FACTORY_PHYSICAL_ATTEMPT_RESERVATION_SCHEMA,
+    BEGIN_FACTORY_PHYSICAL_ATTEMPT_START_SCHEMA,
+    COMMIT_FACTORY_PHYSICAL_ATTEMPT_START_SCHEMA,
+    FAIL_FACTORY_PHYSICAL_ATTEMPT_TERMINAL_SCHEMA,
+    MARK_FACTORY_PHYSICAL_ATTEMPT_START_AMBIGUOUS_SCHEMA,
+    RESERVE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+    SETTLE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+    AbortFactoryPhysicalAttemptReservationV1,
+    BeginFactoryPhysicalAttemptStartV1,
+    CommitFactoryPhysicalAttemptStartV1,
+    FactoryPhysicalAttemptControlPort,
+    FactoryPhysicalAttemptDefiniteStartNotPersistedProofV1,
+    FactoryPhysicalAttemptLeaseV1,
+    FactoryPhysicalAttemptReservationV1,
+    FactoryPhysicalAttemptStartPermitV1,
+    FailFactoryPhysicalAttemptTerminalV1,
+    MarkFactoryPhysicalAttemptStartAmbiguousV1,
+    ProviderAttemptStartReceiptV1,
+    ProviderAttemptTerminalReceiptV1,
+    ReserveFactoryPhysicalAttemptV1,
+    SettleFactoryPhysicalAttemptV1,
+)
 from polaris.kernelone.events.final_request_evidence import (
     ContextSnapshotAuditPinV1,
     canonical_final_request_hash,
     redact_provider_transport,
 )
 from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
-from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1
+from polaris.kernelone.llm.engine.contracts import (
+    FrozenFinalProviderAttemptV1,
+    ProviderAttemptInFlightDrainPort,
+)
 
 from .final_provider_attempt_inflight import ProviderAttemptInFlightCoordinator
 from .final_provider_attempt_lifecycle import StrictProviderAttemptLifecycleStore
@@ -44,6 +70,9 @@ class DurableFinalProviderAttemptSnapshotStore:
             "role": attempt.role,
             "provider": attempt.provider,
             "model": attempt.model,
+            "execution_authority_hash": attempt.execution_authority_hash,
+            "attempt_budget": attempt.attempt_budget,
+            "authority_attempt_ordinal": attempt.authority_attempt_ordinal,
             "semantic_request_hash": attempt.semantic_request_hash,
             "physical_wire_hash": attempt.physical_wire_hash,
             "composite_request_hash": attempt.composite_request_hash,
@@ -81,7 +110,10 @@ class FinalProviderAttemptGate:
         semantic_request: Mapping[str, Any],
         lifecycle: StrictProviderAttemptLifecycleStore,
         snapshot_store: Any,
-        drain_coordinator: ProviderAttemptInFlightCoordinator,
+        drain_coordinator: ProviderAttemptInFlightCoordinator | None = None,
+        physical_attempt_control_port: FactoryPhysicalAttemptControlPort | None = None,
+        execution_authority_hash: str = "",
+        attempt_budget: int = 0,
     ) -> None:
         del workspace
         self._verification_scope = verification_scope
@@ -97,7 +129,33 @@ class FinalProviderAttemptGate:
         self._semantic_request = self._json_copy(semantic_request)
         self._lifecycle = lifecycle
         self._snapshot_store = snapshot_store
-        self._drain_coordinator = drain_coordinator
+        self._physical_attempt_control_port = physical_attempt_control_port
+        self._execution_authority_hash = str(execution_authority_hash)
+        self._attempt_budget = attempt_budget
+        if self._verification_scope == "factory":
+            if not isinstance(self._physical_attempt_control_port, FactoryPhysicalAttemptControlPort):
+                raise RuntimeError("factory_physical_attempt_control_port_required")
+            if not isinstance(self._physical_attempt_control_port, ProviderAttemptInFlightDrainPort):
+                raise RuntimeError("factory_physical_attempt_coordinator_scope_mismatch")
+            if drain_coordinator is not None:
+                raise RuntimeError("factory_physical_attempt_coordinator_scope_mismatch")
+            self._drain_coordinator: ProviderAttemptInFlightDrainPort = self._physical_attempt_control_port
+            if len(self._execution_authority_hash) != 64 or any(
+                character not in "0123456789abcdef" for character in self._execution_authority_hash
+            ):
+                raise RuntimeError("factory_physical_attempt_execution_authority_hash_mismatch")
+            if type(self._attempt_budget) is not int or self._attempt_budget <= 0:
+                raise RuntimeError("factory_physical_attempt_budget_mismatch")
+        else:
+            if (
+                self._physical_attempt_control_port is not None
+                or self._execution_authority_hash
+                or self._attempt_budget != 0
+            ):
+                raise RuntimeError("role_session_factory_physical_attempt_authority_forbidden")
+            if type(drain_coordinator) is not ProviderAttemptInFlightCoordinator:
+                raise RuntimeError("provider attempt drain coordinator scope mismatch")
+            self._drain_coordinator = drain_coordinator
         if (
             self._drain_coordinator.verification_scope != self._verification_scope
             or self._drain_coordinator.scope_id != self._scope_id
@@ -121,7 +179,9 @@ class FinalProviderAttemptGate:
         semantic_request: Mapping[str, Any],
         lifecycle: StrictProviderAttemptLifecycleStore | None = None,
         snapshot_store: Any | None = None,
-        drain_coordinator: ProviderAttemptInFlightCoordinator,
+        physical_attempt_control_port: FactoryPhysicalAttemptControlPort,
+        execution_authority_hash: str,
+        attempt_budget: int,
     ) -> FinalProviderAttemptGate:
         return cls(
             workspace=workspace,
@@ -142,7 +202,10 @@ class FinalProviderAttemptGate:
                 factory_run_id=factory_run_id,
             ),
             snapshot_store=snapshot_store or DurableFinalProviderAttemptSnapshotStore(workspace),
-            drain_coordinator=drain_coordinator,
+            drain_coordinator=None,
+            physical_attempt_control_port=physical_attempt_control_port,
+            execution_authority_hash=execution_authority_hash,
+            attempt_budget=attempt_budget,
         )
 
     @classmethod
@@ -185,10 +248,13 @@ class FinalProviderAttemptGate:
             ),
             snapshot_store=snapshot_store,
             drain_coordinator=drain_coordinator,
+            physical_attempt_control_port=None,
+            execution_authority_hash="",
+            attempt_budget=0,
         )
 
     @property
-    def drain_coordinator(self) -> ProviderAttemptInFlightCoordinator:
+    def drain_coordinator(self) -> ProviderAttemptInFlightDrainPort:
         return self._drain_coordinator
 
     def dispatch_sync(
@@ -197,7 +263,7 @@ class FinalProviderAttemptGate:
         wire_request: Mapping[str, Any],
         send: Callable[[Mapping[str, Any]], _ResultT],
     ) -> _ResultT:
-        attempt, pin = self._start_attempt(wire_request)
+        attempt, pin, lease = self._start_attempt(wire_request)
         status = "failed"
         error = ""
         try:
@@ -209,7 +275,7 @@ class FinalProviderAttemptGate:
             error = f"{type(exc).__name__}: {exc}"
             raise
         finally:
-            self._append_terminal_sync(attempt, pin, status=status, error=error)
+            self._append_terminal_sync(attempt, pin, lease, status=status, error=error)
 
     async def dispatch_async(
         self,
@@ -219,13 +285,14 @@ class FinalProviderAttemptGate:
     ) -> _ResultT:
         """Dispatch a native async transport after durable start registration."""
 
-        attempt, pin = self._start_attempt(wire_request)
+        attempt, pin, lease = self._start_attempt(wire_request)
         try:
             result = await send(attempt.dispatch_view)
         except asyncio.CancelledError as cancellation:
             await self._append_terminal_async(
                 attempt,
                 pin,
+                lease,
                 status="cancelled",
                 error=f"CancelledError: {cancellation}",
             )
@@ -234,6 +301,7 @@ class FinalProviderAttemptGate:
             terminal_cancelled = await self._append_terminal_async(
                 attempt,
                 pin,
+                lease,
                 status="failed",
                 error=f"{type(exc).__name__}: {exc}",
             )
@@ -243,6 +311,7 @@ class FinalProviderAttemptGate:
         terminal_cancelled = await self._append_terminal_async(
             attempt,
             pin,
+            lease,
             status="completed",
             error="",
         )
@@ -266,7 +335,7 @@ class FinalProviderAttemptGate:
         """
 
         async def _dispatch() -> AsyncIterator[_ResultT]:
-            attempt, pin = self._start_attempt(wire_request)
+            attempt, pin, lease = self._start_attempt(wire_request)
             stream_context: AsyncContextManager[_StreamResponseT] | None = None
             response: _StreamResponseT | None = None
             response_entered = False
@@ -331,6 +400,7 @@ class FinalProviderAttemptGate:
             terminal_cancelled = await self._append_terminal_async(
                 attempt,
                 pin,
+                lease,
                 status=status,
                 error=error,
             )
@@ -356,7 +426,7 @@ class FinalProviderAttemptGate:
         Concrete transport cleanup remains the transport callback's responsibility.
         """
 
-        attempt, pin = self._start_attempt(wire_request)
+        attempt, pin, lease = self._start_attempt(wire_request)
 
         def _worker_owned_dispatch() -> _ResultT:
             try:
@@ -370,11 +440,12 @@ class FinalProviderAttemptGate:
                 self._append_terminal_sync(
                     attempt,
                     pin,
+                    lease,
                     status=worker_status,
                     error=f"{type(worker_error).__name__}: {worker_error}",
                 )
                 raise
-            self._append_terminal_sync(attempt, pin, status="completed", error="")
+            self._append_terminal_sync(attempt, pin, lease, status="completed", error="")
             return worker_result
 
         worker = asyncio.create_task(asyncio.to_thread(_worker_owned_dispatch))
@@ -388,37 +459,109 @@ class FinalProviderAttemptGate:
             raise cancellation
         return result
 
-    def _start_attempt(self, wire_request: Mapping[str, Any]) -> tuple[FrozenFinalProviderAttemptV1, Any]:
-        attempt = self._freeze(wire_request)
-        pin = self._snapshot_store.persist_and_pin(attempt)
-        self._lifecycle.append_start(
-            attempt,
-            context_snapshot_ref=pin.context_snapshot_ref,
-            pin_hash=pin.pin_hash,
-        )
-        self._drain_coordinator.register(attempt)
-        return attempt, pin
+    def _start_attempt(
+        self,
+        wire_request: Mapping[str, Any],
+    ) -> tuple[FrozenFinalProviderAttemptV1, Any, FactoryPhysicalAttemptLeaseV1 | None]:
+        attempt, reservation = self._freeze(wire_request)
+        try:
+            pin = self._snapshot_store.persist_and_pin(attempt)
+        except BaseException:
+            if reservation is not None:
+                self._abort_plain_reservation(reservation)
+            raise
+        if reservation is None:
+            self._lifecycle.append_start(
+                attempt,
+                context_snapshot_ref=pin.context_snapshot_ref,
+                pin_hash=pin.pin_hash,
+            )
+            self._require_session_drain_coordinator().register(attempt)
+            return attempt, pin, None
+
+        control = self._require_factory_control_port()
+        try:
+            start_permit = control.begin_start(self._begin_start_command(reservation))
+        except BaseException:
+            self._abort_plain_reservation(reservation)
+            raise
+        try:
+            start_receipt = self._lifecycle.append_start(
+                attempt,
+                start_permit=start_permit,
+                context_snapshot_ref=pin.context_snapshot_ref,
+                pin_hash=pin.pin_hash,
+            )
+        except BaseException as start_error:
+            self._resolve_failed_start_persistence(reservation, start_permit, start_error)
+            raise
+        try:
+            if type(start_receipt) is not ProviderAttemptStartReceiptV1:
+                raise RuntimeError("provider_attempt_start_receipt_exact_type_required")
+            lease = control.commit_started(self._commit_start_command(start_permit, start_receipt))
+        except BaseException:
+            self._mark_start_ambiguous(start_permit)
+            raise
+        return attempt, pin, lease
 
     def _append_terminal_sync(
-        self, attempt: FrozenFinalProviderAttemptV1, pin: Any, *, status: str, error: str
+        self,
+        attempt: FrozenFinalProviderAttemptV1,
+        pin: Any,
+        lease: FactoryPhysicalAttemptLeaseV1 | None,
+        *,
+        status: str,
+        error: str,
     ) -> None:
         try:
-            self._lifecycle.append_terminal(
+            terminal_receipt = self._lifecycle.append_terminal(
                 attempt,
+                lease=lease,
                 context_snapshot_ref=pin.context_snapshot_ref,
                 pin_hash=pin.pin_hash,
                 status=status,
                 error=error,
             )
+            if self._verification_scope == "factory":
+                if type(lease) is not FactoryPhysicalAttemptLeaseV1:
+                    raise RuntimeError("factory_physical_attempt_lease_exact_type_required")
+                if type(terminal_receipt) is not ProviderAttemptTerminalReceiptV1:
+                    raise RuntimeError("provider_attempt_terminal_receipt_exact_type_required")
+                self._require_factory_control_port().settle(
+                    SettleFactoryPhysicalAttemptV1(
+                        schema_version=SETTLE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+                        lease=lease,
+                        terminal_receipt=terminal_receipt,
+                    )
+                )
         except BaseException as terminal_error:
-            self._drain_coordinator.terminal_failed(attempt.provider_request_id, terminal_error)
+            if type(lease) is FactoryPhysicalAttemptLeaseV1:
+                try:
+                    self._require_factory_control_port().terminal_persistence_failed(
+                        FailFactoryPhysicalAttemptTerminalV1(
+                            schema_version=FAIL_FACTORY_PHYSICAL_ATTEMPT_TERMINAL_SCHEMA,
+                            lease=lease,
+                            failure_code="terminal_persistence_failed",
+                            error_type=type(terminal_error).__name__,
+                            error=(str(terminal_error).strip() or type(terminal_error).__name__)[:500],
+                        )
+                    )
+                except Exception as control_error:  # noqa: BLE001 - preserve primary terminal failure evidence
+                    terminal_error.add_note(f"physical attempt terminal failure projection failed: {control_error}")
+            if self._verification_scope == "role_session":
+                self._require_session_drain_coordinator().terminal_failed(
+                    attempt.provider_request_id,
+                    terminal_error,
+                )
             raise
-        self._drain_coordinator.terminal_acked(attempt.provider_request_id)
+        if self._verification_scope == "role_session":
+            self._require_session_drain_coordinator().terminal_acked(attempt.provider_request_id)
 
     async def _append_terminal_async(
         self,
         attempt: FrozenFinalProviderAttemptV1,
         pin: Any,
+        lease: FactoryPhysicalAttemptLeaseV1 | None,
         *,
         status: str,
         error: str,
@@ -428,11 +571,127 @@ class FinalProviderAttemptGate:
                 self._append_terminal_sync,
                 attempt,
                 pin,
+                lease,
                 status=status,
                 error=error,
             )
         )
         return await self._await_task_resisting_cancellation(terminal)
+
+    def _require_factory_control_port(self) -> FactoryPhysicalAttemptControlPort:
+        port = self._physical_attempt_control_port
+        if not isinstance(port, FactoryPhysicalAttemptControlPort):
+            raise RuntimeError("factory_physical_attempt_control_port_required")
+        return port
+
+    def _require_session_drain_coordinator(self) -> ProviderAttemptInFlightCoordinator:
+        coordinator = self._drain_coordinator
+        if type(coordinator) is not ProviderAttemptInFlightCoordinator:
+            raise RuntimeError("provider attempt drain coordinator scope mismatch")
+        return coordinator
+
+    def _abort_plain_reservation(self, reservation: FactoryPhysicalAttemptReservationV1) -> None:
+        self._require_factory_control_port().abort_reservation(
+            AbortFactoryPhysicalAttemptReservationV1(
+                schema_version=ABORT_FACTORY_PHYSICAL_ATTEMPT_RESERVATION_SCHEMA,
+                reservation=reservation,
+                start_permit=None,
+                definite_start_not_persisted_proof=None,
+            )
+        )
+
+    def _mark_start_ambiguous(self, start_permit: FactoryPhysicalAttemptStartPermitV1) -> None:
+        self._require_factory_control_port().mark_start_ambiguous(
+            MarkFactoryPhysicalAttemptStartAmbiguousV1(
+                schema_version=MARK_FACTORY_PHYSICAL_ATTEMPT_START_AMBIGUOUS_SCHEMA,
+                start_permit=start_permit,
+                reason_code="start_persistence_or_commit_ambiguous",
+            )
+        )
+
+    def _resolve_failed_start_persistence(
+        self,
+        reservation: FactoryPhysicalAttemptReservationV1,
+        start_permit: FactoryPhysicalAttemptStartPermitV1,
+        start_error: BaseException,
+    ) -> None:
+        try:
+            absence_proof = self._lifecycle.prove_start_not_persisted(start_permit)
+        except BaseException as proof_error:  # noqa: BLE001 - uncertainty must remain fail-closed
+            self._mark_start_ambiguous(start_permit)
+            start_error.add_note(
+                "strict start absence proof failed; reservation marked ambiguous: "
+                f"{type(proof_error).__name__}: {proof_error}"
+            )
+            return
+        if absence_proof is None:
+            self._mark_start_ambiguous(start_permit)
+            return
+        if type(absence_proof) is not FactoryPhysicalAttemptDefiniteStartNotPersistedProofV1:
+            self._mark_start_ambiguous(start_permit)
+            start_error.add_note("strict start absence proof returned a non-exact proof")
+            return
+        self._require_factory_control_port().abort_reservation(
+            AbortFactoryPhysicalAttemptReservationV1(
+                schema_version=ABORT_FACTORY_PHYSICAL_ATTEMPT_RESERVATION_SCHEMA,
+                reservation=reservation,
+                start_permit=start_permit,
+                definite_start_not_persisted_proof=absence_proof,
+            )
+        )
+
+    @staticmethod
+    def _begin_start_command(
+        reservation: FactoryPhysicalAttemptReservationV1,
+    ) -> BeginFactoryPhysicalAttemptStartV1:
+        return BeginFactoryPhysicalAttemptStartV1(
+            schema_version=BEGIN_FACTORY_PHYSICAL_ATTEMPT_START_SCHEMA,
+            verification_scope=reservation.verification_scope,
+            factory_run_id=reservation.factory_run_id,
+            run_id=reservation.run_id,
+            role=reservation.role,
+            turn_id=reservation.turn_id,
+            call_id=reservation.call_id,
+            request_freeze_id=reservation.request_freeze_id,
+            execution_authority_hash=reservation.execution_authority_hash,
+            attempt_budget=reservation.attempt_budget,
+            provider=reservation.provider,
+            model=reservation.model,
+            semantic_request_hash=reservation.semantic_request_hash,
+            physical_wire_hash=reservation.physical_wire_hash,
+            composite_request_hash=reservation.composite_request_hash,
+            reservation_id=reservation.reservation_id,
+            provider_request_id=reservation.provider_request_id,
+            authority_attempt_ordinal=reservation.authority_attempt_ordinal,
+        )
+
+    @staticmethod
+    def _commit_start_command(
+        start_permit: FactoryPhysicalAttemptStartPermitV1,
+        start_receipt: ProviderAttemptStartReceiptV1,
+    ) -> CommitFactoryPhysicalAttemptStartV1:
+        return CommitFactoryPhysicalAttemptStartV1(
+            schema_version=COMMIT_FACTORY_PHYSICAL_ATTEMPT_START_SCHEMA,
+            verification_scope=start_permit.verification_scope,
+            factory_run_id=start_permit.factory_run_id,
+            run_id=start_permit.run_id,
+            role=start_permit.role,
+            turn_id=start_permit.turn_id,
+            call_id=start_permit.call_id,
+            request_freeze_id=start_permit.request_freeze_id,
+            execution_authority_hash=start_permit.execution_authority_hash,
+            attempt_budget=start_permit.attempt_budget,
+            provider=start_permit.provider,
+            model=start_permit.model,
+            semantic_request_hash=start_permit.semantic_request_hash,
+            physical_wire_hash=start_permit.physical_wire_hash,
+            composite_request_hash=start_permit.composite_request_hash,
+            reservation_id=start_permit.reservation_id,
+            provider_request_id=start_permit.provider_request_id,
+            authority_attempt_ordinal=start_permit.authority_attempt_ordinal,
+            start_permit_id=start_permit.start_permit_id,
+            start_receipt=start_receipt,
+        )
 
     @staticmethod
     async def _await_task_resisting_cancellation(task: asyncio.Task[Any]) -> bool:
@@ -460,27 +719,66 @@ class FinalProviderAttemptGate:
             raise RuntimeError("role-session provider gate requires explicit scope_id")
         return explicit
 
-    def _freeze(self, wire_request: Mapping[str, Any]) -> FrozenFinalProviderAttemptV1:
+    def _freeze(
+        self,
+        wire_request: Mapping[str, Any],
+    ) -> tuple[FrozenFinalProviderAttemptV1, FactoryPhysicalAttemptReservationV1 | None]:
         wire = copy.deepcopy(dict(wire_request))
         self._validate_wire_equivalence(wire)
-        attempt_number, provider_request_id = self._drain_coordinator.mint_attempt_identity()
         durable_wire = redact_provider_transport(wire)
         semantic_hash = canonical_final_request_hash(self._semantic_request)
         wire_hash = canonical_final_request_hash(durable_wire)
-        composite_hash = canonical_final_request_hash(
-            {
-                "semantic_request_hash": semantic_hash,
-                "physical_wire_hash": wire_hash,
-                "provider_request_id": provider_request_id,
-                "request_freeze_id": self._request_freeze_id,
-            }
-        )
+        reservation: FactoryPhysicalAttemptReservationV1 | None = None
+        if self._verification_scope == "factory":
+            reservation = self._require_factory_control_port().reserve(
+                ReserveFactoryPhysicalAttemptV1(
+                    schema_version=RESERVE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+                    verification_scope="factory",
+                    factory_run_id=self._factory_run_id,
+                    run_id=self._run_id,
+                    role=self._role,
+                    turn_id=self._turn_id,
+                    call_id=self._call_id,
+                    request_freeze_id=self._request_freeze_id,
+                    execution_authority_hash=self._execution_authority_hash,
+                    attempt_budget=self._attempt_budget,
+                    provider=self._provider,
+                    model=self._model,
+                    semantic_request_hash=semantic_hash,
+                    physical_wire_hash=wire_hash,
+                )
+            )
+            attempt_number = reservation.authority_attempt_ordinal
+            provider_request_id = reservation.provider_request_id
+            composite_hash = reservation.composite_request_hash
+            execution_authority_hash = reservation.execution_authority_hash
+            attempt_budget = reservation.attempt_budget
+            authority_attempt_ordinal = reservation.authority_attempt_ordinal
+        else:
+            attempt_number, provider_request_id = self._require_session_drain_coordinator().mint_attempt_identity()
+            composite_hash = canonical_final_request_hash(
+                {
+                    "semantic_request_hash": semantic_hash,
+                    "physical_wire_hash": wire_hash,
+                    "provider_request_id": provider_request_id,
+                    "request_freeze_id": self._request_freeze_id,
+                }
+            )
+            execution_authority_hash = ""
+            attempt_budget = 0
+            authority_attempt_ordinal = 0
         durable_view = {
             "schema_version": "llm.frozen_final_provider_attempt.v1",
             "canonical_semantic_request": self._semantic_request,
             "physical_wire": durable_wire,
         }
-        return FrozenFinalProviderAttemptV1(
+        if reservation is not None:
+            durable_view["physical_attempt_authority"] = {
+                "execution_authority_hash": execution_authority_hash,
+                "attempt_budget": attempt_budget,
+                "authority_attempt_ordinal": authority_attempt_ordinal,
+            }
+        attempt = FrozenFinalProviderAttemptV1(
             provider_request_id=provider_request_id,
             request_freeze_id=self._request_freeze_id,
             factory_run_id=self._factory_run_id,
@@ -493,12 +791,16 @@ class FinalProviderAttemptGate:
             model=self._model,
             attempt_number=attempt_number,
             verification_scope=self._verification_scope,
+            execution_authority_hash=execution_authority_hash,
+            attempt_budget=attempt_budget,
+            authority_attempt_ordinal=authority_attempt_ordinal,
             semantic_request_hash=semantic_hash,
             physical_wire_hash=wire_hash,
             composite_request_hash=composite_hash,
             dispatch_view=wire,
             durable_view=durable_view,
         )
+        return attempt, reservation
 
     def _validate_role_identity(self) -> None:
         messages = self._semantic_request.get("messages")

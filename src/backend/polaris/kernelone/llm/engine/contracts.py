@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, AsyncContextManager, Protocol, TypeAlias, TypeVar
+from typing import Any, AsyncContextManager, Protocol, TypeAlias, TypeVar, runtime_checkable
 
 # ErrorCategory is used via AIResponse.error_category annotations.
 from polaris.kernelone.errors import ErrorCategory
@@ -70,6 +70,9 @@ class FrozenFinalProviderAttemptV1:
     model: str
     attempt_number: int
     verification_scope: str
+    execution_authority_hash: str
+    attempt_budget: int
+    authority_attempt_ordinal: int
     semantic_request_hash: str
     physical_wire_hash: str
     composite_request_hash: str
@@ -95,8 +98,20 @@ class FrozenFinalProviderAttemptV1:
         if self.verification_scope == "factory":
             if not self.factory_run_id or self.factory_run_id != self.scope_id:
                 raise ValueError("Factory attempt requires factory_run_id equal to scope_id")
+            if not _EXACT_HASH_64_RE.fullmatch(self.execution_authority_hash):
+                raise ValueError("execution_authority_hash must be exactly 64 lowercase hex")
+            if type(self.attempt_budget) is not int or self.attempt_budget <= 0:
+                raise ValueError("attempt_budget must be an int >= 1")
+            if (
+                type(self.authority_attempt_ordinal) is not int
+                or self.authority_attempt_ordinal < 1
+                or self.authority_attempt_ordinal != self.attempt_number
+            ):
+                raise ValueError("authority_attempt_ordinal must equal Factory attempt_number")
         elif self.factory_run_id:
             raise ValueError("role-session attempt cannot claim factory_run_id")
+        elif self.execution_authority_hash or self.attempt_budget != 0 or self.authority_attempt_ordinal != 0:
+            raise ValueError("role-session attempt cannot claim Factory physical authority")
         if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int) or self.attempt_number < 1:
             raise ValueError("attempt_number must be an int >= 1")
         for hash_field in ("semantic_request_hash", "physical_wire_hash", "composite_request_hash"):
@@ -224,6 +239,16 @@ class ProviderAttemptDrainResultV1:
             raise ValueError("drain settled flag contradicts in-flight diagnostics")
 
 
+class ProviderAttemptDrainError(RuntimeError):
+    """A scoped drain failed closed with typed in-flight diagnostics."""
+
+    def __init__(self, message: str, *, code: str, result: ProviderAttemptDrainResultV1) -> None:
+        super().__init__(message)
+        self.code = code
+        self.result = result
+
+
+@runtime_checkable
 class ProviderAttemptInFlightDrainPort(Protocol):
     """Explicit run/session-scoped drain contract for provider attempts."""
 
@@ -232,6 +257,11 @@ class ProviderAttemptInFlightDrainPort(Protocol):
 
     @property
     def scope_id(self) -> str: ...
+
+    @property
+    def inflight_request_ids(self) -> tuple[str, ...]: ...
+
+    def snapshot(self) -> ProviderAttemptDrainResultV1: ...
 
     async def wait_settled(
         self,

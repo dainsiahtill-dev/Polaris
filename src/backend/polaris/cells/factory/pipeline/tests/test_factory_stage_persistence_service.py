@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
+    FactoryPhysicalAttemptControlError,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRun,
@@ -638,6 +641,31 @@ async def test_automatic_router_mutation_matrix_executes_real_service_owned_writ
             operation="unreviewed_mutation",
             mutation=lambda _current: None,
         )
+
+
+@pytest.mark.asyncio
+async def test_restarted_router_projection_cannot_bypass_physical_replay(tmp_path: Path) -> None:
+    owner, run = await _running_service(tmp_path)
+    before = await owner.get_run(run.id)
+    before_events = await owner.store.get_authoritative_events(run.id)
+    assert before is not None
+
+    restarted = FactoryRunService(tmp_path, executor=_SuccessExecutor())
+    with pytest.raises(
+        FactoryPhysicalAttemptControlError,
+        match="factory_physical_attempt_replay_required",
+    ):
+        await restarted.apply_automatic_router_mutation(
+            run.id,
+            operation="summary_projection",
+            mutation=lambda current: current.metadata.__setitem__("bypassed", True),
+        )
+
+    after = await restarted.get_run(run.id)
+    after_events = await restarted.store.get_authoritative_events(run.id)
+    assert after is not None
+    assert after.to_dict() == before.to_dict()
+    assert after_events == before_events
 
 
 @pytest.mark.asyncio

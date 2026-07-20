@@ -19,7 +19,10 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+from polaris.cells.roles.kernel.internal.llm_caller.invoker import (
+    LLMInvoker,
+    _invoke_executor_with_factory_dispatch,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     PreparedLLMRequest,
@@ -410,6 +413,42 @@ async def test_cache_put_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(rec.end) == 1
     assert rec.end[0]["metadata"]["cached"] is False
     assert rec.end[0]["metadata"]["source"] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_sync_primary_dispatch_seam_passes_exact_port_identity_without_public_call() -> None:
+    """Private seam propagation only; the public Factory call remains zero-transport."""
+
+    request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="build",
+    )
+    frozen = object()
+    validated: list[object] = []
+    exact_port = SimpleNamespace(validate_frozen_identity=validated.append)
+    prepared = SimpleNamespace(
+        ai_request=request,
+        factory_semantic_request=frozen,
+        factory_dispatch_port=exact_port,
+        __post_init__=lambda: None,
+    )
+    seen: list[tuple[AIRequest, object]] = []
+
+    class _DispatchAwareExecutor:
+        async def invoke(self, active_request: AIRequest, *, physical_dispatch_port: object) -> AIResponse:
+            seen.append((active_request, physical_dispatch_port))
+            return AIResponse(ok=True, output="ok")
+
+    response = await _invoke_executor_with_factory_dispatch(
+        executor=_DispatchAwareExecutor(),
+        prepared=cast(PreparedLLMRequest, prepared),
+        request=request,
+    )
+
+    assert response.error is None
+    assert seen == [(request, exact_port)]
+    assert validated == [frozen]
 
 
 @pytest.mark.asyncio

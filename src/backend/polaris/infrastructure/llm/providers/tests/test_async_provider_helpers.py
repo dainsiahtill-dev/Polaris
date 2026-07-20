@@ -23,14 +23,18 @@ from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
 )
+from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
+    FactoryPhysicalAttemptLiveControlPort,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate import (
     FinalProviderAttemptGate,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_inflight import (
-    ProviderAttemptInFlightCoordinator,
-)
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle import (
     StrictProviderAttemptLifecycleStore,
+)
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+    FactoryPhysicalAttemptGrantViewV1,
 )
 from polaris.infrastructure.llm.providers import async_provider_helpers
 from polaris.infrastructure.llm.providers.async_http_client import (
@@ -237,6 +241,21 @@ def _governed_async_port(
         workspace=str(workspace),
         factory_run_id="factory-run-async-1",
     )
+    physical_attempt_control_port = FactoryPhysicalAttemptLiveControlPort(factory_run_id="factory-run-async-1")
+    physical_attempt_control_port.register_grant(
+        FactoryPhysicalAttemptGrantViewV1(
+            schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+            verification_scope="factory",
+            factory_run_id="factory-run-async-1",
+            role="director",
+            stage="director_dispatch",
+            workspace_fencing_token=1,
+            stage_claim_attempt=1,
+            stage_claim_nonce="stage-nonce-async-1",
+            execution_authority_hash="f" * 64,
+            attempt_budget=32,
+        )
+    )
     port = FinalProviderAttemptGate.for_factory_run(
         workspace=str(workspace),
         factory_run_id="factory-run-async-1",
@@ -255,7 +274,9 @@ def _governed_async_port(
             "semantic_options": {"temperature": 0.1},
         },
         lifecycle=lifecycle,
-        drain_coordinator=ProviderAttemptInFlightCoordinator.for_factory_run("factory-run-async-1"),
+        physical_attempt_control_port=physical_attempt_control_port,
+        execution_authority_hash="f" * 64,
+        attempt_budget=32,
     )
     return port, lifecycle
 

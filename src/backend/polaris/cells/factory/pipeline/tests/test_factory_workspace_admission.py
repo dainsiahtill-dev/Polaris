@@ -21,6 +21,12 @@ from polaris.cells.events.fact_stream.public import (
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
 )
+from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
+    FactoryPhysicalAttemptControlError,
+)
+from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
+    FactoryRoleEvidenceAuthorityPort,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_admission import (
     FactoryWorkspaceRunAdmission,
 )
@@ -911,7 +917,7 @@ async def test_start_run_rolls_back_lease_when_run_persistence_fails(
 
 
 @pytest.mark.asyncio
-async def test_two_services_cannot_execute_same_run_stage_concurrently(tmp_path: Path) -> None:
+async def test_second_service_cannot_bypass_replay_to_execute_live_stage(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     cache_root = tmp_path / "runtime"
     workspace.mkdir()
@@ -930,14 +936,13 @@ async def test_two_services_cannot_execute_same_run_stage_concurrently(tmp_path:
     )
     await asyncio.wait_for(executor.entered.wait(), timeout=5)
 
-    with pytest.raises(FactoryWorkspaceRunLeaseConflictError) as conflict:
+    with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_replay_required"):
         await contender.execute_stage(
             run.id,
             "director_dispatch",
             {"heartbeat_interval_seconds": 0},
         )
 
-    assert conflict.value.code == "factory_stage_execution_conflict"
     assert executor.entered_count == 1
     executor.release.set()
     result = await asyncio.wait_for(first_execution, timeout=5)
@@ -1089,15 +1094,13 @@ async def test_inflight_stage_claim_survives_wrapper_return_until_child_settles(
     assert released_lease is not None
     assert released_lease.stage_execution_claim is None
 
-    await service.retry_run_from_stage(run.id, target_stage="director_dispatch")
+    with pytest.raises(
+        FactoryPhysicalAttemptControlError,
+        match="factory_physical_attempt_recovered_run_permanently_closed",
+    ):
+        await service.retry_run_from_stage(run.id, target_stage="director_dispatch")
     assert service._admission.current().stage_execution_claim is None
-    second = await service.execute_stage(
-        run.id,
-        "director_dispatch",
-        {"heartbeat_interval_seconds": 0},
-    )
-    assert second.status == "success"
-    assert executor.entered_count == 2
+    assert executor.entered_count == 1
 
 
 @pytest.mark.asyncio
@@ -1336,6 +1339,106 @@ async def test_explicit_stale_owner_recovery_fences_old_session_before_takeover(
 
 
 @pytest.mark.asyncio
+async def test_restarted_service_replays_physical_attempts_before_stale_owner_release(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    state_root = cache_root / "factory"
+    workspace.mkdir()
+    clock = _MutableClock()
+    admission = FactoryWorkspaceRunAdmission(
+        workspace,
+        state_root=state_root,
+        lease_ttl_seconds=10,
+        clock=clock,
+    )
+    creator = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+        admission=admission,
+    )
+    run = await creator.create_run(FactoryConfig(name="stale-owner-restart"))
+    run = await creator.start_run(run.id)
+    clock.advance(11)
+
+    restarted = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+        admission=admission,
+    )
+    released = await restarted.recover_stale_workspace_owner(
+        run.id,
+        expected_fencing_token=run.metadata["factory_workspace_run_lease"]["fencing_token"],
+        reason="owner process disappeared",
+    )
+
+    assert released.state.value == "released"
+    assert released.lifecycle_operation_claim is None
+    assert released.release_evidence is not None
+    physical_drain = released.release_evidence.details["physical_attempt_drain"]
+    assert physical_drain["settled"] is True
+    recovered_port = restarted._physical_attempt_coordinator(run.id)
+    assert recovered_port.admission_closed is True
+    assert recovered_port.drain_snapshot().settled is True
+
+
+@pytest.mark.asyncio
+async def test_stale_owner_replay_failure_rolls_back_claim_without_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    state_root = cache_root / "factory"
+    workspace.mkdir()
+    clock = _MutableClock()
+    admission = FactoryWorkspaceRunAdmission(
+        workspace,
+        state_root=state_root,
+        lease_ttl_seconds=10,
+        clock=clock,
+    )
+    creator = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+        admission=admission,
+    )
+    run = await creator.create_run(FactoryConfig(name="stale-owner-replay-failure"))
+    run = await creator.start_run(run.id)
+    clock.advance(11)
+    stale = admission.current()
+    assert stale is not None
+
+    restarted = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+        admission=admission,
+    )
+
+    def fail_replay(*_args: Any, **_kwargs: Any) -> object:
+        raise RuntimeError("forced-replay-failure")
+
+    monkeypatch.setattr(restarted, "_capture_physical_attempt_replay_views", fail_replay)
+    with pytest.raises(RuntimeError, match="forced-replay-failure"):
+        await restarted.recover_stale_workspace_owner(
+            run.id,
+            expected_fencing_token=stale.fencing_token,
+            reason="owner process disappeared",
+        )
+
+    durable = admission.current()
+    assert durable is not None
+    assert durable.state.value == "active"
+    assert durable.expires_at == stale.expires_at
+    assert durable.lifecycle_operation_claim is None
+    assert run.id not in restarted._physical_attempt_coordinators
+
+@pytest.mark.asyncio
 async def test_retry_run_rejects_active_factory_child(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -1387,6 +1490,7 @@ async def test_pm_planning_passes_factory_run_authority(
             return CommandResult(run_id="pm-run", status="completed", message="completed", metadata={})
 
     executor = OrchestrationStageExecutor(workspace)
+    authority_port = object.__new__(FactoryRoleEvidenceAuthorityPort)
     run = FactoryRun(
         id="factory-authority",
         config=FactoryConfig(name="authority", stages=["pm_planning"]),
@@ -1395,6 +1499,15 @@ async def test_pm_planning_passes_factory_run_authority(
     )
     monkeypatch.setattr(stage_executor_module, "TaskRuntimeService", CapturingTaskRuntime)
     monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: CompletedPmService())
+
+    async def call_with_test_authority(
+        _authority_port: object,
+        _role: str,
+        operation: Any,
+    ) -> Any:
+        return await operation()
+
+    monkeypatch.setattr(executor, "_call_with_factory_role_evidence_authority", call_with_test_authority)
 
     async def completed_wait(*args: Any, **kwargs: Any) -> CommandResult:
         del args, kwargs
@@ -1409,7 +1522,13 @@ async def test_pm_planning_passes_factory_run_authority(
     monkeypatch.setattr(executor, "_artifact_exists", lambda _path, min_chars=1: False)
     monkeypatch.setattr(executor, "_write_stage_signal_artifact", lambda **_kwargs: "signals.json")
 
-    result = await executor._execute_pm_planning(run, {"directive": "Plan implementation tasks"})
+    result = await executor._execute_pm_planning(
+        run,
+        {
+            "directive": "Plan implementation tasks",
+            stage_executor_module.FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY: authority_port,
+        },
+    )
 
     assert result.status == "success"
     assert captured["factory_run_id"] == run.id

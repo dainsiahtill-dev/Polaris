@@ -47,6 +47,27 @@ class _CutoffPort:
         del ack
         raise AssertionError("contract-only fake must not be called")
 
+    def reserve(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def begin_start(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def commit_started(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def abort_reservation(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def mark_start_ambiguous(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def settle(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def terminal_persistence_failed(self, command: object) -> object:
+        raise AssertionError(command)
+
 
 class _SlotWrapper:
     __slots__ = ("payload",)
@@ -75,12 +96,14 @@ class _RaisingDataclassWrapper:
 
 
 def _authority_binding(**overrides: object) -> FactoryRoleEvidenceAuthorityBindingV1:
+    port = _CutoffPort()
     values: dict[str, object] = {
         "schema_version": FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
         "verification_scope": "factory",
         "factory_run_id": "factory-run-1",
         "role": "pm",
-        "cutoff_port": _CutoffPort(),
+        "cutoff_port": port,
+        "physical_attempt_control_port": port,
         "attempt_budget": 3,
         "execution_authority_hash": "a" * 64,
     }
@@ -184,6 +207,7 @@ def test_pre_cutoff_authority_binding_has_only_honest_runtime_fields() -> None:
         "factory_run_id",
         "role",
         "cutoff_port",
+        "physical_attempt_control_port",
         "attempt_budget",
         "execution_authority_hash",
     )
@@ -201,6 +225,7 @@ def test_runtime_authority_leak_predicate_recurses_slots_mappings_and_ports() ->
     assert contains_factory_role_evidence_runtime_authority(binding) is True
     assert contains_factory_role_evidence_runtime_authority({"nested": [(binding,)]}) is True
     assert contains_factory_role_evidence_runtime_authority({"nested": binding.cutoff_port}) is True
+    assert contains_factory_role_evidence_runtime_authority({"nested": binding.physical_attempt_control_port}) is True
     assert contains_factory_role_evidence_runtime_authority(_SlotWrapper(binding)) is True
     assert contains_factory_role_evidence_runtime_authority(_SlotWrapper(_SlotWrapper(binding.cutoff_port))) is True
     assert contains_factory_role_evidence_runtime_authority({"safe": ["opaque", 32, None]}) is False
@@ -268,6 +293,7 @@ def test_authority_binder_requires_exact_typed_value() -> None:
         factory_run_id=binding.factory_run_id,
         role=binding.role,
         cutoff_port=binding.cutoff_port,
+        physical_attempt_control_port=binding.physical_attempt_control_port,
         attempt_budget=binding.attempt_budget,
         execution_authority_hash=binding.execution_authority_hash,
     )

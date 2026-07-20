@@ -1883,6 +1883,7 @@ cells:
       - polaris.cells.roles.kernel.internal.kernel
       - polaris.cells.roles.kernel.internal.tool_gateway
       - polaris.cells.roles.kernel.internal.context_gateway
+      - polaris.cells.roles.kernel.internal.llm_caller.factory_dispatch_propagation
       - polaris.cells.roles.kernel.internal.constitution_rules
       - polaris.cells.roles.kernel.internal.constitution_adaptor
       - polaris.cells.roles.kernel.internal.transaction
@@ -1964,9 +1965,13 @@ cells:
         - polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py
         - polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py
         - polaris/cells/roles/kernel/tests/test_llm_caller_components.py
+        - polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py
+        - polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py
+        - polaris/kernelone/llm/engine/tests/test_executor.py
+        - polaris/kernelone/llm/engine/stream/tests/test_executor.py
       gaps:
         - Kernel public boundary still needs final routing cleanup for a few parser/helper exports.
-        - B3.3-B3.5 physical provider-attempt qualification, snapshot persistence, and all-role/retry audit remain guarded; B3.2 metadata does not authorize provider dispatch.
+        - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry full-request qualification remain guarded; B3.3 propagation metadata does not authorize provider dispatch.
     generated_artifacts:
       - generated/context.pack.json
 
@@ -2320,7 +2325,7 @@ cells:
         - polaris/cells/factory/pipeline/tests/test_factory_stage_persistence_service.py
       gaps:
         - Workflow execution runtime has been split to orchestration.workflow_runtime and still requires call-site convergence.
-        - Provider-visible Factory role evidence remains disabled until A009B3 B3.2-B3.5 injection, dispatch, physical-attempt, and snapshot qualification gates close.
+        - B3.2 semantic evidence injection and B3.3 zero-transport dispatch propagation are closed; physical Provider dispatch remains disabled until A009B3 B3.4-B3.5 per-attempt parity and snapshot qualification gates close.
 
   - id: factory.cognitive_runtime
     title: Cognitive Runtime

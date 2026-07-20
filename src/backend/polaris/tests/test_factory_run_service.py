@@ -5,8 +5,10 @@ import hashlib
 import json
 import tempfile
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -639,6 +641,206 @@ class TestFactoryRunService:
         assert recovered.recovery_point == "docs_generation"
 
     @pytest.mark.asyncio
+    async def test_fresh_service_replays_empty_physical_attempt_stream_as_closed(self, temp_workspace):
+        cache_root = temp_workspace / "runtime"
+        creator = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        run = await creator.create_run(FactoryConfig(name="restart-replay"))
+        assert creator._physical_attempt_coordinator(run.id).drain_snapshot().settled is True
+
+        restarted = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        role_evidence, lifecycle = restarted._capture_physical_attempt_replay_views(run.id)
+        assert role_evidence.captured_head.global_seq == 0
+        assert lifecycle.captured_head.global_seq == 0
+        with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_required"):
+            restarted._physical_attempt_coordinator(run.id)
+
+        recovered = await restarted.recover_run(run.id)
+        replayed = restarted._physical_attempt_coordinator(run.id)
+
+        assert recovered.status == FactoryRunStatus.RECOVERING
+        assert replayed.drain_snapshot().settled is True
+        assert replayed.close().settled is True
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_claim_rolls_back_when_restart_replay_fails(
+        self,
+        temp_workspace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cache_root = temp_workspace / "runtime"
+        creator = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        created = await creator.create_run(FactoryConfig(name="restart-replay-failure"))
+        restarted = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        persisted = await restarted.get_run(created.id)
+        assert persisted is not None
+
+        def fail_replay(**_kwargs: object) -> None:
+            raise RuntimeError("factory_physical_attempt_replay_head_drift")
+
+        monkeypatch.setattr(restarted, "_recover_physical_attempt_coordinator", fail_replay)
+        with pytest.raises(RuntimeError, match="head_drift"):
+            restarted._claim_lifecycle_operation(
+                persisted,
+                operation="recover_run",
+                nonce="forced-replay-failure",
+                acquire_if_available=True,
+            )
+
+        durable = restarted._admission.current()
+        assert durable is not None
+        assert durable.state.value == "released"
+        assert durable.lifecycle_operation_claim is None
+        assert created.id not in restarted._physical_attempt_coordinators
+
+    @pytest.mark.asyncio
+    async def test_restart_replay_discards_three_drifting_factory_heads(
+        self,
+        temp_workspace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cache_root = temp_workspace / "runtime"
+        creator = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        created = await creator.create_run(FactoryConfig(name="restart-replay-drift"))
+        restarted = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        persisted = await restarted.get_run(created.id)
+        assert persisted is not None
+        original_capture = restarted._capture_physical_attempt_replay_fence
+        capture_count = 0
+
+        def drifting_capture(*, factory_run_id: str, lease: Any):
+            nonlocal capture_count
+            capture_count += 1
+            captured = original_capture(factory_run_id=factory_run_id, lease=lease)
+            return replace(captured, current_stage=f"drift-{capture_count}")
+
+        monkeypatch.setattr(restarted, "_capture_physical_attempt_replay_fence", drifting_capture)
+        with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
+            restarted._claim_lifecycle_operation(
+                persisted,
+                operation="recover_run",
+                nonce="forced-head-drift",
+                acquire_if_available=True,
+            )
+
+        assert capture_count == 6
+        durable = restarted._admission.current()
+        assert durable is not None
+        assert durable.state.value == "released"
+        assert durable.lifecycle_operation_claim is None
+        assert created.id not in restarted._physical_attempt_coordinators
+
+    @pytest.mark.asyncio
+    async def test_restart_execute_stage_cannot_mutate_before_lifecycle_replay(self, temp_workspace) -> None:
+        cache_root = temp_workspace / "runtime"
+        creator = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        created = await creator.create_run(FactoryConfig(name="restart-stage-bypass"))
+        running = await creator.start_run(created.id)
+        before_run = running.to_dict()
+        before_lease = creator._admission.current()
+        assert before_lease is not None
+
+        restarted = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_required"):
+            await restarted.execute_stage(created.id, "pm_planning")
+
+        after_run = await restarted.get_run(created.id)
+        assert after_run is not None
+        assert after_run.to_dict() == before_run
+        assert restarted._admission.current() == before_lease
+        assert created.id not in restarted._physical_attempt_coordinators
+
+    @pytest.mark.asyncio
+    async def test_recovered_run_cannot_reopen_physical_attempt_admission(self, temp_workspace) -> None:
+        cache_root = temp_workspace / "runtime"
+        creator = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        created = await creator.create_run(FactoryConfig(name="restart-permanently-closed"))
+        restarted = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+        recovered = await restarted.recover_run(created.id)
+        before = recovered.to_dict()
+
+        with pytest.raises(RuntimeError, match="factory_physical_attempt_recovered_run_permanently_closed"):
+            await restarted.start_run(created.id)
+
+        after = await restarted.get_run(created.id)
+        assert after is not None
+        assert after.to_dict() == before
+        durable = restarted._admission.current()
+        assert durable is not None
+        assert durable.lifecycle_operation_claim is None
+
+    @pytest.mark.asyncio
+    async def test_terminal_release_waits_for_physical_attempt_drain(
+        self,
+        temp_workspace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        created = await service.create_run(FactoryConfig(name="physical-drain"))
+        await service.start_run(created.id)
+        coordinator = service._physical_attempt_coordinator(created.id)
+        monkeypatch.setattr(
+            coordinator,
+            "close",
+            lambda: SimpleNamespace(
+                factory_run_id=created.id,
+                settled=False,
+                blocking_reservation_ids=("reservation-open",),
+                terminal_failure_reservation_ids=(),
+                by_authority=(),
+            ),
+        )
+
+        completed = await service.complete_run(created.id)
+
+        lease = service._admission.current()
+        assert lease is not None
+        assert lease.state.value == "draining"
+        assert completed.metadata["factory_workspace_run_drain_conflict"]["code"] == (
+            "factory_physical_attempt_drain_open"
+        )
+        assert completed.metadata["factory_physical_attempt_drain"]["blocking_reservation_ids"] == ["reservation-open"]
+
+    @pytest.mark.asyncio
     async def test_retry_run_from_stage_recovers_failed_run(self, temp_workspace):
         service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
         config = FactoryConfig(name="test-run", stages=["pm_planning", "chief_engineer_review", "director_dispatch"])
@@ -1017,6 +1219,27 @@ class _TestFactoryRoleEvidenceAuthorityPort:
         del ack
         raise AssertionError("stage seam test must not resolve cutoff proof")
 
+    def reserve(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def begin_start(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def commit_started(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def abort_reservation(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def mark_start_ambiguous(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def settle(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def terminal_persistence_failed(self, command: object) -> object:
+        raise AssertionError(command)
+
     def require_grant_capacity(self, role: str, count: int) -> None:
         del role
         if len(self.bindings) + count > 512:
@@ -1029,6 +1252,7 @@ class _TestFactoryRoleEvidenceAuthorityPort:
             factory_run_id=self.factory_run_id,
             role=role,
             cutoff_port=self,
+            physical_attempt_control_port=self,
             attempt_budget=32,
             execution_authority_hash=hashlib.sha256(f"test-grant-{len(self.bindings)}-{role}".encode()).hexdigest(),
         )

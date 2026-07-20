@@ -4,6 +4,13 @@
 
 **必用MCP和Skill**: 充分利用codegraph MCP和superpowers，必要时需要使用Playwright来真实跑测试和审计。
 
+## -1) 强制工具链：RTK + CodeGraph + Caveman
+
+- **RTK**：每条 shell 命令及每个 chained segment 都必须以 `rtk` 开头。优先使用 RTK 原生命令；无对应命令时使用 `rtk proxy <command>`。裸 shell 命令只允许用于明确的 RTK 故障诊断。
+- **CodeGraph**：源码发现、架构/调用链/影响分析、代码审查及修改前上下文必须先调用 `mcp__codegraph__codegraph_explore`。返回源码视为已读，禁止再用 `rg`/reader 重复读取；只有 CodeGraph 未覆盖、未索引或明确不可用时，才允许使用 RTK fallback，并记录原因。
+- **Caveman**：默认启用 `caveman` 的 `full` 模式，压缩过程更新与结果，删除重复叙述和无关日志，但必须保留精确技术名、错误文本、命令、验证数字、风险与未完成门禁。安全警告、不可逆操作和可能产生歧义的多步流程恢复完整表达。
+- 三者必须共同使用，不能用其中一个替代另两个。标准顺序：加载适用 Skill -> CodeGraph 定位/审计 -> RTK 执行与验证 -> Caveman 压缩汇报。
+
 ## 0) 后端权威入口（2026-03-22）
 - 对于任何 `src/backend` 任务，必须先读 `src/backend/AGENTS.md`。
 - 统一架构执行标准入口：`src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md`。

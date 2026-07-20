@@ -51,7 +51,8 @@ class _Executor:
         self.first_error = first_error
         self.calls: list[tuple[str, str]] = []
 
-    async def invoke(self, request: AIRequest) -> AIResponse:
+    async def invoke(self, request: AIRequest, *, physical_dispatch_port: object | None = None) -> AIResponse:
+        assert physical_dispatch_port is None
         provider_id, model = get_role_model(request.role)
         self.calls.append((provider_id, model))
         if len(self.calls) == 1:
@@ -77,7 +78,8 @@ class _ProviderFailingExecutor:
         self.error = error
         self.calls: list[tuple[str, str]] = []
 
-    async def invoke(self, request: AIRequest) -> AIResponse:
+    async def invoke(self, request: AIRequest, *, physical_dispatch_port: object | None = None) -> AIResponse:
+        assert physical_dispatch_port is None
         provider_id, model = get_role_model(request.role)
         self.calls.append((provider_id, model))
         if provider_id == self.failing_provider_id:
@@ -102,7 +104,8 @@ class _RequestProviderRecordingExecutor:
         self.first_error = first_error
         self.calls: list[tuple[str | None, str | None]] = []
 
-    async def invoke(self, request: AIRequest) -> AIResponse:
+    async def invoke(self, request: AIRequest, *, physical_dispatch_port: object | None = None) -> AIResponse:
+        assert physical_dispatch_port is None
         self.calls.append((request.provider_id, request.model))
         if len(self.calls) == 1:
             return AIResponse(
@@ -126,7 +129,8 @@ class _RaisingThenOkExecutor:
         self.first_error = first_error
         self.calls: list[tuple[str, str]] = []
 
-    async def invoke(self, request: AIRequest) -> AIResponse:
+    async def invoke(self, request: AIRequest, *, physical_dispatch_port: object | None = None) -> AIResponse:
+        assert physical_dispatch_port is None
         provider_id, model = get_role_model(request.role)
         self.calls.append((provider_id, model))
         if len(self.calls) == 1:
@@ -146,7 +150,8 @@ class _ProviderFallbackThenRequiredToolExecutor:
         self.raise_first = raise_first
         self.calls: list[tuple[str, str, str]] = []
 
-    async def invoke(self, request: AIRequest) -> AIResponse:
+    async def invoke(self, request: AIRequest, *, physical_dispatch_port: object | None = None) -> AIResponse:
+        assert physical_dispatch_port is None
         provider_id, model = get_role_model(request.role)
         options = request.options if isinstance(request.options, dict) else {}
         tool_choice = options.get("tool_choice")
@@ -196,7 +201,8 @@ class _ProviderFallbackThenFailureExecutor:
         self.fallback_error = fallback_error
         self.calls: list[tuple[str, str, str]] = []
 
-    async def invoke(self, request: AIRequest) -> AIResponse:
+    async def invoke(self, request: AIRequest, *, physical_dispatch_port: object | None = None) -> AIResponse:
+        assert physical_dispatch_port is None
         provider_id, model = get_role_model(request.role)
         options = request.options if isinstance(request.options, dict) else {}
         tool_choice = options.get("tool_choice")
@@ -220,7 +226,8 @@ class _PrimaryFailureThenTwoFallbackFailuresExecutor:
         self.native_fallback_error = native_fallback_error
         self.calls: list[tuple[str | None, str | None, str]] = []
 
-    async def invoke(self, request: AIRequest) -> AIResponse:
+    async def invoke(self, request: AIRequest, *, physical_dispatch_port: object | None = None) -> AIResponse:
+        assert physical_dispatch_port is None
         options = request.options if isinstance(request.options, dict) else {}
         tool_choice = options.get("tool_choice")
         if isinstance(tool_choice, dict):

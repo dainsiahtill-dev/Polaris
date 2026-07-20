@@ -35,12 +35,34 @@ def _attempt(
         model="model-1",
         attempt_number=attempt_number,
         verification_scope=verification_scope,
+        execution_authority_hash="d" * 64 if verification_scope == "factory" else "",
+        attempt_budget=32 if verification_scope == "factory" else 0,
+        authority_attempt_ordinal=attempt_number if verification_scope == "factory" else 0,
         semantic_request_hash="a" * 64,
         physical_wire_hash="b" * 64,
         composite_request_hash="c" * 64,
         dispatch_view={},
         durable_view={},
     )
+
+
+def test_frozen_attempt_requires_factory_authority_identity_only_in_factory_scope() -> None:
+    factory = _attempt(verification_scope="factory", scope_id="factory-run-1")
+    assert factory.execution_authority_hash == "d" * 64
+    assert factory.attempt_budget == 32
+    assert factory.authority_attempt_ordinal == factory.attempt_number
+
+    with pytest.raises(ValueError, match="execution_authority_hash"):
+        replace(factory, execution_authority_hash="")
+    with pytest.raises(ValueError, match="attempt_budget"):
+        replace(factory, attempt_budget=0)
+    with pytest.raises(ValueError, match="authority_attempt_ordinal"):
+        replace(factory, authority_attempt_ordinal=2)
+
+    session = _attempt(verification_scope="role_session", scope_id="role-session-1")
+    assert session.execution_authority_hash == ""
+    with pytest.raises(ValueError, match="cannot claim Factory physical authority"):
+        replace(session, execution_authority_hash="e" * 64, attempt_budget=1, authority_attempt_ordinal=1)
 
 
 @pytest.mark.asyncio

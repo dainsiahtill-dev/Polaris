@@ -1,6 +1,6 @@
 # Final Provider Attempt Qualification Blueprint
 
-Status: locked; B3.0-B3.1 closed; B3.2-B3.6 pending
+Status: locked; B3.0-B3.3 closed; B3.4 specification CLEAR and implementation active; B3.5-B3.6 pending
 Date: 2026-07-19
 Scope: `factory.pipeline` + `roles.kernel` + KernelOne LLM effect boundary
 Bench: `not_schedulable`
@@ -32,21 +32,24 @@ Verified current facts:
    a durable cutoff fact, source-head vector, and canonical policy facts. It
    cannot truthfully be constructed by a Factory role seam before the semantic
    request and cutoff ACK exist.
-2. B3.1 now supplies a distinct **pre-cutoff authority carrier** and binds it at
-   every Factory-controlled Architect, PM initial/recovery, Chief Engineer,
-   Director direct/fanout-child, and QA task-creation seam. `RequestPreparer`
-   does not consume that carrier yet, so physical provider dispatch remains
-   fail-closed pending B3.2-B3.5.
-3. `RequestPreparer` still reads the post-cutoff carrier before building the
-   semantic request and deliberately raises
-   `factory_role_evidence_cutoff_not_enabled`. Treating that carrier as the
-   pre-cutoff input would invert causality and require fabricated ACK fields.
+2. B3.1 supplies a distinct **pre-cutoff authority carrier** at every
+   Factory-controlled Architect, PM initial/recovery, Chief Engineer, Director
+   direct/fanout-child, and QA task-creation seam. B3.2 now consumes that exact
+   carrier, resolves the committed post-cutoff proof and freezes the semantic
+   request; physical provider dispatch remains fail-closed pending B3.4-B3.5.
+3. `RequestPreparer` builds the pre-anchor candidate from the pre-cutoff
+   carrier, acquires the durable ACK, resolves the exact post-cutoff proof,
+   injects the canonical evidence block and freezes the final semantic request.
+   `LLMInvoker` then deliberately raises
+   `factory_role_semantic_request_frozen_physical_dispatch_not_enabled` before
+   any physical path. No fabricated ACK or carrier inversion remains.
 4. `AIExecutor` can accept a runtime-private physical dispatch port and bind it
    around provider invocation.
 5. infrastructure HTTP helpers can consume the bound dispatch port immediately
    before a physical attempt.
-6. Invoker sync/structured/fallback and stream paths do not yet prove the port
-   is propagated through every call.
+6. Invoker sync/structured/fallback and stream paths all enforce the B3.2
+   zero-transport barrier; B3.3 must propagate the frozen authority through
+   every physical call without serializing the runtime-private port.
 7. existing cutoff, segmented lifecycle, in-flight drain, and final-attempt gate
    primitives are reused; no second authority is introduced.
 
@@ -421,11 +424,22 @@ express the required capability.
    `roles.kernel.public.final_request_evidence_cutoff` module and its new exact
    DTO/query surface; it does not add a Factory public contract.
 4. **B3.3 Dispatch propagation**: sync, structured, fallback, and stream paths
-   carry the runtime-private port without payload contamination.
-5. **B3.4 Physical-attempt parity**: every provider transport, internal retry,
-   and fallback independently calls the gate.
-6. **B3.5 Snapshot qualification**: same-workspace readable 24-hex snapshot,
-   exact attempt identity, full audit and lifecycle conservation.
+   carry one exact runtime-private, propagation-only port without payload
+   contamination. The B3.2 public hard stop remains active and the port itself
+   also rejects `send` / `open_stream` with
+   `factory_role_semantic_request_frozen_physical_dispatch_not_enabled`.
+   B3.3 therefore proves propagation with zero outbound transport and
+   `FPR=N/A`; it does not attach the transport-capable
+   `FinalProviderAttemptGate`.
+5. **B3.4 Physical-attempt parity**: every `governed_supported` provider
+   transport, internal retry, fallback and reconnect independently calls the
+   gate; every `factory_disabled_opaque` mode remains exhaustively inventoried
+   with zero outbound. Exact attempt identity, authority-hash budget and
+   lifecycle conservation are owned and closed here.
+6. **B3.5 Snapshot qualification**: consume and revalidate B3.4 identity and
+   lifecycle while adding same-workspace readable 24-hex snapshot, complete
+   final-request token/window/evidence/ToolSpec audit and qualification. B3.5
+   does not redefine or defer B3.4 conservation.
 7. **B3.6 Closure**: focused, cross-layer, full Factory, KernelOne, static,
    independent specification, and independent quality reviews.
 
@@ -448,6 +462,546 @@ Only one bucket is implemented and reviewed at a time.
   independent code-quality/concurrency rereview returned `APPROVED`.
 - `FPR=N/A`: B3.1 creates no physical provider attempt and does not count as a
   full-final-request PASS. Dispatch stays fail-closed until B3.2-B3.5 close.
+
+### B3.2 closure evidence (2026-07-19)
+
+- Public exact ACK-to-proof resolution, Invoker-owned run/turn/call/freeze
+  identity, strict resolved-capability identity, canonical first-system
+  evidence injection, complete post-injection recomputation, detached proof
+  validation, recursive non-leakage and immutable semantic freeze are live.
+- Gateway, cutoff acquisition and proof resolution await boundaries revalidate
+  one immutable authority snapshot. Deterministic RED barriers proved and then
+  closed valid-carrier and valid-port swaps, including the cross-port
+  acquire/resolve TOCTOU. Sync, structured and stream paths all stop before
+  snapshot/cache/executor/fallback/transport with
+  `factory_role_semantic_request_frozen_physical_dispatch_not_enabled`.
+- Main-agent acceptance passed the five-file semantic-cutoff aggregate
+  (`382 passed`), the affected LLM cluster (`299 passed`), graph/metadata
+  governance (`569 passed`), catalog governance (`0` issues and `0`
+  mismatches), and the complete Factory Pipeline (`1116 passed in 567.71s`).
+  Ruff, format, scoped mypy, compileall, UTF-8 and diff checks passed.
+- Broad Factory fixtures were not accepted as fake green: `62` direct-stage
+  failures were first reproduced, then every
+  Architect/PM/CE/Director/QA stage call and Director fanout call received an
+  explicit test-only exact authority. Five
+  stage-level missing-port regressions fail before any role/service call, and
+  the final fixture rereview returned `PASS` with P0/P1/P2 all zero.
+- Independent implementation-specification and correctness/concurrency reviews
+  returned `PASS` / `APPROVED`, each with P0/P1/P2 all zero.
+- `FPR=N/A`: B3.2 freezes semantic authority but performs no physical provider
+  dispatch. It does not count as a complete-context PASS and does not authorize
+  Provider or Bench.
+
+### B3.3 locked implementation contract (2026-07-19)
+
+Independent specification audit returned `NEEDS_AMENDMENT` for the prior
+one-line propagation description. The following contract is now authoritative
+for this bucket:
+
+1. One semantic freeze creates one exact runtime-private propagation port from
+   the current exact `FactoryRoleEvidenceAuthorityBindingV1`, the exact
+   post-cutoff binding, and the exact `FactoryRoleFrozenSemanticRequestV1`.
+   Ordinary requests carry neither semantic freeze nor port. Factory requests
+   carry both. A missing, extra, wrong-type, cross-role, cross-run, wrong-hash,
+   or wrong-freeze pairing fails closed.
+2. The port is a sidecar beside `AIRequest`; it never enters `AIRequest`,
+   `context`, request options, cache keys/values, events, snapshots,
+   `StageResult`, artifacts, provider wire, JSON, `repr`, or any
+   `default=str` projection. Recursive runtime-authority leak checks include
+   the port and its live Factory objects. Generic `dataclasses.asdict()` is not
+   an authorized serialization path for the prepared runtime bundle.
+3. The existing B3.2 public zero-transport barrier remains active. The
+   propagation port's sync, async, blocking-async, and stream methods also
+   raise
+   `factory_role_semantic_request_frozen_physical_dispatch_not_enabled`
+   before invoking `send`, `open_stream`, or any SDK. This defense remains
+   until B3.4 and B3.5 atomically replace it with the qualified physical gate.
+4. Sync primary, response-format fallback, reasoning-truncation retry,
+   required-tool native/text retry, retryable-exception fallback, structured
+   native/manual paths, role-binding fallback, stream initial/reconnect, and
+   provider-internal retry all carry the sidecar by object identity. A
+   role-binding fallback or any retry that changes messages, tools,
+   `tool_choice`, `response_format`, provider, model, temperature, output
+   budget, or stream mode must re-prepare, re-cutoff, re-freeze, and obtain a
+   new matching port; it may not reuse the prior semantic authority.
+5. Factory structured calls cannot use Instructor's direct OpenAI/Anthropic
+   SDK path or its hidden reasks. Until that path accepts the exact port and
+   exposes every physical reask, Factory skips it and uses the governed native
+   or manual path. Ordinary role-session behavior remains unchanged.
+6. Stream binding covers async-generator iteration, response cleanup and
+   terminal settlement, not only generator creation. Success, error,
+   `CancelledError`, `GeneratorExit` and `aclose()` restore the prior
+   ContextVar. Nested calls restore the prior token; concurrent tasks and
+   `to_thread` workers remain isolated.
+7. B3.3 does not create a process-global coordinator and does not synthesize
+   physical-attempt authority. Factory-owned aggregate physical budget,
+   run-scoped coordinator injection, per-attempt parity, full context
+   qualification and snapshot re-read remain B3.4/B3.5 work.
+
+The transport-capable `FinalProviderAttemptGate` cannot be enabled in B3.3:
+its current production construction seam lacks the Factory-owned run-scoped
+coordinator; it does not consume `execution_authority_hash` or the aggregate
+32-attempt physical budget; and its present equivalence checks do not yet prove
+the complete token/window/coverage/alias/readable-snapshot contract. Enabling
+it now would authorize I/O before qualification is complete.
+
+#### B3.3 RED matrix
+
+- Invariants (`5`): Factory freeze without port; ordinary request with a port;
+  wrong exact port type; freeze/port identity or hash mismatch; every disabled
+  dispatch method proves `send` / `open_stream` count is zero.
+- Propagation (`10`): sync primary; response-format fallback;
+  reasoning-truncation retry; required-tool native retry; required-tool text
+  retry; retryable-exception fallback; role-binding fallback with a new freeze
+  and new port; structured native; structured Instructor direct-SDK denial;
+  structured manual fallback.
+- Stream/provider (`3`): initial stream; reconnect; provider-internal retry.
+  Reconnect and provider retry observe the same semantic-freeze port in B3.3;
+  B3.4 later mints a distinct physical-attempt identity for every actual try.
+- Lifecycle/isolation (`4`): success/error reset; cancellation/`aclose` reset;
+  nested binding restoration; two-task plus `to_thread` isolation.
+- Governance: Factory cache cannot satisfy a governed call; recursive
+  non-leakage covers the sidecar; all five roles are parameterized; B3.3
+  remains `FPR=N/A`, zero outbound, Provider/Bench forbidden.
+
+#### B3.3 closure evidence (2026-07-19)
+
+- One exact runtime-private propagation port now follows each Factory semantic
+  freeze through the private sync dispatch seam, structured/manual fallback,
+  every semantic retry, role-binding fallback, initial stream and reconnect.
+  Public `call()` remains stopped by the B3.2 zero-transport barrier; the
+  private seam test is not represented as public provider authorization.
+- Every semantic-changing retry re-prepares, re-cuts off, re-freezes and mints
+  a new exact port. Retry context metadata, request context and ContextOS audit
+  share the fresh projection digest; prior source ids remain explicit, while
+  snake_case and camelCase snapshot/degraded/attempt-receipt references are
+  removed before the new attempt is audited.
+- Factory Instructor direct-SDK dispatch is denied. Stream ownership is closed
+  at roles.kernel, AIExecutor and StreamExecutor; per-`anext` binding, nested
+  prior-token restoration, cross-task `aclose`, cancellation and terminal
+  cleanup are covered without leaking Factory concrete types into KernelOne.
+- Main-agent acceptance passed the complete related set at `333 passed` with
+  two existing experimental-stream deprecation warnings. Ruff, format, scoped
+  mypy with `--no-incremental`, compileall and diff checks passed. Independent
+  specification and quality/security reviews both returned `CLEAR`, with
+  P0/P1/P2 all zero.
+- `FPR=N/A`: B3.3 performs zero physical provider transport. Provider and
+  Bench remain forbidden and Bench remains `not_schedulable`. B3.4
+  implementation is the next and only active bucket after independent
+  specification and quality/security rereviews both returned `CLEAR` with
+  P0/P1/P2 all zero.
+
+### B3.4 locked implementation contract (CLEAR; implementation active)
+
+B3.4 closes physical-attempt admission and conservation only. It does not
+qualify final provider context, enable the B3.3 public Factory barrier, call a
+real provider, or authorize Bench. `FPR=N/A` remains mandatory until B3.5.
+
+#### Ownership and injection
+
+1. `FactoryRunService` owns exactly one physical-attempt coordinator for each
+   active Factory run. The same object is injected into Architect, PM
+   initial/recovery, Chief Engineer, every Director fanout child, QA, every
+   semantic freeze, retry, fallback and stream reconnect belonging to that
+   run. Creating a coordinator per call/freeze/role/stage or using a
+   process-global singleton is forbidden.
+2. Factory remains the authority for the fixed per-grant budget and
+   `execution_authority_hash`. Consumption is aggregated by that hash across
+   all semantic freezes and every physical route; a new gate, retry, fallback,
+   fanout child or reconnect cannot reset it. Ordinary role sessions use a
+   distinct session-scoped coordinator and cannot claim Factory authority.
+3. `roles.kernel` owns generic gate/state-machine behavior and may consume
+   only an injected KernelOne/public admission-and-drain protocol. Factory
+   must not import `roles.kernel.internal`; `roles.kernel` must not import
+   Factory internals. The runtime-only authority/coordinator objects remain
+   recursively absent from `AIRequest`, provider bodies, events, snapshots,
+   artifacts, metadata, JSON and `repr`.
+4. `FactoryRoleEvidenceAuthorityPort` registers, closes and revokes each grant
+   in that run coordinator. Its exact role binding carries one runtime-only
+   `physical_attempt_control_port`; all sidecars for the same grant hold the
+   same control-port/coordinator identity.
+   The injected object is one run-scoped Factory live-control adapter backed
+   by the one run coordinator. It still exposes only the seven locked protocol
+   methods. At `reserve`, while holding the Factory authority lock before the
+   coordinator lock, it derives and registers the exact wire-aware cutoff view
+   from its Factory-owned grant plus the typed reserve command, then delegates
+   the atomic reservation. This is the sole live bridge for the late-bound
+   `physical_wire_hash`; adding an eighth public registration method, trusting
+   a caller mapping, or importing Factory internals from `roles.kernel` is
+   forbidden.
+5. KernelOne owns only the generic physical dispatch runtime port and immutable
+   attempt DTOs. Provider adapters consume that generic port only: they never
+   mint identities, calculate Factory budgets or read Factory authority.
+
+The exact public surface added for this bucket is:
+
+- commands: `ReserveFactoryPhysicalAttemptV1`,
+  `BeginFactoryPhysicalAttemptStartV1`,
+  `CommitFactoryPhysicalAttemptStartV1`,
+  `AbortFactoryPhysicalAttemptReservationV1`,
+  `MarkFactoryPhysicalAttemptStartAmbiguousV1`,
+  `SettleFactoryPhysicalAttemptV1` and
+  `FailFactoryPhysicalAttemptTerminalV1`;
+- immutable results: `FactoryPhysicalAttemptReservationV1`,
+  `FactoryPhysicalAttemptStartPermitV1`,
+  `FactoryPhysicalAttemptLeaseV1`,
+  `FactoryPhysicalAttemptBudgetStateV1`,
+  `ProviderAttemptStartReceiptV1` and
+  `ProviderAttemptTerminalReceiptV1`; and
+- the exact runtime protocol `FactoryPhysicalAttemptControlPort` with sync
+  methods `reserve`, `begin_start`, `commit_started`, `abort_reservation`,
+  `mark_start_ambiguous`, `settle` and `terminal_persistence_failed`.
+
+`reserve` returns the reservation; `begin_start` returns the start permit;
+`commit_started` accepts the exact start receipt and returns the one-shot
+physical lease; every abort/ambiguous/settle/failure operation returns the
+updated budget state. `StrictProviderAttemptLifecycleStore.append_start` and
+`append_terminal` return the typed start and terminal receipts respectively;
+neither a `None` return nor a caller-fabricated mapping is accepted.
+
+Every command/result carries exact schema version plus the identity fields
+applicable to its phase. The complete reservation identity is
+`factory_run_id`, controlled child `run_id`, `role`, `turn_id`, `call_id`,
+`request_freeze_id`, `execution_authority_hash`, `attempt_budget`, provider,
+model, semantic hash, physical-wire hash, composite hash, `reservation_id`,
+globally unique `provider_request_id` and authority-hash-local monotonic
+ordinal. Start permit, physical lease and start/terminal receipts repeat and
+exact-match that identity; a lease is one-shot and cannot be substituted
+across reservation, request id, run, role, child, freeze, authority hash or
+composite hash. Start/terminal receipts additionally bind lifecycle event id,
+logical sequence, event hash, phase and durability ACK. Any mismatch enters
+the typed ambiguous/terminal-failure path and produces zero new outbound.
+
+The runtime-only control port is added to
+`FactoryRoleEvidenceAuthorityBindingV1`. `FrozenFinalProviderAttemptV1` and
+strict lifecycle start/terminal facts add exact `execution_authority_hash`,
+`attempt_budget` and the authority-hash-local monotonic ordinal; the composite
+hash binds all three. Drain results expose reserved, start-persisting,
+ambiguous, committed, terminal, in-flight, recovered, terminal failures and
+consumed/remaining budget by authority hash.
+
+#### Atomic reservation and state machine
+
+One exact reservation operation replaces the current separated
+`mint_attempt_identity()` plus `register()` sequence. In one non-awaiting
+linearization section it must:
+
+1. validate exact run, scope, role, controlled child run, live stage claim,
+   grant, cutoff/freeze identity, `attempt_budget` and
+   `execution_authority_hash`;
+2. reject closed, revoked, stale, forged, wrong-role, wrong-child or exhausted
+   authority before snapshot, lifecycle append or outbound callback;
+3. atomically reserve one unit of capacity using the state-derived invariant:
+   `reserved_count = count(RESERVED) + count(START_PERSISTING)`,
+   `ambiguous_count = count(START_AMBIGUOUS)`,
+   `committed_count = count(distinct provider_request_id whose reservation has
+   an authoritative durable start receipt)`. This identity set is the sole
+   committed-budget source; overlapping live/recovered state ancestry cannot
+   add another unit. Admission is legal only when
+   `committed_count + reserved_count + ambiguous_count < attempt_budget`;
+   reservation occupies capacity without consuming committed budget yet;
+4. mint the authority-hash-local monotonic candidate ordinal and globally
+   unique `provider_request_id`; and
+5. publish the reservation into the same run/session coordinator's visible
+   in-flight set before returning it.
+
+The only legal progression is:
+
+```text
+RESERVED
+  |-- ABORTED
+  `-- START_PERSISTING
+        |-- ABORTED                    # definite proof that start did not persist
+        |-- START_AMBIGUOUS
+        |     |-- ABORTED              # strict replay proves start absent
+        |     `-- RECOVERED_START_ABORTING
+        |           |-- TERMINAL_ACKED # cancelled recovery terminal; never dispatch
+        |           `-- TERMINAL_PERSISTENCE_FAILED
+        `-- START_COMMITTED
+              |-- TERMINAL_ACKED
+              |-- TERMINAL_PERSISTENCE_FAILED
+              `-- RECOVERED_START_ABORTING # replay-fenced unmatched durable start only
+                    |-- TERMINAL_ACKED      # cancelled recovery terminal; never dispatch
+                    `-- TERMINAL_PERSISTENCE_FAILED
+```
+
+No transition may be skipped or reordered. Reservation only occupies capacity
+and cannot authorize transport. `begin_start` acquires an active authority
+lease and, under grant-then-coordinator locks, revalidates the live stage claim,
+grant and complete reservation identity before entering `START_PERSISTING`.
+Only then may roles.kernel perform the synthetic B3.4 start-persistence seam
+outside both locks. An exact durable start receipt commits the reservation and
+mints the one-shot `FactoryPhysicalAttemptLeaseV1` required by `send`,
+`open_stream`, SDK or CLI. Durable start is the physical-attempt and
+budget-consumption linearization point.
+
+Close/revoke publishes closed state and atomically aborts plain `RESERVED`
+entries. If close/revoke wins before `begin_start`, the loser writes no start
+and sends nothing. If `begin_start` wins, close/revoke waits for that active
+lease to resolve to `ABORTED` or a terminal state; it cannot invalidate a
+committed attempt before terminal. A definite start-write failure aborts,
+consumes no budget and produces zero outbound. An ambiguous fsync outcome must
+never ordinary-abort or dispatch: it enters `START_AMBIGUOUS`, conservatively
+occupies capacity, freezes new reservations for that authority hash and fails
+the run/drain closed until strict recovery.
+
+On restart, the run coordinator is rebuilt from the strict lifecycle ledger
+before any reservation or outbound is allowed. Every durable start counts as
+committed budget, including terminal/recovered descendants. An unpaired or
+uncertain start quarantines the run and its authority hash. Strict replay that
+proves the start exists may only transition through
+`RECOVERED_START_ABORTING`, append one cancelled terminal and leave the run
+failed; it must never redispatch. Strict replay that proves no start exists may
+transition to `ABORTED`. If neither proof is possible, quarantine remains.
+Structural drain may converge after the cancelled recovery terminal, but that
+does not convert the quarantined run into success.
+
+The replay-only edge into `RECOVERED_START_ABORTING` is legal from
+`START_AMBIGUOUS` when strict replay proves the durable start, or from an
+unmatched `START_COMMITTED` reconstructed from an authoritative durable start
+with no authoritative terminal. It is available only behind the restart replay
+fence, never during live dispatch. A `START_COMMITTED` with a matching durable
+terminal reconstructs directly as `TERMINAL_ACKED`; it cannot be cancelled a
+second time.
+
+Restart never reconstructs the private grant nonce or revives a live grant
+registry row. Before replay, Factory places the recovered run behind a strict
+replay fence that forbids live stage/grant mutation and new admission. Factory
+then captures one head vector containing the Factory stage event-chain head,
+the committed role-evidence cutoff-stream head, the provider-attempt
+lifecycle-stream head and the current run/stage fence identity.
+
+Factory reads every source strictly to that vector and builds a private,
+immutable, detached **replay-only grant-view set**. Each element is keyed by
+`(execution_authority_hash, request_freeze_id, cutoff_fact_id,
+cutoff_sequence, cutoff_event_hash)` and is derived from exactly one committed
+`FactoryRoleEvidenceCutoffBodyV1` plus the exact Factory stage
+claim/event/persistence facts for that grant. Multiple freeze/cutoff elements
+under one `execution_authority_hash` are valid and required; consumed budget,
+ordinals and lifecycle descendants are aggregated across the complete set by
+authority hash. An exact idempotent re-read of the same cutoff fact identity is
+one element. A second distinct fact claiming the same freeze/cutoff identity,
+or one identity with different bytes/hash, is a duplicate conflict.
+
+Each cutoff element must bind the same Factory run, role, controlled child run,
+`execution_authority_hash`, `attempt_budget`, stage claim/fence and source
+identity as the Factory facts. A strict roles.kernel public lifecycle replay
+query supplies only the independently verified lifecycle snapshot at its
+captured head; lifecycle facts cannot create, reconstruct or self-prove
+Factory grant authority. Missing, duplicate or cross-view grant facts,
+cross-child identity, budget/hash/freeze drift, duplicate/regressing ordinal or
+any lifecycle fact without one exact replay-view element quarantine the run.
+
+After constructing and validating the candidate set, Factory immediately
+re-reads all three heads plus the run/stage fence and compare-and-installs the
+coordinator only if the complete vector is unchanged. Head/fence drift discards
+the candidate and performs zero admission or recovery-terminal append; the
+implementation must restart the complete replay from a newly captured vector.
+The sole bound is the immutable Factory-owned
+`FactoryPhysicalAttemptReplayPolicyV1` with
+`schema_version="factory.physical_attempt_replay_policy.v1"`,
+`max_full_replays=3` total candidate builds including the initial build, and
+`total_deadline_seconds=30.0` measured by a monotonic clock; callers,
+environment and provider configuration cannot override it. Exhausting either
+bound quarantines with stable code
+`factory_physical_attempt_replay_head_unstable` and produces zero coordinator
+admission, recovery-terminal append, reservation or outbound. Deterministic
+concurrent append barriers and a fake monotonic clock must cover drift and
+exhaustion across every capture/read/recheck boundary.
+The cancelled recovery terminal uses an expected-previous-lifecycle-head CAS
+under the same replay fence; CAS or Factory/cutoff head/fence drift fails closed
+without a terminal append. The successful append advances the installed
+lifecycle head exactly once.
+
+Replay-only view elements contain no grant nonce, live capability or mutation
+method. They can only validate lifecycle identity, reconstruct consumed budget
+and authorize the one cancelled recovery terminal required for a proven
+durable start. They cannot `reserve`, `begin_start`, mint a lease or dispatch.
+The pre-crash grant and the entire recovered `factory_run_id` remain
+permanently dead for new authority: no stage in that run may mint a replacement
+grant or perform later outbound. Any later outbound belongs to an entirely new
+Factory run with a new `factory_run_id`, admission, stage claim/fence, grant and
+cutoff; it is not continuation or replay of the recovered run.
+
+Every replayed start/terminal must exact-match one Factory-owned replay-only
+grant-view element for factory run, role, controlled child run,
+`execution_authority_hash`, `attempt_budget`, authority-local ordinal and
+`request_freeze_id`. Unknown view, cross-view identity or incomplete
+authority-hash aggregation immediately quarantines the run and performs zero
+new reservation/outbound.
+
+A result cannot escape before durable terminal ACK and `TERMINAL_ACKED`.
+Terminal persistence failure never returns success and remains visible to
+`wait_settled`; cancellation cannot erase it. `wait_settled` is true only when
+every reservation is `ABORTED` or `TERMINAL_ACKED`; `START_PERSISTING`,
+`START_AMBIGUOUS`, `START_COMMITTED`, `RECOVERED_START_ABORTING` and
+`TERMINAL_PERSISTENCE_FAILED` all block or raise. Available capacity is
+`attempt_budget - committed_count - reserved_count - ambiguous_count` using
+the exact state-derived counts above. `START_PERSISTING` therefore never
+releases reserved capacity during fsync. Aborted entries release capacity,
+while every committed/recovered start remains consumed after terminal.
+429, structured reask, provider retry/fallback, SDK retry, CLI/subprocess
+launch and stream reconnect each reserve and consume one independent attempt.
+
+The fixed lock order is grant-authority lock, then run-coordinator lock. The
+reverse order is forbidden. Await, synchronous I/O, fsync, snapshot/FactStream
+access, storage locks, provider/SDK calls, subprocess launch and callbacks are
+all forbidden while holding either lock; storage code cannot call back into the
+coordinator while holding its own lock.
+
+Stable fail-closed codes are:
+`factory_physical_attempt_control_port_required`,
+`factory_physical_attempt_control_port_exact_type_required`,
+`factory_physical_attempt_coordinator_scope_mismatch`,
+`factory_physical_attempt_factory_run_mismatch`,
+`factory_physical_attempt_role_mismatch`,
+`factory_physical_attempt_controlled_run_mismatch`,
+`factory_physical_attempt_execution_authority_hash_mismatch`,
+`factory_physical_attempt_budget_mismatch`,
+`factory_physical_attempt_authority_closed`,
+`factory_physical_attempt_grant_revoked`,
+`factory_physical_attempt_budget_exhausted`,
+`factory_physical_attempt_reservation_unknown`,
+`factory_physical_attempt_reservation_state_conflict`,
+`factory_physical_attempt_start_persistence_failed`,
+`factory_physical_attempt_start_commit_ambiguous`,
+`factory_physical_attempt_transport_before_start`,
+`factory_physical_attempt_duplicate_identity`,
+`factory_physical_attempt_terminal_unknown` and
+`factory_physical_attempt_transport_hook_missing`,
+`factory_physical_attempt_replay_head_unstable`, plus the existing typed
+terminal-persistence/drain timeout/scope errors. Tests assert codes, not
+free-form messages; every admission error is zero transport.
+
+#### Transport inventory and zero-outbound proof
+
+Every registered provider mode must appear in one static inventory and be
+classified exactly once as `governed_supported` or
+`factory_disabled_opaque`. Every `governed_supported` mode must prove that one
+concrete physical HTTP/async/stream/SDK attempt crosses the injected gate, and
+every actual retry/fallback/reconnect on that mode must cross again. This
+includes direct MiniMax/Ollama/Gemini sync calls; Kimi/MiniMax/Ollama/OpenAI
+async streams; async Ollama/Gemini streams; and version-locked Codex SDK
+attempts. Missing capability or hidden retry fails closed;
+`legacy_ungoverned`, raw transport fallback and silent SDK retry are forbidden
+for Factory.
+
+`factory_disabled_opaque` modes receive no positive physical-attempt coverage:
+they remain inventoried, Factory-disabled and prove HTTP/SDK/subprocess
+outbound count exactly zero. Codex CLI and Gemini CLI PTY, non-PTY, winpty and
+fallback `Popen` branches are in this class until every internal HTTP attempt
+has a governed hook. A successful outer subprocess launch, outer `retries=0`
+claim or capability declaration cannot promote them to
+`governed_supported`.
+
+The inventory covers governed role inference for Architect, PM, Chief
+Engineer, every Director child and QA. Health, `list_models` and unrelated
+administrative probes are explicitly excluded and cannot satisfy role-attempt
+coverage. Opaque CLI/agent SDK execution is disabled for Factory unless it
+exposes one governed hook for every internal HTTP attempt. An outer
+`retries=0` argv/config claim or patched subprocess sentinel is never
+sufficient because neither observes hidden reconnects or ignored config. Only
+a version-locked, non-opaque single-request SDK transport with independent
+tests proving the exact request boundary may use disabled built-in retries as
+sufficient evidence; otherwise every actual HTTP retry must independently
+cross the gate. Provider capability self-declaration is not evidence.
+
+B3.4 verification is entirely synthetic: patch `requests`, `aiohttp`, SDK
+clients and `subprocess` entry points with counting sentinels and use in-memory
+fake callbacks for accepted paths. Real provider and Bench call counts remain
+zero. The B3.3 public Factory stop remains unchanged until B3.5 atomically adds
+full-context qualification and readable snapshot proof.
+
+B3.4 may exercise only an opaque synthetic/pre-existing pin seam to test its
+state machine; that is not snapshot qualification. B3.5 must atomically insert
+complete final-request qualification, durable persist, same-workspace 24-hex
+re-read and pin validation before strict start/transport can be enabled.
+
+B3.5 also owns the non-authoritative rejection schema
+`llm.final_provider_attempt_qualification_rejection.v1`, represented by
+`FinalProviderAttemptQualificationRejectionV1`. roles.kernel appends it through
+`events.fact_stream.public` to the separate run/session-scoped logical stream
+`roles.kernel.final_request_qualification_rejections.<scope-hash>`. It binds
+scope/run/role/turn/call/freeze identity and one stable rejection code, but has
+no `provider_request_id`, reservation, lifecycle start/terminal or budget
+effect. Factory may audit its presence as failure evidence; it can never enter
+or satisfy the physical provider-attempt inventory.
+
+#### B3.4 mandatory RED matrix
+
+- 64 concurrent competitors against one budget-32 grant yield exactly 32
+  committed starts, transport entries, terminals and consumed units. A
+  different freeze/gate/retry/fallback/reconnect under the same hash cannot
+  reset the counter; a different grant remains isolated.
+- Forged/wrong/stale/closed/revoked authority, wrong run/role/child/freeze and
+  caller-selected budget fail before reservation effects or outbound.
+- Definite start fsync failure aborts the reservation with zero consumption and
+  zero send. Ambiguous start commit never sends and makes drain fail closed.
+  Deterministic barriers prove no durable start can be unknown to the
+  coordinator and no outbound can precede the exact start receipt.
+- Process restart strictly replays starts/terminals and reconstructs per-hash
+  budget before admission. An unmatched `START_COMMITTED` and a
+  `START_AMBIGUOUS` proven to have a durable start both enter the replay-only
+  `RECOVERED_START_ABORTING` edge; recovery may append only one cancelled
+  terminal per unmatched start and never redispatch.
+- Restart installs a replay fence, captures one Factory-stage/cutoff/lifecycle
+  head vector, builds the detached replay-only grant-view set with one element
+  per exact freeze/cutoff identity, aggregates all elements by authority hash,
+  and exact-matches every lifecycle fact against one element. A second legal
+  freeze under the same hash is retained, while duplicate/conflicting cutoff
+  identity is rejected. Capture/read/recheck drift at every head or fence
+  discards the candidate; three total full replays or the 30-second monotonic
+  deadline, whichever occurs first, exhausts with
+  `factory_physical_attempt_replay_head_unstable`. Recovery terminal uses
+  expected-head CAS. Nonce reconstruction, lifecycle self-proof, old-grant
+  revival and any outbound in the recovered `factory_run_id` are forbidden.
+- Ambiguous replay that proves a durable start exists transitions through
+  recovery with consumed count exactly one; its cancelled terminal ACK never
+  refunds that budget unit.
+- A mixed recovered run with pre-existing normal terminal pairs plus multiple
+  unmatched starts proves total consumed budget equals all durable starts,
+  cancelled recovery terminals equal only the unmatched subset, every start
+  has exactly one terminal after recovery, a recovered start consumes one unit
+  despite overlapping state ancestry, and new transport count is zero.
+- Close/revoke after reserve but before `begin_start` aborts with zero start;
+  close/revoke after `begin_start` waits for abort/terminal. Cross-run/role/
+  child/freeze/attempt lease substitution is rejected before outbound.
+- Sync, native async, blocking-worker, stream success/error/cancellation,
+  `GeneratorExit`, `__aenter__`, consume and `__aexit__` failures each conserve
+  one reservation, one start and one terminal; session/response/subprocess
+  ownership has no leak.
+- Terminal fsync failure blocks drain and cannot return provider success.
+- Revoke/close versus reserve/start is linearized as above; the first publisher
+  wins and the loser either performs zero start/send or completes only the
+  already-won attempt and terminal.
+- Two Factory runs plus one ordinary role session prove independent attempt
+  numbers, budgets, in-flight state, terminal failures and drains.
+- Static provider-registry coverage classifies every registered mode exactly
+  once. Patched sentinels prove every `governed_supported`
+  HTTP/stream/SDK route is governed per physical attempt, while every
+  `factory_disabled_opaque` CLI/SDK/subprocess route remains disabled with
+  outbound count zero.
+- A live, non-recovered green completion drain proves the generalized B3.4
+  equality:
+  `transport callback entries = unique provider_request_id = strict starts =
+  strict terminals = consumed budget`. Reserved, aborted and qualification
+  rejection paths are zero physical attempts; terminal persistence failure is
+  a failed drain, never green conservation.
+- A recovered failed run has a separate structural-settlement invariant:
+  `total_consumed_budget = |all_authoritative_durable_start_ids|`;
+  `all_authoritative_durable_start_ids =
+  preexisting_authoritative_terminal_ids disjoint-union
+  unmatched_recovery_start_ids`; and
+  `cancelled_recovery_terminal_ids = unmatched_recovery_start_ids`. After the
+  recovery CAS, all authoritative start ids therefore have exactly one
+  terminal, but only the unmatched subset receives a new cancelled terminal.
+  New transport entries are exactly zero. Pre-crash transport cannot be
+  inferred from a durable start and cannot satisfy green evidence. Structural
+  settlement never changes the run from failed/quarantined to successful.
+- Ordinary non-Factory no-port behavior remains compatible, consumes no
+  Factory DTO/hash/budget (any session budget uses a separate non-Factory
+  contract), and no runtime
+  authority/coordinator object leaks into serializable state.
 
 ## 8. RED matrix
 
@@ -502,7 +1056,12 @@ Only one bucket is implemented and reviewed at a time.
 - missing tools, wrong `tool_choice`, wrong `response_format`, alias drift,
   stale anchors, missing evidence slots, wrong role/workspace, clipped context,
   messages-only audit, and unreadable snapshot all produce zero transport
-  calls and one failed attempt record.
+  calls and one non-physical
+  `FinalProviderAttemptQualificationRejectionV1` audit fact owned by the B3.5
+  roles.kernel qualification gate. That fact is keyed by call/freeze plus a
+  stable rejection code; it carries no `provider_request_id`, reservation,
+  start or terminal lifecycle fact, consumes no attempt budget and cannot
+  satisfy provider-attempt inventory.
 - exception/cancellation resets both Factory binding and physical dispatch
   ContextVars.
 - fanout cancellation awaits every child; after stage authority closes, late

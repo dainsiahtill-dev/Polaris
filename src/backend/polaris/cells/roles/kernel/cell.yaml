@@ -22,6 +22,7 @@ current_modules:
 - polaris.cells.roles.kernel.internal.token_budget
 - polaris.cells.roles.kernel.internal.events
 - polaris.cells.roles.kernel.internal.context_gateway
+- polaris.cells.roles.kernel.internal.llm_caller.factory_dispatch_propagation
 - polaris.cells.roles.kernel.internal.context_models
 - polaris.cells.roles.kernel.internal.tool_gateway
 - polaris.cells.roles.kernel.internal.turn_engine
@@ -101,6 +102,10 @@ verification:
   - polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py
   - polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py
   - polaris/cells/roles/kernel/tests/test_llm_caller_components.py
+  - polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py
+  - polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py
+  - polaris/kernelone/llm/engine/tests/test_executor.py
+  - polaris/kernelone/llm/engine/stream/tests/test_executor.py
   gaps:
   - Some callers still import role kernel components through transitional compatibility
     paths instead of canonical public contracts.
@@ -113,9 +118,9 @@ verification:
     adopt canonical source imports.
 
     '
-  - B3.3-B3.5 physical provider-attempt qualification, snapshot persistence, and
-    all-role/retry audit remain guarded; B3.2 metadata does not authorize provider
-    dispatch.
+  - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry
+    full-request qualification remain guarded; B3.3 propagation metadata does not
+    authorize provider dispatch.
   - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the\
     \ single execution engine supporting CHAT and WORKFLOW modes: - kernel.run(role,\
     \ request) — blocking execution with RoleTurnResult - kernel.run_stream(role,\

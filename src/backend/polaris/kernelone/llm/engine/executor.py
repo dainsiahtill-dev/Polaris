@@ -428,7 +428,12 @@ class AIExecutor:
                 self.telemetry.record_invoke_end(trace_id, request, response, start_time)
             return response
 
-    async def invoke_stream(self, request: AIRequest) -> AsyncIterator[AIStreamEvent]:
+    async def invoke_stream(
+        self,
+        request: AIRequest,
+        *,
+        physical_dispatch_port: PhysicalProviderDispatchRuntimePort | None = None,
+    ) -> AsyncIterator[AIStreamEvent]:
         """执行流式 AI 调用
 
         Args:
@@ -456,28 +461,35 @@ class AIExecutor:
                 final_request_receipt_sink=self.final_request_receipt_sink,
             )
 
-            async for event in stream_executor.invoke_stream(request):
-                metadata = dict(event.meta or {})
-                metadata.setdefault("provider_id", request.provider_id)
-                metadata.setdefault("model", request.model)
+            owned_stream = stream_executor.invoke_stream(
+                request,
+                physical_dispatch_port=physical_dispatch_port,
+            )
+            try:
+                async for event in owned_stream:
+                    metadata = dict(event.meta or {})
+                    metadata.setdefault("provider_id", request.provider_id)
+                    metadata.setdefault("model", request.model)
 
-                if event.type == StreamEventType.CHUNK:
-                    yield AIStreamEvent.chunk_event(str(event.chunk or ""), meta=metadata)
-                elif event.type == StreamEventType.REASONING_CHUNK:
-                    yield AIStreamEvent.reasoning_event(str(event.reasoning or ""), meta=metadata)
-                elif event.type == StreamEventType.TOOL_CALL:
-                    tool_call = dict(event.tool_call or {})
-                    metadata.setdefault("tool_call", tool_call)
-                    yield AIStreamEvent.tool_call_event(tool_call, meta=metadata)
-                elif event.type == StreamEventType.TOOL_RESULT:
-                    tool_result = dict(event.tool_result or {})
-                    metadata.setdefault("tool_result", tool_result)
-                    yield AIStreamEvent.tool_result_event(tool_result, meta=metadata)
-                elif event.type == StreamEventType.COMPLETE:
-                    yield AIStreamEvent.complete(data=metadata)
-                elif event.type == StreamEventType.ERROR:
-                    yield AIStreamEvent.error_event(str(event.error or "provider_stream_failed"))
-                    return
+                    if event.type == StreamEventType.CHUNK:
+                        yield AIStreamEvent.chunk_event(str(event.chunk or ""), meta=metadata)
+                    elif event.type == StreamEventType.REASONING_CHUNK:
+                        yield AIStreamEvent.reasoning_event(str(event.reasoning or ""), meta=metadata)
+                    elif event.type == StreamEventType.TOOL_CALL:
+                        tool_call = dict(event.tool_call or {})
+                        metadata.setdefault("tool_call", tool_call)
+                        yield AIStreamEvent.tool_call_event(tool_call, meta=metadata)
+                    elif event.type == StreamEventType.TOOL_RESULT:
+                        tool_result = dict(event.tool_result or {})
+                        metadata.setdefault("tool_result", tool_result)
+                        yield AIStreamEvent.tool_result_event(tool_result, meta=metadata)
+                    elif event.type == StreamEventType.COMPLETE:
+                        yield AIStreamEvent.complete(data=metadata)
+                    elif event.type == StreamEventType.ERROR:
+                        yield AIStreamEvent.error_event(str(event.error or "provider_stream_failed"))
+                        return
+            finally:
+                await owned_stream.aclose()
 
         except asyncio.TimeoutError as exc:
             logger.warning("[executor] invoke_stream timeout: %s", exc)

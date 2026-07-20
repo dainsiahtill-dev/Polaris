@@ -13,6 +13,9 @@ from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
 )
+from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
+    FactoryPhysicalAttemptLiveControlPort,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate import (
     DurableFinalProviderAttemptSnapshotStore,
     FinalProviderAttemptGate,
@@ -23,6 +26,10 @@ from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_infli
 )
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle import (
     StrictProviderAttemptLifecycleStore,
+)
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+    FactoryPhysicalAttemptGrantViewV1,
 )
 from polaris.infrastructure.llm.providers import provider_helpers
 from polaris.infrastructure.llm.providers.provider_helpers import (
@@ -137,6 +144,21 @@ def _gate(
         workspace=str(workspace),
         factory_run_id="factory-run-1",
     )
+    physical_attempt_control_port = FactoryPhysicalAttemptLiveControlPort(factory_run_id="factory-run-1")
+    physical_attempt_control_port.register_grant(
+        FactoryPhysicalAttemptGrantViewV1(
+            schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+            verification_scope="factory",
+            factory_run_id="factory-run-1",
+            role="director",
+            stage="director_dispatch",
+            workspace_fencing_token=1,
+            stage_claim_attempt=1,
+            stage_claim_nonce="stage-nonce-1",
+            execution_authority_hash="f" * 64,
+            attempt_budget=32,
+        )
+    )
     gate = FinalProviderAttemptGate(
         workspace=str(workspace),
         verification_scope="factory",
@@ -155,11 +177,40 @@ def _gate(
             "response_format": None,
             "semantic_options": semantic_options or {"temperature": 0.1},
         },
+        physical_attempt_control_port=physical_attempt_control_port,
+        execution_authority_hash="f" * 64,
+        attempt_budget=32,
         lifecycle=lifecycle,
         snapshot_store=snapshot_store or DurableFinalProviderAttemptSnapshotStore(str(workspace)),
-        drain_coordinator=ProviderAttemptInFlightCoordinator.for_factory_run("factory-run-1"),
     )
     return gate, lifecycle
+
+
+def test_factory_gate_conserves_reserve_start_send_terminal_under_one_authority(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    gate, _lifecycle = _gate(tmp_path)
+    sends: list[Mapping[str, Any]] = []
+
+    result = gate.dispatch_sync(
+        wire_request=_wire_request(),
+        send=lambda frozen: sends.append(frozen) or "ok",
+    )
+
+    assert result == "ok"
+    assert len(sends) == 1
+    state = gate._physical_attempt_control_port.budget_state("f" * 64)
+    assert state.reserved_count == 0
+    assert state.committed_count == 1
+    assert state.terminal_count == 1
+    assert state.consumed_attempts == 1
+    assert state.settled is True
+
+
+def test_factory_gate_uses_injected_physical_control_port_as_only_drain_state(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    gate, _lifecycle = _gate(tmp_path)
+
+    assert gate.drain_coordinator is gate._physical_attempt_control_port
 
 
 def _wire_request() -> dict[str, Any]:
@@ -879,41 +930,12 @@ def test_terminal_fsync_failure_blocks_successful_physical_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
 
-    class _FailingTerminalLifecycle:
-        def append_start(self, *_args: object, **_kwargs: object) -> None:
-            return None
+    def _fail_terminal(*_args: object, **_kwargs: object) -> None:
+        raise OSError("terminal fsync failed")
 
-        def append_terminal(self, *_args: object, **_kwargs: object) -> None:
-            raise OSError("terminal fsync failed")
-
-    gate = FinalProviderAttemptGate(
-        workspace=str(tmp_path),
-        verification_scope="factory",
-        factory_run_id="factory-run-1",
-        run_id="run-1",
-        role="director",
-        turn_id="turn-1",
-        call_id="call-1",
-        request_freeze_id="freeze-1",
-        provider="openai",
-        model="model-1",
-        semantic_request={
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "response_format": None,
-            "semantic_options": {"temperature": 0.1},
-        },
-        lifecycle=_FailingTerminalLifecycle(),  # type: ignore[arg-type]
-        snapshot_store=SimpleNamespace(
-            persist_and_pin=lambda _attempt: SimpleNamespace(
-                context_snapshot_ref="d" * 24,
-                pin_hash="e" * 64,
-            )
-        ),
-        drain_coordinator=ProviderAttemptInFlightCoordinator.for_factory_run("factory-run-1"),
-    )
+    monkeypatch.setattr(lifecycle, "append_terminal", _fail_terminal)
     physical_calls = 0
 
     def _post(*_args: object, **_kwargs: object) -> _Response:
@@ -1032,13 +1054,15 @@ async def test_async_cancel_waits_for_shielded_terminal_ack_even_after_second_ca
     release_terminal = threading.Event()
     terminal_complete = threading.Event()
     terminal_calls = 0
+    original_terminal = lifecycle.append_terminal
 
-    def _blocking_terminal(*_args: object, **_kwargs: object) -> None:
+    def _blocking_terminal(*args: Any, **kwargs: Any) -> object:
         nonlocal terminal_calls
         terminal_calls += 1
         terminal_entered.set()
         assert release_terminal.wait(timeout=2)
         terminal_complete.set()
+        return original_terminal(*args, **kwargs)
 
     monkeypatch.setattr(lifecycle, "append_terminal", _blocking_terminal)
     never = asyncio.Event()
@@ -1107,40 +1131,17 @@ async def test_blocking_worker_outlives_cancelled_waiter_and_owns_terminal(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_async_terminal_persistence_failure_rejects_result_and_fails_drain(tmp_path: Path) -> None:
+async def test_async_terminal_persistence_failure_rejects_result_and_fails_drain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
 
-    class _FailingTerminalLifecycle:
-        def append_start(self, *_args: object, **_kwargs: object) -> None:
-            return None
+    def _fail_terminal(*_args: object, **_kwargs: object) -> None:
+        raise OSError("terminal fsync failed")
 
-        def append_terminal(self, *_args: object, **_kwargs: object) -> None:
-            raise OSError("terminal fsync failed")
-
-    gate = FinalProviderAttemptGate(
-        workspace=str(tmp_path),
-        verification_scope="factory",
-        factory_run_id="factory-run-1",
-        run_id="run-1",
-        role="director",
-        turn_id="turn-1",
-        call_id="call-1",
-        request_freeze_id="freeze-1",
-        provider="openai",
-        model="model-1",
-        semantic_request={
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "response_format": None,
-            "semantic_options": {"temperature": 0.1},
-        },
-        lifecycle=_FailingTerminalLifecycle(),  # type: ignore[arg-type]
-        snapshot_store=SimpleNamespace(
-            persist_and_pin=lambda _attempt: SimpleNamespace(context_snapshot_ref="d" * 24, pin_hash="e" * 64)
-        ),
-        drain_coordinator=ProviderAttemptInFlightCoordinator.for_factory_run("factory-run-1"),
-    )
+    monkeypatch.setattr(lifecycle, "append_terminal", _fail_terminal)
 
     async def _send(_wire: object) -> str:
         return "must-not-escape"
@@ -1222,13 +1223,15 @@ async def test_async_stream_terminal_waits_for_response_exit_and_full_consumptio
     original_start = lifecycle.append_start
     original_terminal = lifecycle.append_terminal
 
-    def _append_start(*args: Any, **kwargs: Any) -> None:
-        original_start(*args, **kwargs)
+    def _append_start(*args: Any, **kwargs: Any) -> object:
+        receipt = original_start(*args, **kwargs)
         events.append("start_ack")
+        return receipt
 
-    def _append_terminal(*args: Any, **kwargs: Any) -> None:
-        original_terminal(*args, **kwargs)
+    def _append_terminal(*args: Any, **kwargs: Any) -> object:
+        receipt = original_terminal(*args, **kwargs)
         events.append("terminal_ack")
+        return receipt
 
     monkeypatch.setattr(lifecycle, "append_start", _append_start)
     monkeypatch.setattr(lifecycle, "append_terminal", _append_terminal)
@@ -1281,9 +1284,10 @@ async def test_async_stream_consumer_aclose_exits_response_before_cancelled_term
     events: list[str] = []
     original_terminal = lifecycle.append_terminal
 
-    def _append_terminal(*args: Any, **kwargs: Any) -> None:
-        original_terminal(*args, **kwargs)
+    def _append_terminal(*args: Any, **kwargs: Any) -> object:
+        receipt = original_terminal(*args, **kwargs)
         events.append("terminal_ack")
+        return receipt
 
     monkeypatch.setattr(lifecycle, "append_terminal", _append_terminal)
 
@@ -1324,40 +1328,17 @@ async def test_async_stream_consumer_aclose_exits_response_before_cancelled_term
 
 
 @pytest.mark.asyncio
-async def test_async_stream_terminal_persistence_failure_rejects_normal_completion(tmp_path: Path) -> None:
+async def test_async_stream_terminal_persistence_failure_rejects_normal_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
 
-    class _FailingTerminalLifecycle:
-        def append_start(self, *_args: object, **_kwargs: object) -> None:
-            return None
+    def _fail_terminal(*_args: object, **_kwargs: object) -> None:
+        raise OSError("stream terminal fsync failed")
 
-        def append_terminal(self, *_args: object, **_kwargs: object) -> None:
-            raise OSError("stream terminal fsync failed")
-
-    gate = FinalProviderAttemptGate(
-        workspace=str(tmp_path),
-        verification_scope="factory",
-        factory_run_id="factory-run-1",
-        run_id="run-1",
-        role="director",
-        turn_id="turn-1",
-        call_id="call-1",
-        request_freeze_id="freeze-1",
-        provider="openai",
-        model="model-1",
-        semantic_request={
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "response_format": None,
-            "semantic_options": {"temperature": 0.1},
-        },
-        lifecycle=_FailingTerminalLifecycle(),  # type: ignore[arg-type]
-        snapshot_store=SimpleNamespace(
-            persist_and_pin=lambda _attempt: SimpleNamespace(context_snapshot_ref="d" * 24, pin_hash="e" * 64)
-        ),
-        drain_coordinator=ProviderAttemptInFlightCoordinator.for_factory_run("factory-run-1"),
-    )
+    monkeypatch.setattr(lifecycle, "append_terminal", _fail_terminal)
 
     class _ResponseContext:
         async def __aenter__(self) -> object:
@@ -1418,13 +1399,15 @@ async def test_real_async_helper_retries_each_post_with_exact_frozen_mutation_an
     original_start = lifecycle.append_start
     original_terminal = lifecycle.append_terminal
 
-    def _append_start(*args: Any, **kwargs: Any) -> None:
-        original_start(*args, **kwargs)
+    def _append_start(*args: Any, **kwargs: Any) -> object:
+        receipt = original_start(*args, **kwargs)
         events.append("start_ack")
+        return receipt
 
-    def _append_terminal(*args: Any, **kwargs: Any) -> None:
-        original_terminal(*args, **kwargs)
+    def _append_terminal(*args: Any, **kwargs: Any) -> object:
+        receipt = original_terminal(*args, **kwargs)
         events.append("terminal_ack")
+        return receipt
 
     monkeypatch.setattr(lifecycle, "append_start", _append_start)
     monkeypatch.setattr(lifecycle, "append_terminal", _append_terminal)
@@ -1552,6 +1535,41 @@ async def test_real_async_helper_pin_or_start_failure_keeps_post_count_zero(
         await anext(stream)
     assert create_session_calls == 0
     assert lifecycle.query_strict() == ()
+    if failure_phase == "start":
+        state = gate._physical_attempt_control_port.budget_state("f" * 64)
+        assert state.aborted_count == 1
+        assert state.ambiguous_count == 0
+        assert gate.drain_coordinator.snapshot().settled is True
+
+
+def test_start_append_with_durable_fact_but_lost_ack_is_ambiguous_and_never_dispatches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    original_start = lifecycle.append_start
+    sends = 0
+
+    def _persist_then_lose_ack(*args: Any, **kwargs: Any) -> object:
+        original_start(*args, **kwargs)
+        raise OSError("start durability ack lost")
+
+    def _send(_wire: Mapping[str, Any]) -> str:
+        nonlocal sends
+        sends += 1
+        return "forbidden"
+
+    monkeypatch.setattr(lifecycle, "append_start", _persist_then_lose_ack)
+    with pytest.raises(OSError, match="start durability ack lost"):
+        gate.dispatch_sync(wire_request=_wire_request(), send=_send)
+
+    state = gate._physical_attempt_control_port.budget_state("f" * 64)
+    assert sends == 0
+    assert state.aborted_count == 0
+    assert state.ambiguous_count == 1
+    assert gate.drain_coordinator.snapshot().settled is False
+    assert [fact["event_type"] for fact in lifecycle.query_strict()] == ["provider_attempt.started"]
 
 
 @pytest.mark.asyncio
@@ -1568,17 +1586,19 @@ async def test_real_async_helper_second_cancellation_closes_session_before_termi
     terminal_entered = threading.Event()
     release_terminal = threading.Event()
     terminal_calls = 0
+    original_terminal = lifecycle.append_terminal
 
     async def _create_session(_old: object) -> _AsyncSession:
         return session
 
-    def _blocking_terminal(*_args: object, **_kwargs: object) -> None:
+    def _blocking_terminal(*args: Any, **kwargs: Any) -> object:
         nonlocal terminal_calls
         terminal_calls += 1
         events.append("terminal_entered")
         terminal_entered.set()
         assert release_terminal.wait(timeout=2)
         events.append("terminal_ack")
+        return original_terminal(*args, **kwargs)
 
     async def _handler(_response: object) -> AsyncGenerator[str, None]:
         entered_handler.set()

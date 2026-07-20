@@ -4,11 +4,21 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
+    AppendSegmentedFactEventCommandV1,
     BootstrapFactStreamWorkspaceCommandV1,
+    append_segmented_fact_event,
     bootstrap_fact_stream_workspace,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle import (
     StrictProviderAttemptLifecycleStore,
+)
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    FACTORY_PHYSICAL_ATTEMPT_LEASE_SCHEMA,
+    FACTORY_PHYSICAL_ATTEMPT_START_PERMIT_SCHEMA,
+    FactoryPhysicalAttemptLeaseV1,
+    FactoryPhysicalAttemptStartPermitV1,
+    ProviderAttemptStartReceiptV1,
+    ProviderAttemptTerminalReceiptV1,
 )
 from polaris.kernelone.events.sourcing.segmented_file_store import SegmentedJsonlEventStore
 from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1
@@ -42,6 +52,9 @@ def _attempt(
         model="model-1",
         attempt_number=1,
         verification_scope=verification_scope,
+        execution_authority_hash="f" * 64 if verification_scope == "factory" else "",
+        attempt_budget=32 if verification_scope == "factory" else 0,
+        authority_attempt_ordinal=1 if verification_scope == "factory" else 0,
         semantic_request_hash="a" * 64,
         physical_wire_hash="b" * 64,
         composite_request_hash="c" * 64,
@@ -50,15 +63,169 @@ def _attempt(
     )
 
 
-def test_terminal_without_authoritative_start_fails_closed(tmp_path: Path) -> None:
+def _start_permit(attempt: FrozenFinalProviderAttemptV1) -> FactoryPhysicalAttemptStartPermitV1:
+    return FactoryPhysicalAttemptStartPermitV1(
+        schema_version=FACTORY_PHYSICAL_ATTEMPT_START_PERMIT_SCHEMA,
+        verification_scope="factory",
+        factory_run_id=attempt.factory_run_id,
+        run_id=attempt.run_id,
+        role=attempt.role,
+        turn_id=attempt.turn_id,
+        call_id=attempt.call_id,
+        request_freeze_id=attempt.request_freeze_id,
+        execution_authority_hash="f" * 64,
+        attempt_budget=32,
+        provider=attempt.provider,
+        model=attempt.model,
+        semantic_request_hash=attempt.semantic_request_hash,
+        physical_wire_hash=attempt.physical_wire_hash,
+        composite_request_hash=attempt.composite_request_hash,
+        reservation_id="reservation-1",
+        provider_request_id=attempt.provider_request_id,
+        authority_attempt_ordinal=attempt.attempt_number,
+        start_permit_id="start-permit-1",
+    )
+
+
+def _lease(
+    permit: FactoryPhysicalAttemptStartPermitV1,
+    receipt: ProviderAttemptStartReceiptV1,
+) -> FactoryPhysicalAttemptLeaseV1:
+    return FactoryPhysicalAttemptLeaseV1(
+        schema_version=FACTORY_PHYSICAL_ATTEMPT_LEASE_SCHEMA,
+        verification_scope=permit.verification_scope,
+        factory_run_id=permit.factory_run_id,
+        run_id=permit.run_id,
+        role=permit.role,
+        turn_id=permit.turn_id,
+        call_id=permit.call_id,
+        request_freeze_id=permit.request_freeze_id,
+        execution_authority_hash=permit.execution_authority_hash,
+        attempt_budget=permit.attempt_budget,
+        provider=permit.provider,
+        model=permit.model,
+        semantic_request_hash=permit.semantic_request_hash,
+        physical_wire_hash=permit.physical_wire_hash,
+        composite_request_hash=permit.composite_request_hash,
+        reservation_id=permit.reservation_id,
+        provider_request_id=permit.provider_request_id,
+        authority_attempt_ordinal=permit.authority_attempt_ordinal,
+        start_permit_id=permit.start_permit_id,
+        lease_id="lease-1",
+        start_receipt=receipt,
+    )
+
+
+def test_factory_lifecycle_returns_exact_durable_receipts(tmp_path: Path) -> None:
     _bootstrap(tmp_path)
     lifecycle = StrictProviderAttemptLifecycleStore.for_factory_run(
         workspace=str(tmp_path),
         factory_run_id="factory-run-1",
     )
+    attempt = _attempt()
+    permit = _start_permit(attempt)
+
+    start_receipt = lifecycle.append_start(
+        attempt,
+        start_permit=permit,
+        context_snapshot_ref="d" * 24,
+        pin_hash="e" * 64,
+    )
+    assert type(start_receipt) is ProviderAttemptStartReceiptV1
+    lease = _lease(permit, start_receipt)
+    terminal_receipt = lifecycle.append_terminal(
+        attempt,
+        lease=lease,
+        context_snapshot_ref="d" * 24,
+        pin_hash="e" * 64,
+        status="completed",
+    )
+    assert type(terminal_receipt) is ProviderAttemptTerminalReceiptV1
+    assert terminal_receipt.logical_sequence > start_receipt.logical_sequence
+    assert terminal_receipt.lease_id == lease.lease_id
+
+
+def test_factory_lifecycle_proves_exact_start_absence_at_captured_head(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    lifecycle = StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(tmp_path),
+        factory_run_id="factory-run-1",
+    )
+    permit = _start_permit(_attempt())
+
+    proof = lifecycle.prove_start_not_persisted(permit)
+
+    assert proof is not None
+    assert proof.start_permit == permit
+    assert proof.lifecycle_head_sequence == 0
+    assert len(proof.lifecycle_head_hash) == 64
+    assert proof.durability_acked is True
+
+
+def test_factory_lifecycle_never_projects_persisted_or_conflicting_start_as_absent(tmp_path: Path) -> None:
+    persisted_workspace = tmp_path / "persisted"
+    conflict_workspace = tmp_path / "conflict"
+    _bootstrap(persisted_workspace)
+    _bootstrap(conflict_workspace)
+    attempt = _attempt()
+    permit = _start_permit(attempt)
+    persisted = StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(persisted_workspace),
+        factory_run_id="factory-run-1",
+    )
+    persisted.append_start(
+        attempt,
+        start_permit=permit,
+        context_snapshot_ref="d" * 24,
+        pin_hash="e" * 64,
+    )
+    assert persisted.prove_start_not_persisted(permit) is None
+
+    conflict = StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(conflict_workspace),
+        factory_run_id="factory-run-1",
+    )
+    append_segmented_fact_event(
+        AppendSegmentedFactEventCommandV1(
+            workspace=str(conflict_workspace),
+            logical_stream=conflict.logical_stream,
+            event_type="provider_attempt.started",
+            source="roles.kernel",
+            payload={"provider_request_id": permit.provider_request_id},
+            idempotency_key=f"{permit.provider_request_id}:conflicting-start",
+        )
+    )
+    with pytest.raises(RuntimeError, match="start identity conflict"):
+        conflict.prove_start_not_persisted(permit)
+
+
+def test_terminal_without_authoritative_start_fails_closed(tmp_path: Path) -> None:
+    source_workspace = tmp_path / "receipt-source"
+    target_workspace = tmp_path / "missing-start-target"
+    _bootstrap(source_workspace)
+    _bootstrap(target_workspace)
+    attempt = _attempt()
+    permit = _start_permit(attempt)
+    source_lifecycle = StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(source_workspace),
+        factory_run_id="factory-run-1",
+    )
+    start_receipt = source_lifecycle.append_start(
+        attempt,
+        start_permit=permit,
+        context_snapshot_ref="d" * 24,
+        pin_hash="e" * 64,
+    )
+    assert type(start_receipt) is ProviderAttemptStartReceiptV1
+    lease = _lease(permit, start_receipt)
+    lifecycle = StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(target_workspace),
+        factory_run_id="factory-run-1",
+    )
     with pytest.raises(RuntimeError, match="start is missing or ambiguous"):
         lifecycle.append_terminal(
-            _attempt(),
+            attempt,
+            lease=lease,
             context_snapshot_ref="d" * 24,
             pin_hash="e" * 64,
             status="failed",
@@ -73,15 +240,25 @@ def test_duplicate_terminal_is_idempotent_only_for_the_same_terminal_fact(tmp_pa
         factory_run_id="factory-run-1",
     )
     attempt = _attempt()
-    lifecycle.append_start(attempt, context_snapshot_ref="d" * 24, pin_hash="e" * 64)
+    permit = _start_permit(attempt)
+    start_receipt = lifecycle.append_start(
+        attempt,
+        start_permit=permit,
+        context_snapshot_ref="d" * 24,
+        pin_hash="e" * 64,
+    )
+    assert type(start_receipt) is ProviderAttemptStartReceiptV1
+    lease = _lease(permit, start_receipt)
     lifecycle.append_terminal(
         attempt,
+        lease=lease,
         context_snapshot_ref="d" * 24,
         pin_hash="e" * 64,
         status="completed",
     )
     lifecycle.append_terminal(
         attempt,
+        lease=lease,
         context_snapshot_ref="d" * 24,
         pin_hash="e" * 64,
         status="completed",
@@ -95,6 +272,7 @@ def test_duplicate_terminal_is_idempotent_only_for_the_same_terminal_fact(tmp_pa
     with pytest.raises((RuntimeError, ValueError)):
         lifecycle.append_terminal(
             attempt,
+            lease=lease,
             context_snapshot_ref="d" * 24,
             pin_hash="e" * 64,
             status="failed",
@@ -119,9 +297,18 @@ def test_terminal_healthy_path_recovers_start_by_locator_without_full_ledger_sca
     monkeypatch.setattr(lifecycle, "query_strict", _scan_forbidden)
     monkeypatch.setattr(SegmentedJsonlEventStore, "head", _scan_forbidden)
     monkeypatch.setattr(SegmentedJsonlEventStore, "_full_scan_and_rebuild_locked", _scan_forbidden)
-    lifecycle.append_start(attempt, context_snapshot_ref="d" * 24, pin_hash="e" * 64)
+    permit = _start_permit(attempt)
+    start_receipt = lifecycle.append_start(
+        attempt,
+        start_permit=permit,
+        context_snapshot_ref="d" * 24,
+        pin_hash="e" * 64,
+    )
+    assert type(start_receipt) is ProviderAttemptStartReceiptV1
+    lease = _lease(permit, start_receipt)
     lifecycle.append_terminal(
         attempt,
+        lease=lease,
         context_snapshot_ref="d" * 24,
         pin_hash="e" * 64,
         status="completed",
@@ -183,10 +370,19 @@ def test_lifecycle_rejects_malformed_refs_pin_hash_and_terminal_status_before_ap
         lifecycle.append_start(attempt, context_snapshot_ref="d" * 24, pin_hash="e" * 63)
     assert lifecycle.query_strict() == ()
 
-    lifecycle.append_start(attempt, context_snapshot_ref="d" * 24, pin_hash="e" * 64)
+    permit = _start_permit(attempt)
+    start_receipt = lifecycle.append_start(
+        attempt,
+        start_permit=permit,
+        context_snapshot_ref="d" * 24,
+        pin_hash="e" * 64,
+    )
+    assert type(start_receipt) is ProviderAttemptStartReceiptV1
+    lease = _lease(permit, start_receipt)
     with pytest.raises(ValueError, match="terminal status"):
         lifecycle.append_terminal(
             attempt,
+            lease=lease,
             context_snapshot_ref="d" * 24,
             pin_hash="e" * 64,
             status="success",

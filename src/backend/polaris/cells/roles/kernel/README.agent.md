@@ -71,11 +71,13 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
 - `FactoryRoleEvidenceCutoffAckV1` is locator-only; only
   `FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof` may reconstruct the
   detached committed proof used for semantic request injection
-- B3.2 freezes the provider-visible semantic request after evidence injection
-  but never authorizes or dispatches a physical provider attempt
+- B3.2 freezes the provider-visible semantic request after evidence injection;
+  B3.3 propagates its exact runtime-private port through private sync,
+  structured/manual, retry/fallback, and stream/reconnect seams while retaining
+  the public zero-transport barrier
 - semantic request identity, pre-evidence candidate, and post-evidence frozen
   request are immutable result/value DTOs; none is a command or query
-- B3.3-B3.5 must independently qualify every Architect, PM initial/recovery,
+- B3.4-B3.5 must independently budget, conserve, snapshot, and qualify every Architect, PM initial/recovery,
   Chief Engineer, Director direct/fanout, QA, retry, fallback, structured, and
   stream physical attempt before provider I/O
 - runtime-only authority ports must never enter provider payloads, snapshots,
@@ -92,6 +94,7 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
 - `internal/output_parser.py`
 - `internal/quality_checker.py`
 - `internal/llm_caller/`
+- `internal/llm_caller/factory_dispatch_propagation.py`
 - `internal/retry_policy_engine.py`
 - `internal/error_category.py`
 - `generated/verify.pack.json`
@@ -116,6 +119,10 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
 - `polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py`
 - `polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py`
 - `polaris/cells/roles/kernel/tests/test_llm_caller_components.py`
+- `polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py`
+- `polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py`
+- `polaris/kernelone/llm/engine/tests/test_executor.py`
+- `polaris/kernelone/llm/engine/stream/tests/test_executor.py`
 
 ## Metadata Authority
 
@@ -123,6 +130,6 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
 - `cell.yaml`, `docs/graph/catalog/cells.yaml`, this README, and
   `generated/verify.pack.json` must project the same B3.2 public module, proof
   DTOs, proof-resolution query, and focused tests.
-- Metadata closure is not provider authorization. Until B3.3-B3.5 close,
+- Metadata closure is not provider authorization. Until B3.4-B3.5 close,
   physical provider qualification and complete final-request snapshots remain
   guarded.

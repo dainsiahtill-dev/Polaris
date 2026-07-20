@@ -18,6 +18,9 @@ from polaris.cells.factory.pipeline.internal import (
     factory_run_completion as completion_module,
     factory_stage_executor as executor_module,
 )
+from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
+    FactoryRoleEvidenceAuthorityPort,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_models import (
     FactoryConfig,
@@ -445,6 +448,14 @@ async def test_quality_gate_conflict_matrix_uses_canonical_projection(
 ) -> None:
     executor = OrchestrationStageExecutor(tmp_path)
     run = _factory_run()
+    authority_port = object.__new__(FactoryRoleEvidenceAuthorityPort)
+
+    async def call_with_test_authority(
+        _authority_port: object,
+        _role: str,
+        operation: Any,
+    ) -> Any:
+        return await operation()
 
     async def workspace_checks(_run: FactoryRun, _context: dict[str, Any]) -> tuple[bool, str]:
         return True, ""
@@ -464,6 +475,7 @@ async def test_quality_gate_conflict_matrix_uses_canonical_projection(
         )
 
     monkeypatch.setattr(executor, "_run_workspace_quality_checks", workspace_checks)
+    monkeypatch.setattr(executor, "_call_with_factory_role_evidence_authority", call_with_test_authority)
     monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: _QaCommandService())
     monkeypatch.setattr(executor, "_wait_run_completion", terminal_result)
     monkeypatch.setattr(
@@ -474,7 +486,11 @@ async def test_quality_gate_conflict_matrix_uses_canonical_projection(
 
     result = await executor._execute_quality_gate(
         run,
-        {"qa_target": "Quality gate", "canonical_projection_settlement_timeout_seconds": 0.1},
+        {
+            "qa_target": "Quality gate",
+            "canonical_projection_settlement_timeout_seconds": 0.1,
+            executor_module.FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY: authority_port,
+        },
     )
 
     assert result.status == expected_status

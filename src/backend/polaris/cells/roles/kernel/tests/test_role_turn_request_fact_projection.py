@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import AsyncIterator
-from dataclasses import replace
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,6 +18,9 @@ from polaris.cells.roles.kernel.internal.llm_caller import request_preparer as r
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     build_final_provider_request_snapshot,
     build_final_request_context_audit_for_request,
+)
+from polaris.cells.roles.kernel.internal.llm_caller.factory_dispatch_propagation import (
+    FactorySemanticDispatchPropagationPort,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.factory_role_evidence_binding import (
     FactoryRoleEvidenceBindingV1,
@@ -47,6 +50,7 @@ from polaris.kernelone.events.final_request_evidence import (
     render_role_final_request_policy_facts,
     role_final_request_policy,
 )
+from polaris.kernelone.llm.engine.contracts import AIRequest
 
 
 def _pm_contract_set() -> dict[str, Any]:
@@ -641,6 +645,7 @@ async def test_context_gateway_path_injects_identity_and_recalculates_request(
     assert prepared.context_result.metadata["projection_id"] == final_digest
     assert prepared.context_result.metadata["source_projection_id"] == "stale-projection-id"
     assert prepared.factory_semantic_request is None
+    assert prepared.factory_dispatch_port is None
 
 
 def _semantic_identity() -> object:
@@ -658,6 +663,27 @@ class _B32CutoffPort:
     def __init__(self) -> None:
         self.acquire_requests: list[FactoryRoleEvidenceCutoffRequestV1] = []
         self.resolve_acks: list[FactoryRoleEvidenceCutoffAckV1] = []
+
+    def reserve(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def begin_start(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def commit_started(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def abort_reservation(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def mark_start_ambiguous(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def settle(self, command: object) -> object:
+        raise AssertionError(command)
+
+    def terminal_persistence_failed(self, command: object) -> object:
+        raise AssertionError(command)
 
     async def acquire_cutoff(
         self,
@@ -784,16 +810,15 @@ def _b32_authority(port: _B32CutoffPort, *, role: str = "chief_engineer") -> Fac
         factory_run_id="factory-run-1",
         role=role,
         cutoff_port=port,
+        physical_attempt_control_port=port,
         attempt_budget=3,
         execution_authority_hash="a" * 64,
     )
 
 
-@pytest.mark.parametrize("role", ["architect", "pm", "chief_engineer", "director", "qa"])
-@pytest.mark.asyncio
-async def test_factory_binding_injects_one_exact_evidence_block_and_refreezes_all_projections(
+async def _prepare_b33_factory_request(
     role: str,
-) -> None:
+) -> tuple[_B32CutoffPort, FactoryRoleEvidenceAuthorityBindingV1, SimpleNamespace, Any]:
     port = _B32CutoffPort()
     authority = _b32_authority(port, role=role)
     context = SimpleNamespace(
@@ -809,7 +834,6 @@ async def test_factory_binding_injects_one_exact_evidence_block_and_refreezes_al
             "capability_profile_ref": {"sha256": "f" * 64},
         },
     )
-
     with bind_factory_role_evidence_authority(authority):
         prepared = await LLMRequestPreparer(workspace=".")._prepare_llm_request(
             profile=_profile(role),
@@ -820,6 +844,15 @@ async def test_factory_binding_injects_one_exact_evidence_block_and_refreezes_al
             stream=False,
             factory_semantic_identity=_semantic_identity(),
         )
+    return port, authority, context, prepared
+
+
+@pytest.mark.parametrize("role", ["architect", "pm", "chief_engineer", "director", "qa"])
+@pytest.mark.asyncio
+async def test_factory_binding_injects_one_exact_evidence_block_and_refreezes_all_projections(
+    role: str,
+) -> None:
+    port, authority, context, prepared = await _prepare_b33_factory_request(role)
 
     assert len(port.acquire_requests) == 1
     assert len(port.resolve_acks) == 1
@@ -845,6 +878,64 @@ async def test_factory_binding_injects_one_exact_evidence_block_and_refreezes_al
     assert prepared.context_result.metadata["projection_id"] == prompt_digest
     assert prepared.context_result.metadata["context_result_id"] == build_context_result_id(prompt_digest)
     assert prepared.factory_semantic_request is not None
+    assert type(prepared.factory_dispatch_port) is FactorySemanticDispatchPropagationPort
+    assert prepared.factory_dispatch_port.frozen_semantic_request is prepared.factory_semantic_request
+    prepared.factory_dispatch_port.validate_frozen_identity(prepared.factory_semantic_request)
+    send_count = 0
+    open_stream_count = 0
+
+    def _send(_wire_request: object) -> object:
+        nonlocal send_count
+        send_count += 1
+        return object()
+
+    async def _send_async(_wire_request: object) -> object:
+        nonlocal send_count
+        send_count += 1
+        return object()
+
+    def _open_stream(_wire_request: object) -> object:
+        nonlocal open_stream_count
+        open_stream_count += 1
+        return object()
+
+    async def _consume(_response: object):
+        yield object()
+
+    disabled = "factory_role_semantic_request_frozen_physical_dispatch_not_enabled"
+    with pytest.raises(RuntimeError, match=disabled):
+        prepared.factory_dispatch_port.dispatch_sync(wire_request={}, send=_send)
+    with pytest.raises(RuntimeError, match=disabled):
+        await prepared.factory_dispatch_port.dispatch_async(wire_request={}, send=_send_async)
+    with pytest.raises(RuntimeError, match=disabled):
+        await prepared.factory_dispatch_port.dispatch_blocking_async(wire_request={}, send=_send)
+    with pytest.raises(RuntimeError, match=disabled):
+        async for _ in prepared.factory_dispatch_port.dispatch_stream_async(
+            wire_request={},
+            open_stream=_open_stream,
+            consume=_consume,
+        ):
+            pass
+    assert send_count == 0
+    assert open_stream_count == 0
+
+    assert "factory_run_id" not in repr(prepared.factory_dispatch_port)
+    assert authority.execution_authority_hash not in repr(prepared.factory_dispatch_port)
+    assert "FactorySemanticDispatchPropagationPort" not in repr(prepared)
+    assert "FactorySemanticDispatchPropagationPort" not in json.dumps(prepared, default=str)
+    with pytest.raises(TypeError, match="factory_dispatch_port_serialization_forbidden"):
+        asdict(prepared)
+    assert cutoff_contract.contains_factory_role_evidence_runtime_authority(prepared.factory_dispatch_port) is True
+
+    with pytest.raises(RuntimeError, match="factory_role_semantic_request_dispatch_port_required"):
+        replace(prepared, factory_dispatch_port=None)
+    with pytest.raises(RuntimeError, match="factory_role_semantic_request_required_for_dispatch_port"):
+        replace(prepared, factory_semantic_request=None)
+    with pytest.raises(TypeError, match="factory_role_semantic_dispatch_port_exact_type_required"):
+        replace(prepared, factory_dispatch_port=object())
+    detached_equal_freeze = replace(prepared.factory_semantic_request)
+    with pytest.raises(RuntimeError, match="factory_dispatch_frozen_request_identity_mismatch"):
+        replace(prepared, factory_semantic_request=detached_equal_freeze)
     frozen_payload = prepared.factory_semantic_request.canonical_final_payload_json
     assert json.loads(frozen_payload)["messages"] == prepared.messages
     assert json.loads(frozen_payload)["capability_profile_id"] != "f" * 64
@@ -889,6 +980,179 @@ async def test_factory_binding_injects_one_exact_evidence_block_and_refreezes_al
         second.factory_semantic_request.semantic_candidate_hash
         == prepared.factory_semantic_request.semantic_candidate_hash
     )
+
+
+@pytest.mark.parametrize(
+    ("surface", "field_name", "replacement"),
+    [
+        ("authority", "attempt_budget", 7),
+        ("authority", "role", "qa"),
+        ("binding", "run_id", "different-controlled-run"),
+        ("binding", "signed_factory_binding_hash", "b" * 64),
+        ("frozen", "final_semantic_request_hash", "c" * 64),
+    ],
+)
+@pytest.mark.asyncio
+async def test_b33_live_authority_binding_and_frozen_hash_drift_fail_closed(
+    surface: str,
+    field_name: str,
+    replacement: object,
+) -> None:
+    _port, authority, _context, prepared = await _prepare_b33_factory_request("director")
+    dispatch_port = prepared.factory_dispatch_port
+    assert type(dispatch_port) is FactorySemanticDispatchPropagationPort
+    target = {
+        "authority": authority,
+        "binding": dispatch_port._binding,
+        "frozen": prepared.factory_semantic_request,
+    }[surface]
+    original = getattr(target, field_name)
+    object.__setattr__(target, field_name, replacement)
+    try:
+        with pytest.raises(RuntimeError, match="factory_dispatch_"):
+            dispatch_port.validate_frozen_identity(prepared.factory_semantic_request)
+    finally:
+        object.__setattr__(target, field_name, original)
+
+
+@pytest.mark.asyncio
+async def test_b33_semantic_retry_reacquires_cutoff_refreezes_and_mints_new_exact_port() -> None:
+    port, authority, _context, prepared = await _prepare_b33_factory_request("director")
+    preparer = LLMRequestPreparer(workspace=".")
+    profile = _profile("director")
+    old_projection_id = str(prepared.context_result.metadata["projection_id"])
+    old_context_result_id = str(prepared.context_result.metadata["context_result_id"])
+    prepared.ai_request.context.update(
+        {
+            "context_snapshot_ref": "a" * 24,
+            "context_snapshot_degraded": {"code": "old-snapshot"},
+            "context_snapshot_degraded_reason": "old-snapshot",
+            "contextSnapshotRef": "b" * 24,
+            "contextSnapshotDegraded": {"code": "old-camel-snapshot"},
+            "contextSnapshotDegradedReason": "old-camel-snapshot",
+            "final_provider_attempt_receipt_ref": "receipt://old-attempt",
+            "finalProviderAttemptReceiptRef": "receipt://old-camel-attempt",
+        }
+    )
+    retry_request = preparer._build_reasoning_truncation_retry_request(
+        prepared=prepared,
+        profile=profile,
+    )
+
+    with bind_factory_role_evidence_authority(authority):
+        retry_prepared = await preparer._reprepare_factory_semantic_retry_request(
+            prepared=prepared,
+            request=retry_request,
+            profile=profile,
+        )
+
+    assert len(port.acquire_requests) == 2
+    assert len(port.resolve_acks) == 2
+    old_frozen = prepared.factory_semantic_request
+    new_frozen = retry_prepared.factory_semantic_request
+    assert new_frozen is not old_frozen
+    assert new_frozen.identity.request_freeze_id != old_frozen.identity.request_freeze_id
+    assert (
+        new_frozen.identity.run_id,
+        new_frozen.identity.turn_id,
+        new_frozen.identity.call_id,
+    ) == (
+        old_frozen.identity.run_id,
+        old_frozen.identity.turn_id,
+        old_frozen.identity.call_id,
+    )
+    assert retry_prepared.ai_request is retry_request
+    assert retry_prepared.factory_dispatch_port is not prepared.factory_dispatch_port
+    assert type(retry_prepared.factory_dispatch_port) is FactorySemanticDispatchPropagationPort
+    assert retry_prepared.factory_dispatch_port.frozen_semantic_request is new_frozen
+    retry_prepared.factory_dispatch_port.validate_frozen_identity(new_frozen)
+    with pytest.raises(RuntimeError, match="factory_dispatch_frozen_request_identity_mismatch"):
+        retry_prepared.factory_dispatch_port.validate_frozen_identity(old_frozen)
+    fresh_digest = str(retry_prepared.context_os_audit["prompt_digest"])
+    fresh_context_result_id = build_context_result_id(fresh_digest)
+    assert fresh_digest != old_projection_id
+    assert retry_prepared.context_result.metadata["projection_id"] == fresh_digest
+    assert retry_prepared.context_result.metadata["context_result_id"] == fresh_context_result_id
+    assert retry_prepared.context_result.metadata["source_projection_id"] == old_projection_id
+    assert retry_prepared.context_result.metadata["source_context_result_id"] == old_context_result_id
+    assert retry_request.context["context_projection_id"] == fresh_digest
+    assert retry_request.context["context_result_id"] == fresh_context_result_id
+    assert retry_request.context["context_os_audit"]["prompt_digest"] == fresh_digest
+    assert "context_snapshot_ref" not in retry_request.context
+    assert "context_snapshot_degraded" not in retry_request.context
+    assert "context_snapshot_degraded_reason" not in retry_request.context
+    assert "contextSnapshotRef" not in retry_request.context
+    assert "contextSnapshotDegraded" not in retry_request.context
+    assert "contextSnapshotDegradedReason" not in retry_request.context
+    assert "final_provider_attempt_receipt_ref" not in retry_request.context
+    assert "finalProviderAttemptReceiptRef" not in retry_request.context
+
+
+@pytest.mark.parametrize(
+    ("variant", "option_updates"),
+    [
+        (
+            "tools",
+            {
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ]
+            },
+        ),
+        (
+            "tool_choice",
+            {
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                "tool_choice": "required",
+            },
+        ),
+        ("response_format", {"response_format": {"type": "json_object"}}),
+        ("max_tokens", {"max_tokens": 8192}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_b33_real_semantic_retry_refreezes_provider_visible_option_variants(
+    variant: str,
+    option_updates: dict[str, Any],
+) -> None:
+    port, authority, _context, prepared = await _prepare_b33_factory_request("director")
+    request_options = dict(prepared.ai_request.options)
+    request_options.update(option_updates)
+    retry_request = AIRequest(
+        task_type=prepared.ai_request.task_type,
+        role=prepared.ai_request.role,
+        input=prepared.ai_request.input,
+        options=request_options,
+        context=dict(prepared.ai_request.context),
+    )
+
+    with bind_factory_role_evidence_authority(authority):
+        retry_prepared = await LLMRequestPreparer(workspace=".")._reprepare_factory_semantic_retry_request(
+            prepared=prepared,
+            request=retry_request,
+            profile=_profile("director"),
+        )
+
+    assert len(port.acquire_requests) == 2
+    assert len(port.resolve_acks) == 2
+    assert retry_prepared.factory_semantic_request is not prepared.factory_semantic_request
+    assert retry_prepared.factory_dispatch_port is not prepared.factory_dispatch_port
+    frozen_payload = json.loads(retry_prepared.factory_semantic_request.canonical_final_payload_json)
+    assert frozen_payload[variant] == request_options[variant]
 
 
 @pytest.mark.asyncio

@@ -7,11 +7,31 @@ through per-binding dispatch fanout.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
+    FactoryRoleEvidenceAuthorityPort,
+)
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+
+def _fanout_authority_port() -> FactoryRoleEvidenceAuthorityPort:
+    """Return the exact runtime port type needed by direct fanout unit calls."""
+
+    port = object.__new__(FactoryRoleEvidenceAuthorityPort)
+    capacity_calls: list[tuple[str, int]] = []
+
+    def require_grant_capacity(role: str, count: int) -> None:
+        assert role == "director"
+        assert count >= 0
+        capacity_calls.append((role, count))
+
+    port.require_grant_capacity = require_grant_capacity  # type: ignore[method-assign]
+    port._test_capacity_calls = capacity_calls
+    return port
 
 
 async def _canonical_wait_result(
@@ -39,11 +59,6 @@ async def _canonical_wait_result(
 
 
 def _attach_canonical_wait(executor: Any) -> Any:
-    class _FanoutAuthorityPort:
-        def require_grant_capacity(self, role: str, count: int) -> None:
-            assert role == "director"
-            assert count >= 0
-
     async def _call_with_test_authority(
         _authority_port: object,
         _role: str,
@@ -51,17 +66,36 @@ def _attach_canonical_wait(executor: Any) -> Any:
     ) -> Any:
         return await operation()
 
-    authority_port = _FanoutAuthorityPort()
-    execute_fanout = executor._execute_director_binding_fanout
-
-    async def _execute_fanout_with_test_authority(*args: Any, **kwargs: Any) -> Any:
-        kwargs.setdefault("authority_port", authority_port)
-        return await execute_fanout(*args, **kwargs)
-
     executor._wait_run_completion = _canonical_wait_result
     executor._call_with_factory_role_evidence_authority = _call_with_test_authority
-    executor._execute_director_binding_fanout = _execute_fanout_with_test_authority
+    executor._test_authority_port = _fanout_authority_port()
     return executor
+
+
+@pytest.mark.asyncio
+async def test_direct_fanout_consumes_explicit_exact_authority_port(tmp_path: Path) -> None:
+    """Exercise the production signature directly, without an instance wrapper."""
+
+    from polaris.cells.factory.pipeline.internal.factory_run_service import (
+        OrchestrationStageExecutor,
+    )
+
+    executor = _attach_canonical_wait(OrchestrationStageExecutor(tmp_path))
+    authority_port = executor._test_authority_port
+
+    result = await OrchestrationStageExecutor._execute_director_binding_fanout(
+        executor,
+        service=object(),
+        workspace=str(tmp_path),
+        tasks=[],
+        base_options={},
+        bindings=[],
+        authority_port=authority_port,
+    )
+
+    assert type(authority_port) is FactoryRoleEvidenceAuthorityPort
+    assert authority_port._test_capacity_calls == [("director", 0)]
+    assert result.status == "failed"
 
 
 class TestResolveDirectorBindingFanout:
@@ -467,6 +501,7 @@ class TestExecuteDirectorBindingFanout:
         started_at = loop.time()
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=["TASK-1", "TASK-2"],
@@ -512,6 +547,7 @@ class TestExecuteDirectorBindingFanout:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=["task-1", "task-2", "task-3"],
@@ -547,6 +583,7 @@ class TestExecuteDirectorBindingFanout:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=["TASK-1"],
@@ -592,6 +629,7 @@ class TestExecuteDirectorBindingFanout:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -618,6 +656,7 @@ class TestExecuteDirectorBindingFanout:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -644,6 +683,7 @@ class TestExecuteDirectorBindingFanout:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=["TASK-1"],
@@ -701,6 +741,7 @@ class TestExecuteDirectorBindingFanout:
         executor._wait_run_completion = mock_wait  # type: ignore[assignment]
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -745,6 +786,7 @@ class TestExecuteDirectorBindingFanout:
         executor._wait_run_completion = mock_wait  # type: ignore[assignment]
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -792,6 +834,7 @@ class TestExecuteDirectorBindingFanout:
         executor._read_taskboard_stats = MagicMock(return_value={"total": 7, "completed": 2, "failed": 1, "pending": 4})
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -926,6 +969,7 @@ class TestThreeReachableBindingsAllExecuted:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=["task-1", "task-2", "task-3"],
@@ -977,6 +1021,7 @@ class TestOneExecutedTwoNotExecutedFails:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=["task-1", "task-2", "task-3"],
@@ -1077,6 +1122,7 @@ class TestFanoutWaitForAllRuns:
             side_effect=_canonical_wait_result,
         ) as mock_wait:
             result = await executor._execute_director_binding_fanout(
+                authority_port=executor._test_authority_port,
                 service=mock_service,
                 workspace=".",
                 tasks=None,
@@ -1130,6 +1176,7 @@ class TestFanoutWaitForAllRuns:
         executor._wait_run_completion = mock_wait  # type: ignore[assignment]
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -1176,6 +1223,7 @@ class TestFanoutWaitForAllRuns:
         executor._wait_run_completion = mock_wait  # type: ignore[assignment]
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -1228,6 +1276,7 @@ class TestFanoutBindingMetadata:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=["task-1", "task-2", "task-3"],
@@ -1273,6 +1322,7 @@ class TestFanoutBindingMetadata:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -1440,6 +1490,7 @@ class TestFanoutPartialFailureNotCompleted:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=["task-1", "task-2", "task-3"],
@@ -1492,6 +1543,7 @@ class TestFanoutPartialFailureNotCompleted:
         mock_service.execute_director_run = AsyncMock(side_effect=failing_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -1521,6 +1573,7 @@ class TestFanoutPartialFailureNotCompleted:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -1555,6 +1608,7 @@ class TestFanoutPartialFailureNotCompleted:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -1971,6 +2025,7 @@ class TestBindingTimeoutQuarantine:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -2002,6 +2057,7 @@ class TestBindingTimeoutQuarantine:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -2035,6 +2091,7 @@ class TestBindingTimeoutQuarantine:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -2067,6 +2124,7 @@ class TestBindingTimeoutQuarantine:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -2095,6 +2153,7 @@ class TestBindingTimeoutQuarantine:
         mock_service.execute_director_run = AsyncMock()
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -2130,6 +2189,7 @@ class TestBindingTimeoutQuarantine:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -2167,6 +2227,7 @@ class TestBindingTimeoutQuarantine:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
@@ -2272,6 +2333,7 @@ class TestBindingTimeoutQuarantine:
         mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
 
         result = await executor._execute_director_binding_fanout(
+            authority_port=executor._test_authority_port,
             service=mock_service,
             workspace=".",
             tasks=None,
