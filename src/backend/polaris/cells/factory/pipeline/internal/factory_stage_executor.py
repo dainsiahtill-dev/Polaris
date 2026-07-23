@@ -84,6 +84,7 @@ from polaris.kernelone.fs import (
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.llm.budget_policy import (
     FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS,
+    chief_engineer_portfolio_generation_floor_seconds,
     chief_engineer_portfolio_output_tokens,
 )
 from polaris.kernelone.storage import resolve_storage_roots
@@ -2806,6 +2807,8 @@ class OrchestrationStageExecutor:
     @staticmethod
     def _factory_deadline_budget_policy(
         context: dict[str, Any],
+        *,
+        chief_engineer_generation_floor_seconds: float = 0.0,
     ) -> FactoryDeadlineBudgetPolicyV1:
         """Resolve infrastructure configuration into the pure deadline policy."""
 
@@ -2826,6 +2829,7 @@ class OrchestrationStageExecutor:
                 _DIRECTOR_SETTLEMENT_BARRIER_BUDGET_SECONDS,
                 OrchestrationStageExecutor._director_dispatch_timeout_settle_grace_seconds(context),
             ),
+            chief_engineer_generation_floor_seconds=math.ceil(chief_engineer_generation_floor_seconds),
         )
 
     @staticmethod
@@ -3088,11 +3092,16 @@ class OrchestrationStageExecutor:
     ) -> FactoryDeadlineAdmissionV1:
         """Return admission for one project-level Chief Engineer LLM call."""
 
+        portfolio_task_count = max(1, len(dependency_schedule.active_task_ids))
+        generation_floor_seconds = chief_engineer_portfolio_generation_floor_seconds(portfolio_task_count)
         return resolve_chief_engineer_portfolio_admission(
             remaining_seconds=OrchestrationStageExecutor._factory_deadline_remaining_seconds(context),
             requested_timeout_seconds=requested_timeout_seconds,
             dependency_schedule=dependency_schedule,
-            policy=OrchestrationStageExecutor._factory_deadline_budget_policy(context),
+            policy=OrchestrationStageExecutor._factory_deadline_budget_policy(
+                context,
+                chief_engineer_generation_floor_seconds=generation_floor_seconds,
+            ),
         )
 
     @staticmethod

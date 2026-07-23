@@ -83,6 +83,80 @@ def test_dependency_schedule_fails_closed_for_cycle() -> None:
     assert any(blocker.startswith("dependency_cycle:") for blocker in schedule.blockers)
 
 
+def test_ce_portfolio_admission_blocks_below_modeled_generation_floor() -> None:
+    """Fail-closed: deadline-clipped CE budget below the physical streaming floor BLOCKs."""
+    policy = FactoryDeadlineBudgetPolicyV1(
+        chief_engineer_min_start_seconds=40.0,
+        director_first_task_min_seconds=150.0,
+        director_followup_task_min_seconds=40.0,
+        quality_gate_reserved_seconds=120.0,
+        quality_gate_min_start_reserved_seconds=55.0,
+        safety_seconds=5.0,
+        director_settlement_barrier_seconds=5.0,
+        chief_engineer_generation_floor_seconds=205.0,
+    )
+    # 540 horizon - 460 reserved = 80 available; 80 >= min_start(40) but 80 < floor(205).
+    decision = resolve_chief_engineer_portfolio_admission(
+        remaining_seconds=540.0,
+        requested_timeout_seconds=240,
+        dependency_schedule=build_task_dependency_schedule(_serial_tasks()),
+        policy=policy,
+    )
+
+    assert decision.disposition is FactoryDeadlineDispositionV1.BLOCK
+    assert decision.reason == "insufficient_factory_deadline_for_chief_engineer_portfolio"
+    assert decision.timeout_seconds == 0
+    assert "chief_engineer_deadline_below_generation_floor" in decision.budget_plan.blockers
+
+
+def test_ce_portfolio_admission_executes_at_or_above_generation_floor() -> None:
+    """Ample budget at/above the modeled floor still EXECUTEs and preserves reserves."""
+    policy = FactoryDeadlineBudgetPolicyV1(
+        chief_engineer_min_start_seconds=40.0,
+        director_first_task_min_seconds=150.0,
+        director_followup_task_min_seconds=40.0,
+        quality_gate_reserved_seconds=120.0,
+        quality_gate_min_start_reserved_seconds=55.0,
+        safety_seconds=5.0,
+        director_settlement_barrier_seconds=5.0,
+        chief_engineer_generation_floor_seconds=80.0,
+    )
+    # 540 - 460 = 80 available; floor == 80 -> EXECUTE (floor is inclusive lower bound).
+    decision = resolve_chief_engineer_portfolio_admission(
+        remaining_seconds=540.0,
+        requested_timeout_seconds=240,
+        dependency_schedule=build_task_dependency_schedule(_serial_tasks()),
+        policy=policy,
+    )
+
+    assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+    assert decision.reserved_downstream_seconds == 460.0
+    assert decision.timeout_seconds == 80
+
+
+def test_ce_portfolio_admission_without_deadline_ignores_generation_floor() -> None:
+    """No Factory deadline (remaining=None) means no clipping; floor must not block."""
+    policy = FactoryDeadlineBudgetPolicyV1(
+        chief_engineer_min_start_seconds=40.0,
+        director_first_task_min_seconds=150.0,
+        director_followup_task_min_seconds=40.0,
+        quality_gate_reserved_seconds=120.0,
+        quality_gate_min_start_reserved_seconds=55.0,
+        safety_seconds=5.0,
+        director_settlement_barrier_seconds=5.0,
+        chief_engineer_generation_floor_seconds=205.0,
+    )
+    decision = resolve_chief_engineer_portfolio_admission(
+        remaining_seconds=None,
+        requested_timeout_seconds=240,
+        dependency_schedule=build_task_dependency_schedule(_serial_tasks()),
+        policy=policy,
+    )
+
+    assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+    assert decision.timeout_seconds == 240
+
+
 def test_ce_portfolio_admission_reserves_entire_director_critical_path() -> None:
     decision = resolve_chief_engineer_portfolio_admission(
         remaining_seconds=540.0,

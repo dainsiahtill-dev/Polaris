@@ -4528,7 +4528,11 @@ class TestMirrorHelpers:
 
 
 class TestQualityGateDeadlineHandling:
-    def test_default_deadline_policy_preserves_ce_and_full_five_task_chain(self) -> None:
+    def test_default_deadline_policy_blocks_ce_when_clipped_budget_below_generation_floor(self) -> None:
+        # A 508s horizon over a 5-task serial chain leaves only ~105-108s for the CE
+        # stage after reserving the full Director critical path (400s) + QA + safety.
+        # That is below the modeled physical floor (~205s) to stream the 16384-token
+        # portfolio, so admission must fail closed instead of EXECUTE a doomed call.
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 508.0
         tasks = [
             {
@@ -4544,10 +4548,10 @@ class TestQualityGateDeadlineHandling:
             dependency_schedule=build_task_dependency_schedule(tasks),
         )
 
-        assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert decision.disposition is FactoryDeadlineDispositionV1.BLOCK
+        assert decision.reason == "insufficient_factory_deadline_for_chief_engineer_portfolio"
         assert decision.reserved_downstream_seconds == 400.0
-        assert 105 <= decision.timeout_seconds <= 108
-        assert decision.budget_plan.conserved is True
+        assert decision.timeout_seconds == 0
 
     def test_chief_engineer_deadline_projection_not_used_without_factory_deadline(self) -> None:
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
@@ -4560,7 +4564,10 @@ class TestQualityGateDeadlineHandling:
         assert decision.remaining_seconds is None
         assert decision.timeout_seconds == 123
 
-    def test_chief_engineer_deadline_projection_caps_llm_timeout_to_available_budget(self) -> None:
+    def test_chief_engineer_deadline_projection_blocks_when_available_budget_below_generation_floor(self) -> None:
+        # 180s horizon with a reduced downstream reserve (125s) leaves ~50-55s for CE.
+        # That exceeds min_start (40s) but is far below the ~205s physical floor to
+        # stream the full portfolio, so admission must fail closed.
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 180.0
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {
@@ -4572,9 +4579,10 @@ class TestQualityGateDeadlineHandling:
             dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
-        assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert decision.disposition is FactoryDeadlineDispositionV1.BLOCK
+        assert decision.reason == "insufficient_factory_deadline_for_chief_engineer_portfolio"
         assert decision.reserved_downstream_seconds == 125.0
-        assert 50 <= decision.timeout_seconds <= 55
+        assert decision.timeout_seconds == 0
 
     def test_chief_engineer_deadline_projection_skips_llm_when_downstream_budget_is_at_risk(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0

@@ -168,6 +168,10 @@ class FactoryDeadlineBudgetPolicyV1:
     quality_gate_min_start_reserved_seconds: int
     safety_seconds: int
     director_settlement_barrier_seconds: int = 5
+    #: Physical wall-clock floor to generate the full CE portfolio output at the
+    #: measured provider streaming rate. Below this the CE call cannot finish;
+    #: admission must fail closed instead of EXECUTE a doomed call.
+    chief_engineer_generation_floor_seconds: int = 0
     schema_version: str = "factory.deadline_budget_policy.v1"
 
     def __post_init__(self) -> None:
@@ -179,6 +183,7 @@ class FactoryDeadlineBudgetPolicyV1:
             "quality_gate_min_start_reserved_seconds",
             "safety_seconds",
             "director_settlement_barrier_seconds",
+            "chief_engineer_generation_floor_seconds",
         ):
             object.__setattr__(self, name, _required_seconds(name, getattr(self, name)))
         if self.quality_gate_min_start_reserved_seconds > self.quality_gate_reserved_seconds:
@@ -822,6 +827,20 @@ def resolve_chief_engineer_portfolio_admission(
         reason = "invalid_factory_deadline_input"
         timeout_seconds = 0
     elif allocated_timeout < policy.chief_engineer_min_start_seconds:
+        disposition = FactoryDeadlineDispositionV1.BLOCK
+        reason = "insufficient_factory_deadline_for_chief_engineer_portfolio"
+        timeout_seconds = 0
+    elif available_for_stage is not None and available_for_stage < policy.chief_engineer_generation_floor_seconds:
+        # Fail-closed: the deadline-clipped budget is below the modeled physical
+        # floor for streaming the full CE portfolio output. EXECUTE here would be
+        # a doomed provider_stream_timeout; surface the blocker instead.
+        budget_plan = RunBudgetPlanV1(
+            stage=FactoryDeadlineStageV1.CHIEF_ENGINEER_PORTFOLIO,
+            horizon_seconds=horizon,
+            units=budget_plan.units,
+            valid=False,
+            blockers=("chief_engineer_deadline_below_generation_floor",),
+        )
         disposition = FactoryDeadlineDispositionV1.BLOCK
         reason = "insufficient_factory_deadline_for_chief_engineer_portfolio"
         timeout_seconds = 0

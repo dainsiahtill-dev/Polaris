@@ -19,6 +19,7 @@ from polaris.kernelone.llm.budget_policy import (
     TURN_KIND_REPAIR_SUBCALL,
     TURN_KIND_REQUIRED_TOOL_RETRY,
     ResolvedBudgetV1,
+    chief_engineer_portfolio_generation_floor_seconds,
     chief_engineer_portfolio_output_tokens,
     chief_engineer_structured_output_tokens,
     clamp_output_tokens,
@@ -69,6 +70,21 @@ def test_chief_engineer_portfolio_budget_scales_with_project_size(
     environ = {} if raw_cap is None else {CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV: raw_cap}
 
     assert chief_engineer_portfolio_output_tokens(task_count, environ) == expected
+
+
+@pytest.mark.parametrize(
+    ("task_count", "expected_floor"),
+    [
+        (1, 16_384 / 80.0),  # 204.8s — floor for the 16384-token minimum portfolio
+        (3, 16_384 / 80.0),  # still at the 16384 floor for small portfolios
+        (5, 20_480 / 80.0),  # 256.0s — scales once past the floor
+    ],
+)
+def test_chief_engineer_portfolio_generation_floor_scales_with_output_budget(
+    task_count: int,
+    expected_floor: float,
+) -> None:
+    assert chief_engineer_portfolio_generation_floor_seconds(task_count) == pytest.approx(expected_floor)
 
 
 @pytest.mark.parametrize(

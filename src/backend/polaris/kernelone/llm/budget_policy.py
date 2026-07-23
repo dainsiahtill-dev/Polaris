@@ -75,6 +75,12 @@ DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS: Final[int] = HARD_OUTPUT_TOKEN_
 CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKEN_FLOOR: Final[int] = 16_384
 CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKENS_PER_TASK: Final[int] = 4_096
 
+#: Conservative measured provider streaming rate for advanced coding models
+#: (kimi-for-coding and peers) under structured-output load. Used only to model
+#: the physical wall-clock floor for generating a full CE portfolio; the
+#: admission gate fails closed below it rather than EXECUTE a doomed call.
+CHIEF_ENGINEER_STREAMING_TOKENS_PER_SECOND_FLOOR: Final[float] = 80.0
+
 #: Existing deployment override retained as the single compatibility key for
 #: both portfolio planning and task fission. Central ownership prevents those
 #: two Chief Engineer paths from drifting back to different output budgets.
@@ -300,6 +306,24 @@ def chief_engineer_portfolio_output_tokens(
         normalized_task_count * CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKENS_PER_TASK,
     )
     return min(chief_engineer_structured_output_tokens(environ), clamp_output_tokens(scaled_budget))
+
+
+def chief_engineer_portfolio_generation_floor_seconds(
+    task_count: int,
+    environ: Mapping[str, str] | None = None,
+) -> float:
+    """Model the physical wall-clock floor to stream one full CE portfolio.
+
+    The Factory deadline admission gate uses this as a fail-closed floor: when
+    the deadline-clipped budget available to the CE stage is below the time the
+    provider physically needs to stream the requested output tokens, EXECUTE
+    would deterministically end in ``provider_stream_timeout``. The model is
+    ``requested_output_tokens / conservative_streaming_rate``; the rate floor is
+    deliberately pessimistic so the floor never over-promises.
+    """
+
+    requested_tokens = chief_engineer_portfolio_output_tokens(task_count, environ)
+    return requested_tokens / CHIEF_ENGINEER_STREAMING_TOKENS_PER_SECOND_FLOOR
 
 
 def forced_write_output_token_ceiling() -> int:
@@ -548,6 +572,7 @@ __all__ = [
     "TURN_KIND_REPAIR_SUBCALL",
     "TURN_KIND_REQUIRED_TOOL_RETRY",
     "ResolvedBudgetV1",
+    "chief_engineer_portfolio_generation_floor_seconds",
     "chief_engineer_portfolio_output_tokens",
     "chief_engineer_structured_output_tokens",
     "clamp_output_tokens",
