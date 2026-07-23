@@ -339,6 +339,70 @@ class StreamExecutor:
         payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+    def _build_stream_raw_payload(
+        self,
+        *,
+        collected_output: str,
+        emitted_tool_calls: list[dict[str, Any]],
+        final_usage: Usage,
+        model_spec: Any,
+        provider_type: str,
+    ) -> dict[str, Any]:
+        """Reconstruct a provider-native raw payload from accumulated stream state.
+
+        The streaming executor accumulates tool calls from deltas into
+        ``emitted_tool_calls`` but previously returned ``AIResponse.success``
+        without a ``raw`` payload, so ``extract_native_tool_calls`` (which reads
+        ``raw.content[].tool_use`` / ``raw.tool_calls``) saw zero calls and the
+        TransactionKernel never dispatched a tool batch. Rebuild the native
+        envelope here so downstream decode can see the calls the model emitted.
+        Both Anthropic ``content[].tool_use`` and OpenAI ``tool_calls`` shapes are
+        emitted so extraction succeeds regardless of the resolved provider hint.
+        """
+
+        text_block: dict[str, Any] = {"type": "text", "text": collected_output}
+        content_blocks: list[dict[str, Any]] = [text_block]
+        openai_tool_calls: list[dict[str, Any]] = []
+        for index, call in enumerate(emitted_tool_calls):
+            if not isinstance(call, dict):
+                continue
+            tool_name = str(call.get("tool") or call.get("name") or "").strip()
+            if not tool_name:
+                continue
+            arguments = call.get("arguments")
+            if not isinstance(arguments, dict):
+                arguments = {}
+            call_id = str(call.get("call_id") or call.get("id") or f"call_{index}").strip()
+            content_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": call_id,
+                    "name": tool_name,
+                    "input": arguments,
+                }
+            )
+            openai_tool_calls.append(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    },
+                }
+            )
+
+        payload: dict[str, Any] = {
+            "provider": provider_type,
+            "model": str(getattr(model_spec, "model", "") or ""),
+            "content": content_blocks,
+            "stop_reason": "tool_use" if openai_tool_calls else "end_turn",
+            "usage": final_usage.to_dict() if hasattr(final_usage, "to_dict") else {},
+        }
+        if openai_tool_calls:
+            payload["tool_calls"] = openai_tool_calls
+        return payload
+
     @staticmethod
     def _non_empty_str(value: Any) -> str:
         text = str(value or "").strip()
@@ -957,6 +1021,13 @@ class StreamExecutor:
             structured=structured,
             trace_id=trace_id,
             thinking=collected_reasoning if collected_reasoning else None,
+            raw=self._build_stream_raw_payload(
+                collected_output=collected_output,
+                emitted_tool_calls=emitted_tool_calls,
+                final_usage=final_usage,
+                model_spec=model_spec,
+                provider_type=provider_type,
+            ),
             metadata=self._traceability_metadata(request.context),
         )
 
