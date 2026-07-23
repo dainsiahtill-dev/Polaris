@@ -308,6 +308,18 @@ def chief_engineer_portfolio_output_tokens(
     return min(chief_engineer_structured_output_tokens(environ), clamp_output_tokens(scaled_budget))
 
 
+def chief_engineer_generation_floor_seconds_for_output_tokens(output_tokens: int) -> float:
+    """Model the physical wall-clock floor to stream ``output_tokens`` tokens.
+
+    Single arithmetic core shared by the portfolio floor and any smaller
+    bounded sub-call (e.g. the CE output-schema repair, which requests far
+    fewer tokens than a full portfolio). The rate floor is deliberately
+    pessimistic so the modeled floor never over-promises.
+    """
+
+    return max(1, int(output_tokens)) / CHIEF_ENGINEER_STREAMING_TOKENS_PER_SECOND_FLOOR
+
+
 def chief_engineer_portfolio_generation_floor_seconds(
     task_count: int,
     environ: Mapping[str, str] | None = None,
@@ -323,7 +335,7 @@ def chief_engineer_portfolio_generation_floor_seconds(
     """
 
     requested_tokens = chief_engineer_portfolio_output_tokens(task_count, environ)
-    return requested_tokens / CHIEF_ENGINEER_STREAMING_TOKENS_PER_SECOND_FLOOR
+    return chief_engineer_generation_floor_seconds_for_output_tokens(requested_tokens)
 
 
 def forced_write_output_token_ceiling() -> int:
@@ -572,6 +584,7 @@ __all__ = [
     "TURN_KIND_REPAIR_SUBCALL",
     "TURN_KIND_REQUIRED_TOOL_RETRY",
     "ResolvedBudgetV1",
+    "chief_engineer_generation_floor_seconds_for_output_tokens",
     "chief_engineer_portfolio_generation_floor_seconds",
     "chief_engineer_portfolio_output_tokens",
     "chief_engineer_structured_output_tokens",

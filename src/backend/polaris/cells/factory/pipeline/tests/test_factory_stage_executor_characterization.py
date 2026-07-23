@@ -4584,6 +4584,67 @@ class TestQualityGateDeadlineHandling:
         assert decision.reserved_downstream_seconds == 125.0
         assert decision.timeout_seconds == 0
 
+    def test_chief_engineer_schema_repair_uses_smaller_output_token_floor(self) -> None:
+        # The bounded output-schema repair requests only 8192 tokens (floor ~102s),
+        # far below the full-portfolio floor (~205s). A budget that is below the
+        # portfolio floor but above the repair floor must still admit the repair.
+        # 400s horizon, reduced downstream reserve (125s) -> ~272-275s available.
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 400.0
+        schedule = build_task_dependency_schedule([{"id": "TASK-1"}])
+        portfolio_decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 60,
+                "quality_gate_reserved_budget_seconds": 30,
+            },
+            requested_timeout_seconds=240,
+            dependency_schedule=schedule,
+        )
+        repair_decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 60,
+                "quality_gate_reserved_budget_seconds": 30,
+            },
+            requested_timeout_seconds=240,
+            dependency_schedule=schedule,
+            output_tokens=8_192,
+        )
+
+        # ~272-275s available: above the portfolio floor -> both EXECUTE; repair floor is smaller.
+        assert portfolio_decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert repair_decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+
+    def test_chief_engineer_schema_repair_floor_admits_where_portfolio_floor_blocks(self) -> None:
+        # 230s horizon, reduced downstream reserve (125s) -> ~102-105s available.
+        # Below the portfolio floor (~205s) but at/above the repair floor (~102.4s):
+        # portfolio must BLOCK, repair must be admitted at the boundary.
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 230.0
+        schedule = build_task_dependency_schedule([{"id": "TASK-1"}])
+        portfolio_decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 60,
+                "quality_gate_reserved_budget_seconds": 30,
+            },
+            requested_timeout_seconds=240,
+            dependency_schedule=schedule,
+        )
+        repair_decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 60,
+                "quality_gate_reserved_budget_seconds": 30,
+            },
+            requested_timeout_seconds=240,
+            dependency_schedule=schedule,
+            output_tokens=8_192,
+        )
+
+        assert portfolio_decision.disposition is FactoryDeadlineDispositionV1.BLOCK
+        assert portfolio_decision.reason == "insufficient_factory_deadline_for_chief_engineer_portfolio"
+        assert repair_decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+
     def test_chief_engineer_deadline_projection_skips_llm_when_downstream_budget_is_at_risk(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(

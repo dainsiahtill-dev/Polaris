@@ -84,6 +84,7 @@ from polaris.kernelone.fs import (
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.llm.budget_policy import (
     FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS,
+    chief_engineer_generation_floor_seconds_for_output_tokens,
     chief_engineer_portfolio_generation_floor_seconds,
     chief_engineer_portfolio_output_tokens,
 )
@@ -3089,11 +3090,20 @@ class OrchestrationStageExecutor:
         *,
         requested_timeout_seconds: int,
         dependency_schedule: TaskDependencyScheduleV1,
+        output_tokens: int | None = None,
     ) -> FactoryDeadlineAdmissionV1:
-        """Return admission for one project-level Chief Engineer LLM call."""
+        """Return admission for one project-level Chief Engineer LLM call.
 
-        portfolio_task_count = max(1, len(dependency_schedule.active_task_ids))
-        generation_floor_seconds = chief_engineer_portfolio_generation_floor_seconds(portfolio_task_count)
+        ``output_tokens`` overrides the modeled generation floor for bounded
+        sub-calls (e.g. the output-schema repair requests far fewer tokens than
+        a full portfolio); ``None`` models the full portfolio floor.
+        """
+
+        if output_tokens is None:
+            portfolio_task_count = max(1, len(dependency_schedule.active_task_ids))
+            generation_floor_seconds = chief_engineer_portfolio_generation_floor_seconds(portfolio_task_count)
+        else:
+            generation_floor_seconds = chief_engineer_generation_floor_seconds_for_output_tokens(output_tokens)
         return resolve_chief_engineer_portfolio_admission(
             remaining_seconds=OrchestrationStageExecutor._factory_deadline_remaining_seconds(context),
             requested_timeout_seconds=requested_timeout_seconds,
@@ -5429,6 +5439,7 @@ class OrchestrationStageExecutor:
                                 context,
                                 requested_timeout_seconds=requested_timeout_seconds,
                                 dependency_schedule=dependency_schedule,
+                                output_tokens=_CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS,
                             )
                             if deadline_decision.disposition is FactoryDeadlineDispositionV1.BLOCK:
                                 stage_signals.append(
