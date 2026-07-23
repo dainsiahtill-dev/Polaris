@@ -1,0 +1,1162 @@
+card_id: vc-20260720-pre-bench-execution-fact-chain-gate
+classification: structural
+status: active
+bench_status: not_schedulable
+bug_summary: >-
+  DEO-1A through DEO-4 and B3.4-B3.6 are closed. The first authorized fresh
+  isolated L1-04 run exposed final_request_role_included_refs_drift before CE
+  transport; that defect is closed. The authorized same-project retry then
+  reached the exact physical-wire gate and exposed physical_wire_max_tokens_drift:
+  the frozen request retained 128000 requested tokens while the Engine correctly
+  clamped the actual provider config to 16384, but the native route projector
+  still used the pre-clamp value. The projector fix is implemented. The final
+  broad-gate pass also closed stale Run Ledger fixtures and a Factory repair
+  evidence regression that counted authority-free callback diagnostics as
+  physical effects. Acceptance run 3 then proved CE context quality but found
+  two pre-Provider identity projections: Director used the private TaskRuntime
+  row id instead of the canonical external task id, and the PM route probe did
+  not carry a first-class transaction turn identity. Both are closed without
+  weakening either fail-closed boundary. Exactly one fresh isolated L1-04
+  acceptance run was then consumed. Run 4 proved both identity fixes and the
+  PM/CE route audit, reached Director, and exposed an empty ToolSpecRegistry
+  provenance projection in the exact final request audit. B3.5 correctly
+  rejected that request before Provider transport with
+  tool_registry_source_mismatch. The producer now reconstructs authoritative
+  registry provenance from the exact final Provider tool surface and refuses
+  provenance for unknown or incomplete schemas. Run 5 then reached physical
+  Director writes and exposed two downstream fact-chain defects: a committed
+  TaskRuntime receipt was shadowed by an incomplete result projection, and
+  sequential claim/abort CAS values were guessed from the immutable admission
+  head after earlier receipt transitions had advanced the shared operation
+  stream. Both defects are closed without synthesizing receipts or weakening
+  TaskRuntime authority. Focused, Cell-full, Factory, Run Ledger, integration,
+  and architecture gates are green. Run 6 then exposed the stale 240-second CE
+  portfolio timeout and a causal attribution gap. Broad validation also
+  exposed and closed missing physical-attempt stage-claim revalidation,
+  restart replay fencing/deadline gaps, and an Artifact Store/Projection/QA
+  public import cycle. Factory 1287, Delivery 375, and Artifact Store 4 tests
+  are green. Acceptance run 7 consumed that authorization and exposed an
+  execution-boundary defect: Factory returned from Director dispatch while the
+  TaskRuntime child remained active, then closed the stage role-evidence
+  authority before the child reached Provider transport. R11 is now closed:
+  Factory carries one absolute execution deadline, Director re-clamps at the
+  execution, role-dialogue, and final-request boundaries, and Factory spends
+  the unused execution lease before its settlement reserve. Acceptance run 8
+  consumed that authorization and reached a real Chief Engineer physical
+  Provider request, but the request timed out after 191 seconds before any
+  Director dispatch or target-project effect. R12 is closed: roles.runtime now
+  honors streamed task commands, Factory CE portfolio calls use the audited
+  stream path, task timeout authority reaches provider context, and
+  incomplete/error streams fail closed. Run 9 then proved the streamed response
+  path but exposed terminal stream metadata loss; R13 now preserves the exact
+  final-request audit and snapshot reference. Run 10 proved R13 and exposed a
+  fixed 4096-event conservation buffer below the qualified 16384-token physical
+  output budget. R14 now scales the event-count budget from the exact qualified
+  wire request while retaining the 8 MiB byte cap, a 65536-event hard cap, and
+  terminal-before-release zero-leak semantics. Run 11 proved the buffer fix and
+  complete CE final-request context, then exposed a 128000-token portfolio
+  request competing for a 125-second physical lease plus loss of the first
+  timeout cause across stream projections. R15 now scales only Factory CE
+  portfolio output to task count under the existing deployment cap, emits a
+  typed provider_stream_timeout, suppresses the duplicate materialization
+  error, and preserves the first causal error. Run 12 proved the physical CE
+  request and coherent 16384-token response, then exposed a streamed terminal
+  fact-chain break: terminal Provider metadata and its context snapshot were
+  discarded during RawLLMResponse materialization, the stream projected two
+  terminal completions, and the CE portfolio lacked an explicit analyze-only
+  delivery contract. R16 now conserves terminal metadata through Run Ledger,
+  restores the CE analyze-only marker without changing existing materialize or
+  propose behavior, and emits one authoritative terminal completion. Broad
+  gates and a recaptured stable source snapshot are green. Run 13 proved R16,
+  accepted the complete Chief Engineer blueprint portfolio, and reached a real
+  Director Provider request. It then exposed a primary write-code request that
+  inherited the generic 128000-token execution budget despite only about 46
+  seconds remaining on the Factory deadline. R17 now applies the existing
+  central 7000-token materialization ceiling to authoritative first-call
+  write_code contracts while leaving review calls unchanged. Full Director,
+  roles/adapters, Factory, budget-policy, static, and structural gates are
+  green. Run 14 then reached another fully audited Chief Engineer Provider
+  stream and exposed a cross-layer deadline reset: response-body consumption
+  outlived the declared 193-second Provider timeout, then Role StreamEngine
+  replayed the already-timed-out request under a fresh timeout budget. R18 now
+  applies one monotonic absolute deadline across Provider wire retries,
+  response consumption, custom handlers, retry backoff, and resource cleanup;
+  the role layer treats the consumed provider_stream_timeout as terminal while
+  preserving transient network and 429 reconnects. Run 15 proved R18 admitted
+  exactly one physical request and that the Provider durably completed, then
+  exposed a subtler deadline leak: the timeout context remained armed across
+  Factory's post-terminal buffered replay and cancelled the CE consumer task.
+  R19 now applies the deadline only while awaiting physical stream data, never
+  across outward yields. Run 16 proved that repair, crossed the former
+  cancellation window, and exposed a second post-terminal deadline projection:
+  KernelOne StreamExecutor rejected Factory's already-completed buffered replay
+  against its legacy 300-second wall clock, then the role layer issued a second
+  physical request. R20 transfers deadline ownership only for a sidecar with
+  both physical stream dispatch and Factory route-authority capabilities;
+  arbitrary sidecars and ungoverned streams retain the old fail-closed timeout.
+  Run 17 proved R20 with one completed physical stream and exposed a streamed
+  output-validation parity gap: malformed CE JSON was projected as successful
+  before Factory rejected it. R21 now validates streamed output before
+  TaskBoundary, preserves the typed validation failure through roles.runtime,
+  and permits exactly one separately claimed, deadline-readmitted CE schema
+  repair that preserves the complete physical output and PM authority. Role
+  Kernel 4159, Role Runtime 697, Factory Pipeline 1221, and Factory
+  characterization 251 tests are green. Exactly one fresh isolated L1-04
+  acceptance run was consumed. Run 18 proved the R21 validation/repair path but
+  exposed a CE authority-cardinality error before the repair Provider request:
+  the repair child attempted to mint a second stage grant although the fixed CE
+  cap is one. R22 now reuses the single CE authority across independently
+  claimed primary and repair TaskRuntime attempts. The same run exposed stale
+  subordinate ContextOS coverage projections after Factory cutoff authority
+  replaced heuristic refs; R22A now rebuilds sources, slots, ratio, and context
+  quality from the typed cutoff facts. Roles Kernel 4159 and Factory Pipeline
+  1221 tests are green. Acceptance run 19 proved the R22 authority reuse and
+  reached the separately claimed CE schema-repair Provider request, then
+  exposed corrupt-output replay inside the repair instruction. R23 now
+  projects bounded structured failure evidence plus only the corrupt output
+  digest/size, reconstructs a fresh portfolio from authoritative PM and target
+  evidence, and caps repair output at 8192 tokens. Factory Pipeline 1222 tests
+  are green. Run 20 proved the R23 repair request hygiene and produced an
+  accepted CE portfolio, then exposed a Director dependency projection error:
+  the suspended internal CE primary-attempt TaskRuntime row was mixed into the
+  PM task DAG and rejected as an unknown active task. The public signal
+  mislabeled that typed schedule rejection as deadline exhaustion despite 1210
+  seconds remaining for a 1155-second request. R24 now excludes only
+  provenance-complete internal CE rows, preserves unknown untrusted rows as
+  fail-closed blockers, and reports invalid dependency schedules with their
+  real code and blocker evidence. Factory Pipeline 1225 tests are green. The
+  post-R24 source snapshot was stable across two independent captures. Run 21
+  proved R24, reached a real Director Provider request, and materialized five
+  project files. It then exposed a role-evidence source resolver that treated
+  the heterogeneous execution.control_plane stream as gate-only and rejected
+  valid tool_call_lifecycle and task_boundary_verdict facts. R25 now preserves
+  strict whole-stream integrity and source-head validation while projecting
+  only gate_evaluated facts into dynamic role-evidence slots. The exact R25
+  physical stream replays successfully and Factory Pipeline 1227 tests are
+  green. Run 22 (R26) proved R25 and kept every PM/CE final-request evidence
+  slot readable and role-correct, but exposed a bounded-output contract break.
+  The CE caller requested JSON while both exact physical Kimi requests were
+  projected as plain_text with response_format=null and mandatory unbounded
+  thinking. The primary consumed exactly 16384 completion tokens before its
+  JSON was truncated; the separately claimed repair consumed exactly 8192
+  completion tokens, produced only 641 visible characters, and was also
+  truncated. Director and QA were therefore never reached. Bench is frozen
+  until reasoning budget is carried into the exact physical request, audited,
+  and the JSON-output reservation is regression-proven. R26 is now closed: the
+  primary portfolio and schema-repair calls carry distinct bounded reasoning
+  budgets through Factory, Role Kernel, KernelOne Engine, and the exact
+  Anthropic-compatible provider request. Streamed explicit JSON contracts are
+  audited as text_json_fallback instead of plain_text, invalid budgets fail
+  closed, and standard non-thinking Anthropic routes remain unchanged. Focused
+  tests, split Cell suites, static gates, and post-edit CodeGraph review are
+  green. The one authorized R27 run was consumed and proved both reasoning
+  budgets reached the physical wire. It also exposed cross-instance WebSocket
+  contamination: an older R24 page reused the shared local token and connected
+  to R27 on a recycled port with a foreign workspace, saturating the WS queue and
+  backend CPU. R27 closes that isolation defect with Supervisor-generated
+  per-instance tokens plus authoritative workspace rejection. The same run left
+  the CE repair non-terminal after the Provider socket reached CLOSE-WAIT, but
+  concurrent WS starvation prevents clean attribution. Bench is frozen for R28
+  deterministic EOF/cleanup/terminal-fact reproduction; no retry is authorized.
+  R28 is now closed. A deterministic half-closed session reproduced the exact
+  missing-terminal shape: stream consumption finished, but the response/session
+  context cleanup was awaited without a bound before the durable terminal append.
+  The gate now bounds cleanup, cancels the stuck cleanup task, emits one typed
+  provider_stream_cleanup_timeout failed terminal, releases the physical attempt,
+  leaks zero buffered output, and does not retry the non-network failure. Roles
+  Kernel 2746, Provider 106, Factory Pipeline 1227, and Engine/Anthropic 324 tests
+  are green. The post-R28 source snapshot is identical across two captures.
+  The single authorized R29 run was consumed. It proved PM and Chief Engineer,
+  reached Director, materialized five Go project files, and passed a real Go
+  compile check. It then exposed a private-row/external-task identity mismatch
+  when Director projected the deterministic verify command into a deferred
+  directed effect. The first task failed with
+  deo_deferred_command_request_invalid and downstream tasks were blocked. The
+  same run also exposed a queued settlement waiting-barrier idempotency payload
+  drift that produced a hot replay-conflict loop. Both R29 roots are now closed:
+  the deferred command boundary normalizes only the exact bound private row id
+  to its external task id, and settlement reuses an open-barrier pending fact
+  while allocating retry identities per claim. Roles Adapter 1263, settlement
+  consumer/runtime 82, and Factory Pipeline 1229 tests are green; static and
+  post-edit structural review are green. A twice-identical post-R29 source
+  snapshot authorized exactly one fresh isolated L1-04 R30 run. R30 exposed
+  transient non-authoritative TaskRuntime readiness being returned as terminal;
+  that root is closed and its single R31 authorization was consumed. R31 proved
+  PM, Chief Engineer, Director physical writes, and a real Go compile, then
+  exposed and closed a Director child-invocation identity collision. The single
+  authorized R32 run was consumed. R32 proved a complete Chief Engineer physical
+  Provider lifecycle but exposed two downstream roots: Factory replay compared
+  the pre-evidence semantic candidate hash to the final qualified semantic
+  request hash, and the CE role run did not terminalize after the physical
+  terminal fact. R32 then closed dual-semantic replay, R33 closed terminal
+  WebSocket policy-rejection reconnect storms, and R34 compacted the exact
+  post-terminal Provider replay from 10,088 tiny journal events to bounded
+  ordered batches without changing Provider or tool facts. The closing
+  pre-bench architecture run exposed R35: Director rewrote a TaskRuntime-owned
+  runtime_execution projection for child role calls. R35 now treats that
+  projection as read-only and carries parent/child identity only through
+  director.role_subinvocation.v1. The complete current-source fact-chain and
+  architecture gates are green, authorizing exactly one fresh isolated L1-04.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+required_gates:
+  deo_1a_through_deo_4_closed: pass
+  b3_4_through_b3_6_physical_dispatch: pass
+  final_provider_request_context_audit: pass
+  context_snapshot_readability: pass
+  settlement_and_fresh_workspace_identity: pass
+  taskruntime_receipt_run_ledger_qa: pass
+  isolated_instance_startup: pass
+  source_snapshot_stability: pass
+  r5_effect_receipt_projection: pass
+  r6_sequential_claim_stream_head: pass
+  r7_ce_portfolio_timeout: pass
+  r7b_structured_upstream_failure_attribution: pass
+  r8_physical_attempt_stage_claim_revalidation: pass
+  r9_restart_replay_fence_and_deadline: pass
+  r10_artifact_store_import_ownership: pass
+  r11_director_child_stage_boundary_settlement: pass
+  r12_chief_engineer_physical_timeout: pass
+  r13_stream_terminal_evidence_projection: pass
+  r14_stream_buffer_budget: pass
+  r15_chief_engineer_portfolio_budget_and_timeout_truth: pass
+  r16_stream_terminal_truth_and_ce_delivery_mode: pass
+  r17_director_primary_write_budget: pass
+  r18_provider_stream_absolute_deadline: pass
+  r19_provider_terminal_replay_deadline: pass
+  r20_kernel_stream_terminal_replay_timeout: pass
+  r21_stream_output_validation_and_ce_schema_repair: pass
+  r22_ce_schema_repair_authority_reuse: pass
+  r22a_final_request_audit_authority_projection: pass
+  r23_ce_schema_repair_input_hygiene: pass
+  r24_director_pm_dependency_projection: pass
+  r25_mixed_control_plane_role_evidence: pass
+  r26_ce_reasoning_budget_and_json_truth: pass
+  r27_cross_instance_ws_isolation: pass
+  r28_provider_stream_terminal_stall: pass
+  r29_director_verify_attempt_identity: pass
+  r29_settlement_replay_idempotency: pass
+  r29_roles_adapter_cell_full: "1263 passed"
+  r29_settlement_consumer_runtime: "82 passed"
+  r29_factory_pipeline_full: "1229 passed, 2 warnings"
+  r29_static_and_codegraph_review: pass
+  r30_transient_projection_stage_authority: pass
+  r30_factory_pipeline_full: "1230 passed, 2 warnings"
+  r30_static_and_codegraph_review: pass
+  r31_director_subinvocation_identity: pass
+  r31_roles_adapters_full: "1302 passed, 2 warnings"
+  r31_roles_kernel_full: "4162 passed, 2 warnings"
+  r31_roles_runtime_full: "697 passed, 2 warnings"
+  r31_factory_pipeline_full: "1230 passed, 2 warnings"
+  r31_static_and_codegraph_review: pass
+  r32_dual_semantic_replay: pass
+  r32_ce_terminalization: pass
+  r33_ws_policy_rejection_terminal: pass
+  r34_post_terminal_stream_replay_compaction: pass
+  r34_kernelone_stream_and_roles_kernel: "2803 passed, 1 warning"
+  r35_director_runtime_execution_owner_boundary: pass
+  r35_roles_adapters_full: "1302 passed"
+  r36_director_retry_event_loop_lock_ownership: pass
+  r37_taskruntime_projection_fail_fast: pass
+  r39_director_pm_task_claim_boundary: pass
+  r39_taskruntime_materialized_dependency_satisfaction: pass
+  workflow_qa_blocked_evidence: pass
+  r42_ce_thinking_only_bounded_schema_recovery: pass
+  r42_factory_stage_characterization: "261 passed"
+  r42b_final_request_prompt_control_plane_isolation: pass
+  r42b_final_request_and_qualification_integration: "321 passed"
+  current_roles_kernel_full: "2747 passed, 1 warning"
+  current_factory_pipeline_full: "1237 passed, 2 warnings"
+  current_kernelone_release: "415 passed, 1 skipped, 2 warnings; ok=true"
+  current_architecture_full: "1411 passed, 8 skipped"
+  current_static_gates: pass
+  source_snapshot_a: d7c0ddc8ddba40ea831322ac561da327a5cf9f2da73b068d582c1dca5283b68e
+  source_snapshot_b: d7c0ddc8ddba40ea831322ac561da327a5cf9f2da73b068d582c1dca5283b68e
+  source_snapshots_identical: true
+scheduling:
+  bench_schedulable: false
+  authorization_scope: none_r43_consumed
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  reserved_main_ports:
+    backend: 49977
+    frontend: 5173
+  next_action: >-
+    Run exactly one fresh isolated L1-04 R43 acceptance attempt, audit every
+    physical role's final Provider request from its readable 24-hex ContextOS
+    snapshot, then consume this one-shot authorization and fail closed on the
+    first newly observed general platform defect.
+latest_consumed_run_r40:
+  project_id: L1-04
+  bench_run_id: d0c3b2888919
+  factory_run_id: factory_da9db51c3c75
+  result: auditor_aborted_without_platform_verdict
+  wall_clock_seconds: 357.2
+  reason: >-
+    Main Agent initially mistook Uvicorn WebSocket handshake acceptance for
+    application authorization and stopped its own instance. Durable connection
+    audit later proved the stale-page connections never entered runtime.v2.
+  websocket_connection_audit:
+    total_connections: 93
+    authorized_open: 1
+    auth_rejected_closed_1008: 92
+    foreign_runtime_subscription: 0
+    isolation: pass
+  plan_materialized: true
+  blueprint_materialized: true
+  director_task_1_materialized: true
+  director_task_2_materialized: true
+  source_files_materialized: 7
+  continuation_boundary_fix_observed: pass
+  completed_verified: false
+  platform_failure_verdict: none_run_was_manually_stopped
+  physical_final_request_context_audit:
+    pm: 11b350e035cbbf153701dc1e
+    chief_engineer: 3341221c2b3abd3e838fc1d0
+    director_task_1: 32507bebe0607c43b53852c1
+    director_task_2: cd2bf388eb6391a0fb7be47c
+    role_identity: pass
+    required_tools: pass
+    response_contract: pass
+    token_window: pass
+    coverage_flags: pass
+    snapshots_readable: pass
+  instance_stopped_via_launcher: true
+latest_consumed_run_r39:
+  project_id: L1-04
+  bench_run_id: r39
+  factory_run_id: factory_0fed651bd294
+  result: failed_at_director_continuation_boundary
+  exact_error: >-
+    Director run requires valid Chief Engineer blueprint/handoff evidence:
+    missing Chief Engineer blueprint id
+  backend_fresh: true
+  plan_materialized: true
+  chief_engineer_blueprints_accepted: 3
+  director_reached: true
+  director_provider_request_reached: true
+  files_materialized: 5
+  durable_effect_receipts: 5
+  failed_receipts: 0
+  go_source_files: 4
+  go_compile: pass
+  qa_reached: false
+  completed_verified: false
+  final_request_context_audit:
+    pm: 978d41a5b06fdd5b22aac32d
+    chief_engineer_primary: a65e296d09713627622aadee
+    chief_engineer_repair: 3ad5bfef5bc1a5680678e3b6
+    director: 2c1e2c2789948bed3020057b
+    all_role_identity_tool_schema_and_context_quality: pass
+  instance_stopped_via_launcher: true
+latest_consumed_run_r38:
+  project_id: L1-04
+  bench_run_id: cd224e7d6557
+  factory_run_id: factory_cf62591d2df4
+  result: failed_at_chief_engineer_provider_stream_timeout
+  wall_clock_seconds: 206.6
+  exact_error: provider_stream_timeout:188s
+  factory_timeout_seconds: 540
+  requested_ce_timeout_seconds: 600
+  reserved_downstream_seconds: 310
+  allocated_ce_timeout_seconds: 188
+  pm_final_context_snapshot_ref: 1fd90a2e08c6fd9d9a8fe1c0
+  chief_engineer_final_context_snapshot_ref: 403e6d605c6946e235e24fe7
+  final_request_context_audit:
+    role_identity: pass
+    required_refs: pass
+    required_tools: pass_not_required
+    token_window: pass
+    pm_final_tokens: 2596
+    chief_engineer_final_tokens: 4889
+    context_window_tokens: 262144
+  source_files: 0
+  provider_calls:
+    pm: 1
+    chief_engineer: 1
+    director: 0
+    qa: 0
+  instance_stopped_via_launcher: true
+latest_consumed_run:
+  bucket: R36
+  project_id: L1-04
+  bench_run_id: b93c3b89980a
+  factory_run_id: factory_8fa89496a1ad
+  director_run_id: director-296ead26bd4f
+  result: failed_at_director_retry_before_provider_transport
+  exact_error: >-
+    TransactionKernel execution failed: LLM call failed: asyncio.Lock is bound
+    to a different event loop
+  provider_request_context_audit:
+    pm: edf443612b11f1b3207531ec
+    chief_engineer_primary: b25c581522e5e84b403c34f5
+    chief_engineer_repair: ea10b673c4d4c16e5e94e1d3
+    director_primary: aa4ccb5d966a4099437dcd2b
+    all_role_identity_tool_schema_and_context_quality: pass
+  target_project_edits: 0
+source_snapshot:
+  head: 5a758d7d236f534e41287211707aa6a7152ed7a0
+  changed_content_manifest_sha256: 549b2e48a141717b75df263811b9b4363add4d6a3b6ef38a5c59fb72777fc854
+  worktree_path_set_sha256: 20d8a2154aa45cfdce3ddc5a6fcfd8dc960152c1a2a8d14acee4f9793f451283
+  changed_path_count: 378
+  manifest_algorithm: sha256_of_utf8_lines_sha256_two_spaces_path_lf
+  manifest_excludes_gate_card_itself: true
+  stable_before_after_gate: true
+  invalidated_by_acceptance_r4: false
+  invalidated_by_acceptance_r5: false
+  invalidated_by_acceptance_r6: false
+  invalidated_by_acceptance_r7: false
+  invalidated_by_acceptance_r11: false
+  invalidated_by_acceptance_r12: false
+  invalidated_by_acceptance_r13: false
+  invalidated_by_acceptance_r14: false
+  invalidated_by_acceptance_r15: true
+  recaptured_after_r15_fix: true
+  invalidated_by_acceptance_r16: true
+  recaptured_after_r16_fix: true
+  invalidated_by_acceptance_r17: true
+  recaptured_after_r17_fix: true
+  invalidated_by_acceptance_r18: true
+  recaptured_after_r18_fix: true
+  invalidated_by_acceptance_r19: true
+  recaptured_after_r19_fix: true
+  invalidated_by_acceptance_r20: true
+  recaptured_after_r20_fix: true
+  invalidated_by_acceptance_r21: true
+  recaptured_after_r21_fix: true
+  invalidated_by_acceptance_r22: true
+  recaptured_after_r22_fix: true
+  invalidated_by_acceptance_r23: true
+  recaptured_after_r23_fix: true
+  invalidated_by_acceptance_r24: true
+  recaptured_after_r24_fix: true
+  invalidated_by_acceptance_r25: true
+  recaptured_after_r25_fix: true
+  invalidated_by_acceptance_r26: true
+  recaptured_after_r26_fix: true
+  invalidated_by_acceptance_r27: true
+  recaptured_after_r27_fix: true
+  invalidated_by_acceptance_r29: true
+  recaptured_after_r29_fix: true
+  invalidated_by_acceptance_r30: true
+  recaptured_after_r30_fix: true
+  invalidated_by_acceptance_r31: true
+  recaptured_after_r31_fix: true
+  invalidated_by_acceptance_r39: true
+  recaptured_after_r39_fix: true
+  post_r39_identical_capture_count: 2
+  invalidated_by_acceptance_r40: false
+  recaptured_after_r40_audit_abort: true
+  post_r40_identical_capture_count: 2
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  closed_at: null
+  evidence:
+    provider_requests_before_close: 0
+    bench_runs_before_close: 0
+    consumed_acceptance_bench_runs: 29
+    authorized_acceptance_bench_runs: 1
+    r32_failed_acceptance_run:
+      project_id: L1-04
+      bench_run_id: 75b2b442beb1
+      factory_run_id: factory_af0cf43f315d
+      wall_clock_seconds: 1508.2
+      stage: chief_engineer_review
+      physical_provider_terminal: completed
+      role_terminal_event_present: false
+      replay_error: factory_physical_attempt_replay_lifecycle_identity_mismatch
+      completed_verified: false
+    r31_failed_acceptance_run:
+      project_id: L1-04
+      bench_run_id: ffafdb3d5203
+      factory_run_id: factory_f904a2104887
+      director_run_id: director-b4abd976972b
+      wall_clock_seconds: 386.1
+      stage: director_dispatch
+      error_code: director.canonical_task_boundary_missing
+      root_cause: director_child_role_calls_share_parent_transaction_invocation
+      idempotency_conflict_fields: payload
+      shared_role_runtime_session_id: tx-925d07af35ed461db4a67556afffb353
+      shared_transaction_invocation_id: txi_f8fbcaca64c2324f86f08230
+      files_materialized: 5
+      go_source_files: 4
+      go_compile: pass
+      qa_reached: false
+      completed_verified: false
+      instance_stopped_via_launcher: true
+    r30_failed_acceptance_run:
+      project_id: L1-04
+      bench_run_id: 468c3f16e20d
+      factory_run_id: factory_27942d18f703
+      director_run_id: director-ed76ca80579f
+      wall_clock_seconds: 232.6
+      stage: director_dispatch
+      rejection_code: director.run_status_non_success
+      readiness_reason_code: task_runtime_fact_projection_not_ready
+      director_provider_error: factory_role_evidence_authority_closed
+      pm_final_physical_context_snapshot_ref: a93fa17a3df11c93ed49b40c
+      ce_final_physical_context_snapshot_ref: 2e143ded7a3406137ab174d9
+      final_request_context_audit: pass_for_pm_and_ce
+      director_provider_request_reached: false
+      source_files_materialized: 0
+      qa_reached: false
+      instance_stopped_via_launcher: true
+    r29_failed_acceptance_run:
+      project_id: L1-04
+      bench_run_id: codex-r29
+      factory_run_id: factory_84c8691284d9
+      director_run_id: director-f77ed9d872f8
+      wall_clock_seconds: 784.8
+      stage: director_dispatch
+      error_code: director.canonical_task_boundary_missing
+      direct_authority_error: deo_deferred_command_request_invalid
+      files_materialized: 5
+      go_source_files: 4
+      production_lines: 341
+      go_compile: pass
+      tests_materialized: 0
+      qa_reached: false
+      completed_verified: false
+      settlement_wake_replay_failures: 609
+      settlement_idempotency_conflict_occurrences: 1828
+      instance_stopped: true
+    r28_provider_stream_terminal_stall_closure:
+      root_cause: provider_stream_cleanup_unbounded
+      terminal_error_code: provider_stream_cleanup_timeout
+      buffered_output_leaked: 0
+      physical_retry_count_after_cleanup_timeout: 0
+      focused_tests: 109
+      roles_kernel_tests: 2746
+      provider_tests: 106
+      factory_pipeline_tests: 1227
+      engine_and_anthropic_tests: 324
+      stable_source_captures: 2
+    r27_failed_acceptance_run:
+      project_id: L1-04
+      bench_run_id: eaeb3ecee000
+      factory_run_id: factory_1d2ba955276b
+      instance_id: factory-bench-l1-04-codex-r27-l1-04-run-eaeb3ecee000-d474b6dc72ad3a20
+      wall_clock_seconds: 1520.1
+      terminal_phase: event_wait_timeout
+      last_stage: chief_engineer_review
+      plan_materialized: true
+      blueprint_materialized: false
+      director_reached: false
+      qa_reached: false
+      primary_reasoning_budget_reached_wire: true
+      repair_reasoning_budget_reached_wire: true
+      cross_instance_ws_contamination: true
+      provider_socket_state_before_stop: CLOSE-WAIT
+      instance_stopped: true
+    r26_failed_acceptance_run:
+      project_id: L1-04
+      bench_run_id: c04e5325a689
+      factory_run_id: factory_1301152739c7
+      instance_id: factory-bench-l1-04-codex-r26-l1-04-run-c04e5325a689-51120dcd5dcf7a59
+      wall_clock_seconds: 5377.4
+      stage: chief_engineer_review
+      rejection_code: chief_engineer.llm_review_failed
+      root_cause_hint: "Output validation failed: JSON parse error: no JSON object found"
+      backend_fresh: true
+      pm_completed: true
+      director_reached: false
+      qa_reached: false
+      primary_completion_tokens: 16384
+      primary_max_tokens: 16384
+      primary_visible_chars: 14996
+      repair_completion_tokens: 8192
+      repair_max_tokens: 8192
+      repair_visible_chars: 641
+      physical_response_format: null
+      physical_thinking:
+        type: enabled
+        budget_tokens: null
+      final_request_context_readable: true
+      required_refs_missing: []
+      instance_stopped: true
+    failed_acceptance_run:
+      project_id: L1-04
+      factory_run_id: factory_60c76b4dd40f
+      context_snapshot_ref: 9a0f02085ed52abe11a0a91c
+      stage: chief_engineer_review
+      rejection_code: final_request_role_included_refs_drift
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_materialized: true
+      director_reached: false
+      qa_reached: false
+    second_failed_acceptance_run:
+      project_id: L1-04
+      factory_run_id: factory_86e34548b0df
+      semantic_context_snapshot_ref: 0ee3b411eb3956c45df9d952
+      executor_context_snapshot_ref: 14d1fb24ed7114bc24fc6c12
+      stage: chief_engineer_review
+      rejection_code: physical_wire_max_tokens_drift
+      requested_max_tokens: 128000
+      effective_max_tokens: 16384
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_materialized: true
+      director_reached: false
+      qa_reached: false
+    third_failed_acceptance_run:
+      project_id: L1-04
+      factory_run_id: factory_36070b234f59
+      director_run_id: director-dcdd3201ff52
+      chief_engineer_semantic_context_snapshot_ref: 8fcaa8c16fd7be27432dcf10
+      chief_engineer_final_physical_context_snapshot_ref: f1c7678818a88438e4612305
+      stage: director_dispatch
+      rejection_code: director.canonical_task_boundary_missing
+      nested_rejection_code: deo_execution_attempt_mismatch
+      pm_probe_rejection_code: transaction_identity_unbound
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_materialized: true
+      director_reached: true
+      director_provider_request_reached: false
+      qa_reached: false
+    fourth_failed_acceptance_run:
+      project_id: L1-04
+      factory_run_id: factory_434001b91ac2
+      director_run_id: director-9e88273c9be5
+      director_context_snapshot_ref: f6e8e962d8daf00ba70c1fc9
+      stage: director_dispatch
+      rejection_code: tool_registry_source_mismatch
+      backend_fresh: true
+      route_audit_passed: true
+      plan_materialized: true
+      blueprint_materialized: true
+      director_reached: true
+      director_provider_request_reached: false
+      qa_reached: false
+      observed_tool_registry_source: ""
+      observed_tools:
+        - write_file
+    fifth_failed_acceptance_run:
+      project_id: L1-04
+      factory_run_id: factory_892b88dad469
+      director_run_id: director-bce8350615be
+      stage: director_dispatch
+      first_rejection_code: control_plane:missing_effect_receipt
+      second_rejection_code: deo_claim_failed
+      first_tool_call_id: call_019f877c8fac7e53a3631f6d
+      second_tool_call_id: call_019f877c8fac7e53a3631f73
+      physical_receipt_committed: true
+      first_receipt_event_seq: 7
+      stale_second_claim_seq: 7
+      required_second_claim_seq: 8
+      backend_fresh: true
+      director_provider_request_reached: true
+      source_files_materialized:
+        - go.mod
+    sixth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: 57d40c7e2b37
+      instance_id: >-
+        factory-bench-l1-04-codex-r7-20260722-l1-04-run-57d40c7e2b37-3cd14eb76063293f
+      stage: chief_engineer_review
+      rejection_code: task_boundary_verdict_missing
+      wall_clock_seconds: 251.1
+      backend_fresh: true
+      backend_port: 49978
+      frontend_port: 5175
+      plan_materialized: true
+      blueprint_materialized: true
+      llm_route_audit_passed: true
+      director_artifact_present: false
+      qa_authoritative: false
+      source_files_materialized: 0
+      instance_stopped_via_launcher: true
+    seventh_failed_acceptance_run:
+      project_id: L1-04
+      factory_run_id: factory_8d34eb3d21b1
+      director_run_id: director-674a0ae69435
+      stage: director_dispatch
+      rejection_code: factory_role_evidence_authority_closed
+      canonical_gate: run_ledger_integrity_failed
+      failure_taxonomy: control_plane:tool_lifecycle_failed
+      wall_clock_seconds: 154.7
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_materialized: true
+      chief_engineer_portfolio_passed: true
+      director_reached: true
+      director_provider_request_reached: false
+      director_llm_calls: 0
+      director_inflight_run_continues: true
+      director_barrier_max_total_seconds: 5.0
+      source_files_materialized: 0
+      qa_reached: false
+      instance_stopped_via_launcher: true
+    eighth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: c1ef765f8c8d
+      factory_run_id: factory_07a3ec2b9356
+      instance_id: >-
+        factory-bench-l1-04-codex-r12-l1-04-run-c1ef765f8c8d-66892aa52dc90b9b
+      stage: chief_engineer_review
+      rejection_code: chief_engineer.llm_review_failed
+      root_cause_hint: "TransactionKernel execution failed: Request timeout (191.0s)"
+      wall_clock_seconds: 206.4
+      backend_fresh: true
+      backend_port: 49978
+      frontend_port: 5175
+      plan_materialized: true
+      blueprint_materialized: false
+      chief_engineer_llm_calls: 1
+      chief_engineer_blueprints_generated: 0
+      chief_engineer_blueprints_required: 3
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    ninth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: 844b872e8799
+      factory_run_id: factory_6839c0348e4a
+      instance_id: >-
+        factory-bench-l1-04-codex-r13-l1-04-run-844b872e8799-3155e9dc256f7c5b
+      stage: chief_engineer_review
+      rejection_code: chief_engineer.final_request_audit_missing
+      root_cause_hint: >-
+        CE streaming completed, but roles.runtime projected the final
+        RoleTurnResult without merging the terminal stream event metadata;
+        final_request_context_audit and context_snapshot_ref were lost.
+      wall_clock_seconds: 183.5
+      backend_fresh: true
+      backend_port: 49978
+      frontend_port: 5174
+      plan_materialized: true
+      blueprint_artifact_materialized: true
+      chief_engineer_blueprints_accepted: 0
+      chief_engineer_blueprints_required: 3
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    tenth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: 25b6350aac9b
+      factory_run_id: factory_5793716523bb
+      instance_id: >-
+        factory-bench-l1-04-codex-r14-l1-04-run-25b6350aac9b-69d15d648c51af79
+      stage: chief_engineer_review
+      rejection_code: chief_engineer.llm_review_failed
+      root_cause_hint: >-
+        The qualified CE physical stream exceeded the fixed 4096-event
+        conservation buffer while its exact physical request legitimately
+        authorized up to 16384 output tokens. The gate terminalized the
+        attempt with factory_provider_stream_buffer_limit_exceeded and leaked
+        zero uncommitted stream items upstream.
+      wall_clock_seconds: 180.3
+      backend_fresh: true
+      backend_port: 49978
+      frontend_port: 5174
+      plan_materialized: true
+      blueprint_artifact_materialized: true
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    eleventh_failed_acceptance_run:
+      project_id: L1-04
+      run_id: 55ca9d019033
+      factory_run_id: factory_4688ad9a898e
+      stage: chief_engineer_review
+      rejection_code: chief_engineer.llm_review_failed
+      first_physical_error: provider_stream_failed
+      overwritten_error: No LLM response materialized from stream
+      requested_output_tokens: 128000
+      physical_attempt_timeout_seconds: 125
+      semantic_context_snapshot_ref: aa866bb912e213ae8d4a577c
+      physical_context_snapshot_ref: 779f259d94bcfa4bd4066b8e
+      lifecycle_context_snapshot_ref: c2da3d9b0efe3ed5f74c67d5
+      final_request_context_audit: pass
+      wall_clock_seconds: 157.6
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_artifact_materialized: true
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    twelfth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: a9ae89d99a0d
+      factory_run_id: factory_255535981b71
+      instance_id: >-
+        factory-bench-l1-04-codex-r16-l1-04-run-a9ae89d99a0d-315db1ff945109d8
+      stage: chief_engineer_review
+      rejection_code: chief_engineer.final_request_audit_missing
+      root_cause_hint: >-
+        The physical CE stream completed with a coherent three-task blueprint
+        and a passing final-request audit, but terminal Provider metadata was
+        discarded while materializing RawLLMResponse. A second terminal event
+        and a missing analyze-only delivery marker compounded the projection
+        drift, so Factory admitted zero blueprints.
+      semantic_context_snapshot_ref: bc0ca59eb9168c6532222faf
+      physical_context_snapshot_ref: f8bf8c8f9576c49e6d0895d1
+      lifecycle_context_snapshot_ref: 1d91ca795d0045e7bfdc81ba
+      requested_output_tokens: 16384
+      physical_attempt_timeout_seconds: 183
+      final_request_context_audit: pass
+      wall_clock_seconds: 408.6
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_artifact_materialized: true
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    thirteenth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: e1e3544b000b
+      factory_run_id: factory_886390982871
+      director_run_id: director-2d6a6cb8f485
+      instance_id: >-
+        factory-bench-l1-04-codex-r17-l1-04-run-e1e3544b000b-5a9b1ebbe8b39395
+      stage: director_dispatch
+      rejection_code: director_first_call_llm_timeout
+      result_error_code: model_provider_timeout
+      downstream_boundary_error: director.canonical_task_boundary_missing
+      wall_clock_seconds: 302.2
+      backend_fresh: true
+      plan_materialized: true
+      chief_engineer_blueprints_accepted: 3
+      director_reached: true
+      director_provider_request_reached: true
+      requested_output_tokens: 128000
+      provider_timeout_ceiling_seconds: 46.0
+      context_snapshot_ref: 5425221fc44785e39a56622d
+      final_request_context_audit: pass
+      source_files_materialized: 0
+      qa_reached: false
+      instance_stopped_via_launcher: true
+    fourteenth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: 000e13cdd2ab
+      factory_run_id: factory_d62938e54720
+      instance_id: >-
+        factory-bench-l1-04-codex-r18-l1-04-run-000e13cdd2ab-a0e51d74e955dc2e
+      stage: chief_engineer_review
+      rejection_code: chief_engineer_blueprint:llm_review_failed
+      provider_error: provider_stream_timeout:193s
+      wall_clock_seconds: 507.4
+      provider_wire_attempts: 2
+      semantic_context_snapshot_ref: 37fffc38c39fcc3d6ad8a95e
+      physical_context_snapshot_ref: 4af87b883300a76e64dae908
+      final_request_context_audit: pass
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_artifact_materialized: true
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    fifteenth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: e9ff5cf30fee
+      factory_run_id: factory_4b6587290aa8
+      instance_id: >-
+        factory-bench-l1-04-codex-r19-l1-04-run-e9ff5cf30fee-49e2b24b27e45b97
+      stage: chief_engineer_review
+      rejection_code: chief_engineer_portfolio_review_cancelled
+      runner_error: event_wait_timeout
+      wall_clock_seconds: 540.2
+      provider_wire_attempts: 1
+      provider_terminal_status: completed
+      provider_elapsed_seconds: 168
+      replay_to_cancellation_seconds: 23
+      factory_workspace_lease_version: 21
+      factory_workspace_lease_active: true
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_materialized: false
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    sixteenth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: a922f8362845
+      factory_run_id: factory_a622acb89b87
+      instance_id: >-
+        factory-bench-l1-04-codex-r20-l1-04-run-a922f8362845-731f085add31a6ab
+      stage: chief_engineer_review
+      rejection_code: chief_engineer.llm_review_failed
+      provider_error: Stream overall timeout after 300.0s
+      wall_clock_seconds: 613.5
+      logical_ce_llm_calls: 1
+      provider_wire_attempts: 2
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_materialized: true
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    seventeenth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: 3e85ed70e4e4
+      factory_run_id: factory_0e248f124b08
+      instance_id: >-
+        factory-bench-l1-04-codex-r21-l1-04-run-3e85ed70e4e4-e9df0d1b686f8e91
+      stage: chief_engineer_review
+      rejection_code: chief_engineer.output_schema_invalid
+      wall_clock_seconds: 586.4
+      logical_ce_llm_calls: 1
+      provider_wire_attempts: 1
+      provider_terminal_status: completed
+      provider_http_status: 200
+      provider_elapsed_seconds: 573
+      completion_tokens: 12211
+      response_chars: 28461
+      context_snapshot_ref: f254207f13e552bb0f9a4cf5
+      final_request_context_audit: pass
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_materialized: false
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    eighteenth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: 8609608b059f
+      factory_run_id: factory_91b96bb6fbe4
+      instance_id: >-
+        factory-bench-l1-04-codex-r22-l1-04-run-8609608b059f-d698a30e3a50a0a9
+      stage: chief_engineer_review
+      rejection_code: chief_engineer.llm_review_failed
+      root_cause_code: factory_role_evidence_stage_grant_cardinality_exceeded
+      wall_clock_seconds: 129.4
+      primary_ce_physical_context_snapshot_ref: 28a6b16201cd258458fc357a
+      pm_physical_context_snapshot_ref: ae14b6d4197075c97d331248
+      final_request_context_audit: pass_with_projection_drift_closed_by_r22a
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_artifact_materialized: true
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    nineteenth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: 218caf274b83
+      factory_run_id: factory_a09fccb0bbad
+      instance_id: >-
+        factory-bench-l1-04-codex-r23-l1-04-run-218caf274b83-73aa10fe95bb5217
+      stage: chief_engineer_review
+      public_rejection_code: task_boundary_verdict_missing
+      authoritative_rejection_code: chief_engineer.output_schema_invalid
+      root_cause_code: ce_schema_repair_corrupt_output_replay
+      wall_clock_seconds: 1821.2
+      pm_physical_context_snapshot_ref: 200095b2bff80c6691a86dff
+      primary_ce_physical_context_snapshot_ref: 4c58929b0263eaf8bc500df5
+      repair_ce_physical_context_snapshot_ref: 9c72869f9b6fa82cd04b60e7
+      final_request_context_audit: pass
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_artifact_materialized: true
+      director_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped_via_launcher: true
+    twentieth_failed_acceptance_run:
+      project_id: L1-04
+      run_id: 884a62d5528b
+      factory_run_id: factory_faa2894ebe27
+      instance_id: >-
+        factory-bench-l1-04-codex-r24-l1-04-run-884a62d5528b-9f353c7758c40d50
+      stage: director_dispatch
+      public_rejection_code: director.dispatch_deadline_blocker
+      authoritative_rejection_reason: invalid_pm_task_dependency_schedule
+      root_cause_code: director_pm_dependency_projection_includes_internal_ce_task
+      authoritative_blocker: unknown_active_task_ids:CE-PORTFOLIO-factory_faa2894ebe27
+      requested_timeout_seconds: 1155
+      remaining_seconds: 1210
+      wall_clock_seconds: 2244.7
+      pm_physical_context_snapshot_ref: 07a731ee3b4ca45ef01790e1
+      primary_ce_physical_context_snapshot_ref: ca204b31bcc66c641021a8f0
+      repair_ce_physical_context_snapshot_ref: dd4a55ba7bd3f84c6dcfd467
+      final_request_context_audit: pass
+      ce_schema_repair_input_hygiene: pass
+      backend_fresh: true
+      plan_materialized: true
+      blueprint_artifact_materialized: true
+      director_reached: true
+      director_provider_request_reached: false
+      qa_reached: false
+      target_project_effects: 0
+      instance_stopped: true
+    target_project_effects: 0
+    taskruntime_full: "895 passed, 10 warnings"
+    factory_pipeline_full: "1225 passed, 2 warnings"
+    roles_runtime_full: "697 passed, 2 warnings"
+    roles_adapters_full: "1291 passed, 2 warnings"
+    roles_kernel_full: "4159 passed, 2 warnings"
+    production_receipt_integration: "4 passed"
+    role_runtime_and_transaction_wiring: "626 passed"
+    taskruntime_factory_regression: "141 passed"
+    pre_bench_matrix: "649 passed, 2 warnings"
+    current_fact_chain_matrix: "2037 passed, 10 warnings"
+    r34_kernelone_stream_and_roles_kernel: "2803 passed, 1 warning"
+    r35_roles_adapters_full: "1302 passed"
+    context_instance_fresh_workspace: "200 passed, 2 warnings"
+    architecture: "1411 passed, 8 skipped"
+    ruff: pass
+    mypy_strict_taskruntime_service: pass
+    role_context_matrix:
+      - pm
+      - architect
+      - chief_engineer
+      - director
+      - qa
+    main_ports:
+      backend_49977_listening: true
+      frontend_5173_listening: true
+    failures_closed:
+      - code: sequential_claim_uses_stale_admission_head
+        root_cause: >-
+          Claim and abort CAS sequences were derived from the immutable
+          inventory-admission head plus member index even though earlier
+          members append claim, receipt, abort, or recovery transitions to the
+          same operation stream.
+        fix: >-
+          Strictly rebuild the exact admitted operation through TaskRuntime's
+          public read port before every claim or abort, derive the next sequence
+          from the current stream head, and keep command CAS as the final race
+          and authority guard.
+      - code: committed_effect_receipt_projection_gap
+        root_cause: >-
+          The physical v2 receipt and TaskRuntime commit existed, but the
+          result-level projection dropped the sibling commit and an incomplete
+          direct view shadowed the valid nested pair in Run Ledger.
+        fix: >-
+          Preserve exact receipt-plus-commit pairs across ToolExecutionResult,
+          BatchReceipt, raw result, and Run Ledger; accept historical nested
+          commits only when their receipt exactly matches the direct receipt.
+      - code: final_request_tool_registry_provenance_missing
+        root_cause: >-
+          The final request auditor trusted optional caller context keys for
+          ToolSpecRegistry provenance. No production producer populated them,
+          so a valid registry-derived write_file schema was reported with an
+          empty source and false alias coverage; B3.5 correctly rejected it.
+        fix: >-
+          Reconstruct provenance from the exact final Provider tool schemas,
+          capture each effective registry spec, verify argument-alias property
+          coverage, hash the actual surface, and refuse any source claim for
+          unknown or incomplete schemas. Qualification still independently
+          validates full schema shape, scoped enums, hash, source and aliases.
+      - code: pm_route_probe_transaction_identity_unbound
+        root_cause: >-
+          The real PM route-audit probe carried only correlation fields, so
+          TransactionKernel correctly rejected it before Provider construction;
+          run/task/session fallback is forbidden.
+        fix: >-
+          Generate a stable run-scoped turn_request_id and explicitly project
+          accepted first-class execution identities from adapter context into
+          RoleRuntime request metadata.
+      - code: director_internal_external_task_id_projection_missing
+        root_cause: >-
+          The guarded Director role command used TaskRuntime's private integer
+          row id while its exact authority bound the canonical PM/CE external
+          task id required by RoleRuntime.
+        fix: >-
+          Normalize only an exact canonical internal-row id into its bound
+          external task id. Preserve all other caller ids so genuine drift is
+          still rejected fail-closed.
+      - code: factory_non_effect_repair_evidence_misclassified
+        root_cause: >-
+          The materialization public boundary treated a repair-kernel denial
+          carrying source_tool/repair_kernel metadata as an actual tool effect.
+          Factory therefore counted thirteen authority-free diagnostics as
+          effect results and could rerun validation against an unchanged
+          workspace.
+        fix: >-
+          Keep dispatchable deferred requests, physical mutation results,
+          hashes and receipts as effect payloads; classify missing-evidence
+          callback denials without those fields as non-effect evidence. Factory
+          tests now assert no mutation without a canonical TaskRuntime attempt.
+      - code: run_ledger_negative_fixture_version_omitted
+        root_cause: >-
+          Two negative Run Ledger fixtures omitted the now-required TaskRuntime
+          commit version and therefore accumulated an unrelated
+          invalid_task_runtime_version failure.
+        fix: >-
+          Bind both fixtures to canonical version 3 so each regression isolates
+          only its intended receipt identity/hash mismatch.
+      - code: physical_wire_max_tokens_drift
+        root_cause: >-
+          The provider-native authority copied the pre-clamp semantic output
+          budget instead of the Engine's final model/window-clamped invoke
+          budget, while the actual provider correctly consumed the latter.
+        fix: >-
+          Project the final Engine max_tokens only when it is a positive,
+          non-expanding reduction of the frozen request. Invalid values and
+          attempted expansions remain fail-closed across Anthropic, OpenAI chat
+          and OpenAI responses protocols.
+      - code: final_request_role_included_refs_drift
+        root_cause: >-
+          Generic ContextOS observation refs were projected into the exact
+          Factory qualifying included_refs list, even when the cutoff-bound
+          role evidence slot was absent_at_request_time.
+        fix: >-
+          Bind the frozen audit through the live Factory dispatch sidecar;
+          preserve observed_included_refs separately and recompute required,
+          included, missing and pass from the exact role policy facts and tool
+          coverage. Rebinding is idempotent so later tampering is never healed.
+      - code: factory_workspace_stale_owner_fence_failed
+        root_cause: >-
+          Factory owner lookup coupled stable session_id plus attempt identity
+          to volatile lease_expires_at and therefore rejected a legitimate
+          lagging TaskBoard/fact projection as a foreign session.
+        fix: >-
+          Resolve Factory ownership only from explicit session metadata or an
+          exact session_id plus attempt task-row binding; never infer it from
+          the role child run_id and never require volatile lease equality.
+      - code: context_roundtrip_duplicate_runtime_root
+        root_cause: >-
+          The e2e assertion wrapped an already resolved project runtime root in
+          StorageLayout and inspected a duplicated projects/runtime path.
+        fix: >-
+          Assert the UTF-8 JSON payload at resolve_storage_roots(workspace)
+          runtime_root/contexts/<shard>/<hash>, matching producer and reader.
+      - code: factory_director_child_stage_boundary_settlement
+        root_cause: >-
+          An early inflight Director lifecycle result left most of the admitted
+          execution budget unused, but Factory waited only its five-second
+          settlement reserve and closed role-evidence authority while the
+          TaskRuntime child was reaching Provider transport.
+        fix: >-
+          Carry one absolute execution deadline into Director metadata, clamp
+          it at execution, role-dialogue, and final semantic-request boundaries,
+          reject expired/sub-second leases before transport, and wait the unused
+          execution lease plus settlement reserve before stage return.
+      - code: ce_schema_repair_duplicate_stage_grant
+        root_cause: >-
+          The independently claimed CE schema-repair child tried to mint a
+          second stage role-evidence grant. The CE stage grant cap is exactly
+          one, so the authority correctly rejected the repair before transport.
+        fix: >-
+          Reuse the one typed CE authority binding across primary and repair
+          final requests while preserving independent TaskRuntime task, claim,
+          session, request-freeze, and physical-attempt identities.
+      - code: factory_cutoff_audit_subprojection_drift
+        root_cause: >-
+          Factory cutoff rebinding replaced required/included/missing refs and
+          the pass bit, but retained heuristic coverage sources, evidence slots,
+          ratio, and context-quality findings.
+        fix: >-
+          Rebuild every subordinate evidence projection from the typed cutoff
+          policy facts, recompute the ratio, and remove or reconstruct only the
+          superseded evidence findings.
+    residual_risks:
+      - >-
+        The long-lived main backend reports stale_since_startup=true because
+        shared source changed after it started. The acceptance bench must not
+        consume it; isolated mode starts a fresh backend on non-main ports.

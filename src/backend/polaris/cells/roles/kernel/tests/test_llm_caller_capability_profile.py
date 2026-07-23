@@ -121,6 +121,74 @@ async def test_prepare_request_includes_resolved_actor_capability_profile(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_streaming_json_contract_preserves_reasoning_budget_and_truthful_fallback(tmp_path: Path) -> None:
+    request_preparer = LLMRequestPreparer(workspace=str(tmp_path), formatter=None, model_catalog=None)
+    request_preparer._model_catalog = _ModelCatalog()
+    profile = SimpleNamespace(
+        role_id="chief_engineer",
+        provider_id="provider-a",
+        model="qwen-16k",
+        tool_policy=SimpleNamespace(whitelist=()),
+    )
+    context = SimpleNamespace(
+        message="Return one JSON portfolio.",
+        domain="code",
+        context_override={
+            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
+                {"role": "system", "content": "You are the Chief Engineer."},
+                {"role": "user", "content": "Return one JSON portfolio."},
+            ],
+            "response_format_mode": "json",
+            "chief_engineer_json_contract_required": True,
+            "reasoning_budget_tokens": 2_048,
+        },
+    )
+
+    prepared = await request_preparer._prepare_llm_request(
+        profile=profile,
+        system_prompt="You are the Chief Engineer.",
+        context=context,
+        temperature=0.0,
+        max_tokens=8_192,
+        stream=True,
+    )
+
+    assert prepared.response_format_mode == "text_json_fallback"
+    assert "response_format" not in prepared.request_options
+    assert prepared.request_options["reasoning_budget_tokens"] == 2_048
+    assert prepared.ai_request.options["reasoning_budget_tokens"] == 2_048
+    assert prepared.ai_request.context["reasoning_budget_tokens"] == 2_048
+    assert prepared.capability_profile["response_format_mode"] == "text_json_fallback"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_budget_must_leave_visible_output_budget(tmp_path: Path) -> None:
+    request_preparer = LLMRequestPreparer(workspace=str(tmp_path), formatter=None, model_catalog=None)
+    request_preparer._model_catalog = _ModelCatalog()
+    profile = SimpleNamespace(
+        role_id="chief_engineer",
+        provider_id="provider-a",
+        model="qwen-16k",
+        tool_policy=SimpleNamespace(whitelist=()),
+    )
+    context = SimpleNamespace(
+        message="Return JSON.",
+        domain="code",
+        context_override={"reasoning_budget_tokens": 4_096},
+    )
+
+    with pytest.raises(ValueError, match="reasoning_budget_tokens_must_be_less_than_max_tokens"):
+        await request_preparer._prepare_llm_request(
+            profile=profile,
+            system_prompt="You are the Chief Engineer.",
+            context=context,
+            temperature=0.0,
+            max_tokens=4_096,
+            stream=True,
+        )
+
+
+@pytest.mark.asyncio
 async def test_prepare_request_preserves_final_request_evidence_context(tmp_path: Path) -> None:
     request_preparer = LLMRequestPreparer(workspace=str(tmp_path), formatter=None, model_catalog=None)
     request_preparer._model_catalog = _ModelCatalog()

@@ -70,6 +70,20 @@ class QAWorkflow(WorkflowQueryState):
                 message="QA skipped because Director did not complete cleanly",
                 details={"reason": reason},
             )
+            blocked_success, blocked_payload = _result_success(
+                await workflow.execute_activity(
+                    "record_qa_blocked",
+                    {
+                        "run_id": workflow_input.run_id,
+                        "workspace": workflow_input.workspace,
+                        "reason": reason,
+                        "blocked_stage": "director",
+                        "failure_reason": f"Director status: {workflow_input.director_status or 'unknown'}",
+                        "metadata": metadata,
+                    },
+                    start_to_close_timeout=timedelta(minutes=2),
+                )
+            )
             _receipt_success, receipt_payload = _result_success(
                 await workflow.execute_activity(
                     "record_qa_cognitive_receipt",
@@ -90,6 +104,8 @@ class QAWorkflow(WorkflowQueryState):
                 reason=reason,
                 evidence={
                     "skipped": True,
+                    "blocked_artifact_recorded": blocked_success,
+                    "blocked_artifact": _activity_payload(blocked_payload),
                     "cognitive_runtime": _activity_payload(receipt_payload).get("cognitive_runtime_receipt", {}),
                 },
             )

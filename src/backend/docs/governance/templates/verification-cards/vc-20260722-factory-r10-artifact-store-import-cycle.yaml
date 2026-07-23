@@ -1,0 +1,54 @@
+schema_version: "verification-card/v1"
+id: "vc-20260722-factory-r10-artifact-store-import-cycle"
+title: "Runtime Artifact Store public boundary does not import Projection ownership"
+classification: "cell_boundary"
+severity: "P0"
+status: "complete"
+bench_status: "not_schedulable"
+scope:
+  files:
+    - "src/backend/polaris/cells/runtime/artifact_store/__init__.py"
+    - "src/backend/polaris/cells/runtime/artifact_store/public/__init__.py"
+    - "src/backend/polaris/cells/runtime/artifact_store/public/service.py"
+    - "src/backend/polaris/cells/runtime/artifact_store/tests/test_public_import_boundary.py"
+defect:
+  physical_error: >-
+    ImportError: cannot import name CodeChangeState from partially initialized
+    module polaris.cells.runtime.projection.public.service
+  import_cycle: >-
+    runtime.projection -> qa.audit_verdict -> audit.verdict ->
+    runtime.artifact_store -> runtime.projection
+  affected_surface: "Delivery test collection and runtime websocket startup"
+root_cause: >-
+  runtime.artifact_store.public.service eagerly re-exported Runtime V2 models
+  owned by runtime.projection. A consumer needing only resolve_artifact_path
+  therefore initialized the entire Projection/QA graph and closed a circular
+  import during Delivery collection.
+repair_contract:
+  artifact_store_exports_only_owned_services_and_paths: true
+  projection_models_owned_by_runtime_projection: true
+  compatibility_lazy_fallback: forbidden
+  internal_cross_cell_import: forbidden
+  public_boundary_must_not_import_projection: true
+  target_project_edits: forbidden
+verification:
+  tdd_red: "Delivery collection failed with partially initialized projection service"
+  import_boundary_regression: "1 passed"
+  artifact_store_full: "4 passed"
+  delivery_full: "375 passed, 9 warnings"
+  factory_full: "1287 passed, 2 warnings"
+  strict_mypy: "pass on 4 R10 files"
+  ruff: "pass"
+  format: "pass"
+  compileall: "pass"
+  diff_check: "pass"
+  provider_requests: 0
+  bench_runs: 0
+next_gate:
+  state: "not_schedulable"
+  action: >-
+    Refreeze the pre-bench source manifest and authorize exactly one fresh
+    isolated L1-04 acceptance run.
+owner: "Codex /root"
+opened_at: "2026-07-22"
+closed_at: "2026-07-22"

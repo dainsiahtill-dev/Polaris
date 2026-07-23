@@ -1,0 +1,110 @@
+card_id: vc-20260722-factory-r21-stream-output-validation-and-ce-schema-repair
+classification: execution_fact_chain
+status: closed
+bench_status: unblocked
+bug_summary: >-
+  The seventeenth authorized fresh isolated L1-04 run proved R20: one qualified
+  Chief Engineer Provider stream crossed the old 300-second replay timeout and
+  completed without duplicate transport. The physical response contained a
+  semantically complete portfolio but invalid JSON (an unquoted placeholder
+  fragment plus duplicated trailing content). The streaming Role Kernel did
+  not run the same output validation as its non-streaming path and projected a
+  successful RoleTurnResult/TaskBoundary before Factory later rejected the
+  payload. Factory had no bounded, deadline-aware repair path, so the run ended
+  at chief_engineer_review after 586.4 seconds.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: 3e85ed70e4e4
+  factory_run_id: factory_0e248f124b08
+  instance_id: >-
+    factory-bench-l1-04-codex-r21-l1-04-run-3e85ed70e4e4-e9df0d1b686f8e91
+  stage: chief_engineer_review
+  rejection_code: chief_engineer.output_schema_invalid
+  wall_clock_seconds: 586.4
+  logical_ce_llm_calls: 1
+  provider_wire_attempts: 1
+  provider_terminal_status: completed
+  provider_http_status: 200
+  provider_elapsed_seconds: 573
+  completion_tokens: 12211
+  response_chars: 28461
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_materialized: false
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  context_snapshot_ref: f254207f13e552bb0f9a4cf5
+  call_id: c8a91c755b7948a797cb04034faa0de3
+  final_request_audit:
+    role_identity: chief_engineer
+    provider: anthropic_compat
+    model: kimi-for-coding
+    transport: stream
+    response_format: json
+    tool_choice: none
+    final_request_tokens: 4876
+    context_window_tokens: 262144
+    pm_contract_coverage: pass
+    target_file_coverage: pass
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r21/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r21/audits/3e85ed70e4e4/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r21/L1-04.chain.log
+root_cause:
+  code: stream_output_validation_parity_and_bounded_repair_gap
+  summary: >-
+    Non-streaming Role Kernel execution validated role output before returning,
+    but StreamEventProjector always emitted a complete RoleTurnResult with
+    structured_output=null and appended TaskBoundary first. roles.runtime also
+    collapsed typed stream errors to role_runtime_error. Factory consequently
+    learned about malformed CE JSON only in a later local check, after the
+    execution boundary had already claimed success, and could neither consume a
+    typed validation failure nor safely retry within remaining downstream
+    budgets.
+  fix: >-
+    Extract one shared output validator for streaming/non-streaming paths. For
+    streams with no higher-priority dropped-dispatch lifecycle failure, validate
+    the final physical content before TaskBoundary and project typed
+    output_validation_failed plus complete validation evidence. Preserve that
+    error code through roles.runtime. Factory consumes only that typed failure,
+    suspends the invalid primary TaskRuntime attempt, re-runs deadline admission,
+    and issues at most one CE-only JSON repair through a separate TaskRuntime
+    claim/lease/final Provider request. The repair prompt preserves the complete
+    physical output and PM task/scope authority; no local regex mutation or
+    target-project edit is allowed.
+required_gates:
+  stream_validation_before_task_boundary: pass
+  dropped_dispatch_precedence: pass
+  typed_runtime_error_projection: pass
+  separate_primary_and_repair_claims: pass
+  primary_attempt_suspended: pass
+  repair_attempt_settled: pass
+  bounded_single_repair_negative_control: pass
+  factory_deadline_readmission: pass
+  stream_projection_targeted: "12 passed"
+  role_runtime_targeted: "14 passed"
+  factory_characterization: "251 passed"
+  role_runtime_full: "697 passed, 2 warnings"
+  role_kernel_full: "4159 passed, 2 warnings"
+  factory_pipeline_full: "1221 passed, 2 warnings"
+  ruff: pass
+  mypy_source: pass
+  compileall: pass
+  codegraph_post_edit_review: pass
+  diff_check: pass
+scheduling:
+  bench_schedulable: true
+  authorization_scope: one_fresh_isolated_l1_04_acceptance_run
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: fresh_isolated_l1_04_r22
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

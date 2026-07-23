@@ -73,6 +73,7 @@ class FrozenFinalProviderAttemptV1:
     execution_authority_hash: str
     attempt_budget: int
     authority_attempt_ordinal: int
+    semantic_candidate_hash: str
     semantic_request_hash: str
     physical_wire_hash: str
     composite_request_hash: str
@@ -108,10 +109,14 @@ class FrozenFinalProviderAttemptV1:
                 or self.authority_attempt_ordinal != self.attempt_number
             ):
                 raise ValueError("authority_attempt_ordinal must equal Factory attempt_number")
+            if not _EXACT_HASH_64_RE.fullmatch(self.semantic_candidate_hash):
+                raise ValueError("semantic_candidate_hash must be exactly 64 lowercase hex")
         elif self.factory_run_id:
             raise ValueError("role-session attempt cannot claim factory_run_id")
         elif self.execution_authority_hash or self.attempt_budget != 0 or self.authority_attempt_ordinal != 0:
             raise ValueError("role-session attempt cannot claim Factory physical authority")
+        elif self.semantic_candidate_hash:
+            raise ValueError("role-session attempt cannot claim Factory semantic candidate authority")
         if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int) or self.attempt_number < 1:
             raise ValueError("attempt_number must be an int >= 1")
         for hash_field in ("semantic_request_hash", "physical_wire_hash", "composite_request_hash"):

@@ -1,0 +1,59 @@
+card_id: vc-20260723-factory-r34-post-terminal-stream-replay-compaction
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_summary: >-
+  R32 completed the CE physical Provider attempt in about 125 seconds, then
+  replayed 10,088 tiny reasoning events for about 37 minutes. Per-event audit
+  and runtime projection backpressure prevented role terminalization before
+  the Factory deadline.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+assumption_register:
+  - id: A1
+    claim: physical_provider_attempt_completed_before_role_stall
+    evidence: provider_attempt_terminal_at_2026_07_22T23_44_50_811670Z
+  - id: A2
+    claim: replay_amplification_is_local_and_post_terminal
+    evidence: 10088_reasoning_events_from_23_44_50_822139Z_to_00_21_48_883745Z
+  - id: A3
+    claim: context_and_role_identity_are_not_the_blocker
+    evidence: ce_final_request_snapshot_valid_4886_of_262144_tokens
+pre_mortem:
+  most_likely_wrong_fix: >-
+    Coalescing raw SSE dictionaries inside the physical-attempt gate would
+    couple a generic authority boundary to provider-specific event schemas and
+    could reorder tool calls.
+  prevention: >-
+    Coalesce only decoded contiguous text in StreamExecutor, flush on every
+    semantic boundary, and leave tool/receipt/terminal events untouched.
+verification_plan:
+  focused_tests:
+    - factory_governed_tiny_reasoning_replay_is_compacted
+    - coalescing_preserves_text_and_tool_order
+    - ungoverned_stream_retains_chunk_granularity
+  broader_tests:
+    - kernelone_stream_executor_suite
+    - roles_kernel_suite
+    - final_provider_attempt_suite
+  static_gates:
+    - ruff_check_and_format
+    - mypy
+    - compileall
+scheduling:
+  bench_schedulable: false
+  next_action: run_pre_bench_gate_then_one_fresh_isolated_l1_04
+sign_off:
+  owner: Codex /root
+  closed_at: "2026-07-23"
+closure_evidence:
+  red_regression: 4096_tiny_reasoning_deltas_projected_as_4096_role_events
+  fixed_projection: 4096_deltas_projected_as_4_byte_identical_batches
+  observed_r32_reduction: 10088_events_to_about_40_batches_252_2x
+  focused_stream_executor: 51_passed
+  roles_kernel_and_stream: 2803_passed
+  anthropic_provider_integration: 36_passed
+  static_gates: pass

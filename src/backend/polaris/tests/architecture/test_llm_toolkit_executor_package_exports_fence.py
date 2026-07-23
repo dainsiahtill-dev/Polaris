@@ -7,9 +7,7 @@ from pathlib import Path
 import polaris.kernelone.llm.toolkit.executor as executor_root
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
-EXECUTOR_INIT_SOURCE = (
-    BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "executor" / "__init__.py"
-)
+EXECUTOR_INIT_SOURCE = BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "executor" / "__init__.py"
 
 
 def test_executor_package_root_keeps_current_public_exports() -> None:
@@ -18,10 +16,15 @@ def test_executor_package_root_keeps_current_public_exports() -> None:
         "CODE_INTELLIGENCE_AVAILABLE",
         "AgentAccelToolExecutor",
         "BudgetExceededError",
+        "CommandCapabilityDenialReasonV1",
+        "CommandCapabilityValidationInputV1",
+        "CommandCapabilityValidationResultV1",
+        "CommandCapabilityValidationStatusV1",
         "KernelToolCallingRuntime",
         "build_tool_feedback",
         "execute_tool_call",
         "execute_tool_calls",
+        "validate_command_capability",
     }
 
     assert set(executor_root.__all__) == expected_exports

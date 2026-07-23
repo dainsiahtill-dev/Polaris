@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 from polaris.cells.roles.kernel.internal.kernel import transaction_invocation_setup as setup
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.delivery_mode import _ensure_context_delivery_mode_marker
 from polaris.cells.roles.kernel.internal.transaction.tool_surface import TransactionToolSurfacePlan
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest
 
@@ -135,3 +136,14 @@ async def test_stream_setup_skips_delivery_marker(monkeypatch: pytest.MonkeyPatc
     )
 
     assert calls == ["platform"]
+
+
+def test_explicit_analyze_only_context_restores_authoritative_marker() -> None:
+    messages = [{"role": "user", "content": "Produce the implementation blueprint."}]
+
+    result = _ensure_context_delivery_mode_marker(
+        messages,
+        {"delivery_mode": "analyze_only"},
+    )
+
+    assert result[-1]["content"].startswith("[mode:analyze_only]\n")

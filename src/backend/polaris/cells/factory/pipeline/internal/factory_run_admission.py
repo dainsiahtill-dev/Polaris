@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_FACTORY_WORKSPACE_LEASE_TTL_SECONDS = 180.0
 _LEASE_RECORD_NAME = ".workspace_run_lease.json"
 _LEASE_LOCK_NAME = ".workspace_run_lease.lock"
+_RESTART_REPLAY_FENCE_REASON = "factory_physical_attempt_restart_replay_fence"
 
 
 def _utc_now() -> datetime:
@@ -300,6 +301,7 @@ class FactoryWorkspaceRunAdmission:
         expected_fencing_token: int | None,
         lease_ttl_seconds: float | None = None,
         allow_expired_owner: bool = False,
+        replay_fence: bool = False,
     ) -> FactoryWorkspaceRunLeaseV1:
         """Atomically acquire workspace authority and one lifecycle mutation.
 
@@ -314,6 +316,8 @@ class FactoryWorkspaceRunAdmission:
         normalized_nonce = _normalize_run_id(nonce)
         if type(allow_expired_owner) is not bool:
             raise TypeError("allow_expired_owner must be a bool")
+        if type(replay_fence) is not bool:
+            raise TypeError("replay_fence must be a bool")
         if allow_expired_owner and normalized_operation != "recover_stale_workspace_owner":
             raise ValueError("expired owner lifecycle claim is reserved for stale-owner recovery")
         ttl = self._ttl(lease_ttl_seconds)
@@ -416,10 +420,15 @@ class FactoryWorkspaceRunAdmission:
             )
 
             sequence = current.lifecycle_claim_sequence + 1
+            replay_fencing_token = current.fencing_token + 1 if replay_fence else current.fencing_token
             claimed = replace(
                 current,
+                state=self._state("draining") if replay_fence else current.state,
                 version=current.version + 1,
+                fencing_token=replay_fencing_token,
                 updated_at=now.isoformat(),
+                expires_at=current.expires_at if allow_expired_owner else self._expires_at(now, ttl),
+                drain_reason=_RESTART_REPLAY_FENCE_REASON if replay_fence else current.drain_reason,
                 lifecycle_claim_sequence=sequence,
                 lifecycle_operation_claim=FactoryLifecycleOperationClaimV1(
                     run_id=normalized_run_id,
@@ -609,6 +618,13 @@ class FactoryWorkspaceRunAdmission:
                 fencing_token=fencing_token,
                 now=now,
             )
+            if current.lifecycle_operation_claim is not None:
+                self._raise_conflict(
+                    "Factory stage execution cannot overlap a lifecycle operation",
+                    code="factory_lifecycle_operation_inflight",
+                    run_id=normalized_run_id,
+                    current=current,
+                )
             existing = current.stage_execution_claim
             if existing is not None:
                 if existing.stage == normalized_stage and existing.nonce == normalized_nonce:
@@ -688,10 +704,13 @@ class FactoryWorkspaceRunAdmission:
                     now=now,
                     allow_expired=allow_expired_owner,
                 )
-                valid_state = current.state.value in ({"active", "draining"} if allow_expired_owner else {"active"})
+                replay_fenced = (
+                    current.state.value == "draining" and current.drain_reason == _RESTART_REPLAY_FENCE_REASON
+                )
+                valid_state = current.state.value == "active" or replay_fenced
                 if not valid_state:
                     self._raise_conflict(
-                        "Factory physical-attempt replay requires an ACTIVE workspace lease",
+                        "Factory physical-attempt replay requires an ACTIVE or replay-fenced workspace lease",
                         code="factory_workspace_run_not_active",
                         run_id=normalized_run_id,
                         current=current,

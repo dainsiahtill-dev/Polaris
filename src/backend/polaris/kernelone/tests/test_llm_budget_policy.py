@@ -19,6 +19,7 @@ from polaris.kernelone.llm.budget_policy import (
     TURN_KIND_REPAIR_SUBCALL,
     TURN_KIND_REQUIRED_TOOL_RETRY,
     ResolvedBudgetV1,
+    chief_engineer_portfolio_output_tokens,
     chief_engineer_structured_output_tokens,
     clamp_output_tokens,
     classify_turn_kind,
@@ -47,6 +48,27 @@ def test_chief_engineer_structured_output_budget_has_one_policy(
     environ = {} if raw_value is None else {CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV: raw_value}
 
     assert chief_engineer_structured_output_tokens(environ) == expected
+
+
+@pytest.mark.parametrize(
+    ("task_count", "raw_cap", "expected"),
+    [
+        (1, None, 16_384),
+        (3, None, 16_384),
+        (5, None, 20_480),
+        (32, None, HARD_OUTPUT_TOKEN_CLAMP),
+        (64, None, HARD_OUTPUT_TOKEN_CLAMP),
+        (10, "20000", 20_000),
+    ],
+)
+def test_chief_engineer_portfolio_budget_scales_with_project_size(
+    task_count: int,
+    raw_cap: str | None,
+    expected: int,
+) -> None:
+    environ = {} if raw_cap is None else {CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV: raw_cap}
+
+    assert chief_engineer_portfolio_output_tokens(task_count, environ) == expected
 
 
 @pytest.mark.parametrize(

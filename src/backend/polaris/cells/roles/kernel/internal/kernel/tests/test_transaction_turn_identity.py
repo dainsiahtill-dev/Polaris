@@ -8,8 +8,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
-from polaris.cells.roles.kernel.internal.kernel import transaction_factory, transaction_turn_executor as executor_module
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    QueryFactEventsV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+    query_fact_events,
+)
+from polaris.cells.roles.kernel.internal.kernel import transaction_turn_executor as executor_module
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import (
     _assert_task_runtime_guard_allows_tool,
@@ -27,12 +33,12 @@ from polaris.cells.roles.profile.public.service import RoleTurnRequest
 from polaris.cells.runtime.task_runtime.public import (
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptAuthoritySettlementVerdictV1,
     TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
     TaskRuntimeExecutionAttemptIdentityV1,
     TaskRuntimeExecutionAttemptSettlementVerdictV1,
     TaskRuntimeService,
     create_task_runtime_execution_attempt_authority,
-    heartbeat_task_runtime_execution_attempt,
 )
 
 
@@ -60,10 +66,23 @@ def _bind(request: RoleTurnRequest, workspace: Path, *, role: str = "chief_engin
     return _bind_transaction_attempt(request, invocation_id=invocation_id, attempt=0)
 
 
+def _bootstrap_fact_stream(workspace: Path) -> None:
+    """Provision the explicit FactStream authority required by strict I/O."""
+
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            maintenance_reason="transaction-turn-identity-test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
+
+
 def _claim_task_runtime_attempt(
     workspace: Path,
 ) -> tuple[TaskRuntimeService, TaskRuntimeExecutionAttemptIdentityV1]:
     workspace.mkdir(exist_ok=True)
+    _bootstrap_fact_stream(workspace)
     runtime = TaskRuntimeService(str(workspace))
     task_id = int(runtime.create_task_row(subject="canonical heartbeat")["id"])
     claim = runtime.claim_execution(
@@ -125,7 +144,9 @@ def test_transaction_tool_guard_uses_one_public_authority_for_renewal_and_termin
     settled_identities: list[TaskRuntimeExecutionAttemptIdentityV1] = []
     renewed = replace(initial, lease_expires_at="2030-01-01T00:02:00+00:00")
 
-    def heartbeat(command: HeartbeatTaskRuntimeExecutionAttemptCommandV1) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
+    def heartbeat(
+        command: HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+    ) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
         heartbeat_entered.set()
         assert release_heartbeat.wait(timeout=1.0)
         return TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
@@ -169,9 +190,12 @@ def test_transaction_tool_guard_uses_one_public_authority_for_renewal_and_termin
     assert not heartbeat_thread.is_alive()
     assert not terminal_thread.is_alive()
     assert settled_identities == [renewed]
-    assert getattr(terminal_result["result"], "success") is True
+    result = terminal_result["result"]
+    assert isinstance(result, TaskRuntimeExecutionAttemptAuthoritySettlementVerdictV1)
+    assert result.success is True
     with pytest.raises(RuntimeError, match="heartbeat_rejected:authority_closed"):
         _assert_task_runtime_guard_allows_tool(request)
+
 
 def test_transaction_tool_guard_continuously_renews_and_chat_is_unaffected() -> None:
     initial = TaskRuntimeExecutionAttemptIdentityV1(
@@ -193,7 +217,9 @@ def test_transaction_tool_guard_continuously_renews_and_chat_is_unaffected() -> 
     )
     received: list[TaskRuntimeExecutionAttemptIdentityV1] = []
 
-    def heartbeat(command: HeartbeatTaskRuntimeExecutionAttemptCommandV1) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
+    def heartbeat(
+        command: HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+    ) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
         received.append(command.identity)
         next_identity = renewed if len(received) == 1 else renewed_again
         return TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
@@ -445,6 +471,7 @@ async def test_execute_turn_rejects_unbound_identity_before_llm_tool_or_fact_eff
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    _bootstrap_fact_stream(workspace)
     request = _request(workspace, metadata={})
     kernel = RoleExecutionKernel.create_default(workspace=str(workspace))
     create_kernel = MagicMock()
@@ -482,6 +509,7 @@ async def test_execute_stream_rejects_missing_execution_scope_before_effects(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    _bootstrap_fact_stream(workspace)
     request = _request(workspace, metadata={"session_id": "chat-session-only"})
     kernel = RoleExecutionKernel.create_default(workspace=str(workspace))
     create_kernel = MagicMock()

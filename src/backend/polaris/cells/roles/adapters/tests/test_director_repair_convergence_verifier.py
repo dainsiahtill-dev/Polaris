@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import json
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -107,8 +106,8 @@ def test_step_verify_convergence_verifier_success_writes_verified_raw_output(
     snapshot = verifier(_request(tmp_path))
 
     assert policy_calls == [(command, str(tmp_path.resolve()))]
-    assert snapshot.exit_code == 0
-    assert snapshot.residual_artifact_quality_errors == ()
+    assert snapshot.exit_code == 1
+    assert "missing authoritative execute_command effect receipt" in snapshot.residual_artifact_quality_errors[0]
     assert snapshot.command == ("/bin/sh", "-c", command)
     assert snapshot.metadata["evidence_source"] == _EVIDENCE_SOURCE
     assert snapshot.metadata["command_kind"] == "shell_step_verify"
@@ -117,9 +116,9 @@ def test_step_verify_convergence_verifier_success_writes_verified_raw_output(
     assert snapshot.metadata["command_safety_reason"] == "kernelone policy allowed test-grep verify"
     assert snapshot.metadata["step_verify_safety_policy_source"] == "kernelone_policy_safe_fixture"
     payload = _raw_output_payload(snapshot)
-    assert payload["exit_code"] == 0
-    assert payload["output"] == ""
-    assert payload["residual_artifact_quality_errors"] == []
+    assert payload["exit_code"] == 1
+    assert "roles.kernel directed-effect authority" in payload["output"]
+    assert payload["residual_artifact_quality_errors"]
     assert payload["metadata"]["command_safety_allowed"] is True
     assert payload["metadata"]["step_verify_safety_policy_source"] == "kernelone_policy_safe_fixture"
 
@@ -148,21 +147,6 @@ def test_step_verify_convergence_verifier_runs_environment_prep_before_verify(
         },
         requirement={"manifest": "package.json"},
     )
-    calls: list[tuple[str, object]] = []
-
-    def fake_subprocess_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        calls.append(("prep", args[0]))
-        assert args[0] == list(plan.command)
-        assert kwargs["cwd"] == str(tmp_path.resolve())
-        return subprocess.CompletedProcess(args[0], 0, stdout="installed\n", stderr="")
-
-    def fake_run_step_verify(verify: str, *, cwd: str) -> tuple[int, str]:
-        calls.append(("verify", verify))
-        assert cwd == str(tmp_path.resolve())
-        return (0, "")
-
-    monkeypatch.setattr(verifier_module.subprocess, "run", fake_subprocess_run)
-    monkeypatch.setattr(verifier_module, "run_step_verify", fake_run_step_verify)
     verifier = build_step_verify_convergence_verifier(
         tmp_path,
         task_id="task-verifier",
@@ -172,19 +156,19 @@ def test_step_verify_convergence_verifier_runs_environment_prep_before_verify(
 
     snapshot = verifier(_request(tmp_path, round_number=1, environment_prep_plans=(plan,)))
 
-    assert calls == [("prep", list(plan.command)), ("verify", command)]
-    assert snapshot.exit_code == 0
-    assert snapshot.residual_artifact_quality_errors == ()
+    assert snapshot.exit_code == 1
+    assert "environment_prep_directed_effect_required" in snapshot.residual_artifact_quality_errors[0]
     assert snapshot.metadata["environment_prep_required"] is True
     assert snapshot.metadata["environment_prep_plan_count"] == 1
-    assert snapshot.metadata["environment_prep_failed"] is False
+    assert snapshot.metadata["environment_prep_failed"] is True
     prep_receipt = snapshot.metadata["environment_prep_receipts"][0]
     assert prep_receipt["schema_version"] == "director.environment_prep_receipt.v1"
-    assert prep_receipt["status"] == "succeeded"
+    assert prep_receipt["status"] == "failed"
+    assert prep_receipt["error_code"] == "environment_prep_directed_effect_required"
     assert prep_receipt["command"] == list(plan.command)
     assert prep_receipt["freshness_key"] == "fresh-node-key"
     payload = _raw_output_payload(snapshot)
-    assert payload["environment_prep_receipts"][0]["status"] == "succeeded"
+    assert payload["environment_prep_receipts"][0]["status"] == "failed"
 
 
 def test_step_verify_convergence_verifier_missing_raw_output_marks_missing_evidence(
@@ -236,7 +220,7 @@ def test_step_verify_convergence_verifier_failure_reports_residual_and_raw_outpu
 
     assert snapshot.exit_code != 0
     assert snapshot.residual_artifact_quality_errors
-    assert "Step verify failed" in snapshot.residual_artifact_quality_errors[0]
+    assert "Step verify pending" in snapshot.residual_artifact_quality_errors[0]
     assert snapshot.metadata["evidence_source"] == _EVIDENCE_SOURCE
     assert snapshot.metadata["command_kind"] == "shell_step_verify"
     assert snapshot.metadata["raw_output_ref_verified"] is True
@@ -266,18 +250,11 @@ def test_step_verify_convergence_verifier_rejects_unsafe_command_without_executi
             "policy_source": "kernelone_policy_unsafe_fixture",
         }
 
-    def fail_if_called(*_: Any, **__: Any) -> tuple[int, str]:
-        raise AssertionError("run_step_verify must not execute unsafe commands")
-
     monkeypatch.setattr(
         verifier_module._step_verify_module,
         "assess_step_verify_command_safety",
         policy,
         raising=False,
-    )
-    monkeypatch.setattr(
-        "polaris.cells.roles.adapters.internal.director.repair_convergence_verifier.run_step_verify",
-        fail_if_called,
     )
     verifier = build_step_verify_convergence_verifier(
         tmp_path,

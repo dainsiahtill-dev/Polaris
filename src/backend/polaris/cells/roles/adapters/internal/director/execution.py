@@ -6,18 +6,15 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.kernelone.events.file_event_broadcaster import (
-    broadcast_file_written,
-    calculate_patch,
-)
 
-from .execution_tools import DirectorToolExecutor
 from .helpers import (
     extract_kernel_tool_results,
     looks_like_protocol_patch_response,
@@ -100,13 +97,11 @@ class DirectorPatchExecutor:
 
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
-        self._message_bus: Any | None = None
-        self._worker_id = "director"
-        self._tool_executor = DirectorToolExecutor(workspace)
 
     def set_message_bus(self, message_bus: Any | None) -> None:
-        self._message_bus = message_bus
-        self._tool_executor.set_message_bus(message_bus)
+        """Retain the compatibility hook; text fallback owns no physical bus."""
+
+        del message_bus
 
     # -------------------------------------------------------------------------
     # LLM Timeout Resolution
@@ -122,8 +117,35 @@ class DirectorPatchExecutor:
         return max(900.0, value)
 
     @staticmethod
+    def clamp_llm_call_timeout_to_factory_deadline(
+        context: dict[str, Any] | None,
+        timeout_seconds: float,
+    ) -> float:
+        """Apply the live Factory execution deadline as a non-expanding ceiling."""
+
+        resolved_timeout = max(0.1, float(timeout_seconds))
+        deadline_raw: Any = None
+        if isinstance(context, dict):
+            deadline_raw = context.get("factory_director_execution_deadline_epoch_seconds")
+            metadata = context.get("metadata")
+            if deadline_raw is None and isinstance(metadata, dict):
+                deadline_raw = metadata.get("factory_director_execution_deadline_epoch_seconds")
+        if deadline_raw is None or isinstance(deadline_raw, bool):
+            return resolved_timeout
+        try:
+            deadline_epoch = float(deadline_raw)
+        except (TypeError, ValueError):
+            deadline_epoch = 0.0
+        if not math.isfinite(deadline_epoch) or deadline_epoch <= 0:
+            raise RuntimeError("factory_director_execution_deadline_invalid")
+        remaining_seconds = deadline_epoch - time.time()
+        if remaining_seconds <= 0:
+            raise RuntimeError("factory_director_execution_deadline_exhausted")
+        return min(resolved_timeout, remaining_seconds)
+
+    @staticmethod
     def resolve_llm_call_timeout_seconds(context: dict[str, Any] | None) -> float:
-        """解析 LLM 调用超时时间"""
+        """Resolve the call timeout under the live Factory execution deadline."""
         from .helpers import _DEFAULT_LLM_CALL_TIMEOUT_SECONDS
 
         timeout_max = DirectorPatchExecutor._llm_call_timeout_max_seconds()
@@ -149,6 +171,7 @@ class DirectorPatchExecutor:
             raw_candidates.append(context.get("director_llm_timeout_seconds"))
             raw_candidates.append(context.get("director_dispatch_timeout_seconds"))
 
+        resolved_timeout = explicit_default
         for raw in raw_candidates:
             if raw is None:
                 continue
@@ -158,8 +181,16 @@ class DirectorPatchExecutor:
                 continue
             if value <= 0:
                 continue
-            return max(explicit_default, min(value, timeout_max))
-        return explicit_default
+            resolved_timeout = max(explicit_default, min(value, timeout_max))
+            break
+
+        # Factory admission owns an absolute execution deadline.  The child can
+        # spend significant time in TaskRuntime claim/projection work before it
+        # reaches the Provider boundary, so replaying the original relative
+        # timeout here would let the physical request outlive its parent stage.
+        # Clamp at the actual call start; an exhausted deadline is a control-
+        # plane rejection and must not produce a Provider request.
+        return DirectorPatchExecutor.clamp_llm_call_timeout_to_factory_deadline(context, resolved_timeout)
 
     @staticmethod
     def resolve_direct_fallback_timeout_seconds(
@@ -262,255 +293,6 @@ class DirectorPatchExecutor:
                 "repair_path": "native_tools_or_director_runtime_repair_required",
             },
         }
-
-    # -------------------------------------------------------------------------
-    # PATCH_FILE Format Execution
-    # -------------------------------------------------------------------------
-
-    async def _execute_patch_file_format(
-        self,
-        response: str,
-        task_id: str,
-        update_task_progress_fn: Any,
-    ) -> list[dict[str, Any]]:
-        """执行 PATCH_FILE 格式的响应"""
-        from polaris.cells.director.execution.public.service import validate_before_apply
-        from polaris.kernelone.llm.toolkit import (
-            StrictOperationApplier,
-            parse_protocol_output,
-        )
-
-        workspace_path = Path(self.workspace).resolve()
-        protocol_operations = parse_protocol_output(response)
-        if protocol_operations:
-            return self._apply_protocol_operations(
-                protocol_operations,
-                workspace_path=workspace_path,
-                task_id=task_id,
-                update_task_progress_fn=update_task_progress_fn,
-                applier=StrictOperationApplier,
-            )
-
-        integrity = validate_before_apply(response, {})
-        protocol_like_response = looks_like_protocol_patch_response(response)
-        parse_errors = list(integrity.errors or []) if not integrity.is_valid else []
-        if protocol_like_response:
-            error_text = "; ".join(parse_errors[:3]) or "No valid patch format found"
-            return [{"tool": "patch_apply", "success": False, "error": error_text}]
-
-        results: list[dict[str, Any]] = []
-        for patch in self._extract_markdown_file_blocks(response):
-            result = self._apply_single_patch(
-                patch,
-                workspace_path,
-                task_id,
-                update_task_progress_fn,
-            )
-            results.append(result)
-        return results
-
-    def _apply_protocol_operations(
-        self,
-        operations: list[Any],
-        *,
-        workspace_path: Path,
-        task_id: str,
-        update_task_progress_fn: Any,
-        applier: Any,
-    ) -> list[dict[str, Any]]:
-        """应用协议操作"""
-        from polaris.kernelone.llm.toolkit import EditType
-
-        results: list[dict[str, Any]] = []
-        for operation in operations:
-            file_path = str(getattr(operation, "path", "") or "").strip()
-            if not file_path:
-                results.append({"tool": "patch_apply", "success": False, "error": "Missing file path"})
-                continue
-            path_error = self._validate_relative_patch_path(file_path)
-            if path_error:
-                results.append({"tool": "patch_apply", "success": False, "error": path_error})
-                continue
-
-            update_task_progress_fn(task_id, "executing", current_file=file_path)
-            try:
-                target = (workspace_path / file_path).resolve()
-                if workspace_path not in target.parents and target != workspace_path:
-                    raise RuntimeError(f"Unsafe patch path: {file_path}")
-                existed_before = target.exists()
-                old_content = ""
-                if existed_before and target.is_file():
-                    old_content = target.read_text(encoding="utf-8")
-                outcome = applier.apply(operation, str(workspace_path))
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                results.append({"tool": "patch_apply", "success": False, "error": str(exc)})
-                continue
-            if outcome.success:
-                changed = bool(getattr(outcome, "changed", False))
-                operation_kind = "modify"
-                bytes_written = 0
-                broadcast_ok = False
-                if changed:
-                    if target.exists() and target.is_file():
-                        new_content = target.read_text(encoding="utf-8")
-                        operation_kind = "modify" if existed_before else "create"
-                        bytes_written = len(new_content.encode("utf-8"))
-                    else:
-                        new_content = ""
-                        operation_kind = "delete"
-                    broadcast_ok = self._emit_realtime_file_change(
-                        file_path=file_path,
-                        operation=operation_kind,
-                        old_content=old_content,
-                        new_content=new_content,
-                        task_id=task_id,
-                    )
-                edit_type = getattr(operation, "edit_type", None)
-                if edit_type == EditType.SEARCH_REPLACE:
-                    source_tool = "edit_file"
-                elif edit_type == EditType.DELETE:
-                    source_tool = "delete_file"
-                else:
-                    source_tool = "write_file"
-                effect_receipt = {
-                    "path": file_path,
-                    "file": file_path,
-                    "bytes_written": bytes_written,
-                    "changed": changed,
-                    "operation": operation_kind,
-                    "broadcast_ok": broadcast_ok,
-                }
-                results.append(
-                    {
-                        "tool": "patch_apply",
-                        "tool_name": "patch_apply",
-                        "success": True,
-                        "status": "success",
-                        "file": file_path,
-                        "path": file_path,
-                        "effect_receipt": effect_receipt,
-                        "result": {
-                            "ok": True,
-                            "source_tool": source_tool,
-                            "file": file_path,
-                            "bytes_written": bytes_written,
-                            "changed": changed,
-                            "operation": operation_kind,
-                            "broadcast_ok": broadcast_ok,
-                        },
-                    }
-                )
-                continue
-
-            results.append(
-                {
-                    "tool": "patch_apply",
-                    "success": False,
-                    "error": str(getattr(outcome, "error_message", "") or "Patch apply failed"),
-                }
-            )
-        return results
-
-    def _apply_single_patch(
-        self,
-        patch: dict[str, Any],
-        workspace_path: Path,
-        task_id: str,
-        update_task_progress_fn: Any,
-    ) -> dict[str, Any]:
-        """应用单个补丁块"""
-        file_path = str(patch.get("file") or "").strip()
-        if not file_path:
-            return {"tool": "patch_apply", "success": False, "error": "Missing file path"}
-        path_error = self._validate_relative_patch_path(file_path)
-        if path_error:
-            return {"tool": "patch_apply", "success": False, "error": path_error}
-        update_task_progress_fn(task_id, "executing", current_file=file_path)
-        try:
-            target = (workspace_path / file_path).resolve()
-            if workspace_path not in target.parents and target != workspace_path:
-                raise RuntimeError(f"Unsafe patch path: {file_path}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            search = str(patch.get("search") or "")
-            replace = str(patch.get("replace") or "")
-            if target.exists():
-                original_content = target.read_text(encoding="utf-8")
-                if search:
-                    if search not in original_content:
-                        raise RuntimeError(f"PATCH SEARCH block not found in file: {file_path}")
-                    new_content = original_content.replace(search, replace, 1)
-                    tool_name = "edit_file"
-                else:
-                    new_content = replace
-                    tool_name = "write_file"
-            else:
-                new_content = replace
-                tool_name = "write_file"
-            if tool_name == "edit_file":
-                tool_result = self._tool_executor.execute_tool(
-                    "edit_file",
-                    {"file": file_path, "search": search, "replace": replace},
-                    task_id=task_id,
-                )
-            else:
-                tool_result = self._tool_executor.execute_tool(
-                    "write_file",
-                    {"file": file_path, "content": new_content},
-                    task_id=task_id,
-                )
-            if not bool(tool_result.get("ok")):
-                raise RuntimeError(str(tool_result.get("error") or "Patch apply failed"))
-            operation = str(tool_result.get("operation") or "modify")
-            bytes_written = int(tool_result.get("bytes_written") or len(new_content.encode("utf-8")))
-            effect_receipt = {
-                "path": file_path,
-                "file": file_path,
-                "bytes_written": bytes_written,
-                "changed": True,
-                "operation": operation,
-                "broadcast_ok": bool(tool_result.get("broadcast_ok")),
-            }
-            return {
-                "tool": "patch_apply",
-                "tool_name": "patch_apply",
-                "success": True,
-                "status": "success",
-                "file": file_path,
-                "path": file_path,
-                "effect_receipt": effect_receipt,
-                "result": {
-                    "ok": True,
-                    "source_tool": tool_name,
-                    "file": file_path,
-                    "bytes_written": bytes_written,
-                    "operation": operation,
-                    "broadcast_ok": bool(tool_result.get("broadcast_ok")),
-                },
-            }
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            return {"tool": "patch_apply", "success": False, "error": str(exc)}
-
-    def _emit_realtime_file_change(
-        self,
-        *,
-        file_path: str,
-        operation: str,
-        old_content: str,
-        new_content: str,
-        task_id: str,
-    ) -> bool:
-        """Broadcast a FILE_WRITTEN event for patch paths applied outside tool executor."""
-        patch = calculate_patch(old_content, new_content)
-        return broadcast_file_written(
-            file_path=file_path,
-            operation=operation,
-            content_size=len(new_content.encode("utf-8")),
-            task_id=task_id,
-            patch=patch,
-            message_bus=self._message_bus,
-            worker_id=self._worker_id,
-            event_log_workspace=self.workspace,
-        )
 
     @staticmethod
     def _validate_relative_patch_path(file_path: str) -> str | None:

@@ -1,20 +1,24 @@
 card_id: vc-20260719-final-provider-attempt-qualification
+status: verified_closed
 bug_summary: >-
   B3.2 now reconstructs, injects, recomputes and freezes one exact semantic
   request for every Factory role while stopping before physical transport.
-  B3.3-B3.5 still must propagate that immutable authority to every provider
-  retry, fallback, structured, fanout-child and stream attempt, qualify the
-  exact provider-visible request immediately before I/O, and persist a readable
-  same-workspace snapshot and lifecycle proof.
+  B3.3-B3.4 now propagate that immutable authority to every provider retry,
+  fallback, structured, fanout-child and stream attempt while conserving each
+  physical start. B3.5-B3.6 now qualify the exact provider-visible request
+  immediately before I/O, persist a readable same-workspace snapshot and
+  qualification proof, and reject invalid coverage with zero transport or
+  physical-attempt effects.
 classification: structural
 bug_path:
   file: polaris/cells/roles/kernel/internal/llm_caller/invoker.py
   method: LLMInvoker.call / call_structured / call_stream
   symptom: >-
-    A qualified Factory semantic request deliberately raises
-    factory_role_semantic_request_frozen_physical_dispatch_not_enabled before
-    snapshot, cache, executor, fallback, stream or transport. Removing that stop
-    before B3.3-B3.5 would allow unaudited physical provider attempts.
+    The former B3.2 stop has been atomically replaced for exact production
+    PreparedLLMRequest instances by port-owned final-provider-request
+    qualification. Legacy or malformed test doubles remain fail-closed; every
+    invalid production qualification records one durable non-physical rejection
+    fact and performs zero transport, reservation, lifecycle or budget effects.
 assumptions:
   - id: A1
     statement: I assume the existing typed Factory role binding is a post-cutoff proof carrier and cannot truthfully be constructed at a pre-cutoff role seam.
@@ -115,6 +119,77 @@ assumptions:
       asyncio task context is inherited at create_task. Pending children must be
       cancelled and gathered with return_exceptions=True before the stage-local
       registry closes and the claim is released.
+  - id: A14
+    statement: I assume a process-local recovered coordinator cannot permanently fence a still-running peer service for the same Factory run.
+    status: verified_true
+    evidence: >-
+      Independent two-service reproduction showed service B replayed a closed
+      coordinator while service A retained its open coordinator and could still
+      execute a stage under the unchanged durable fencing token. Restart replay
+      now rotates and persists the Factory workspace fence before any replay
+      read, while every authorization-advancing operation on an already-issued
+      live control port reacquires the exact durable stage claim before local
+      coordinator state; failed replay leaves that durable fence closed.
+  - id: A15
+    statement: I assume provider registration or capability self-declaration cannot prove that every physical retry, reconnect, SDK call, or subprocess route crosses the Factory dispatch gate.
+    status: verified_true
+    evidence: >-
+      Factory uses one closed static provider-type-by-mode inventory and seals
+      the exact bootstrap concrete class for each governed stable key. Direct
+      HTTP routes now cross sync/async/stream dispatch per attempt; Codex SDK is
+      version-locked with SDK retries disabled; opaque CLI routes, unknown
+      dynamic routes, same-name replacement implementations, and virtual
+      bootstrap overrides fail before replacement construction or provider
+      invocation while ordinary administration remains allowed. Ollama's sync
+      stream fallback uses context-propagating thread delegation, so the bound
+      dispatch capability cannot disappear at the worker-thread boundary.
+  - id: A16
+    statement: I assume a streamed provider chunk may escape as apparent success before the physical response is closed and its terminal lifecycle fact is durably acknowledged.
+    status: verified_true
+    evidence: >-
+      The prior async generator yielded provider chunks while still consuming
+      the physical response, then closed the response and appended the strict
+      terminal event afterward. The gate now buffers all chunks inside the
+      physical-attempt boundary and releases them only after response exit and
+      terminal ACK; immutable item-count and strict JSON-safe canonical UTF-8
+      byte limits bound the buffer. Opaque objects cannot shrink through string
+      coercion; NaN and positive/negative Infinity are rejected as non-JSON;
+      overflow, serialization failure, terminal persistence failure, or
+      cancellation leaks no item.
+  - id: A17
+    statement: I assume constructing a Factory Provider gate can create a lifecycle ledger before a forged or stale execution authority is rejected.
+    status: verified_true
+    evidence: >-
+      The default Factory lifecycle store previously enrolled its segmented
+      ledger during gate construction, before reserve validated the live grant,
+      role, budget, run and authority hash. Default lifecycle construction is
+      now deferred until _freeze returns a valid reservation; invalid authority
+      reaches neither lifecycle enrollment nor snapshot persistence.
+  - id: A18
+    statement: I assume the nominal 30-second restart-replay budget can expire inside a blocking capture or recovery write and still publish recovered admission.
+    status: verified_true
+    evidence: >-
+      Replay previously checked time only at full-replay entry and recovery-work
+      entry. Fence reads, role/lifecycle captures, recovery-terminal CAS, settle,
+      verification queries and final drain could consume the budget unchecked.
+      The fixed deadline is now revalidated before and after lifecycle-hold
+      entry, every yielded revalidation and every external replay step, inside
+      the recovery-fence callback, and immediately before coordinator
+      publication; expiry raises the locked replay-head-unstable fail-closed code.
+  - id: A19
+    statement: I assume durable admission storage locks may overlap the local grant-authority or coordinator lock without violating the locked ordering contract.
+    status: verified_false
+    evidence: >-
+      The locked blueprint forbids storage access or callbacks while either
+      local lock is held. Live admission now performs exact durable stage-claim
+      revalidation before and after each authorization-advancing local mutation,
+      with both local locks released. Factory publishes a non-blocking local
+      admission fence before durable replay-fence I/O, and any unexposed local
+      mutation whose durable postcheck fails is exactly compensated; a barrier
+      test proves concurrent fencing leaves zero blocking reservation or inflight
+      request. Restart replay captures and CAS-validates durable vectors inside
+      lifecycle holds, but constructs, settles, drains and publishes the
+      process-local coordinator only after those holds release.
 pre_mortem:
   failure_point: >-
     The most likely incorrect fix would qualify the prepared semantic request
@@ -136,9 +211,9 @@ verification_plan:
       expected: A live cutoff port can be carried before ACK without fabricated proof fields; cleanup restores prior context on success and failure.
       status: existing_fix
     - file: polaris/cells/roles/kernel/tests/test_final_provider_attempt_gate.py
-      description: Prove one independent qualification and lifecycle per physical attempt.
-      expected: Retries and fallbacks cannot reuse PASS and failures cause zero transport calls.
-      status: existing_fix
+      description: '[B3.4-B3.5] Prove one independent qualification and lifecycle per physical attempt, including prequalification rejection and stream conservation through terminal ACK.'
+      expected: Retries and fallbacks cannot reuse PASS; invalid authority or final-request coverage creates no reservation/lifecycle/budget/transport effect and exactly one stable rejection fact; streamed JSON-safe items remain private until response exit plus durable terminal ACK; opaque and non-finite items, terminal persistence failure and cancellation leak no item.
+      status: verified_fix
     - file: polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py
       description: '[B3.2] Prove locator-only ACK resolution, detached proof validation, semantic cutoff injection, recomputation, and strict fail-closed validation.'
       expected: Canonical anchors are provider-visible and stale or wrong-role evidence fails.
@@ -167,16 +242,54 @@ verification_plan:
       description: Cover PM, architect, CE, Director, fanout-child, QA, recovery binding seams, and Factory-minted role/budget/hash authority.
       expected: Each controlled role has a unique isolated grant; PM recovery and fanout siblings cannot share authority; 1/2/1/512/1 cardinality, fixed budget 32, wrong role/budget/hash/child, stale or closed authority, cancellation drain, and recovery without authority all fail before persistent effects or provider I/O.
       status: existing_fix
+    - file: polaris/cells/factory/pipeline/tests/test_factory_workspace_admission.py
+      description: '[B3.4] Prove restart replay installs one durable cross-process fence, enforces one fixed 30-second budget, and never reopens the recovered run.'
+      expected: A live peer and every previously issued live control port with the prior token cannot claim a stage, mutate the lease, mint/register/reserve/start/commit a grant, or dispatch after successful or failed replay; local admission closes before durable replay publication, and a concurrent fence inserted between durable precheck and local mutation leaves no unexposed grant/reservation/permit/lease; the one deadline is checked before and after every replay I/O boundary including context entry and final revalidation; no durable storage hold overlaps local control locks; successful recovery releases only after structural drain evidence.
+      status: verified_fix
+    - file: polaris/kernelone/llm/engine/tests/test_provider_route_inventory.py
+      description: '[B3.4] Prove every stable registered provider type is statically classified once for invoke and stream, and dynamic registration cannot self-promote.'
+      expected: Only governed_supported routes backed by the exact sealed bootstrap implementation may proceed under a physical-dispatch port; opaque, uninventoried, or same-name replacement routes fail closed and ordinary non-Factory administration is unchanged.
+      status: verified_fix
+    - file: polaris/kernelone/llm/engine/tests/test_executor.py
+      description: '[B3.4] Prove direct non-stream routes are statically governed and opaque CLI routes are rejected before provider resolution.'
+      expected: Anthropic, Codex SDK, Gemini API, Kimi, MiniMax, Ollama and OpenAI require the exact sealed implementation and bound dispatch; Codex/Gemini CLI, unknown and same-name replacement routes produce stable fail-closed errors with zero outbound.
+      status: verified_fix
+    - file: polaris/kernelone/llm/engine/stream/tests/test_executor.py
+      description: '[B3.4] Prove native and single-shot stream routes are statically governed and opaque CLI streams are rejected before provider resolution.'
+      expected: Every governed stable stream route requires the exact sealed implementation and one bound stream or governed invoke dispatch per physical attempt; opaque CLI, unknown and same-name replacement routes fail with zero outbound.
+      status: verified_fix
+    - file: polaris/tests/integration/llm/providers/test_factory_governed_direct_provider_routes.py
+      description: '[B3.4] Execute transport sentinels for every direct sync, async and native stream provider family.'
+      expected: Gemini, Ollama, MiniMax, OpenAI, Anthropic, Kimi, AsyncOllama and AsyncGemini each cross the bound physical dispatch before exactly one raw HTTP operation; thread delegation preserves the binding.
+      status: verified_fix
+    - file: polaris/tests/integration/llm/providers/test_codex_sdk_provider.py
+      description: '[B3.4] Qualify the exact OpenAI SDK transport used by Codex SDK.'
+      expected: Factory calls require openai 2.41.0 from the uv-locked environment, construct the SDK with max_retries=0, reject every sdk_params value except None or an empty dict before client or gate, and execute the exact frozen SDK request under dispatch.
+      status: verified_fix
   integration_tests:
     - description: Focused B3.2 semantic cutoff and proof-resolution suite; this gate does not authorize Provider or Bench.
-      command: python -m pytest -q polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py polaris/cells/roles/kernel/tests/test_llm_caller_components.py
+      command: rtk proxy uv run --project src/backend pytest -q src/backend/polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py src/backend/polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py src/backend/polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py
       status: existing_fix
     - description: Complete Factory Pipeline regression suite.
-      command: python -m pytest -q polaris/cells/factory/pipeline/tests
+      command: rtk proxy uv run --project src/backend pytest -q src/backend/polaris/cells/factory/pipeline/tests
       status: existing_fix
     - description: KernelOne architecture and aggregate release gates.
-      command: python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+      command: rtk proxy uv run --project src/backend python src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
       status: existing_fix
+    - description: Focused B3.4 physical-attempt, durable-replay, route-inventory and direct-provider transport matrix; 459 passed under the uv-locked environment; this gate does not authorize Provider or Bench.
+      command: rtk proxy uv run --project src/backend pytest -q src/backend/polaris/cells/roles/kernel/tests/test_final_provider_attempt_gate.py src/backend/polaris/cells/factory/pipeline/tests/test_factory_physical_attempt_control.py src/backend/polaris/cells/factory/pipeline/tests/test_factory_workspace_admission.py src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py src/backend/polaris/infrastructure/llm/providers/tests/test_async_provider_helpers.py src/backend/polaris/infrastructure/llm/providers/tests/test_provider_helpers_retry.py src/backend/polaris/kernelone/llm/engine/tests/test_provider_route_inventory.py src/backend/polaris/kernelone/llm/engine/tests/test_executor.py src/backend/polaris/kernelone/llm/engine/stream/tests/test_executor.py src/backend/polaris/tests/integration/llm/providers/test_factory_governed_direct_provider_routes.py src/backend/polaris/tests/integration/llm/providers/test_codex_sdk_provider.py
+      status: verified_fix
+    - description: Focused B3.5 final-provider-request qualification and prequalification-rejection matrix.
+      command: rtk proxy uv run --project src/backend pytest -q src/backend/polaris/cells/roles/kernel/tests/test_final_provider_attempt_gate.py src/backend/polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py
+      status: verified_fix
+    - description: B3.6 complete Factory regression after the final rejection-path amendment.
+      command: rtk proxy uv run --project src/backend pytest -q src/backend/polaris/cells/factory/pipeline/tests --maxfail=1
+      result: 1205 passed, 2 warnings in 616.04s
+      status: verified_fix
+    - description: B3.6 KernelOne architecture and aggregate release gates after the final amendment.
+      command: rtk proxy uv run --project src/backend pytest -q src/backend/polaris/tests/architecture/test_kernelone_release_gates.py && rtk proxy uv run --project src/backend python src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+      result: 18 passed; aggregate exit 0
+      status: verified_fix
   manual_check:
     - Confirm B3.2 ends at an immutable semantic request freeze and performs no physical provider dispatch.
     - Inspect every physical provider transport seam and prove a bound gate is consumed immediately before I/O.
@@ -187,4 +300,6 @@ related_adrs:
   - ADR-0098
 sign_off:
   completed_by: Codex /root
-  completed_at: '2026-07-19'
+  completed_at: '2026-07-20'
+  independent_quality_security_review: CLEAR
+  independent_specification_review: SPEC CLEAR

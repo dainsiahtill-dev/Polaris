@@ -27,6 +27,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.policy.layer import (
     BudgetPolicy,
@@ -35,6 +40,18 @@ from polaris.cells.roles.kernel.internal.policy.layer import (
     PolicyResult,
 )
 from polaris.cells.roles.profile.public.service import RoleExecutionMode, RoleTurnRequest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_fact_stream_workspace(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="turn_engine_policy_convergence_test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
 
 
 def _native_tool_call(

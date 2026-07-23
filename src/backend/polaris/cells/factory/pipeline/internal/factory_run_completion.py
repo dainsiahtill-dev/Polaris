@@ -591,7 +591,10 @@ class RunCompletionWaiter:
                 run_id=run_id,
                 process_terminal=process_terminal,
             )
-            if canonical is not None:
+            canonical_metadata = (
+                canonical.metadata if canonical is not None and isinstance(canonical.metadata, dict) else {}
+            )
+            if canonical is not None and canonical_metadata.get("canonical_authoritative") is True:
                 return canonical
 
             lifecycle_status = str(lifecycle_result.status or "").strip().lower()

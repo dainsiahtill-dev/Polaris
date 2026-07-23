@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,6 +17,29 @@ from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionCo
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, TurnPhaseEvent
 from polaris.kernelone.context.truth_log_service import TruthLogService
+
+
+@contextmanager
+def _registered_async_tool() -> Iterator[str]:
+    """Expose one real async ToolSpec without leaking registry state across tests."""
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    token = ToolSpecRegistry._state_var.set(ToolSpecRegistry._get_state())
+    name = "enqueue_background_job"
+    try:
+        ToolSpecRegistry.register(
+            name,
+            {
+                "description": "Enqueue an asynchronous background job",
+                "category": "async",
+                "arguments": [{"name": "title", "type": "string", "required": True}],
+                "arg_aliases": {"title": "title"},
+            },
+            strict=True,
+        )
+        yield name
+    finally:
+        ToolSpecRegistry._state_var.reset(token)
 
 
 class TestLedgerTelemetryAlignment:
@@ -350,30 +375,29 @@ class TestLedgerTelemetryAlignment:
 
     @pytest.mark.asyncio
     async def test_handoff_ledger_records_zero_tools(self) -> None:
-        llm = AsyncMock(
-            return_value={
-                "content": "Create PR.",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {"name": "create_pull_request", "arguments": '{"title": "PR"}'},
-                    }
-                ],
-                "model": "test-model",
-                "usage": {"prompt_tokens": 15, "completion_tokens": 8},
-            }
-        )
-        tool_runtime = AsyncMock()
-        controller = TurnTransactionController(
-            llm_provider=llm,
-            tool_runtime=tool_runtime,
-            config=TransactionConfig(domain="document"),
-        )
+        with _registered_async_tool() as async_tool:
+            llm = AsyncMock(
+                return_value={
+                    "content": "Queue work.",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": async_tool, "arguments": '{"title": "job"}'},
+                        }
+                    ],
+                    "model": "test-model",
+                    "usage": {"prompt_tokens": 15, "completion_tokens": 8},
+                }
+            )
+            tool_runtime = AsyncMock()
+            controller = TurnTransactionController(
+                llm_provider=llm,
+                tool_runtime=tool_runtime,
+                config=TransactionConfig(domain="document"),
+            )
 
-        result = await controller.execute(
-            "turn_6", [{"role": "user", "content": "pr"}], [{"name": "create_pull_request"}]
-        )
+            result = await controller.execute("turn_6", [{"role": "user", "content": "queue"}], [{"name": async_tool}])
 
         assert result["kind"] == "handoff_workflow"
         assert result["metrics"]["tool_calls"] == 0

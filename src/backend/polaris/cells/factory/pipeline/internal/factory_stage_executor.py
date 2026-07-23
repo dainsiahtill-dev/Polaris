@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import logging
@@ -47,6 +48,7 @@ from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FactoryRoleEvidenceAuthorityBindingV1,
     bind_factory_role_evidence_authority,
 )
 from polaris.cells.roles.kernel.public.service import QualityChecker
@@ -82,7 +84,7 @@ from polaris.kernelone.fs import (
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.llm.budget_policy import (
     FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS,
-    chief_engineer_structured_output_tokens,
+    chief_engineer_portfolio_output_tokens,
 )
 from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
@@ -120,6 +122,11 @@ from .factory_workspace_quality import WorkspaceQualityRunner
 from .run_ledger import load_run_ledger_projection
 
 logger = logging.getLogger(__name__)
+
+_CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS = 8_192
+_CHIEF_ENGINEER_PORTFOLIO_REASONING_BUDGET_TOKENS = 4_096
+_CHIEF_ENGINEER_SCHEMA_REPAIR_REASONING_BUDGET_TOKENS = 2_048
+_CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS = 2_000
 
 # Language-to-extension mapping for PM plan language consistency validation.
 # Used to detect when the PM model plans files in the wrong language
@@ -303,7 +310,13 @@ _DIRECTOR_TIMEOUT_ENV_KEYS = (
     "KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS",
     "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS",
 )
-_DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS = 240
+# Project-level CE portfolios aggregate every PM task, shared interface, and
+# verification contract into one structured provider response.  The former
+# 240-second default was inherited from the retired per-task call path and can
+# expire a healthy reasoning model before it emits any authoritative overlay.
+# Factory deadline admission still clips this request to the exact conserved
+# stage budget, so the longer ceiling cannot consume Director/QA reserves.
+_DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS = 600
 _CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS = 30
 _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS = (
     "KERNELONE_FACTORY_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS",
@@ -758,15 +771,25 @@ class OrchestrationStageExecutor:
         authority_port: FactoryRoleEvidenceAuthorityPort,
         role: str,
         operation: Callable[[], Awaitable[Any]],
+        *,
+        authority_binding: FactoryRoleEvidenceAuthorityBindingV1 | None = None,
     ) -> Any:
-        """Bind one role-task grant and revoke it if task creation raises."""
+        """Bind one role-task grant and revoke it if task creation raises.
 
-        authority_binding = authority_port.mint_authority_binding(role)
+        A bounded retry for the same controlled child run may reuse the
+        caller-owned binding.  This preserves the fixed per-stage grant
+        cardinality while every physical request still consumes the grant's
+        aggregate attempt budget under a distinct request freeze.
+        """
+
+        binding = authority_binding or authority_port.mint_authority_binding(role)
+        if binding.role != role or binding.cutoff_port is not authority_port:
+            raise RuntimeError("factory_role_evidence_authority_binding_scope_mismatch")
         try:
-            with bind_factory_role_evidence_authority(authority_binding):
+            with bind_factory_role_evidence_authority(binding):
                 return await operation()
         except BaseException:
-            authority_port.revoke_authority_binding(authority_binding)
+            authority_port.revoke_authority_binding(binding)
             raise
 
     def _artifact_path(self, relative_path: str) -> Path:
@@ -2506,8 +2529,12 @@ class OrchestrationStageExecutor:
             stats[str(key)] = _safe_taskboard_stat(value)
         return stats
 
-    def _read_observable_task_rows(self, *, factory_run_id: str = "") -> list[dict[str, Any]]:
-        """Return only authoritative TaskRuntime fact-projected rows.
+    def _query_observable_task_rows(
+        self,
+        *,
+        factory_run_id: str = "",
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """Return authoritative rows or one typed fail-closed diagnostic.
 
         Degraded transitional rows remain available to UI/diagnostic consumers
         through TaskRuntime, but Factory stage decisions fail closed instead of
@@ -2516,23 +2543,45 @@ class OrchestrationStageExecutor:
 
         try:
             projection = TaskRuntimeService(str(self.workspace)).query_observable_task_rows_projection()
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            logger.debug("Failed to read observable task rows for factory taskboard projection", exc_info=True)
-            return []
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return [], {
+                "code": "director.task_runtime_fact_projection_unavailable",
+                "severity": "error",
+                "detail": (f"TaskRuntime fact-only observable projection is unavailable: {type(exc).__name__}: {exc}"),
+                "failure_class": FailureClassV1.LEDGER_PROJECTION_INCOMPLETE.value,
+                "responsible_layer": "task_runtime",
+                "repairable_by_director": False,
+            }
         if (
             projection.authoritative is not True
             or projection.degraded
             or projection.source != "task_runtime.execution_fact"
             or projection.readiness.get("ready") is not True
         ):
-            logger.warning(
-                "Factory rejected degraded TaskRuntime projection: source=%s readiness=%s",
-                projection.source,
-                dict(projection.readiness),
-            )
-            return []
+            readiness = dict(projection.readiness)
+            return [], {
+                "code": "director.task_runtime_fact_projection_not_ready",
+                "severity": "error",
+                "detail": (
+                    "TaskRuntime fact-only observable projection is not ready: "
+                    f"source={projection.source}; readiness={readiness}"
+                ),
+                "failure_class": FailureClassV1.LEDGER_PROJECTION_INCOMPLETE.value,
+                "responsible_layer": "task_runtime",
+                "repairable_by_director": False,
+                "projection_source": projection.source,
+                "projection_readiness": readiness,
+            }
         rows = projection.rows_for_factory_run(factory_run_id) if str(factory_run_id or "").strip() else projection.rows
-        return [dict(row) for row in rows if isinstance(row, Mapping)]
+        return [dict(row) for row in rows if isinstance(row, Mapping)], None
+
+    def _read_observable_task_rows(self, *, factory_run_id: str = "") -> list[dict[str, Any]]:
+        """Return only authoritative TaskRuntime fact-projected rows."""
+
+        rows, failure = self._query_observable_task_rows(factory_run_id=factory_run_id)
+        if failure is not None:
+            logger.warning("Factory rejected TaskRuntime projection: %s", failure)
+        return rows
 
     def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
         """Return TaskBoard PM/external ids that can be claimed in this round."""
@@ -2543,6 +2592,11 @@ class OrchestrationStageExecutor:
         ids: list[str] = []
         seen: set[str] = set()
         for row in rows:
+            if self._is_internal_chief_engineer_task_row(
+                row,
+                factory_run_id=factory_run_id,
+            ):
+                continue
             status = str(row.get("status") or "").strip().lower()
             if status not in {"pending", "ready"}:
                 continue
@@ -2764,6 +2818,9 @@ class OrchestrationStageExecutor:
             quality_gate_reserved_seconds=math.ceil(
                 OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context),
             ),
+            quality_gate_min_start_reserved_seconds=math.ceil(
+                _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS,
+            ),
             safety_seconds=int(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS),
             director_settlement_barrier_seconds=min(
                 _DIRECTOR_SETTLEMENT_BARRIER_BUDGET_SECONDS,
@@ -2784,6 +2841,37 @@ class OrchestrationStageExecutor:
                 unresolved.append(task_id)
         return tuple(unresolved)
 
+    @staticmethod
+    def _is_internal_chief_engineer_task_row(
+        row: Mapping[str, Any],
+        *,
+        factory_run_id: str,
+    ) -> bool:
+        """Identify a trusted Factory-owned CE execution row.
+
+        Director dependency admission is defined over PM task identities.  CE
+        portfolio and schema-repair attempts are separate TaskRuntime facts and
+        must remain observable, but they are not vertices in the PM dependency
+        graph.  The exclusion is provenance-bound so an arbitrary unknown task
+        id still invalidates the schedule fail-closed.
+        """
+
+        resolved_run_id = str(factory_run_id or "").strip()
+        if not resolved_run_id:
+            return False
+        metadata_raw = row.get("metadata")
+        metadata: Mapping[str, Any] = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+        external_task_id = OrchestrationStageExecutor._task_projection_external_id(row)
+        return bool(
+            external_task_id
+            and str(metadata.get("factory_run_id") or "").strip() == resolved_run_id
+            and str(metadata.get("factory_stage") or "").strip() == "chief_engineer_review"
+            and str(metadata.get("role") or "").strip() == "chief_engineer"
+            and str(metadata.get("external_task_id") or "").strip() == external_task_id
+            and str(metadata.get("source_task_id") or "").strip() == external_task_id
+            and str(metadata.get("materialized_by") or "").strip() == "runtime.task_runtime"
+        )
+
     def _director_dependency_schedule(
         self,
         pm_tasks: list[dict[str, Any]],
@@ -2793,10 +2881,58 @@ class OrchestrationStageExecutor:
         """Project the remaining Director critical path from TaskRuntime facts."""
 
         observable_rows = self._read_observable_task_rows(factory_run_id=factory_run_id)
-        active_task_ids = self._unresolved_task_ids_from_rows(observable_rows)
+        dependency_rows = [
+            row
+            for row in observable_rows
+            if not self._is_internal_chief_engineer_task_row(
+                row,
+                factory_run_id=factory_run_id,
+            )
+        ]
+        active_task_ids = self._unresolved_task_ids_from_rows(dependency_rows)
         return build_task_dependency_schedule(
             pm_tasks,
             active_task_ids=active_task_ids if observable_rows else None,
+        )
+
+    @staticmethod
+    def _director_admission_failure_projection(
+        admission_decision: FactoryDeadlineAdmissionV1,
+    ) -> tuple[str, str, str, str]:
+        """Project one admission rejection without misreporting its cause."""
+
+        reason = str(admission_decision.reason or "").strip()
+        blockers = (
+            admission_decision.dependency_schedule.blockers
+            if reason == "invalid_pm_task_dependency_schedule"
+            else admission_decision.budget_plan.blockers
+        )
+        blocker_detail = "; ".join(str(item) for item in blockers if str(item).strip())
+        if reason == "invalid_pm_task_dependency_schedule":
+            detail = "Director dispatch rejected an invalid PM task dependency schedule"
+            if blocker_detail:
+                detail = f"{detail}: {blocker_detail}"
+            return (
+                "director.dispatch_dependency_schedule_blocker",
+                detail,
+                "failed",
+                "Director dispatch skipped because the PM task dependency schedule is invalid",
+            )
+        if reason == "no_active_director_tasks":
+            return (
+                "director.dispatch_no_active_tasks",
+                "Director dispatch admission found no active PM tasks",
+                "failed",
+                "Director dispatch skipped because no active PM tasks were admitted",
+            )
+        return (
+            "director.dispatch_deadline_blocker",
+            (
+                "Factory deadline does not leave enough budget to start another Director "
+                "LLM turn while preserving downstream quality-gate time"
+            ),
+            "timeout",
+            "Director dispatch skipped because factory deadline budget is exhausted",
         )
 
     @staticmethod
@@ -2805,6 +2941,7 @@ class OrchestrationStageExecutor:
         *,
         requested_timeout_seconds: int,
         first_materialization_pending: bool,
+        materialization_pending: bool,
         dependency_schedule: TaskDependencyScheduleV1,
     ) -> FactoryDeadlineAdmissionV1:
         """Return the canonical typed admission for one Director dispatch."""
@@ -2814,6 +2951,7 @@ class OrchestrationStageExecutor:
             requested_timeout_seconds=requested_timeout_seconds,
             dependency_schedule=dependency_schedule,
             first_materialization_pending=first_materialization_pending,
+            materialization_pending=materialization_pending,
             policy=OrchestrationStageExecutor._factory_deadline_budget_policy(context),
         )
 
@@ -4374,7 +4512,18 @@ class OrchestrationStageExecutor:
         )
 
     @staticmethod
-    def _ce_llm_failure_allows_blueprint_projection(ce_result: Any) -> bool:
+    def _ce_portfolio_result_allows_schema_repair(ce_result: Any) -> bool:
+        """Whether one failed CE portfolio result may consume the single repair.
+
+        This is deliberately narrower than a generic retryability predicate.
+        Provider/routing/deadline failures remain fatal here.  Only an invalid
+        portfolio payload, or a provider result that contains no visible
+        portfolio payload at all, may use the already-governed schema repair.
+        """
+
+        error_code = str(getattr(ce_result, "error_code", None) or "").strip().lower()
+        if error_code == "output_validation_failed":
+            return True
         failure_text = " ".join(
             str(value or "")
             for value in (
@@ -4387,37 +4536,21 @@ class OrchestrationStageExecutor:
         return any(
             token in failure_text
             for token in (
-                "request timeout",
-                "provider_timeout",
-                "timed out",
-                "timeout",
-                "transport timeout",
+                "thinking-only response",
+                "thinking only response",
+                "thinking_only_response",
                 "empty response",
                 "no visible output",
                 "no visible output or tool calls",
-                "awaiting user clarification",
-                # Transient provider rate limiting (HTTP 429) is infrastructure
-                # back-pressure, not a CE design failure. The advisory CE LLM
-                # review is non-authoritative (the deterministic blueprint is the
-                # scope authority and has already succeeded), so a 429 must degrade
-                # to that blueprint projection rather than abort the whole chain.
-                # Live defect: under shared-provider (kimi) saturation every CE
-                # review failed on 429, was treated as fatal, and left prod=0 even
-                # though a usable deterministic blueprint existed.
-                "429",
-                "rate limit",
-                "rate_limit",
-                "rate-limited",
-                "too many requests",
-                # A transiently-open circuit breaker (opened by upstream rate
-                # limiting / jitter) is also infrastructure back-pressure, not a CE
-                # design failure — degrade to the deterministic blueprint instead of
-                # aborting while the breaker recovers.
-                "circuit_open",
-                "circuit breaker is open",
-                "circuitopenerror",
             )
-        )
+        ) or ("model returned" in failure_text and "awaiting user clarification" in failure_text)
+
+    @staticmethod
+    def _ce_schema_repair_failure_class(ce_result: Any) -> str:
+        error_code = str(getattr(ce_result, "error_code", None) or "").strip().lower()
+        if error_code == "output_validation_failed":
+            return "output_validation_failed"
+        return "thinking_only_response"
 
     @staticmethod
     def _attach_ce_llm_evidence(signal: dict[str, Any], evidence: dict[str, Any]) -> None:
@@ -4831,6 +4964,203 @@ class OrchestrationStageExecutor:
                 type(preserved_error).__name__,
             )
 
+    @staticmethod
+    def _chief_engineer_schema_repair_objective(
+        *,
+        prior_result: RoleExecutionResultV1,
+        portfolio_task_ids: tuple[str, ...],
+    ) -> str:
+        """Build one bounded CE reconstruction objective without replaying corrupt bytes."""
+
+        prior_error = str(prior_result.error_message or prior_result.error_code or "output validation failed").strip()[
+            :_CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS
+        ]
+        prior_output = str(prior_result.output or "")
+        prior_output_sha256 = hashlib.sha256(prior_output.encode("utf-8")).hexdigest()
+        return (
+            "Reconstruct a fresh, concise Chief Engineer portfolio as exactly one valid JSON object from the "
+            "authoritative validated PM contracts, target_files, and scope_paths already attached to this request. "
+            "Do not copy, quote, continue, or textually repair the previous malformed output; its bytes are "
+            "intentionally excluded so corrupt placeholders and duplicated stream fragments cannot be replayed. "
+            "Preserve every validated PM task id and remain inside PM-authoritative scope. Return JSON only: no "
+            "markdown, prose, SESSION_PATCH wrapper, placeholder syntax, angle-bracket metavariables, comments, or "
+            "trailing fragments. Keep the response under 8,000 output tokens.\n\n"
+            "Required shape:\n"
+            "- top-level keys: construction_plan, scope_for_apply, risk_flags\n"
+            "- construction_plan.task_plans: object keyed by every validated PM task id\n"
+            "- construction_plan.project_interface_contract: object containing provider_declarations and "
+            "consumer_declarations arrays\n"
+            "- every task plan: concrete files, public interfaces, dependencies, implementation phases, "
+            "verification evidence, and handoff criteria\n"
+            "- scope_for_apply and risk_flags: arrays\n\n"
+            f"Validated PM task ids: {json.dumps(list(portfolio_task_ids), ensure_ascii=False)}\n"
+            f"Prior validation failure: {prior_error}\n"
+            f"Excluded prior output SHA-256: {prior_output_sha256}\n"
+            f"Excluded prior output UTF-8 character count: {len(prior_output)}"
+        )
+
+    def _settle_chief_engineer_attempt_before_schema_repair(
+        self,
+        *,
+        lease_scope: _ChiefEngineerExecutionAttemptLeaseScope,
+    ) -> None:
+        """Suspend the invalid primary CE attempt before claiming its repair task."""
+
+        should_settle, heartbeat_failure = lease_scope.begin_settlement()
+        if not should_settle or lease_scope.task_id is None or lease_scope.execution_attempt is None:
+            reason = heartbeat_failure.error_message if heartbeat_failure is not None else "settlement_not_started"
+            raise RuntimeError(f"chief_engineer_schema_repair_primary_settlement_blocked:{reason}")
+        self._settle_chief_engineer_execution_attempt(
+            task_id=lease_scope.task_id,
+            execution_attempt=lease_scope.execution_attempt,
+            stage_status="failed",
+            summary="chief_engineer_output_validation_failed_before_schema_repair",
+        )
+
+    async def _run_chief_engineer_schema_repair(
+        self,
+        *,
+        run: FactoryRun,
+        authority_port: FactoryRoleEvidenceAuthorityPort,
+        authority_binding: FactoryRoleEvidenceAuthorityBindingV1,
+        prior_result: RoleExecutionResultV1,
+        portfolio_context: Mapping[str, Any],
+        portfolio_task_ids: tuple[str, ...],
+        deadline_decision: FactoryDeadlineAdmissionV1,
+    ) -> RoleExecutionResultV1:
+        """Run exactly one separately claimed, deadline-admitted CE schema repair."""
+
+        repair_scope = _ChiefEngineerExecutionAttemptLeaseScope()
+        repair_task_id = f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR"
+        repair_timeout_seconds = int(deadline_decision.timeout_seconds)
+        repair_lease_budget = self._chief_engineer_execution_attempt_lease_budget(repair_timeout_seconds)
+        repair_objective = self._chief_engineer_schema_repair_objective(
+            prior_result=prior_result,
+            portfolio_task_ids=portfolio_task_ids,
+        )
+        prior_error = str(prior_result.error_message or prior_result.error_code or "output validation failed").strip()[
+            :_CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS
+        ]
+        prior_output = str(prior_result.output or "")
+        repair_failure_feedback = {
+            "schema_version": "factory.chief_engineer_schema_repair.failure_evidence.v1",
+            "failure_class": self._ce_schema_repair_failure_class(prior_result),
+            "failure_stage": "chief_engineer_review",
+            "detail": prior_error,
+            "prior_output_sha256": hashlib.sha256(prior_output.encode("utf-8")).hexdigest(),
+            "prior_output_chars": len(prior_output),
+            "evidence_refs": [],
+        }
+        try:
+            runtime_task_id, execution_attempt = self._claim_chief_engineer_execution_attempt(
+                run_id=run.id,
+                portfolio_task_id=repair_task_id,
+                objective=repair_objective,
+                lease_budget=repair_lease_budget,
+            )
+            repair_scope.bind_claim(task_id=runtime_task_id, execution_attempt=execution_attempt)
+            repair_scope.start_keeper(
+                _ChiefEngineerExecutionAttemptLeaseKeeper(
+                    workspace=str(self.workspace),
+                    task_id=runtime_task_id,
+                    execution_attempt=execution_attempt,
+                    budget=repair_lease_budget,
+                )
+            )
+            repair_context = deepcopy(dict(portfolio_context))
+            repair_context.update(
+                {
+                    "chief_engineer_schema_repair": True,
+                    "chief_engineer_schema_repair_of_task_id": f"CE-PORTFOLIO-{run.id}",
+                    "chief_engineer_prior_error_code": str(prior_result.error_code or ""),
+                    "chief_engineer_prior_error_message": prior_error,
+                    "failure_feedback": repair_failure_feedback,
+                    "chief_engineer_deadline_decision": deadline_decision.to_dict(),
+                    "chief_engineer_llm_timeout_seconds": repair_timeout_seconds,
+                    "llm_call_timeout_seconds": repair_timeout_seconds,
+                    "request_timeout_seconds": repair_timeout_seconds,
+                    "temperature": 0.0,
+                    "llm_max_tokens": _CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS,
+                    "reasoning_budget_tokens": _CHIEF_ENGINEER_SCHEMA_REPAIR_REASONING_BUDGET_TOKENS,
+                    "response_format_mode": "json",
+                    "chief_engineer_json_contract_required": True,
+                    "chief_engineer_portfolio_required": True,
+                }
+            )
+            command = ExecuteRoleTaskCommandV1(
+                role="chief_engineer",
+                task_id=repair_task_id,
+                workspace=str(self.workspace),
+                objective=repair_objective,
+                run_id=run.id,
+                stream=True,
+                context=repair_context,
+                timeout_seconds=repair_timeout_seconds,
+                execution_attempt=execution_attempt,
+                metadata={
+                    "pm_task_contract": dict(repair_context["pm_task_contract"]),
+                    "pm_task_contracts": list(repair_context["pm_task_contracts"]),
+                    "target_files": list(repair_context["target_files"]),
+                    "scope_paths": list(repair_context["scope_paths"]),
+                    "source": "factory_stage_executor.chief_engineer_schema_repair",
+                    "schema_repair_of_task_id": f"CE-PORTFOLIO-{run.id}",
+                    "cognitive_runtime_mode": "off",
+                    "cognitive_runtime_enabled": False,
+                    "cognitive_runtime_required": False,
+                    "llm_call_timeout_seconds": repair_timeout_seconds,
+                    "validate_output": True,
+                    "max_retries": 0,
+                    "temperature": 0.0,
+                    "llm_max_tokens": _CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS,
+                    "reasoning_budget_tokens": _CHIEF_ENGINEER_SCHEMA_REPAIR_REASONING_BUDGET_TOKENS,
+                    "response_format_mode": "json",
+                    "chief_engineer_json_contract_required": True,
+                    "chief_engineer_portfolio_required": True,
+                },
+            )
+            result = cast(
+                RoleExecutionResultV1,
+                await self._call_with_factory_role_evidence_authority(
+                    authority_port,
+                    "chief_engineer",
+                    lambda: RoleRuntimeService().execute_role_task(command),
+                    authority_binding=authority_binding,
+                ),
+            )
+            should_settle, heartbeat_failure = repair_scope.begin_settlement()
+            if not should_settle or repair_scope.execution_attempt is None:
+                reason = heartbeat_failure.error_message if heartbeat_failure is not None else "settlement_not_started"
+                raise RuntimeError(f"chief_engineer_schema_repair_settlement_blocked:{reason}")
+            self._settle_chief_engineer_execution_attempt(
+                task_id=runtime_task_id,
+                execution_attempt=repair_scope.execution_attempt,
+                stage_status="success" if result.ok else "failed",
+                summary=(
+                    "chief_engineer_schema_repair_completed"
+                    if result.ok
+                    else str(result.error_code or "chief_engineer_schema_repair_failed")
+                ),
+            )
+            return result
+        except asyncio.CancelledError as exc:
+            self._settle_chief_engineer_execution_attempt_after_exception(
+                lease_scope=repair_scope,
+                stage_status="cancelled",
+                summary="chief_engineer_schema_repair_cancelled",
+                preserved_error=exc,
+            )
+            raise
+        except BaseException as exc:
+            self._settle_chief_engineer_execution_attempt_after_exception(
+                lease_scope=repair_scope,
+                stage_status="failed",
+                summary=f"chief_engineer_schema_repair_exception:{type(exc).__name__}",
+                preserved_error=exc,
+            )
+            raise
+        finally:
+            repair_scope.stop_keeper()
+
     async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         """Run CE review under one claim-bound heartbeat and settlement scope."""
 
@@ -4977,13 +5307,15 @@ class OrchestrationStageExecutor:
                         "suppress_working_memory_contract": True,
                         "suppress_tool_policy_prompt": True,
                         "disable_internal_tool_rounds": True,
+                        "delivery_mode": "analyze_only",
                         "_transaction_kernel_forced_tool_definitions": [],
                         "_transaction_kernel_forced_tool_choice": "none",
                         "temperature": 0.2,
                         "response_format_mode": "json",
                         "chief_engineer_json_contract_required": True,
                         "chief_engineer_portfolio_required": True,
-                        "llm_max_tokens": chief_engineer_structured_output_tokens(),
+                        "llm_max_tokens": chief_engineer_portfolio_output_tokens(len(portfolio_tasks)),
+                        "reasoning_budget_tokens": _CHIEF_ENGINEER_PORTFOLIO_REASONING_BUDGET_TOKENS,
                         "chief_engineer_llm_timeout_seconds": ce_timeout_seconds,
                         "llm_call_timeout_seconds": ce_timeout_seconds,
                         "request_timeout_seconds": ce_timeout_seconds,
@@ -5017,6 +5349,7 @@ class OrchestrationStageExecutor:
                         workspace=str(self.workspace),
                         objective=objective,
                         run_id=run.id,
+                        stream=True,
                         context=portfolio_context,
                         timeout_seconds=ce_timeout_seconds,
                         execution_attempt=ce_execution_attempt,
@@ -5033,20 +5366,87 @@ class OrchestrationStageExecutor:
                             "validate_output": True,
                             "max_retries": 0,
                             "temperature": 0.2,
+                            "reasoning_budget_tokens": _CHIEF_ENGINEER_PORTFOLIO_REASONING_BUDGET_TOKENS,
                             "response_format_mode": "json",
                             "chief_engineer_json_contract_required": True,
                             "chief_engineer_portfolio_required": True,
                         },
                     )
                     llm_call_count = 1
+                    authority_binding = authority_port.mint_authority_binding("chief_engineer")
                     ce_result = cast(
                         RoleExecutionResultV1,
                         await self._call_with_factory_role_evidence_authority(
                             authority_port,
                             "chief_engineer",
                             lambda: RoleRuntimeService().execute_role_task(command),
+                            authority_binding=authority_binding,
                         ),
                     )
+                    if self._ce_portfolio_result_allows_schema_repair(ce_result):
+                        initial_evidence = self._ce_extract_llm_evidence(
+                            ce_result,
+                            task_id=portfolio_task_id,
+                            run_id=run.id,
+                        )
+                        repair_signal: dict[str, Any] = {
+                            "code": "chief_engineer.output_schema_repair_started",
+                            "severity": "warning",
+                            "detail": str(
+                                ce_result.error_message
+                                or "CE stream output failed validation; one bounded schema repair was requested."
+                            ),
+                            "task_id": portfolio_task_id,
+                            "repair_task_id": f"{portfolio_task_id}-SCHEMA-REPAIR",
+                            "prior_error_code": ce_result.error_code,
+                            "prior_failure_class": self._ce_schema_repair_failure_class(ce_result),
+                        }
+                        self._attach_ce_llm_evidence(repair_signal, initial_evidence)
+                        stage_signals.append(repair_signal)
+                        try:
+                            self._settle_chief_engineer_attempt_before_schema_repair(lease_scope=lease_scope)
+                        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                            stage_signals.append(
+                                {
+                                    "code": "chief_engineer.output_schema_repair_settlement_failed",
+                                    "severity": "error",
+                                    "detail": f"{type(exc).__name__}: {exc}",
+                                    "task_id": portfolio_task_id,
+                                }
+                            )
+                            ce_result = None
+                        else:
+                            deadline_decision = self._chief_engineer_deadline_projection_decision(
+                                context,
+                                requested_timeout_seconds=requested_timeout_seconds,
+                                dependency_schedule=dependency_schedule,
+                            )
+                            if deadline_decision.disposition is FactoryDeadlineDispositionV1.BLOCK:
+                                stage_signals.append(
+                                    {
+                                        "code": "chief_engineer.output_schema_repair_deadline_blocked",
+                                        "severity": "error",
+                                        "detail": (
+                                            "The CE schema repair was not admitted because the remaining Factory "
+                                            "lease cannot preserve mandatory downstream budgets."
+                                        ),
+                                        "task_id": portfolio_task_id,
+                                        "deadline_decision": deadline_decision.to_dict(),
+                                        "reason": deadline_decision.reason,
+                                    }
+                                )
+                                ce_result = None
+                            else:
+                                ce_result = await self._run_chief_engineer_schema_repair(
+                                    run=run,
+                                    authority_port=authority_port,
+                                    authority_binding=authority_binding,
+                                    prior_result=ce_result,
+                                    portfolio_context=portfolio_context,
+                                    portfolio_task_ids=tuple(task.task_id for task in portfolio_tasks),
+                                    deadline_decision=deadline_decision,
+                                )
+                                llm_call_count = 2
                 except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
                     stage_signals.append(
                         {
@@ -5406,12 +5806,15 @@ class OrchestrationStageExecutor:
         stage_status = "cancelled" if cancelled_by_factory else "failed" if has_errors else "success"
         error_code = ""
         root_cause_hint = ""
+        failure_recoverable = True
         if has_errors:
             for signal in stage_signals:
                 if str(signal.get("severity") or "").strip().lower() != "error":
                     continue
                 error_code = str(signal.get("code") or "").strip()
                 root_cause_hint = str(signal.get("detail") or "").strip()
+                if isinstance(signal.get("recoverable"), bool):
+                    failure_recoverable = bool(signal["recoverable"])
                 if error_code:
                     break
 
@@ -5482,6 +5885,19 @@ class OrchestrationStageExecutor:
                 f"error_code={error_code or 'none'}; root_cause_hint={root_cause_hint or 'none'}"
             ),
             artifacts=artifacts,
+            metadata={
+                "error_code": error_code,
+                "failure_class": (
+                    "ROLE_LLM_REVIEW_FAILED"
+                    if error_code == "chief_engineer.llm_review_failed"
+                    else "CHIEF_ENGINEER_REVIEW_FAILED"
+                    if stage_status == "failed"
+                    else ""
+                ),
+                "responsible_layer": "chief_engineer" if stage_status == "failed" else "",
+                "root_cause_hint": root_cause_hint,
+                "recoverable": failure_recoverable if stage_status == "failed" else False,
+            },
         )
 
     async def _execute_director_dispatch(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
@@ -5590,6 +6006,9 @@ class OrchestrationStageExecutor:
                     }
                 )
         initial_stats = self._read_taskboard_stats()
+        _observable_rows, task_runtime_projection_failure = self._query_observable_task_rows(factory_run_id=run.id)
+        if task_runtime_projection_failure is not None:
+            stage_signals.append(task_runtime_projection_failure)
         attempts: list[dict[str, Any]] = []
         last_command_result: CommandResult | None = None
         final_result: CommandResult | None = None
@@ -5718,18 +6137,19 @@ class OrchestrationStageExecutor:
                     context,
                     requested_timeout_seconds=requested_director_dispatch_timeout_seconds,
                     first_materialization_pending=first_materialization_pending,
+                    materialization_pending=materialization_pending,
                     dependency_schedule=dependency_schedule,
                 )
                 admission_payload = admission_decision.to_dict()
                 if not admission_decision.executable:
+                    error_code, error_detail, result_status, result_message = (
+                        self._director_admission_failure_projection(admission_decision)
+                    )
                     stage_signals.append(
                         {
-                            "code": "director.dispatch_deadline_blocker",
+                            "code": error_code,
                             "severity": "error",
-                            "detail": (
-                                "Factory deadline does not leave enough budget to start another Director "
-                                "LLM turn while preserving downstream quality-gate time"
-                            ),
+                            "detail": error_detail,
                             "round": round_index,
                             "failure_class": FailureClassV1.TASKBOARD_DEADLOCK.value,
                             "responsible_layer": "execution_control_plane",
@@ -5741,8 +6161,8 @@ class OrchestrationStageExecutor:
                     )
                     final_result = CommandResult(
                         run_id="",
-                        status="timeout",
-                        message="Director dispatch skipped because factory deadline budget is exhausted",
+                        status=result_status,
+                        message=result_message,
                         metadata={
                             "deadline_admission": admission_payload,
                         },
@@ -5929,6 +6349,12 @@ class OrchestrationStageExecutor:
                     round_requested_task_ids = list(requested_task_ids or [])
                 base_options["metadata"]["director_claimable_task_ids"] = list(round_requested_task_ids)
                 execution_deadline_monotonic = _new_monotonic_deadline(director_execution_timeout_seconds)
+                director_execution_deadline_epoch_seconds = datetime.now(
+                    timezone.utc
+                ).timestamp() + _remaining_monotonic_seconds(execution_deadline_monotonic)
+                base_options["metadata"]["factory_director_execution_deadline_epoch_seconds"] = (
+                    director_execution_deadline_epoch_seconds
+                )
                 if director_binding_fanout:
                     command_result = await self._execute_director_binding_fanout(
                         service=service,
@@ -6058,10 +6484,22 @@ class OrchestrationStageExecutor:
                                     "responsible_layer": "execution_control_plane",
                                 },
                             )
+                # A lifecycle result can report ``inflight_run_continues``
+                # before the execution lease has actually elapsed (for
+                # example while TaskRuntime's fact projection is still
+                # catching up).  Spending only the settlement reserve here
+                # lets Factory return and close its stage-bound role-evidence
+                # authority while the admitted Director child is still
+                # approaching Provider transport.  Preserve the one parent / one
+                # child execution boundary by consuming the unused execution
+                # lease first, then the dedicated settlement reserve.
+                director_barrier_wait_seconds = director_settlement_timeout_seconds
+                if self._inflight_director_run_ids(director_result):
+                    director_barrier_wait_seconds += _whole_wait_seconds(execution_deadline_monotonic)
                 director_result, barrier_observed = await self._settle_inflight_director_result(
                     service,
                     result=director_result,
-                    grace_seconds=director_settlement_timeout_seconds,
+                    grace_seconds=director_barrier_wait_seconds,
                     cancel_event=self._resolve_cancel_event(context),
                     abort_checker=abort_checker,
                 )
@@ -6086,6 +6524,7 @@ class OrchestrationStageExecutor:
                     "timeout_seconds": director_lease_timeout_seconds,
                     "execution_timeout_seconds": director_execution_timeout_seconds,
                     "settlement_timeout_seconds": director_settlement_timeout_seconds,
+                    "execution_barrier_wait_seconds": director_barrier_wait_seconds,
                     "materialization_pending": materialization_pending,
                     "missing_declared_target_count": len(missing_declared_targets),
                     "progress_made": progress_made,

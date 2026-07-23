@@ -12,6 +12,9 @@ purpose: 'Code/patch application, file application, existence gate, and repair l
 current_modules:
 - polaris.cells.director.runtime.public.contracts
 - polaris.cells.director.runtime.public.service
+- polaris.cells.director.runtime.public.directed_effect_contracts
+- polaris.cells.director.runtime.public.directed_effect_policy_contracts
+- polaris.cells.director.runtime.public.directed_effect_service
 tags: []
 owned_paths:
 - polaris/cells/director/runtime/**
@@ -20,6 +23,9 @@ public_contracts:
   modules:
   - polaris.cells.director.runtime.public.contracts
   - polaris.cells.director.runtime.public.service
+  - polaris.cells.director.runtime.public.directed_effect_contracts
+  - polaris.cells.director.runtime.public.directed_effect_policy_contracts
+  - polaris.cells.director.runtime.public.directed_effect_service
   commands:
   - ExecuteDirectorTaskCommandV1
   - RetryDirectorTaskCommandV1
@@ -53,6 +59,8 @@ public_contracts:
   - DirectorRepairKernelSummaryProjectionResultV1
   - DirectorRepairRevalidationProjectionResultV1
   - DirectorRepairResultV1
+  - DirectorRepairEffectV1
+  - DirectorRepairEffectPlanV1
   - DirectorRepairCoverageReportV1
   - DirectorRepairDiagnosticCoverageV1
   - DirectorRepairLanguageSlotV1
@@ -87,6 +95,12 @@ verification:
     and polaris/kernelone/tools/ pending Cell extraction.
 
     '
+  - DEO-2D closes direct raw/PATCH/file-apply mutation seams; DEO-3 still owns
+    durable receipt settlement and parent close.
   smoke_commands: []
-  tests: []
+  tests:
+  - polaris/cells/director/runtime/public/tests/test_directed_effect_authorization.py
+  - polaris/cells/director/runtime/public/tests/test_directed_effect_policy_contracts.py
+  - polaris/cells/director/runtime/tests/test_repair_kernel_contract.py
+  - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
 generated_artifacts: []

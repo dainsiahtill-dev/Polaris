@@ -8,6 +8,11 @@ from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
     read_run_ledger_projection,
 )
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_executor import TransactionTurnExecutor
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
     _bind_transaction_attempt,
@@ -209,6 +214,19 @@ def _route_transaction_factory_to_test_kernel(monkeypatch: pytest.MonkeyPatch) -
     )
 
 
+@pytest.fixture(autouse=True)
+def _bootstrap_control_plane_fact_stream(tmp_path: Any) -> None:
+    """Mirror application startup for tests that assert durable ledger facts."""
+
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="roles_kernel_execution_control_plane_test",
+        )
+    )
+
+
 @pytest.mark.asyncio
 async def test_role_execution_dropped_tool_dispatch_commits_ledger_and_blocks_qa(
     monkeypatch: pytest.MonkeyPatch,
@@ -243,6 +261,7 @@ async def test_role_execution_dropped_tool_dispatch_commits_ledger_and_blocks_qa
         ),
     )
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.WORKFLOW,
         workspace=str(tmp_path),
         message="[mode:materialize]\nCreate src/index.js",
@@ -313,6 +332,7 @@ async def test_stream_role_execution_dropped_tool_dispatch_commits_ledger(
         ),
     )
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.WORKFLOW,
         workspace=str(tmp_path),
         message="[mode:materialize]\nCreate src/index.js",
@@ -381,6 +401,7 @@ async def test_role_execution_successful_turn_with_missing_target_commits_task_b
         ),
     )
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.WORKFLOW,
         workspace=str(tmp_path),
         message="[mode:materialize]\nCreate src/index.js",
@@ -455,6 +476,7 @@ async def test_role_execution_successful_turn_with_missing_entrypoint_commits_ta
         ),
     )
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.WORKFLOW,
         workspace=str(tmp_path),
         message="[mode:materialize]\nCreate package.json",
@@ -525,6 +547,7 @@ async def test_stream_role_execution_successful_turn_with_missing_target_commits
         ),
     )
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.WORKFLOW,
         workspace=str(tmp_path),
         message="[mode:materialize]\nCreate src/index.js",
@@ -600,6 +623,7 @@ async def test_stream_role_execution_successful_turn_with_missing_entrypoint_com
         ),
     )
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.WORKFLOW,
         workspace=str(tmp_path),
         message="[mode:materialize]\nCreate package.json",
@@ -673,6 +697,7 @@ async def test_stream_forced_write_zero_dispatch_fails_with_dropped_lifecycle(
         ),
     )
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.WORKFLOW,
         workspace=str(tmp_path),
         message="[mode:materialize]\nCreate src/index.js",
@@ -749,6 +774,7 @@ async def test_stream_normal_completed_turn_unaffected_by_lifecycle_receipt(
         ),
     )
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.WORKFLOW,
         workspace=str(tmp_path),
         message="Summarize the repository",

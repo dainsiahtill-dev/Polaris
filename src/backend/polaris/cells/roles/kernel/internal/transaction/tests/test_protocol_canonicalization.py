@@ -161,7 +161,7 @@ def test_infer_execution_mode_consistency() -> None:
     for tool_name in DEPRECATED_WRITE_TOOLS:
         assert _infer_execution_mode(tool_name) == ToolExecutionMode.WRITE_SERIAL
     assert _infer_execution_mode("read_file") == ToolExecutionMode.READONLY_PARALLEL
-    assert _infer_execution_mode("create_pull_request") == ToolExecutionMode.ASYNC_RECEIPT
+    assert _infer_execution_mode("create_pull_request") == ToolExecutionMode.WRITE_SERIAL
     # 未知工具默认安全：WRITE_SERIAL
     assert _infer_execution_mode("unknown_tool_xyz") == ToolExecutionMode.WRITE_SERIAL
 

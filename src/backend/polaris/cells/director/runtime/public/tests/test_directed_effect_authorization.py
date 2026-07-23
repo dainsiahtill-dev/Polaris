@@ -103,6 +103,7 @@ _EXPECTED_ERROR_CODES = {
     "deo_public_policy_evidence_drift",
     "deo_capability_scope_drift",
     "deo_job_token_evidence_drift",
+    "deo_current_policy_evidence_unavailable",
 }
 
 
@@ -790,10 +791,13 @@ def _comparison_binding() -> tuple[
     bound = policy_contracts.DirectorEffectPolicyBoundSnapshotV1(
         snapshot=snapshot,
         authorization_evidence_hash=authorization.authorization_hash,
+        authorization_binding=binding,
+        authorization_binding_hash=binding.authorization_binding_hash,
         member=grant.member,
         member_binding_hash=policy_contracts.hash_directed_effect_policy_member_binding(
             snapshot.evidence_hash,
             authorization.authorization_hash,
+            binding.authorization_binding_hash,
             grant.member,
         ),
     )
@@ -871,13 +875,24 @@ def _bound_with_authorization(
     bound: policy_contracts.DirectorEffectPolicyBoundSnapshotV1,
     authorization: contracts.DirectorEffectAuthorizationEvidenceV1,
 ) -> policy_contracts.DirectorEffectPolicyBoundSnapshotV1:
+    prior_binding = bound.authorization_binding
+    binding = contracts.DirectorEffectAuthorizationBindingV1(
+        authorization_evidence=authorization,
+        classification_evidence=prior_binding.classification_evidence,
+        tool_spec_hash=prior_binding.tool_spec_hash,
+        tool_spec_snapshot_hash=prior_binding.tool_spec_snapshot_hash,
+        alias_binding_hash=prior_binding.alias_binding_hash,
+    )
     return policy_contracts.DirectorEffectPolicyBoundSnapshotV1(
         snapshot=bound.snapshot,
         authorization_evidence_hash=authorization.authorization_hash,
+        authorization_binding=binding,
+        authorization_binding_hash=binding.authorization_binding_hash,
         member=bound.member,
         member_binding_hash=policy_contracts.hash_directed_effect_policy_member_binding(
             bound.snapshot.evidence_hash,
             authorization.authorization_hash,
+            binding.authorization_binding_hash,
             bound.member,
         ),
     )

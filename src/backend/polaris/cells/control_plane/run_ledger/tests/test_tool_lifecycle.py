@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
 from polaris.cells.control_plane.run_ledger.public import tool_lifecycle
+from polaris.cells.control_plane.run_ledger.public.directed_effect_receipt_validation import (
+    directed_effect_receipt_payload_hash,
+)
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1
-from polaris.cells.control_plane.run_ledger.public.projection import build_run_ledger_projection
+from polaris.cells.control_plane.run_ledger.public.projection import (
+    _directed_effect_receipt_errors,
+    _tool_receipt_modality,
+    build_run_ledger_projection,
+)
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     ToolLifecycleRequirementV1,
     batch_receipt_has_dispatch_evidence,
@@ -54,6 +62,52 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     tool_dispatch_dropped_error_message,
     tool_dispatch_dropped_guard_applies,
 )
+
+
+def _authoritative_deo3_receipt(*, receipt_outcome: str = "succeeded") -> tuple[dict[str, Any], dict[str, Any]]:
+    payload: dict[str, Any] = {
+        "arguments_hash": "1" * 64,
+        "authoritative": True,
+        "batch_id": "batch-deo3",
+        "claim_grant_hash": "2" * 64,
+        "context_id": "context-deo3",
+        "durable": True,
+        "effect_call_id": None,
+        "effect_operation_id": None,
+        "normalized_tool_name": "write_file",
+        "operation_id": "deo_v1_" + "a" * 48,
+        "parent_close_eligible": True,
+        "physical_result_hash": "3" * 64,
+        "plan_hash": None,
+        "policy_evidence_hash": "4" * 64,
+        "repair_binding_hash": None,
+        "repair_contingency_kind": None,
+        "repair_request_hash": None,
+        "receipt_binding_hash": "5" * 64,
+        "receipt_outcome": receipt_outcome,
+        "schema_version": "roles.adapters.director_physical_effect_receipt.v2",
+        "target_state_hash": "6" * 64,
+        "tool_call_id": "call-deo3",
+    }
+    receipt_hash = directed_effect_receipt_payload_hash(payload)
+    assert receipt_hash is not None
+    effect = {
+        **payload,
+        "receipt_hash": receipt_hash,
+        "receipt_id": f"director-physical-effect-{receipt_hash[:24]}",
+    }
+    commit = {
+        "code": "receipt_committed",
+        "event_id": "fact-deo3-receipt",
+        "operation_id": effect["operation_id"],
+        "receipt_ref": effect["receipt_id"],
+        "receipt_hash": receipt_hash,
+        "receipt_binding_hash": effect["receipt_binding_hash"],
+        "receipt_outcome": receipt_outcome,
+        "state": "RECEIPT_COMMITTED",
+        "version": 3,
+    }
+    return effect, commit
 
 
 def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
@@ -158,6 +212,290 @@ def test_tool_lifecycle_receipt_links_batch_and_effect_refs() -> None:
     assert receipt["effect_receipt_refs"][0]["file"] == "src/index.js"
     assert receipt["effect_receipt_refs"][0]["tool_name"] == "write_file"
     assert failure_evidence_from_lifecycle_receipt(receipt) == {}
+
+
+@pytest.mark.parametrize(
+    ("receipt_outcome", "expected_ok", "expected_failure"),
+    (
+        ("succeeded", True, ""),
+        ("failed", False, FailureClassV1.TOOL_RESULT_FAILED.value),
+    ),
+)
+def test_tool_lifecycle_projects_task_runtime_authoritative_effect_receipt(
+    receipt_outcome: str,
+    expected_ok: bool,
+    expected_failure: str,
+) -> None:
+    effect, commit = _authoritative_deo3_receipt(receipt_outcome=receipt_outcome)
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-deo3",
+        task_id="TASK-DEO3",
+        turn_id="turn-deo3",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-deo3",
+                "results": [
+                    {
+                        "call_id": "call-deo3",
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "effect_receipt": effect,
+                        "effect_receipt_commit": commit,
+                    }
+                ],
+                "success_count": 1,
+                "failure_count": 0,
+            }
+        ],
+    ).to_dict()
+
+    assert receipt["effect_receipt_count"] == 1
+    assert receipt["ok"] is expected_ok
+    assert receipt["failure_class"] == expected_failure
+    effect_ref = receipt["effect_receipt_refs"][0]
+    assert effect_ref["receipt_hash"] == effect["receipt_hash"]
+    assert effect_ref["receipt_outcome"] == receipt_outcome
+    assert effect_ref["task_runtime_state"] == "RECEIPT_COMMITTED"
+    assert effect_ref["task_runtime_event_id"] == "fact-deo3-receipt"
+
+
+def test_tool_lifecycle_projects_matching_nested_commit_when_direct_receipt_copy_lacks_commit() -> None:
+    """Regression: preserve the valid R5 batch shape without inventing receipt evidence."""
+
+    effect, commit = _authoritative_deo3_receipt()
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-deo3-r5",
+        task_id="TASK-DEO3-R5",
+        turn_id="turn-deo3-r5",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-deo3-r5",
+                "results": [
+                    {
+                        "call_id": "call-deo3",
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "effect_receipt": effect,
+                        "result": {
+                            "effect_receipt": dict(effect),
+                            "effect_receipt_commit": commit,
+                        },
+                    }
+                ],
+                "success_count": 1,
+                "failure_count": 0,
+            }
+        ],
+    ).to_dict()
+
+    assert receipt["ok"] is True
+    assert receipt["failure_class"] == ""
+    assert receipt["effect_receipt_count"] == 1
+    assert receipt["effect_receipt_refs"][0]["task_runtime_event_id"] == "fact-deo3-receipt"
+
+
+def test_tool_lifecycle_rejects_nested_commit_for_different_direct_receipt() -> None:
+    """A nested commit cannot authorize a different direct receipt projection."""
+
+    direct_effect, _ = _authoritative_deo3_receipt()
+    nested_effect, nested_commit = _authoritative_deo3_receipt(receipt_outcome="failed")
+    item = {
+        "effect_receipt": direct_effect,
+        "result": {
+            "effect_receipt": nested_effect,
+            "effect_receipt_commit": nested_commit,
+        },
+    }
+
+    assert tool_lifecycle._effect_receipt_from_result(item) == {}
+
+
+def test_run_ledger_projects_v2_operation_from_hash_bound_tool_name() -> None:
+    effect, commit = _authoritative_deo3_receipt()
+
+    modality = _tool_receipt_modality(
+        {"tool_receipts": [{"effect_receipt": effect, "effect_receipt_commit": commit}]},
+        {},
+    )
+
+    assert modality is not None
+    assert modality["ok"] is True
+    assert modality["metadata"]["operations"] == ["write_file"]
+
+
+def test_tool_lifecycle_rejects_task_runtime_commit_bound_to_another_receipt() -> None:
+    effect, commit = _authoritative_deo3_receipt()
+    commit["receipt_hash"] = "0" * 64
+    item = {
+        "effect_receipt": effect,
+        "effect_receipt_commit": commit,
+    }
+
+    assert tool_lifecycle._effect_receipt_from_result(item) == {}
+
+
+@pytest.mark.parametrize(
+    ("field", "tampered_value"),
+    (
+        ("physical_result_hash", "9" * 64),
+        ("receipt_hash", "9" * 64),
+        ("receipt_id", "director-physical-effect-" + "9" * 24),
+    ),
+)
+def test_tool_lifecycle_rejects_tampered_authoritative_receipt(
+    field: str,
+    tampered_value: object,
+) -> None:
+    effect, commit = _authoritative_deo3_receipt()
+    effect[field] = tampered_value
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-deo3-tampered",
+        task_id="TASK-DEO3",
+        turn_id="turn-deo3",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-deo3",
+                "results": [
+                    {
+                        "call_id": "call-deo3",
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "effect_receipt": effect,
+                        "effect_receipt_commit": commit,
+                    }
+                ],
+                "success_count": 1,
+                "failure_count": 0,
+            }
+        ],
+    ).to_dict()
+
+    assert receipt["ok"] is False
+    assert receipt["dispatch_status"] == "blocked"
+    assert receipt["effect_receipt_count"] == 0
+    assert receipt["failure_class"] == FailureClassV1.MISSING_EFFECT_RECEIPT.value
+
+
+@pytest.mark.parametrize("invalid_float", (float("nan"), float("inf"), float("-inf")))
+def test_authoritative_receipt_non_finite_float_fails_closed_in_both_consumers(
+    invalid_float: float,
+) -> None:
+    effect, commit = _authoritative_deo3_receipt()
+    effect["physical_result_hash"] = invalid_float
+    projection_receipt = {**effect, "_task_runtime_receipt_commit": commit}
+
+    errors = _directed_effect_receipt_errors(projection_receipt, index=0)
+
+    assert errors is not None
+    assert "receipt[0]:invalid_receipt_payload" in errors
+    assert tool_lifecycle._effect_receipt_from_result({"effect_receipt": effect, "effect_receipt_commit": commit}) == {}
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "invalid_value"),
+    (
+        ("effect", "operation_id", 7),
+        ("effect", "normalized_tool_name", 7),
+        ("effect", "operation_id", " deo_v1_" + "a" * 48 + " "),
+        ("effect", "normalized_tool_name", " write_file "),
+        ("effect", "arguments_hash", "not-a-hash"),
+        ("effect", "physical_result_hash", 42),
+        ("effect", "plan_hash", ""),
+        ("effect", "schema_version", " roles.adapters.director_physical_effect_receipt.v2 "),
+        ("effect", "receipt_hash", "<pad-current>"),
+        ("effect", "receipt_id", "<pad-current>"),
+        ("commit", "event_id", 7),
+        ("commit", "operation_id", 7),
+        ("commit", "version", None),
+        ("commit", "version", 0),
+        ("commit", "version", True),
+        ("commit", "version", "3"),
+    ),
+)
+def test_authoritative_receipt_malformed_types_hashes_and_version_fail_closed_in_both_consumers(
+    target: str,
+    field: str,
+    invalid_value: object,
+) -> None:
+    effect, commit = _authoritative_deo3_receipt()
+    malformed = effect if target == "effect" else commit
+    malformed[field] = f" {malformed[field]} " if invalid_value == "<pad-current>" else invalid_value
+    projection_receipt = {**effect, "_task_runtime_receipt_commit": commit}
+
+    errors = _directed_effect_receipt_errors(projection_receipt, index=0)
+
+    assert errors is not None
+    assert errors
+    assert tool_lifecycle._effect_receipt_from_result({"effect_receipt": effect, "effect_receipt_commit": commit}) == {}
+
+
+def test_authoritative_receipt_rejects_unhashed_audit_field_injection() -> None:
+    effect, commit = _authoritative_deo3_receipt()
+    effect.update(
+        {
+            "path": "/tampered/unbound",
+            "before_hash": "a" * 64,
+            "after_hash": "b" * 64,
+        }
+    )
+    projection_receipt = {**effect, "_task_runtime_receipt_commit": commit}
+
+    errors = _directed_effect_receipt_errors(projection_receipt, index=0)
+
+    assert errors == ["receipt[0]:unexpected_receipt_fields:after_hash,before_hash,path"]
+    assert tool_lifecycle._effect_receipt_from_result({"effect_receipt": effect, "effect_receipt_commit": commit}) == {}
+
+
+def test_tool_lifecycle_treats_uncommitted_v2_effect_receipt_as_missing() -> None:
+    receipt = build_tool_call_lifecycle_receipt(
+        run_id="run-deo3",
+        task_id="TASK-DEO3",
+        turn_id="turn-deo3",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-deo3",
+                "results": [
+                    {
+                        "call_id": "call-deo3",
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "effect_receipt": {
+                            "schema_version": "roles.adapters.director_physical_effect_receipt.v2",
+                            "operation_id": "deo_v1_" + "d" * 48,
+                            "receipt_hash": "e" * 64,
+                            "receipt_binding_hash": "f" * 64,
+                            "receipt_outcome": "succeeded",
+                            "authoritative": True,
+                            "durable": True,
+                            "parent_close_eligible": True,
+                        },
+                    }
+                ],
+                "success_count": 1,
+                "failure_count": 0,
+            }
+        ],
+    ).to_dict()
+
+    assert receipt["ok"] is False
+    assert receipt["effect_receipt_count"] == 0
+    assert receipt["failure_class"] == FailureClassV1.MISSING_EFFECT_RECEIPT.value
 
 
 def test_project_native_tool_call_facts_to_metadata_can_emit_decision_caller_compat_count() -> None:

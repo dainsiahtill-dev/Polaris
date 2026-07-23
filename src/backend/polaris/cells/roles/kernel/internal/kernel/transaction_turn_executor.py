@@ -85,7 +85,19 @@ class TransactionTurnExecutor:
             role=role,
             workspace=self.kernel.workspace,
         )
-        tk = create_transaction_kernel(self.kernel, role, profile, request)
+        directed_effect_runtime = getattr(self.kernel, "directed_effect_runtime", None)
+        directed_effect_required = bool(getattr(self.kernel, "directed_effect_required", False))
+        if directed_effect_runtime is None and not directed_effect_required:
+            tk = create_transaction_kernel(self.kernel, role, profile, request)
+        else:
+            tk = create_transaction_kernel(
+                self.kernel,
+                role,
+                profile,
+                request,
+                directed_effect_runtime=directed_effect_runtime,
+                directed_effect_required=directed_effect_required,
+            )
         turn_id = _resolve_transaction_turn_id(request, observer_run_id)
 
         invocation_setup = await build_transaction_invocation_setup(
@@ -176,7 +188,19 @@ class TransactionTurnExecutor:
             role=role,
             workspace=self.kernel.workspace,
         )
-        tk = create_transaction_kernel(self.kernel, role, profile, request)
+        directed_effect_runtime = getattr(self.kernel, "directed_effect_runtime", None)
+        directed_effect_required = bool(getattr(self.kernel, "directed_effect_required", False))
+        if directed_effect_runtime is None and not directed_effect_required:
+            tk = create_transaction_kernel(self.kernel, role, profile, request)
+        else:
+            tk = create_transaction_kernel(
+                self.kernel,
+                role,
+                profile,
+                request,
+                directed_effect_runtime=directed_effect_runtime,
+                directed_effect_required=directed_effect_required,
+            )
         turn_id = _resolve_transaction_turn_id(request, stream_run_id)
 
         invocation_setup = await build_transaction_invocation_setup(
@@ -186,7 +210,7 @@ class TransactionTurnExecutor:
             request=request,
             system_prompt=system_prompt,
             mode="stream",
-            restore_delivery_mode_marker=False,
+            restore_delivery_mode_marker=True,
         )
         context_gateway = invocation_setup.context_gateway
         context_result = invocation_setup.context_result

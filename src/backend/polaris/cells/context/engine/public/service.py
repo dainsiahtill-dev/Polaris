@@ -179,6 +179,51 @@ def _context_hash_from_ref(context_snapshot_ref: str) -> str:
     return validate_context_hash(token)
 
 
+def _project_final_physical_provider_request(
+    *,
+    snapshot_payload: dict[str, Any],
+    provider_request: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Project the exact provider-native body for ContextOS/UI consumers."""
+
+    if snapshot_payload.get("schema_version") != "llm.final_physical_provider_request_context.v1":
+        return None
+    wire = provider_request.get("final_physical_request")
+    route = provider_request.get("physical_route_authority")
+    if not isinstance(wire, dict) or not isinstance(route, dict):
+        return None
+    body = wire.get("body")
+    if not isinstance(body, dict):
+        return None
+    protocol = str(route.get("native_protocol") or "")
+    if protocol == "anthropic_messages":
+        messages_raw = body.get("messages")
+        messages = list(messages_raw) if isinstance(messages_raw, list) else []
+        if "system" in body:
+            messages = [{"role": "system", "content": body.get("system")}, *messages]
+    elif protocol == "openai_responses":
+        messages_raw = body.get("input")
+        messages = list(messages_raw) if isinstance(messages_raw, list) else []
+    elif protocol == "openai_chat_completions":
+        messages_raw = body.get("messages")
+        messages = list(messages_raw) if isinstance(messages_raw, list) else []
+    else:
+        return None
+    tools_raw = body.get("tools")
+    return {
+        "messages": messages,
+        "tools": list(tools_raw) if isinstance(tools_raw, list) else [],
+        "tool_choice": body.get("tool_choice"),
+        "response_format": body.get("response_format"),
+        "provider_request_schema_version": route.get("native_request_schema_version"),
+        "native_protocol": protocol,
+        "endpoint": wire.get("endpoint"),
+        "transport_kind": wire.get("transport_kind"),
+        "body": body,
+        "wire": wire,
+    }
+
+
 def query_final_provider_request_audit(
     query: QueryFinalProviderRequestAuditV1,
 ) -> FinalProviderRequestAuditResultV1:
@@ -263,12 +308,41 @@ def query_final_provider_request_audit(
             error_message="Context snapshot does not include provider_request audit evidence.",
         )
 
+    physical_projection = _project_final_physical_provider_request(
+        snapshot_payload=snapshot_payload,
+        provider_request=provider_request,
+    )
+    if (
+        snapshot_payload.get("schema_version") == "llm.final_physical_provider_request_context.v1"
+        and physical_projection is None
+    ):
+        return FinalProviderRequestAuditResultV1(
+            ok=False,
+            status="invalid_snapshot",
+            workspace=query.workspace,
+            context_snapshot_ref=query.context_snapshot_ref,
+            payload={
+                "context_hash": context_hash,
+                "context_path": str(file_path),
+                "storage_source": storage_source,
+            },
+            error_code="final_physical_provider_request_invalid",
+            error_message="Final physical provider request has an unsupported or invalid native protocol.",
+        )
     messages_raw = snapshot_payload.get("messages")
     messages = messages_raw if isinstance(messages_raw, list) else []
     final_audit_raw = provider_request.get("final_request_context_audit")
-    final_audit = final_audit_raw if isinstance(final_audit_raw, dict) else {}
+    final_audit = dict(final_audit_raw) if isinstance(final_audit_raw, dict) else {}
+    coverage_raw = final_audit.get("final_request_evidence_coverage")
+    if isinstance(coverage_raw, dict):
+        coverage = dict(coverage_raw)
+        coverage["context_snapshot_ref"] = context_hash
+        final_audit["final_request_evidence_coverage"] = coverage
     tools_raw = provider_request.get("tools")
     tools = tools_raw if isinstance(tools_raw, list) else []
+    if physical_projection is not None:
+        messages = physical_projection["messages"]
+        tools = physical_projection["tools"]
     return FinalProviderRequestAuditResultV1(
         ok=True,
         status="available",
@@ -285,14 +359,31 @@ def query_final_provider_request_audit(
             "message_count": len(messages),
             "messages": messages,
             "provider_request": provider_request,
-            "provider_request_schema_version": provider_request.get("schema_version"),
+            "provider_request_schema_version": (
+                physical_projection["provider_request_schema_version"]
+                if physical_projection is not None
+                else provider_request.get("schema_version")
+            ),
             "role": provider_request.get("role"),
             "provider_id": provider_request.get("provider_id"),
             "provider_type": provider_request.get("provider_type"),
             "model": provider_request.get("model"),
             "tools": tools,
-            "tool_choice": provider_request.get("tool_choice"),
-            "response_format": provider_request.get("response_format"),
+            "tool_choice": (
+                physical_projection["tool_choice"]
+                if physical_projection is not None
+                else provider_request.get("tool_choice")
+            ),
+            "response_format": (
+                physical_projection["response_format"]
+                if physical_projection is not None
+                else provider_request.get("response_format")
+            ),
+            "native_protocol": physical_projection["native_protocol"] if physical_projection else None,
+            "physical_endpoint": physical_projection["endpoint"] if physical_projection else None,
+            "physical_transport_kind": physical_projection["transport_kind"] if physical_projection else None,
+            "final_physical_request_body": physical_projection["body"] if physical_projection else None,
+            "final_physical_request": physical_projection["wire"] if physical_projection else None,
             "final_request_context_audit": final_audit,
         },
     )

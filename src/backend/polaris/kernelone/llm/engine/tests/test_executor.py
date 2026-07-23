@@ -18,6 +18,7 @@ import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from polaris.kernelone.llm.engine._executor_base import build_invoke_config
 from polaris.kernelone.llm.engine.contracts import (
     AIRequest,
     AIResponse,
@@ -83,6 +84,8 @@ def _executor_for_provider(provider: _CapturingProvider) -> tuple[AIExecutor, Ma
     )
     manager = MagicMock()
     manager.get_provider_instance.return_value = provider
+    manager.get_factory_default_provider_instance.return_value = provider
+    manager.is_factory_default_provider_implementation.return_value = True
     return AIExecutor(model_catalog=model_catalog, token_budget=token_budget), manager
 
 
@@ -105,6 +108,16 @@ class TestAIExecutorBasic:
         executor = AIExecutor(workspace="/tmp/test")
 
         assert executor.workspace == "/tmp/test"
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    def test_reasoning_budget_reaches_provider_config(self, streaming: bool) -> None:
+        config = build_invoke_config(
+            {"type": "anthropic_compat"},
+            {"max_tokens": 8_192, "reasoning_budget_tokens": 2_048},
+            streaming=streaming,
+        )
+
+        assert config["reasoning_budget_tokens"] == 2_048
 
     @pytest.mark.asyncio
     async def test_invoke_with_stream_option_raises(self) -> None:
@@ -230,6 +243,67 @@ class TestPhysicalProviderDispatchContext:
         assert "physical_dispatch_port" not in request.to_dict()
         assert context_store.await_args is not None
         assert "physical_dispatch_port" not in json.dumps(context_store.await_args.kwargs, default=str)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "provider_type",
+        ["codex_cli", "gemini_cli"],
+    )
+    async def test_factory_bound_opaque_provider_route_fails_before_instance_or_outbound(
+        self,
+        provider_type: str,
+    ) -> None:
+        provider = _CapturingProvider()
+        executor, manager = _executor_for_provider(provider)
+        port = MagicMock(spec=PhysicalProviderDispatchPort)
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-1",
+            model="model-1",
+            input="must-not-launch-codex",
+        )
+
+        with (
+            patch.object(executor, "_resolve_provider_model", return_value=("provider-1", "model-1")),
+            patch.object(executor, "_get_provider_config", return_value={"type": provider_type}),
+            patch("polaris.kernelone.llm.engine.executor.get_provider_manager", return_value=manager),
+        ):
+            response = await executor.invoke(request, physical_dispatch_port=port)
+
+        assert response.ok is False
+        assert response.error == f"factory_provider_route_disabled_opaque:{provider_type}:invoke"
+        manager.get_provider_instance.assert_not_called()
+        assert provider.calls == []
+        assert get_physical_provider_dispatch_port() is None
+
+    @pytest.mark.asyncio
+    async def test_factory_bound_governed_key_rejects_replaced_provider_implementation(self) -> None:
+        provider = _CapturingProvider()
+        executor, manager = _executor_for_provider(provider)
+        manager.get_factory_default_provider_instance.return_value = None
+        manager.is_factory_default_provider_implementation.return_value = False
+        port = MagicMock(spec=PhysicalProviderDispatchPort)
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-1",
+            model="model-1",
+            input="must-not-reach-replaced-provider",
+        )
+
+        with (
+            patch.object(executor, "_resolve_provider_model", return_value=("provider-1", "model-1")),
+            patch.object(executor, "_get_provider_config", return_value={"type": "openai_compat"}),
+            patch("polaris.kernelone.llm.engine.executor.get_provider_manager", return_value=manager),
+        ):
+            response = await executor.invoke(request, physical_dispatch_port=port)
+
+        assert response.ok is False
+        assert response.error == "factory_provider_route_implementation_untrusted:openai_compat:invoke"
+        manager.get_provider_instance.assert_not_called()
+        assert provider.calls == []
+        assert get_physical_provider_dispatch_port() is None
 
     @pytest.mark.asyncio
     async def test_concurrent_executor_requests_keep_ports_isolated(self) -> None:

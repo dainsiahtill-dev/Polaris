@@ -1,0 +1,105 @@
+card_id: vc-20260722-factory-r22-ce-repair-authority-and-audit-projection
+classification: execution_fact_chain
+status: closed
+bench_status: unblocked
+bug_summary: >-
+  The eighteenth authorized fresh isolated L1-04 run reached one real Chief
+  Engineer physical Provider request. The Provider returned a semantically
+  rich but malformed JSON portfolio, so R21 correctly admitted its single
+  bounded schema-repair child. The child then failed before Provider transport:
+  it attempted to mint a second Chief Engineer role-evidence grant although the
+  constitutional stage policy permits exactly one CE grant. The public bench
+  projection consequently reported task_boundary_verdict_missing, but no
+  Director attempt had occurred; the authoritative failure was
+  factory_role_evidence_stage_grant_cardinality_exceeded. The same run also
+  exposed an audit-projection inconsistency: Factory cutoff facts correctly
+  replaced heuristic required/included/missing refs, while coverage_sources,
+  evidence_slots, coverage_ratio, and context_quality retained the superseded
+  heuristic verdict.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: 8609608b059f
+  factory_run_id: factory_91b96bb6fbe4
+  instance_id: >-
+    factory-bench-l1-04-codex-r22-l1-04-run-8609608b059f-d698a30e3a50a0a9
+  stage: chief_engineer_review
+  rejection_code: chief_engineer.llm_review_failed
+  root_cause_code: factory_role_evidence_stage_grant_cardinality_exceeded
+  wall_clock_seconds: 129.4
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_artifact_materialized: true
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  primary_ce_physical_context_snapshot_ref: 28a6b16201cd258458fc357a
+  primary_ce_semantic_context_snapshot_ref: fbcc0912a6a63535c6d2a744
+  pm_physical_context_snapshot_ref: ae14b6d4197075c97d331248
+  pm_semantic_context_snapshot_ref: 7d6842a9f887000372ae0d66
+  final_request_audit:
+    chief_engineer_role_identity: pass
+    chief_engineer_pm_contract_coverage: pass
+    chief_engineer_target_file_coverage: pass
+    chief_engineer_tool_surface: intentionally_empty_analyze_only
+    pm_role_identity: pass
+    pm_raw_intent_cutoff_authority: present
+    observed_projection_drift: >-
+      included_refs and missing_required_refs were authoritative, but
+      coverage_ratio remained 0.0 and evidence slots remained heuristic.
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r22/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r22/audits/8609608b059f/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r22/L1-04.chain.log
+root_cause:
+  code: ce_schema_repair_duplicate_stage_grant_and_partial_audit_rebind
+  summary: >-
+    The schema repair correctly used an independent TaskRuntime task, claim,
+    session, request freeze, and physical-attempt admission, but it incorrectly
+    equated that execution isolation with a second stage-level CE evidence
+    authority. Separately, final-request audit rebinding changed only the
+    headline ref lists and pass bit, leaving subordinate evidence projections
+    derived from the pre-authority heuristic inventory.
+  fix: >-
+    Mint exactly one CE stage grant and reuse its typed authority binding for
+    both the primary request and the one bounded schema-repair child. Preserve
+    independent TaskRuntime and final-request identities; do not raise the CE
+    grant cap. When the Factory cutoff becomes authoritative, rebuild coverage
+    sources and evidence slots from its typed policy facts, recompute the ratio,
+    and remove or rebuild only superseded evidence findings in context_quality.
+required_gates:
+  ce_stage_grant_cardinality_unchanged: pass
+  primary_and_repair_share_one_ce_grant: pass
+  primary_and_repair_taskruntime_isolation: pass
+  bounded_single_repair_negative_control: pass
+  authoritative_coverage_sources: pass
+  authoritative_evidence_slots: pass
+  authoritative_coverage_ratio: pass
+  authoritative_context_quality: pass
+  factory_authority_focused: "6 passed"
+  factory_authority_full: "134 passed"
+  factory_characterization: "251 passed"
+  audit_projection_role_matrix: "5 passed"
+  audit_projection_full_file: "105 passed"
+  qualification_and_kernelone_evidence: "127 passed"
+  role_kernel_full: "4159 passed, 2 warnings"
+  factory_pipeline_full: "1221 passed, 2 warnings"
+  ruff: pass
+  mypy_source: pass
+  compileall: pass
+  codegraph_pre_edit_review: pass
+  codegraph_post_edit_review: pass
+scheduling:
+  bench_schedulable: true
+  authorization_scope: one_fresh_isolated_l1_04_acceptance_run
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: fresh_isolated_l1_04_r23
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

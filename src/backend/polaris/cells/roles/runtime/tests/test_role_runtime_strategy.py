@@ -586,10 +586,20 @@ class TestRoleRuntimeServiceStrategy:
         class FakeKernel:
             pass
 
-        def fake_transaction_kernel_factory(_kernel, role, profile, request):
+        def fake_transaction_kernel_factory(
+            _kernel,
+            role,
+            profile,
+            request,
+            *,
+            directed_effect_runtime=None,
+            directed_effect_required=None,
+        ):
             captured["role"] = role
             captured["profile"] = profile
             captured["request"] = request
+            captured["directed_effect_runtime"] = directed_effect_runtime
+            captured["directed_effect_required"] = directed_effect_required
             return {"controller": True}
 
         monkeypatch.setattr(cognitive_middleware, "CognitiveMiddleware", FakeCognitiveMiddleware)
@@ -618,6 +628,8 @@ class TestRoleRuntimeServiceStrategy:
         assert request.metadata["cognitive_tool_policy"]["blocked_tools"] == ("delete_file",)
         assert request.context_override is not None
         assert request.context_override["cognitive_guidance"]["execution_path"] == "verify_then_write"
+        assert captured["directed_effect_runtime"] is None
+        assert captured["directed_effect_required"] is False
 
     @pytest.mark.asyncio
     async def test_stream_chat_turn_applies_cognitive_strategy_before_fingerprint(self, monkeypatch) -> None:

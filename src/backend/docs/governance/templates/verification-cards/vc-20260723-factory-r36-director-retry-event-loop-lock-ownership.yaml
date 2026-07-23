@@ -1,0 +1,67 @@
+card_id: vc-20260723-factory-r36-director-retry-event-loop-lock-ownership
+classification: runtime_lifecycle
+status: closed
+bench_status: not_schedulable_after_r38
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+defect:
+  project_id: L1-04
+  bench_run_id: b93c3b89980a
+  factory_run_id: factory_8fa89496a1ad
+  director_run_id: director-296ead26bd4f
+  phase: director_empty_write_content_retry
+  provider_calls_in_failed_retry: 0
+  exact_error: >-
+    TransactionKernel execution failed: LLM call failed: asyncio.Lock is bound
+    to a different event loop
+  completed_artifacts:
+    - go.mod
+  missing_artifacts:
+    - models/capsule.go
+    - models/exhibit.go
+    - models/gallery.go
+    - main.go
+final_provider_request_audit:
+  pm: edf443612b11f1b3207531ec
+  chief_engineer_primary: b25c581522e5e84b403c34f5
+  chief_engineer_repair: ea10b673c4d4c16e5e94e1d3
+  director_primary: aa4ccb5d966a4099437dcd2b
+  role_identity: pass
+  tools_and_tool_choice: pass
+  token_window: pass
+  required_context_coverage: pass
+required_tests:
+  cross_event_loop_sequential_retry: pass
+  same_event_loop_concurrency_serialization: pass
+  provider_attempt_conservation: pass
+  focused_regression: pass_135
+  architecture: pass_1411_skipped_8
+deferred:
+  factory_missing_ce_blueprint_misattribution: open_after_r36
+  multi_file_materialization_completion: observe_after_r36
+implementation:
+  root: >-
+    FactoryRoleEvidenceAuthorityPort captured the Factory run asyncio.Lock but
+    Director retry called acquire_cutoff/resolve_cutoff_proof from a foreign
+    event loop.
+  strategy: >-
+    Preserve the one Factory lifecycle lock and marshal the complete cutoff
+    critical section to its construction-time owner loop.
+  source: src/backend/polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py
+  regression: src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py
+validation:
+  authority_suite: 135_passed
+  related_fact_chain_suite: 506_passed
+  architecture_suite: 1411_passed_8_skipped
+  compileall: pass
+  ruff: pass
+  mypy_source: pass
+  format_check: pass
+  diff_check: pass
+  codegraph_post_edit_review: pass
+  current_fact_chain: 2126_passed_12_warnings
+  current_architecture: 1411_passed_8_skipped
+next_action: close_r38_timeout_budget_contract_then_requalify

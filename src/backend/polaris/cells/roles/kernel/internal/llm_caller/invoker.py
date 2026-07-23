@@ -23,7 +23,7 @@ import time
 import uuid
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     project_native_tool_call_envelopes_to_metadata,
@@ -52,7 +52,6 @@ from ..llm_cache import get_global_llm_cache
 from .context_audit import (
     build_final_provider_request_snapshot,
     build_final_request_context_audit_for_request,
-    enforce_final_request_evidence_coverage,
 )
 from .error_handling import (
     ERROR_CATEGORY_CANCELLED,
@@ -62,6 +61,15 @@ from .error_handling import (
     is_retryable_error,
 )
 from .event_emitter import LLMEventEmitter
+from .factory_dispatch_propagation import (
+    FactorySemanticDispatchPropagationPort,
+    enforce_factory_aware_final_request_evidence_coverage,
+)
+from .final_provider_attempt_qualification import (
+    context_snapshot_matches_frozen_attempt,
+    final_request_snapshot_evidence,
+)
+from .final_request_metrics import validated_final_context_evidence
 from .helpers import (
     build_native_tool_call_envelope_payloads,
     extract_json_from_text,
@@ -94,6 +102,11 @@ class _FactorySemanticDispatchNotEnabledError(RuntimeError):
 
 
 def _enforce_factory_semantic_zero_transport(prepared: PreparedLLMRequest) -> None:
+    # B3.5 production requests are exact PreparedLLMRequest instances whose
+    # live sidecar performs qualification.  Legacy/malformed test doubles do
+    # not carry that authority and remain fail-closed.
+    if type(prepared) is PreparedLLMRequest:
+        return
     prepared.__post_init__()
     if prepared.factory_semantic_request is not None:
         raise _FactorySemanticDispatchNotEnabledError(_FACTORY_SEMANTIC_DISPATCH_NOT_ENABLED)
@@ -127,12 +140,54 @@ async def _invoke_executor_with_factory_dispatch(
     executor: Any,
     prepared: PreparedLLMRequest,
     request: Any,
+    profile: Any | None = None,
 ) -> Any:
     """Preserve the legacy executor call shape for ordinary requests."""
 
     port = _physical_dispatch_port_for_request(prepared, request)
     if port is None:
         return await executor.invoke(request)
+    if type(port) is not FactorySemanticDispatchPropagationPort:
+        return await executor.invoke(request, physical_dispatch_port=port)
+    frozen = prepared.factory_semantic_request
+    if frozen is None:
+        raise RuntimeError("factory_role_semantic_request_required_for_dispatch_port")
+    request_context = getattr(request, "context", None)
+    existing_context_ref = (
+        str(request_context.get("context_snapshot_ref") or "") if isinstance(request_context, dict) else ""
+    )
+    if not context_snapshot_matches_frozen_attempt(
+        workspace=port.workspace,
+        context_snapshot_ref=existing_context_ref,
+        frozen=frozen,
+    ):
+        await _store_active_request_context_snapshot(
+            workspace=port.workspace,
+            active_request=request,
+            prepared=prepared,
+            profile=profile,
+            run_id=frozen.identity.run_id,
+            call_id=frozen.identity.call_id,
+        )
+    audit = build_final_request_context_audit_for_request(
+        ai_request=request,
+        prepared=prepared,
+        profile=profile,
+    )
+    audit = port.bind_final_request_context_audit(audit)
+    enforce_factory_aware_final_request_evidence_coverage(
+        port=prepared.factory_dispatch_port,
+        ai_request=request,
+        audit=audit,
+    )
+    request_context = getattr(request, "context", None)
+    context_snapshot_ref = (
+        str(request_context.get("context_snapshot_ref") or "") if isinstance(request_context, dict) else ""
+    )
+    port.qualify(
+        final_request_context_audit=audit,
+        context_snapshot_ref=context_snapshot_ref,
+    )
     return await executor.invoke(request, physical_dispatch_port=port)
 
 
@@ -219,10 +274,18 @@ def _with_final_request_context_audit(
     profile: Any,
 ) -> dict[str, Any]:
     payload = dict(metadata)
-    audit = build_final_request_context_audit_for_request(
-        ai_request=active_request,
-        prepared=prepared,
-        profile=profile,
+    final_evidence = validated_final_context_evidence(
+        prepared.factory_dispatch_port,
+        expected_port_type=FactorySemanticDispatchPropagationPort,
+    )
+    audit = (
+        final_evidence[1]
+        if final_evidence is not None
+        else build_final_request_context_audit_for_request(
+            ai_request=active_request,
+            prepared=prepared,
+            profile=profile,
+        )
     )
     raw_final_tokens = audit.get("final_request_token_estimate")
     final_tokens = int(
@@ -330,7 +393,7 @@ def _profile_lacks_forced_tool_choice(profile: Any) -> bool:
 
 def _allowed_tool_names_from_prepared(prepared: PreparedLLMRequest) -> list[str]:
     names: list[str] = []
-    for tool in prepared.native_tool_schemas or []:
+    for tool in cast(list[Any], prepared.native_tool_schemas or []):
         if not isinstance(tool, dict):
             continue
         function_block = tool.get("function")
@@ -546,16 +609,32 @@ async def _store_active_request_context_snapshot(
     if not messages:
         return None
     try:
+        provider_request_snapshot = build_final_provider_request_snapshot(
+            ai_request=request,
+            prepared=prepared,
+            profile=profile,
+        )
+        frozen = prepared.factory_semantic_request
+        if frozen is not None:
+            provider_request_snapshot["factory_final_request"] = final_request_snapshot_evidence(frozen)
+            snapshot_audit = provider_request_snapshot.get("final_request_context_audit")
+            if not isinstance(snapshot_audit, dict):
+                raise RuntimeError("factory_final_request_context_audit_missing")
+            dispatch_port = prepared.factory_dispatch_port
+            if type(dispatch_port) is not FactorySemanticDispatchPropagationPort:
+                raise RuntimeError("factory_dispatch_port_required_for_context_audit_binding")
+            bound_snapshot_audit = dispatch_port.bind_final_request_context_audit(snapshot_audit)
+            provider_request_snapshot["final_request_context_audit"] = bound_snapshot_audit
+            provider_request_snapshot["final_request_evidence_coverage"] = bound_snapshot_audit.get(
+                "final_request_evidence_coverage",
+                {},
+            )
         context_store_hash = await AIExecutor._store_context_messages(
             workspace,
             messages,
             run_id,
             call_id,
-            build_final_provider_request_snapshot(
-                ai_request=request,
-                prepared=prepared,
-                profile=profile,
-            ),
+            provider_request_snapshot,
         )
     except (RuntimeError, ValueError, TypeError, OSError) as exc:
         logger.warning(
@@ -1124,6 +1203,7 @@ class LLMInvoker:
                 executor=executor,
                 prepared=prepared,
                 request=request,
+                profile=profile,
             )
         finally:
             with contextlib.suppress(AttributeError, TypeError):
@@ -1245,6 +1325,7 @@ class LLMInvoker:
                 executor=executor,
                 prepared=prepared,
                 request=active_request,
+                profile=profile,
             )
             native_tool_fallback = True
             logger.warning("[invoker] required-tool text fallback: provider cannot force native tool_choice")
@@ -1288,6 +1369,7 @@ class LLMInvoker:
                 executor=executor,
                 prepared=prepared,
                 request=active_request,
+                profile=profile,
             )
             logger.warning("[invoker] required-tool re-ask: provider returned prose without required tool call")
             is_response_ok, response_error = read_response_status(response)
@@ -1312,7 +1394,7 @@ class LLMInvoker:
             final_request_receipt_sink=self._record_final_request_receipt,
         )
 
-    def _record_final_request_receipt(self, receipt: dict[str, Any]) -> None:
+    def _record_final_request_receipt(self, receipt: Any) -> None:
         if not isinstance(receipt, dict):
             return
         raw_payload = receipt.get("payload")
@@ -1385,6 +1467,20 @@ class LLMInvoker:
         return None
 
     @staticmethod
+    def _extract_final_context_snapshot_ref(
+        prepared: PreparedLLMRequest,
+        request: Any,
+    ) -> str | None:
+        port = prepared.factory_dispatch_port
+        evidence = validated_final_context_evidence(
+            port,
+            expected_port_type=FactorySemanticDispatchPropagationPort,
+        )
+        if evidence is not None:
+            return evidence[0]
+        return LLMInvoker._extract_context_snapshot_ref(request)
+
+    @staticmethod
     def _profile_bound_request_for_evidence(request: Any, profile: RoleProfile) -> Any:
         """Return an evidence-only request view pinned to ``profile`` binding."""
 
@@ -1446,7 +1542,7 @@ class LLMInvoker:
                     active_context.get("response_format_mode") or prepared.response_format_mode
                 ),
                 "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
-                "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+                "context_snapshot_ref": self._extract_final_context_snapshot_ref(prepared, active_request),
             },
             prepared=prepared,
             active_request=active_request,
@@ -1482,7 +1578,7 @@ class LLMInvoker:
                         "run_id": run_id,
                         "workspace": self.workspace,
                         "attempt": attempt,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+                        "context_snapshot_ref": self._extract_final_context_snapshot_ref(prepared, active_request),
                     },
                     prepared=prepared,
                     active_request=active_request,
@@ -1630,7 +1726,7 @@ class LLMInvoker:
             "source": "llm",
             "compression_applied": prepared.context_result.compression_applied if prepared.context_result else False,
             "turn_round": turn_round,
-            "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+            "context_snapshot_ref": self._extract_final_context_snapshot_ref(prepared, active_request),
             **native_tool_metadata,
         }
         event_metadata = _with_context_snapshot_diagnostics(event_metadata, active_request)
@@ -1677,7 +1773,7 @@ class LLMInvoker:
             "turn_round": turn_round,
             # SSOT Fix: Pass context token count for context panel display
             "context_tokens": int(final_context_tokens or 0),
-            "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+            "context_snapshot_ref": self._extract_final_context_snapshot_ref(prepared, active_request),
         }
         response_metadata = _with_context_snapshot_diagnostics(response_metadata, active_request)
         if provider_usage is not None:
@@ -1788,6 +1884,7 @@ class LLMInvoker:
                 executor=executor,
                 prepared=prepared,
                 request=active_request,
+                profile=profile,
             )
             native_response_fallback = True
             is_response_ok, response_error = read_response_status(response)
@@ -1817,6 +1914,7 @@ class LLMInvoker:
                 executor=executor,
                 prepared=prepared,
                 request=active_request,
+                profile=profile,
             )
             logger.warning(
                 "[invoker] reasoning-truncation re-ask: reserved output budget + minimal-reasoning directive"
@@ -2199,7 +2297,8 @@ class LLMInvoker:
             final_context_tokens = int(
                 raw_final_context_tokens if raw_final_context_tokens is not None else prompt_tokens
             )
-            enforce_final_request_evidence_coverage(
+            enforce_factory_aware_final_request_evidence_coverage(
+                port=prepared.factory_dispatch_port,
                 ai_request=prepared.ai_request,
                 audit=final_context_audit,
             )
@@ -2284,6 +2383,7 @@ class LLMInvoker:
                 executor=executor,
                 prepared=prepared,
                 request=active_request,
+                profile=profile,
             )
             native_response_fallback = False
 
@@ -2754,6 +2854,7 @@ class LLMInvoker:
                 executor=executor,
                 prepared=prepared,
                 request=prepared.ai_request,
+                profile=profile,
             )
             if bool(getattr(response, "ok", True)):
                 content = str(getattr(response, "output", "") or "")
@@ -3009,6 +3110,7 @@ class LLMInvoker:
             executor=executor,
             prepared=prepared,
             request=ai_request,
+            profile=profile,
         )
         is_response_ok, response_error = read_response_status(response)
         response_format_mode = ""
@@ -3259,7 +3361,8 @@ class LLMInvoker:
             final_context_tokens = int(
                 raw_final_context_tokens if raw_final_context_tokens is not None else prompt_tokens
             )
-            enforce_final_request_evidence_coverage(
+            enforce_factory_aware_final_request_evidence_coverage(
+                port=prepared.factory_dispatch_port,
                 ai_request=prepared.ai_request,
                 audit=final_context_audit,
             )
@@ -3573,7 +3676,7 @@ class LLMInvoker:
             message_roles: list[str] = []
             message_content_sha256: list[str] = []
             message_content_chars: list[int] = []
-            for message in prepared_messages:
+            for message in cast(list[Any], prepared_messages):
                 if not isinstance(message, dict):
                     continue
                 message_roles.append(str(message.get("role") or ""))

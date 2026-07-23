@@ -1,0 +1,114 @@
+card_id: vc-20260722-factory-r12-ce-physical-timeout
+classification: runtime_authority
+status: complete
+bench_status: closed
+bug_summary: >-
+  The eighth authorized fresh isolated L1-04 acceptance run reached the real
+  Chief Engineer physical Provider request with a fresh isolated backend and a
+  valid PM contract. The first CE portfolio request timed out at 191 seconds;
+  zero of three blueprints were accepted, Director and QA were not reached, and
+  no target-project effect occurred. The exact final request and deadline
+  derivation were valid, but roles.runtime ignored
+  ExecuteRoleTaskCommandV1.stream and always used the blocking kernel.run path.
+  Factory now requests the existing audited stream path for CE portfolio calls,
+  task timeout authority is projected into the request context, complete/error
+  evidence is preserved, and a stream without a terminal event fails closed.
+  No timeout was inflated and no deterministic CE fallback was restored.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: c1ef765f8c8d
+  factory_run_id: factory_07a3ec2b9356
+  instance_id: >-
+    factory-bench-l1-04-codex-r12-l1-04-run-c1ef765f8c8d-66892aa52dc90b9b
+  stage: chief_engineer_review
+  error_code: chief_engineer.llm_review_failed
+  error: "TransactionKernel execution failed: Request timeout (191.0s)"
+  wall_clock_seconds: 206.4
+  chief_engineer_llm_calls: 1
+  blueprints_generated: 0
+  blueprints_required: 3
+  backend_fresh: true
+  plan_materialized: true
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r12/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r12/audits/c1ef765f8c8d/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r12/L1-04.chain.log
+root_cause:
+  code: role_task_stream_flag_ignored
+  summary: >-
+    ExecuteRoleTaskCommandV1 exposed a stream flag, but
+    RoleRuntimeService.execute_role_task always called kernel.run. The real CE
+    request therefore used one blocking requests.post with a 191-second
+    request timeout instead of the existing audited streaming provider path.
+  fix: >-
+    Project command timeout into request context; dispatch streamed task
+    commands through kernel.run_stream; preserve final RoleTurnResult and
+    final-request metadata on complete/error; fail closed on exceptions or a
+    stream ending without a terminal event; enable stream only for Factory CE
+    portfolio commands.
+  forbidden_shortcuts_preserved:
+    timeout_increase: false
+    deterministic_ce_fallback: false
+    target_project_edit: false
+required_investigation:
+  final_provider_request_role_identity: pass
+  final_provider_request_messages_tools_format: pass
+  final_request_token_and_window_audit: pass
+  pm_contract_and_target_coverage: pass
+  absolute_deadline_projection: pass
+  timeout_derivation: pass
+  parent_settlement_budget: pass
+final_request_evidence:
+  semantic_context_snapshot_ref: a1c09ef464e65dd0b85c8890
+  physical_context_snapshot_ref: f716700998ff0808506dec6a
+  role: chief_engineer
+  provider: anthropic_compat-1771249789301
+  model: kimi-for-coding
+  native_protocol: anthropic_messages
+  transport_before_fix: requests.post
+  provider_mode_before_fix: invoke
+  system_chars: 17279
+  user_messages: 1
+  final_request_tokens: 4873
+  context_window_tokens: 262144
+  context_utilization_percent: 1.86
+  target_files_covered: 10
+  tools_required: false
+  tools_offered: 0
+  response_format: none
+  timeout_seconds: 191
+required_gates:
+  regression_test_red_green: pass
+  focused_tests: "13 passed"
+  roles_runtime_full: "696 passed, 2 warnings"
+  factory_pipeline_full: "1219 passed, 2 warnings"
+  roles_adapters_full: "1291 passed, 2 warnings"
+  roles_kernel_full: "4144 passed, 2 warnings"
+  ruff: pass
+  ruff_format: pass
+  mypy: pass
+  compileall: pass
+  codegraph_structural_review: pass
+  independent_review: not_run_subagents_not_authorized
+  source_snapshot_stability: pass
+source_hashes:
+  roles_runtime_service_sha256: 8e2791725dea683c2483a3d4eb969df5f925cee163e9dc477778e761725ddc30
+  factory_stage_executor_sha256: 6f1f9c69586d7209326662927fd1d5bfe86c5e2572c372ab2d499435962f64af
+  roles_runtime_regression_test_sha256: 339318d8d13eee3e12e7489523abdc1cb96f7ced1d9a19d502d19e0858cf7abf
+  factory_characterization_test_sha256: bc310ea391877dea4de264c5d3544a1b1d8e23b9af85b8298a4f0b02a0b81723
+scheduling:
+  bench_schedulable: true
+  authorization_scope: delegated_to_pre_bench_one_shot_gate
+  next_action: recapture_source_snapshot_then_authorize_one_fresh_isolated_l1_04
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

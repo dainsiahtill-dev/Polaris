@@ -1,18 +1,198 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import patch
 
+from polaris.cells.context.engine.public.contracts import QueryFinalProviderRequestAuditV1
 from polaris.cells.context.engine.public.service import (
     build_context_window,
     get_anthropomorphic_context_v2,
     get_search_service,
+    query_final_provider_request_audit,
 )
 from polaris.kernelone.context.engine import ContextBudget, ContextItem, ContextPack
 
 if TYPE_CHECKING:
     import pytest
+
+
+def test_query_final_physical_provider_request_projects_native_anthropic_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context_ref = "a" * 24
+    snapshot_path = tmp_path / context_ref
+    native_body = {
+        "model": "kimi-for-coding",
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "build"}],
+        "system": "polaris.role_identity.v1:director",
+        "temperature": 0.0,
+        "tools": [{"name": "write_file", "input_schema": {"type": "object"}}],
+        "tool_choice": {"type": "auto"},
+    }
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "llm.final_physical_provider_request_context.v1",
+                "trace_id": "run-1",
+                "call_id": "call-1",
+                "messages": [{"role": "system", "content": "semantic"}],
+                "provider_request": {
+                    "role": "director",
+                    "provider_id": "kimi",
+                    "provider_type": "anthropic_compat",
+                    "model": "kimi-for-coding",
+                    "final_request_context_audit": {"audit_scope": "provider_native_wire"},
+                    "final_physical_request": {
+                        "endpoint": "https://api.kimi.com/coding/v1/messages",
+                        "transport_kind": "http_post_json",
+                        "body": native_body,
+                    },
+                    "physical_route_authority": {
+                        "native_protocol": "anthropic_messages",
+                        "native_request_schema_version": "llm.factory_provider_native_request.v1",
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "polaris.cells.context.engine.public.service.context_snapshot_candidates",
+        lambda _workspace, _context_hash: [("test", snapshot_path)],
+    )
+
+    result = query_final_provider_request_audit(
+        QueryFinalProviderRequestAuditV1(workspace=str(tmp_path), context_snapshot_ref=context_ref)
+    )
+
+    assert result.ok is True
+    assert result.payload["messages"] == [
+        {"role": "system", "content": native_body["system"]},
+        *native_body["messages"],
+    ]
+    assert result.payload["tools"] == native_body["tools"]
+    assert result.payload["tool_choice"] == native_body["tool_choice"]
+    assert result.payload["native_protocol"] == "anthropic_messages"
+    assert result.payload["final_physical_request_body"] == native_body
+
+
+def _query_physical_snapshot(
+    *,
+    tmp_path: Path,
+    monkeypatch: Any,
+    context_ref: str,
+    native_protocol: str,
+    native_body: dict[str, Any],
+) -> Any:
+    snapshot_path = tmp_path / context_ref
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "llm.final_physical_provider_request_context.v1",
+                "trace_id": "run-1",
+                "call_id": "call-1",
+                "messages": [{"role": "system", "content": "semantic"}],
+                "provider_request": {
+                    "role": "director",
+                    "provider_id": "openai",
+                    "provider_type": "openai_compat",
+                    "model": "gpt-test",
+                    "final_request_context_audit": {"audit_scope": "provider_native_wire"},
+                    "final_physical_request": {
+                        "endpoint": "https://example.test/v1/provider",
+                        "transport_kind": "http_post_json",
+                        "body": native_body,
+                    },
+                    "physical_route_authority": {
+                        "native_protocol": native_protocol,
+                        "native_request_schema_version": "llm.factory_provider_native_request.v1",
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "polaris.cells.context.engine.public.service.context_snapshot_candidates",
+        lambda _workspace, _context_hash: [("test", snapshot_path)],
+    )
+    return query_final_provider_request_audit(
+        QueryFinalProviderRequestAuditV1(workspace=str(tmp_path), context_snapshot_ref=context_ref)
+    )
+
+
+def test_query_final_physical_provider_request_projects_openai_chat_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    native_body = {
+        "model": "gpt-test",
+        "messages": [{"role": "system", "content": "system"}, {"role": "user", "content": "build"}],
+        "tools": [{"type": "function", "function": {"name": "write_file", "parameters": {}}}],
+        "tool_choice": "auto",
+        "response_format": {"type": "json_object"},
+    }
+    result = _query_physical_snapshot(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        context_ref="b" * 24,
+        native_protocol="openai_chat_completions",
+        native_body=native_body,
+    )
+
+    assert result.ok is True
+    assert result.payload["messages"] == native_body["messages"]
+    assert result.payload["tools"] == native_body["tools"]
+    assert result.payload["response_format"] == native_body["response_format"]
+    assert result.payload["native_protocol"] == "openai_chat_completions"
+
+
+def test_query_final_physical_provider_request_projects_openai_responses_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    native_body = {
+        "model": "gpt-test",
+        "input": [{"role": "system", "content": "system"}, {"role": "user", "content": "build"}],
+        "tools": [{"type": "function", "name": "write_file", "parameters": {}}],
+        "tool_choice": "auto",
+    }
+    result = _query_physical_snapshot(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        context_ref="c" * 24,
+        native_protocol="openai_responses",
+        native_body=native_body,
+    )
+
+    assert result.ok is True
+    assert result.payload["messages"] == native_body["input"]
+    assert result.payload["tools"] == native_body["tools"]
+    assert result.payload["native_protocol"] == "openai_responses"
+
+
+def test_query_final_physical_provider_request_rejects_unknown_native_protocol(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _query_physical_snapshot(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        context_ref="d" * 24,
+        native_protocol="opaque_unknown",
+        native_body={"messages": [{"role": "user", "content": "build"}]},
+    )
+
+    assert result.ok is False
+    assert result.status == "invalid_snapshot"
+    assert result.error_code == "final_physical_provider_request_invalid"
 
 
 def _base_pack() -> ContextPack:

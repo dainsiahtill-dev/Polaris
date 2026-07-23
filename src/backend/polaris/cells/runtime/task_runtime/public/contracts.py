@@ -777,6 +777,10 @@ TaskRuntimeExecutionAttemptSettlementCodeV1 = Literal[
     "settlement_parent_close_proof_required",
     "settlement_parent_registry_invalid",
     "settlement_parent_registry_unavailable",
+    "settlement_directed_effect_unresolved",
+    "settlement_effect_outcome_conflict",
+    "settlement_terminal_intent_conflict",
+    "settlement_parent_close_failed",
     "row_projection_failed",
 ]
 
@@ -795,6 +799,7 @@ TaskRuntimeExecutionAttemptHeartbeatCodeV1 = Literal[
     "lease_version_mismatch",
     "session_not_active",
     "session_lease_expired",
+    "terminal_fence_pending",
     "file_lock_timeout",
     "session_terminal_preserved",
     "row_projection_failed",
@@ -1341,6 +1346,7 @@ class RuntimeTaskRuntimeError(RuntimeError):
 
 DIRECTED_EFFECT_OPERATION_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-operation/1"
 DIRECTED_EFFECT_OPERATION_SCHEMA_V2: Final[str] = "task-runtime.directed-effect-operation/2"
+DIRECTED_EFFECT_OPERATION_SCHEMA_V3: Final[str] = "task-runtime.directed-effect-operation/3"
 DIRECTED_EFFECT_OPERATION_SNAPSHOT_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-operation-snapshot/1"
 DIRECTED_EFFECT_CLAIM_GRANT_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-claim-grant/1"
 DIRECTED_EFFECT_INVENTORY_INTENT_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-inventory-intent/1"
@@ -1352,6 +1358,7 @@ DIRECTED_EFFECT_PARENT_REGISTRY_IDENTITY_SCHEMA_V1: Final[str] = (
     "task-runtime.directed-effect-parent-registry-identity/1"
 )
 DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-parent-registry/1"
+DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2: Final[str] = "task-runtime.directed-effect-parent-registry/2"
 DIRECTED_EFFECT_PARENT_REGISTRY_PROJECTION_SCHEMA_V1: Final[str] = (
     "task-runtime.directed-effect-parent-registry-projection/1"
 )
@@ -1382,6 +1389,8 @@ DirectedEffectOperationStateV1 = Literal[
     "ABORTED",
     "DEAD_LETTER",
 ]
+
+DirectedEffectReceiptOutcomeV1 = Literal["succeeded", "failed"]
 
 _DIRECTED_EFFECT_OPERATION_STATES: tuple[DirectedEffectOperationStateV1, ...] = (
     "INTENT_COMMITTED",
@@ -1451,6 +1460,11 @@ DirectedEffectAuthorityFailureCodeV1 = Literal[
     "inventory_admission_incomplete",
     "inventory_admission_unexpected",
     "inventory_not_ready",
+    "receipt_binding_conflict",
+    "receipt_evidence_conflict",
+    "recovery_evidence_conflict",
+    "recovery_deadline_exceeded",
+    "dead_letter_evidence_conflict",
 ]
 
 DirectedEffectOperationCodeV1 = (
@@ -1460,6 +1474,10 @@ DirectedEffectOperationCodeV1 = (
         "parent_registry_found",
         "admitted",
         "effect_claimed",
+        "receipt_committed",
+        "recovery_pending",
+        "dead_lettered",
+        "closed_by_parent",
         "aborted",
         "found",
         "idempotent_replay",
@@ -2868,6 +2886,87 @@ class AbortDirectedEffectOperationCommandV1(_DirectedEffectOperationCommandBaseV
 
 
 @dataclass(frozen=True, slots=True)
+class CommitDirectedEffectReceiptCommandV1(_DirectedEffectOperationCommandBaseV1):
+    """Commit one durable physical-effect receipt to an ``EFFECT_STARTED`` operation."""
+
+    intended_effect_fingerprint: str = ""
+    policy_verdict_hash: str = ""
+    expected_receipt_binding_hash: str = ""
+    receipt_ref: str = ""
+    receipt_hash: str = ""
+    receipt_binding_hash: str = ""
+    receipt_outcome: DirectedEffectReceiptOutcomeV1 = "succeeded"
+
+    def __post_init__(self) -> None:
+        _DirectedEffectOperationCommandBaseV1.__post_init__(self)
+        for field_name in (
+            "intended_effect_fingerprint",
+            "policy_verdict_hash",
+            "expected_receipt_binding_hash",
+            "receipt_hash",
+            "receipt_binding_hash",
+        ):
+            object.__setattr__(
+                self, field_name, _directed_effect_inventory_digest(field_name, getattr(self, field_name))
+            )
+        object.__setattr__(self, "receipt_ref", _directed_effect_token("receipt_ref", self.receipt_ref))
+        if self.receipt_outcome not in ("succeeded", "failed"):
+            raise ValueError("receipt_outcome must be 'succeeded' or 'failed'")
+
+
+@dataclass(frozen=True, slots=True)
+class MarkDirectedEffectRecoveryPendingCommandV1(_DirectedEffectOperationCommandBaseV1):
+    """Move ``EFFECT_STARTED`` to finite, evidence-bound recovery."""
+
+    intended_effect_fingerprint: str = ""
+    policy_verdict_hash: str = ""
+    expected_receipt_binding_hash: str = ""
+    reason: str = ""
+    recovery_evidence_ref: str = ""
+    recovery_evidence_hash: str = ""
+
+    def __post_init__(self) -> None:
+        _DirectedEffectOperationCommandBaseV1.__post_init__(self)
+        for field_name in (
+            "intended_effect_fingerprint",
+            "policy_verdict_hash",
+            "expected_receipt_binding_hash",
+            "recovery_evidence_hash",
+        ):
+            object.__setattr__(
+                self, field_name, _directed_effect_inventory_digest(field_name, getattr(self, field_name))
+            )
+        for field_name in ("reason", "recovery_evidence_ref"):
+            object.__setattr__(self, field_name, _directed_effect_token(field_name, getattr(self, field_name)))
+
+
+@dataclass(frozen=True, slots=True)
+class DeadLetterDirectedEffectOperationCommandV1(_DirectedEffectOperationCommandBaseV1):
+    """Resolve ``RECOVERY_PENDING`` to an evidence-bound terminal dead letter."""
+
+    intended_effect_fingerprint: str = ""
+    policy_verdict_hash: str = ""
+    expected_receipt_binding_hash: str = ""
+    reason: str = ""
+    resolution_evidence_ref: str = ""
+    resolution_evidence_hash: str = ""
+
+    def __post_init__(self) -> None:
+        _DirectedEffectOperationCommandBaseV1.__post_init__(self)
+        for field_name in (
+            "intended_effect_fingerprint",
+            "policy_verdict_hash",
+            "expected_receipt_binding_hash",
+            "resolution_evidence_hash",
+        ):
+            object.__setattr__(
+                self, field_name, _directed_effect_inventory_digest(field_name, getattr(self, field_name))
+            )
+        for field_name in ("reason", "resolution_evidence_ref"):
+            object.__setattr__(self, field_name, _directed_effect_token(field_name, getattr(self, field_name)))
+
+
+@dataclass(frozen=True, slots=True)
 class GetDirectedEffectOperationQueryV1:
     workspace: str
     task_id: int
@@ -3016,6 +3115,10 @@ class DirectedEffectOperationResultV1:
             "parent_idempotent_replay",
             "admitted",
             "effect_claimed",
+            "receipt_committed",
+            "recovery_pending",
+            "dead_lettered",
+            "closed_by_parent",
             "aborted",
             "found",
             "idempotent_replay",
@@ -3058,6 +3161,125 @@ class DirectedEffectOperationResultV1:
 
 
 @dataclass(frozen=True, slots=True)
+class ReconcileAmbiguousDirectedEffectsCommandV1:
+    """Request one bounded Factory-startup recovery sweep without effect replay.
+
+    TaskRuntime mints and persists the actual maintenance authority under its
+    workspace recovery lock.  Callers deliberately cannot supply an owner PID,
+    epoch, lease id, or token.
+    """
+
+    workspace: str
+    reason: str
+    factory_run_id: str = ""
+    actor: str = "factory.settlement.startup"
+    authority_kind: Literal["factory_settlement_startup"] = "factory_settlement_startup"
+    max_sessions: int = 256
+    max_operations: int = 4096
+    deadline_seconds: float = 30.0
+    lock_timeout_seconds: float = 1.0
+
+    def __post_init__(self) -> None:
+        workspace = str(Path(self.workspace).expanduser().resolve())
+        if self.workspace != workspace:
+            raise ValueError("workspace must be canonical")
+        object.__setattr__(self, "workspace", workspace)
+        object.__setattr__(self, "reason", _directed_effect_token("reason", self.reason))
+        object.__setattr__(self, "factory_run_id", str(self.factory_run_id or "").strip())
+        object.__setattr__(self, "actor", _directed_effect_token("actor", self.actor))
+        if self.actor != "factory.settlement.startup":
+            raise ValueError("actor must be factory.settlement.startup")
+        if self.authority_kind != "factory_settlement_startup":
+            raise ValueError("authority_kind must be factory_settlement_startup")
+        _directed_effect_positive_int("max_sessions", self.max_sessions)
+        _directed_effect_positive_int("max_operations", self.max_operations)
+        for field_name in ("deadline_seconds", "lock_timeout_seconds"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{field_name} must be a finite positive number")
+            normalized = float(value)
+            if not math.isfinite(normalized) or normalized <= 0:
+                raise ValueError(f"{field_name} must be a finite positive number")
+            object.__setattr__(self, field_name, normalized)
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectRecoverySweepItemV1:
+    """One TaskRuntime recovery/dead-letter fact exposed to read-only sinks."""
+
+    factory_run_id: str
+    session_id: str
+    task_id: int
+    operation_id: str
+    code: Literal["recovery_pending", "dead_lettered"]
+    state: Literal["RECOVERY_PENDING", "DEAD_LETTER"]
+    version: int
+    event_id: str
+    evidence_ref: str
+    evidence_hash: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "factory_run_id", str(self.factory_run_id or "").strip())
+        for field_name in ("session_id", "operation_id", "event_id", "evidence_ref"):
+            object.__setattr__(self, field_name, _directed_effect_token(field_name, getattr(self, field_name)))
+        _directed_effect_positive_int("task_id", self.task_id)
+        _directed_effect_positive_int("version", self.version)
+        expected_code = {"RECOVERY_PENDING": "recovery_pending", "DEAD_LETTER": "dead_lettered"}.get(self.state)
+        if self.code != expected_code:
+            raise ValueError("recovery sweep state and code must agree")
+        object.__setattr__(
+            self,
+            "evidence_hash",
+            _directed_effect_inventory_digest("evidence_hash", self.evidence_hash),
+        )
+
+    def to_record(self) -> dict[str, object]:
+        evidence_prefix = "recovery" if self.state == "RECOVERY_PENDING" else "resolution"
+        return {
+            "schema_version": "roles.adapters.directed_effect_recovery_fact.v1",
+            "authoritative": True,
+            "durable": True,
+            "factory_run_id": self.factory_run_id,
+            "session_id": self.session_id,
+            "task_id": self.task_id,
+            "operation_id": self.operation_id,
+            "code": self.code,
+            "state": self.state,
+            "version": self.version,
+            "event_id": self.event_id,
+            f"{evidence_prefix}_evidence_ref": self.evidence_ref,
+            f"{evidence_prefix}_evidence_hash": self.evidence_hash,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectRecoverySweepResultV1:
+    """Bounded startup/stale-owner recovery report."""
+
+    ok: bool
+    code: Literal["reconciled", "partial_failure"]
+    workspace: str
+    scanned_session_count: int
+    items: tuple[DirectedEffectRecoverySweepItemV1, ...] = ()
+    failures: tuple[Mapping[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.ok != (self.code == "reconciled"):
+            raise ValueError("ok must match recovery sweep code")
+        workspace = str(Path(self.workspace).expanduser().resolve())
+        if self.workspace != workspace:
+            raise ValueError("workspace must be canonical")
+        _directed_effect_non_negative_int("scanned_session_count", self.scanned_session_count)
+        if not isinstance(self.items, tuple) or any(
+            type(item) is not DirectedEffectRecoverySweepItemV1 for item in self.items
+        ):
+            raise TypeError("items must contain exact DirectedEffectRecoverySweepItemV1 values")
+        if not isinstance(self.failures, tuple) or any(not isinstance(item, Mapping) for item in self.failures):
+            raise TypeError("failures must be a tuple of mappings")
+        object.__setattr__(self, "failures", tuple(_to_immutable_evidence(item) for item in self.failures))
+
+
+@dataclass(frozen=True, slots=True)
 class DirectedEffectParentRegistryResultV1:
     ok: bool
     code: DirectedEffectOperationCodeV1
@@ -3081,6 +3303,7 @@ __all__ = [
     "DIRECTED_EFFECT_INVENTORY_PROJECTION_SCHEMA_V1",
     "DIRECTED_EFFECT_OPERATION_SCHEMA_V1",
     "DIRECTED_EFFECT_OPERATION_SCHEMA_V2",
+    "DIRECTED_EFFECT_OPERATION_SCHEMA_V3",
     "DIRECTED_EFFECT_OPERATION_SNAPSHOT_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_BINDING_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_CORRELATION_SCHEMA_V1",
@@ -3088,6 +3311,7 @@ __all__ = [
     "DIRECTED_EFFECT_PARENT_REGISTRY_IDENTITY_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_REGISTRY_PROJECTION_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1",
+    "DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2",
     "OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1",
     "TASK_RUNTIME_EXECUTION_ATTEMPT_IDENTITY_SCHEMA_V1",
     "TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1",
@@ -3098,7 +3322,9 @@ __all__ = [
     "AdmitDirectedEffectParentCommandV1",
     "BindRuntimeTaskToFactoryRunCommandV1",
     "ClaimDirectedEffectCommandV1",
+    "CommitDirectedEffectReceiptCommandV1",
     "CreateRuntimeTaskCommandV1",
+    "DeadLetterDirectedEffectOperationCommandV1",
     "DirectedEffectAuthorityFailureCodeV1",
     "DirectedEffectClaimGrantV1",
     "DirectedEffectInventoryCodeV1",
@@ -3122,6 +3348,7 @@ __all__ = [
     "DirectedEffectParentRegistryIdentityV1",
     "DirectedEffectParentRegistryProjectionV1",
     "DirectedEffectParentRegistryResultV1",
+    "DirectedEffectReceiptOutcomeV1",
     "DirectedEffectStreamEnrollmentCodeV1",
     "DirectedEffectStreamEnrollmentResultV1",
     "EnrollDirectedEffectOperationStreamCommandV1",
@@ -3137,6 +3364,7 @@ __all__ = [
     "GetRuntimeTaskQueryV1",
     "HeartbeatTaskRuntimeExecutionAttemptCommandV1",
     "ListRuntimeTasksQueryV1",
+    "MarkDirectedEffectRecoveryPendingCommandV1",
     "ObservableTaskRowsProjectionV1",
     "OpenTaskRuntimeExecutionAttemptAuthorityCommandV1",
     "OwnerReworkExecutionAuthorizationV1",

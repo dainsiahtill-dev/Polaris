@@ -19,15 +19,13 @@ from polaris.cells.director.runtime.public.service import (
     QueryDirectorRepairAdvisoryValidationV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
-    RunDirectorRepairCommandV1,
     query_director_repair_post_execution_schedule,
     query_director_repair_strategy_catalog,
     run_director_post_execution_repair_schedule_result,
-    run_director_repair,
     validate_director_repair_advisory,
 )
+from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
 
-from .execution_tools import DirectorToolExecutor
 from .repair_profile_projection import project_repair_kernel_summary
 from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
 
@@ -111,6 +109,7 @@ def run_post_execution_language_repairs(
     task_id: str,
     resident_agi_repair_advisory_overlay: dict[str, Any] | None = None,
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Run post-execution language repairs and return normalized tool results."""
 
@@ -122,6 +121,11 @@ def run_post_execution_language_repairs(
 
     def _run_step(step: DirectorRepairPostExecutionStepV1) -> list[dict[str, Any]]:
         runner = _runner_for_post_execution_step(step)
+        execution_attempt_kwargs = (
+            {"execution_attempt": execution_attempt}
+            if type(execution_attempt) is TaskRuntimeExecutionAttemptIdentityV1
+            else {}
+        )
         if step.step_id == "cpp.post_execution":
             return run_cpp_post_repairs_as_tool_results(
                 workspace,
@@ -129,6 +133,7 @@ def run_post_execution_language_repairs(
                 task_id=task_id,
                 advisor_notes=runtime_advisor_notes,
                 convergence_verifier=convergence_verifier,
+                **execution_attempt_kwargs,
             )
         if step.step_id == "go.module_import":
             return _run_go_post_repairs(
@@ -136,6 +141,7 @@ def run_post_execution_language_repairs(
                 task_id=task_id,
                 advisor_notes=runtime_advisor_notes,
                 convergence_verifier=convergence_verifier,
+                **execution_attempt_kwargs,
             )
         if step.step_id == "rust.dependency_resolution":
             return _run_rust_dependency_repair(
@@ -143,6 +149,7 @@ def run_post_execution_language_repairs(
                 task_id=task_id,
                 advisor_notes=runtime_advisor_notes,
                 convergence_verifier=convergence_verifier,
+                **execution_attempt_kwargs,
             )
         if step.step_id == "rust.post_execution_convergence":
             return _run_rust_post_repairs(
@@ -151,6 +158,7 @@ def run_post_execution_language_repairs(
                 task_id=task_id,
                 advisor_notes=runtime_advisor_notes,
                 convergence_verifier=convergence_verifier,
+                **execution_attempt_kwargs,
             )
         if step.step_id == "java.post_execution":
             return _run_java_post_repairs(
@@ -159,13 +167,16 @@ def run_post_execution_language_repairs(
                 task_id=task_id,
                 advisor_notes=runtime_advisor_notes,
                 convergence_verifier=convergence_verifier,
+                **execution_attempt_kwargs,
             )
         return runner(adapter, workspace, task_id)
 
     schedule_result = run_director_post_execution_repair_schedule_result(
         runner_step_ids=tuple(_POST_EXECUTION_REPAIR_RUNNERS),
         runner=_run_step,
-        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
+        # Deferred effects may plan one round only.  Later rounds require the
+        # first round's lifecycle, receipt and revalidation facts (DEO-3).
+        max_rounds=1,
     )
     tool_results = [dict(item) for item in schedule_result.tool_results]
     ordered_steps = schedule_result.ordered_steps
@@ -216,6 +227,7 @@ def run_cpp_post_repairs_as_tool_results(
     task_id: str = "director-cpp-post-repair",
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     """Run C++ post repairs and normalize them as write-tool results."""
 
@@ -234,6 +246,7 @@ def run_cpp_post_repairs_as_tool_results(
         task_id=task_id,
         advisor_notes=advisor_notes,
         convergence_verifier=convergence_verifier,
+        execution_attempt=execution_attempt,
     )
     tool_results.extend(
         _run_cpp_standard_include_runtime_repair(
@@ -242,6 +255,7 @@ def run_cpp_post_repairs_as_tool_results(
             task_id=task_id,
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -251,6 +265,7 @@ def run_cpp_post_repairs_as_tool_results(
             task_id=task_id,
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -260,6 +275,7 @@ def run_cpp_post_repairs_as_tool_results(
             task_id=task_id,
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -269,6 +285,7 @@ def run_cpp_post_repairs_as_tool_results(
             task_id=task_id,
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -279,6 +296,7 @@ def run_cpp_post_repairs_as_tool_results(
             source_tool="deterministic_cpp_post_repair",
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
     )
     return tool_results
@@ -291,6 +309,7 @@ def _run_cpp_include_path_runtime_repair(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     return _run_cpp_runtime_repair(
         adapter,
@@ -299,6 +318,7 @@ def _run_cpp_include_path_runtime_repair(
         source_tool="deterministic_cpp_include_path_repair",
         advisor_notes=advisor_notes,
         convergence_verifier=convergence_verifier,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -309,6 +329,7 @@ def _run_cpp_standard_include_runtime_repair(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     return _run_cpp_runtime_repair(
         adapter,
@@ -317,6 +338,7 @@ def _run_cpp_standard_include_runtime_repair(
         source_tool="deterministic_cpp_standard_include_repair",
         advisor_notes=advisor_notes,
         convergence_verifier=convergence_verifier,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -327,6 +349,7 @@ def _run_cpp_placeholder_declaration_runtime_repair(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     return _run_cpp_runtime_repair(
         adapter,
@@ -335,6 +358,7 @@ def _run_cpp_placeholder_declaration_runtime_repair(
         source_tool="deterministic_cpp_placeholder_declaration_repair",
         advisor_notes=advisor_notes,
         convergence_verifier=convergence_verifier,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -345,6 +369,7 @@ def _run_cpp_struct_getter_field_access_runtime_repair(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     return _run_cpp_runtime_repair(
         adapter,
@@ -353,6 +378,7 @@ def _run_cpp_struct_getter_field_access_runtime_repair(
         source_tool="deterministic_cpp_struct_getter_field_access_repair",
         advisor_notes=advisor_notes,
         convergence_verifier=convergence_verifier,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -363,6 +389,7 @@ def _run_cpp_missing_private_members_runtime_repair(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     return _run_cpp_runtime_repair(
         adapter,
@@ -371,6 +398,7 @@ def _run_cpp_missing_private_members_runtime_repair(
         source_tool="deterministic_cpp_missing_private_members_repair",
         advisor_notes=advisor_notes,
         convergence_verifier=convergence_verifier,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -382,72 +410,30 @@ def _run_cpp_runtime_repair(
     source_tool: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_cpp_base_files(workspace_path)
     if not base_files:
         return []
 
-    if convergence_verifier is not None and adapter is not None:
-        return run_runtime_repair_with_director_tools(
-            adapter,
-            workspace_path=workspace_path,
-            task_id=task_id,
-            source_tool=source_tool,
-            executor_factory=DirectorToolExecutor,
-            base_files=base_files,
-            allowed_paths=tuple(base_files.keys()),
-            advisor_notes=advisor_notes,
-            use_editor=False,
-            convergence_verifier=convergence_verifier,
-            max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
-        )
     if adapter is None:
         return _policy_gated_adapter_missing_tool_result(
             task_id=task_id,
             source_tool=source_tool,
         )
-
-    write_results: dict[str, dict[str, Any]] = {}
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    executor = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    )
-
-    def writer(path: str, content: str) -> dict[str, Any]:
-        write_result = executor.execute_tool(
-            "write_file",
-            {"file": path, "content": content},
-            task_id=task_id,
-        )
-        write_results[path] = dict(write_result)
-        if bool(write_result.get("ok")):
-            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                adapter._update_task_progress(task_id, "executing", current_file=path)
-        return dict(write_result)
-
-    canonical_result = run_director_repair(
-        RunDirectorRepairCommandV1(
-            task_id=task_id,
-            workspace=str(workspace_path),
-            source_tool=source_tool,
-            base_files=base_files,
-            allowed_paths=tuple(base_files.keys()),
-            advisor_notes=advisor_notes,
-        ),
-        writer=writer,
-    )
-    if canonical_result.ok:
-        return _canonical_repair_result_to_tool_results(
-            canonical_result,
-            write_results=write_results,
-            workspace=workspace_path,
-        )
-    return _canonical_repair_failure_to_tool_results(
-        canonical_result,
+    return run_runtime_repair_with_director_tools(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
         source_tool=source_tool,
+        execution_attempt=execution_attempt,
+        base_files=base_files,
+        allowed_paths=tuple(base_files.keys()),
+        advisor_notes=advisor_notes,
+        use_editor=False,
+        convergence_verifier=convergence_verifier,
+        max_rounds=1,
     )
 
 
@@ -457,6 +443,7 @@ def _run_go_post_repairs(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for source_tool in _GO_POST_EXECUTION_RUNTIME_SOURCE_TOOLS:
@@ -466,6 +453,7 @@ def _run_go_post_repairs(
             source_tool=source_tool,
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
         if any(not bool(item.get("success", False)) for item in runtime_results):
             return runtime_results
@@ -480,6 +468,7 @@ def _run_go_runtime_repair(
     source_tool: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace = Path(str(getattr(adapter, "workspace", "") or ""))
     if not workspace.is_dir():
@@ -493,13 +482,13 @@ def _run_go_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool=source_tool,
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         allowed_paths=tuple(base_files.keys()),
         advisor_notes=advisor_notes,
         use_editor=True,
         convergence_verifier=convergence_verifier,
-        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
+        execution_attempt=execution_attempt,
+        max_rounds=1,
     )
 
 
@@ -510,6 +499,7 @@ def _run_rust_post_repairs(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     if not (workspace_path / "Cargo.toml").is_file():
@@ -519,12 +509,14 @@ def _run_rust_post_repairs(
         adapter,
         workspace_path,
         task_id=task_id,
+        execution_attempt=execution_attempt,
     )
     tool_results.extend(
         _run_rust_method_self_signature_runtime_repair(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -532,6 +524,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -539,6 +532,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -546,6 +540,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -553,6 +548,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -560,6 +556,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -567,6 +564,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -574,6 +572,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -581,6 +580,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -588,6 +588,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -595,6 +596,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -602,6 +604,7 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -611,6 +614,7 @@ def _run_rust_post_repairs(
             task_id=task_id,
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
     )
     tool_results.extend(
@@ -620,6 +624,7 @@ def _run_rust_post_repairs(
             task_id=task_id,
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
     )
     return tool_results
@@ -631,6 +636,7 @@ def _run_rust_dependency_repair(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     if not (workspace_path / "Cargo.toml").is_file():
@@ -643,14 +649,14 @@ def _run_rust_dependency_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_dependency_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=_rust_post_execution_artifact_quality_errors(adapter),
         allowed_paths=tuple(base_files.keys()),
         advisor_notes=advisor_notes,
         use_editor=False,
         convergence_verifier=convergence_verifier,
-        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
+        execution_attempt=execution_attempt,
+        max_rounds=1,
     )
 
 
@@ -659,6 +665,7 @@ def _run_rust_crate_import_rewrite_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -670,11 +677,11 @@ def _run_rust_crate_import_rewrite_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_crate_import_rewrite_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -683,6 +690,7 @@ def _run_rust_method_self_signature_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -694,11 +702,11 @@ def _run_rust_method_self_signature_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_method_self_signature_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -707,6 +715,7 @@ def _run_rust_wrong_crate_path_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -718,11 +727,11 @@ def _run_rust_wrong_crate_path_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_wrong_crate_path_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -731,6 +740,7 @@ def _run_rust_incompatible_copy_derive_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -742,11 +752,11 @@ def _run_rust_incompatible_copy_derive_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_incompatible_copy_derive_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -755,6 +765,7 @@ def _run_rust_missing_trait_derive_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -766,11 +777,11 @@ def _run_rust_missing_trait_derive_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_derive_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -779,6 +790,7 @@ def _run_rust_unused_import_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -790,11 +802,11 @@ def _run_rust_unused_import_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_unused_import_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -803,6 +815,7 @@ def _run_rust_unresolved_pub_use_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -814,11 +827,11 @@ def _run_rust_unresolved_pub_use_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_unresolved_pub_use_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -827,6 +840,7 @@ def _run_rust_trait_import_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -838,11 +852,11 @@ def _run_rust_trait_import_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_trait_import_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -851,6 +865,7 @@ def _run_rust_line_suggestion_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -862,11 +877,11 @@ def _run_rust_line_suggestion_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_line_suggestion_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -875,6 +890,7 @@ def _run_rust_field_rename_suggestion_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -886,11 +902,11 @@ def _run_rust_field_rename_suggestion_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_field_rename_suggestion_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -899,6 +915,7 @@ def _run_rust_missing_binary_entrypoint_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -910,11 +927,11 @@ def _run_rust_missing_binary_entrypoint_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_missing_binary_entrypoint_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=_rust_post_execution_artifact_quality_errors(adapter),
         allowed_paths=allowed_paths,
         use_editor=False,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -923,6 +940,7 @@ def _run_rust_missing_module_file_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -942,11 +960,11 @@ def _run_rust_missing_module_file_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_missing_module_file_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=allowed_paths,
         use_editor=False,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -955,6 +973,7 @@ def _run_rust_duplicate_module_file_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -974,11 +993,11 @@ def _run_rust_duplicate_module_file_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_rust_duplicate_module_file_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=allowed_paths,
         use_editor=False,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -989,6 +1008,7 @@ def _run_rust_missing_fields_runtime_repair(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -1000,14 +1020,14 @@ def _run_rust_missing_fields_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool=_RUST_MISSING_FIELDS_SOURCE_TOOL,
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         advisor_notes=advisor_notes,
         use_editor=True,
         convergence_verifier=convergence_verifier,
-        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
+        execution_attempt=execution_attempt,
+        max_rounds=1,
     )
 
 
@@ -1018,6 +1038,7 @@ def _run_rust_lib_root_facade_runtime_repair(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -1029,14 +1050,14 @@ def _run_rust_lib_root_facade_runtime_repair(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool=_RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         advisor_notes=advisor_notes,
         use_editor=True,
         convergence_verifier=convergence_verifier,
-        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
+        execution_attempt=execution_attempt,
+        max_rounds=1,
     )
 
 
@@ -1047,6 +1068,7 @@ def _run_java_post_repairs(
     task_id: str,
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> list[dict[str, Any]]:
     if not any(workspace.rglob("*.java")):
         return []
@@ -1060,166 +1082,14 @@ def _run_java_post_repairs(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_java_post_repair",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=_post_execution_artifact_quality_errors(adapter),
         allowed_paths=tuple(base_files.keys()),
         advisor_notes=advisor_notes,
         use_editor=True,
         convergence_verifier=convergence_verifier,
-        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
-    )
-
-
-def _run_java_accessor_alias_runtime_repair(
-    adapter: Any,
-    workspace: Path,
-    *,
-    task_id: str,
-    advisor_notes: RuntimeAdvisorNotes = (),
-    convergence_verifier: ConvergenceVerifier | None = None,
-) -> list[dict[str, Any]]:
-    workspace_path = workspace.resolve()
-    base_files: dict[str, str] = {}
-    for java_file in sorted((workspace_path / "src" / "main" / "java").rglob("*.java")):
-        try:
-            relative_path = java_file.relative_to(workspace_path).as_posix()
-        except ValueError:
-            continue
-        try:
-            base_files[relative_path] = java_file.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-    if not base_files:
-        return []
-
-    if convergence_verifier is not None:
-        return run_runtime_repair_with_director_tools(
-            adapter,
-            workspace_path=workspace_path,
-            task_id=task_id,
-            source_tool="deterministic_java_accessor_alias_repair",
-            executor_factory=DirectorToolExecutor,
-            base_files=base_files,
-            allowed_paths=tuple(base_files.keys()),
-            advisor_notes=advisor_notes,
-            use_editor=False,
-            convergence_verifier=convergence_verifier,
-            max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
-        )
-
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    executor = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    )
-    write_results: dict[str, dict[str, Any]] = {}
-
-    def _policy_gated_writer(path: str, content: str) -> dict[str, Any]:
-        write_result = executor.execute_tool(
-            "write_file",
-            {"file": path, "content": content},
-            task_id=task_id,
-        )
-        write_results[path] = dict(write_result)
-        if bool(write_result.get("ok")):
-            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                adapter._update_task_progress(task_id, "executing", current_file=path)
-        return dict(write_result)
-
-    canonical_result = run_director_repair(
-        RunDirectorRepairCommandV1(
-            task_id=task_id,
-            workspace=str(workspace_path),
-            source_tool="deterministic_java_accessor_alias_repair",
-            base_files=base_files,
-            allowed_paths=tuple(base_files.keys()),
-            advisor_notes=advisor_notes,
-        ),
-        writer=_policy_gated_writer,
-    )
-    if canonical_result.ok:
-        return _canonical_repair_result_to_tool_results(
-            canonical_result,
-            write_results=write_results,
-            workspace=workspace_path,
-        )
-    return _canonical_repair_failure_to_tool_results(
-        canonical_result,
-        source_tool="deterministic_java_accessor_alias_repair",
-    )
-
-
-def _run_java_test_dependency_runtime_repair(
-    adapter: Any,
-    workspace: Path,
-    *,
-    task_id: str,
-    advisor_notes: RuntimeAdvisorNotes = (),
-    convergence_verifier: ConvergenceVerifier | None = None,
-) -> list[dict[str, Any]]:
-    workspace_path = workspace.resolve()
-    base_files = _collect_java_test_base_files(workspace_path)
-    if not base_files:
-        return []
-
-    source_tool = "deterministic_java_test_dependency_repair"
-    if convergence_verifier is not None:
-        return run_runtime_repair_with_director_tools(
-            adapter,
-            workspace_path=workspace_path,
-            task_id=task_id,
-            source_tool=source_tool,
-            executor_factory=DirectorToolExecutor,
-            base_files=base_files,
-            allowed_paths=tuple(base_files.keys()),
-            advisor_notes=advisor_notes,
-            use_editor=False,
-            convergence_verifier=convergence_verifier,
-            max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
-        )
-
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    executor = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    )
-    write_results: dict[str, dict[str, Any]] = {}
-
-    def _policy_gated_writer(path: str, content: str) -> dict[str, Any]:
-        write_result = executor.execute_tool(
-            "write_file",
-            {"file": path, "content": content},
-            task_id=task_id,
-        )
-        write_results[path] = dict(write_result)
-        if bool(write_result.get("ok")):
-            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                adapter._update_task_progress(task_id, "executing", current_file=path)
-        return dict(write_result)
-
-    canonical_result = run_director_repair(
-        RunDirectorRepairCommandV1(
-            task_id=task_id,
-            workspace=str(workspace_path),
-            source_tool=source_tool,
-            base_files=base_files,
-            allowed_paths=tuple(base_files.keys()),
-            advisor_notes=advisor_notes,
-        ),
-        writer=_policy_gated_writer,
-    )
-    if canonical_result.ok:
-        return _canonical_repair_result_to_tool_results(
-            canonical_result,
-            write_results=write_results,
-            workspace=workspace_path,
-        )
-    return _canonical_repair_failure_to_tool_results(
-        canonical_result,
-        source_tool=source_tool,
+        execution_attempt=execution_attempt,
+        max_rounds=1,
     )
 
 

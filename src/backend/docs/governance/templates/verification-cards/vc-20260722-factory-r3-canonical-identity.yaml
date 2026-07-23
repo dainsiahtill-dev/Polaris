@@ -1,0 +1,94 @@
+card_id: vc-20260722-factory-r3-canonical-identity
+classification: execution_fact_chain
+severity: P0
+status: complete
+bench_status: not_schedulable_until_gate_refrozen
+symptom:
+  project_id: L1-04
+  factory_run_id: factory_36070b234f59
+  director_run_id: director-dcdd3201ff52
+  instance_id: factory-bench-l1-04-codex-final-r3-l1-04-run-bf6632941d8a-4392a9ddc6fba80a
+  stage: director_dispatch
+  error_code: director.canonical_task_boundary_missing
+  nested_error: >-
+    director_first_call_llm_error:Guarded role session lacks a valid
+    TaskRuntime execution attempt
+  provider_requests:
+    pm: 0
+    chief_engineer: 1
+    director: 0
+  source_files_materialized: 0
+final_request_audit:
+  chief_engineer:
+    qualified: true
+    semantic_context_snapshot_ref: 8fcaa8c16fd7be27432dcf10
+    final_physical_context_snapshot_ref: f1c7678818a88438e4612305
+    durable_attempt_context_snapshot_ref: 1ce6e781e9d49b21996a5aa0
+    role_identity_ok: true
+    model: kimi-for-coding
+    provider: anthropic_compat-1771249789301
+    messages: 6
+    tools: 0
+    tool_choice: null
+    response_format: null
+    final_request_tokens: 4878
+    context_window_tokens: 262144
+    context_window_utilization: 0.0186
+    coverage:
+      pm_contract: true
+      target_files: true
+      workspace_quality_evidence: true
+  pm:
+    qualified: false
+    provider_request_absent: true
+    failure_code: transaction_identity_unbound
+    failure_detail: >-
+      A first-class stable execution identity is required; run/task/session
+      fallback is forbidden.
+  director:
+    qualified: false
+    provider_request_absent: true
+    failure_code: deo_execution_attempt_mismatch
+root_causes:
+  - code: director_internal_external_task_id_projection_missing
+    evidence: >-
+      The TaskRuntime authority bound internal row task_id=1 to
+      external_task_id=TASK-1. Director built the guarded role command with
+      task_id=1, while RoleRuntime correctly requires the external identity.
+    repair: >-
+      Snapshot the exact open TaskRuntime authority and normalize only a
+      command task id equal to its canonical internal row id into the external
+      task id. Preserve every other caller value so genuine drift remains
+      fail-closed.
+  - code: pm_route_probe_transaction_identity_unbound
+    evidence: >-
+      The deterministic PM route probe entered RoleRuntime with correlation
+      fields only. TransactionKernel correctly rejected the physical attempt
+      before Provider request construction because no execution_attempt_id,
+      turn_request_id, execution_id, or task_runtime_session_id existed.
+    repair: >-
+      Generate a deterministic run-scoped pm.route_audit_probe.v1
+      turn_request_id and explicitly project accepted first-class execution
+      identities from adapter context into RoleRuntime request metadata. No
+      run/task/session fallback was added.
+repair_contract:
+  taskruntime_authority_remains_required: true
+  genuine_task_identity_drift: fail_closed
+  transaction_first_class_identity_required: true
+  run_task_session_identity_fallback: forbidden
+  provider_request_before_identity_validation: forbidden
+verification:
+  tdd_red: >-
+    3 failed: PM probe lacked turn_request_id and runtime metadata projection;
+    Director internal task id projected unchanged instead of TASK-8.
+  focused_identity_green: "160 passed"
+  director_projection_green: "2 passed including genuine drift preservation"
+  roles_adapters_full: "1285 passed"
+  factory_full: "1284 passed, 2 warnings"
+  architecture: "1411 passed, 8 skipped"
+  ruff: pass
+  format: pass
+  target_project_edits: 0
+owner: Codex /root
+opened_at: "2026-07-22"
+closed_at: "2026-07-22"

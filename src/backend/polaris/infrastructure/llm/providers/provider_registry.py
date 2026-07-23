@@ -9,7 +9,9 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, ClassVar
 
 from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo
@@ -41,35 +43,63 @@ class ProviderManager:
 
     def __init__(self) -> None:
         self._provider_classes: dict[str, type[BaseProvider]] = {}
+        self._factory_default_provider_classes: Mapping[str, type[BaseProvider]] = MappingProxyType({})
         self._provider_instances: dict[str, BaseProvider] = {}
         self._instance_timestamps: dict[str, float] = {}  # creation time per instance
         self._instance_failures: dict[str, int] = {}  # consecutive failure count
         self._instance_locks: dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
-        self._register_default_providers()
+        default_provider_classes = ProviderManager._register_default_providers(self)
+        # Factory route trust is sealed to bootstrap-owned concrete classes.
+        # Runtime registration may add ordinary providers, but cannot replace a
+        # governed key and inherit its physical-dispatch qualification.
+        # Call the exact base implementation and seal its explicit return value;
+        # virtual bootstrap overrides must never self-declare a trusted class.
+        self._factory_default_provider_classes = MappingProxyType(default_provider_classes)
 
-    def _register_default_providers(self) -> None:
+    def _register_default_providers(self) -> dict[str, type[BaseProvider]]:
         """Register all default providers"""
+        registered: dict[str, type[BaseProvider]] = {}
+
+        def register(provider_type: str, provider_class: type[BaseProvider]) -> None:
+            ProviderManager.register_provider(self, provider_type, provider_class)
+            registered[provider_type] = provider_class
+
         # Register enhanced providers
-        self.register_provider("codex_sdk", CodexSDKProvider)
-        self.register_provider("codex_cli", CodexCLIProvider)  # Use proper Codex CLI provider
-        self.register_provider("gemini_cli", GeminiCLIProvider)
-        self._register_optional_provider("minimax", "minimax_provider", "MiniMaxProvider")
-        self._register_optional_provider("kimi", "kimi_provider", "KimiProvider")
-        self.register_provider("gemini_api", GeminiAPIProvider)
+        register("codex_sdk", CodexSDKProvider)
+        register("codex_cli", CodexCLIProvider)  # Use proper Codex CLI provider
+        register("gemini_cli", GeminiCLIProvider)
+        minimax = ProviderManager._register_optional_provider(self, "minimax", "minimax_provider", "MiniMaxProvider")
+        if minimax is not None:
+            registered["minimax"] = minimax
+        kimi = ProviderManager._register_optional_provider(self, "kimi", "kimi_provider", "KimiProvider")
+        if kimi is not None:
+            registered["kimi"] = kimi
+        register("gemini_api", GeminiAPIProvider)
 
         # Register async Ollama provider (with sync adapter)
-        self._register_optional_provider(
+        ollama = ProviderManager._register_optional_provider(
+            self,
             "ollama",
             "async_ollama_provider",
             "AsyncOllamaProvider",
             async_adapter=True,
         )
+        if ollama is not None:
+            registered["ollama"] = ollama
 
         # The provider type strings are stable user configuration identifiers.
         # The implementation classes and modules use canonical provider names.
-        self._register_optional_provider("openai_compat", "openai_provider", "OpenAIProvider")
-        self.register_provider("anthropic_compat", AnthropicProvider)
+        openai = ProviderManager._register_optional_provider(
+            self,
+            "openai_compat",
+            "openai_provider",
+            "OpenAIProvider",
+        )
+        if openai is not None:
+            registered["openai_compat"] = openai
+        register("anthropic_compat", AnthropicProvider)
+        return registered
 
     def _register_optional_provider(
         self,
@@ -78,7 +108,7 @@ class ProviderManager:
         class_name: str,
         *,
         async_adapter: bool = False,
-    ) -> None:
+    ) -> type[BaseProvider] | None:
         """Register a provider only when its optional transport dependencies exist."""
         try:
             module = importlib.import_module(f".{module_name}", package=__package__)
@@ -87,8 +117,9 @@ class ProviderManager:
                 provider_class = AsyncProviderClassAdapter.create(provider_class)
         except (AttributeError, ImportError) as exc:
             logger.info("%s provider unavailable: %s", provider_type, exc)
-            return
-        self.register_provider(provider_type, provider_class)
+            return None
+        ProviderManager.register_provider(self, provider_type, provider_class)
+        return provider_class
 
     def register_provider(self, provider_type: str, provider_class: type[BaseProvider]) -> None:
         """Register a provider class"""
@@ -139,6 +170,75 @@ class ProviderManager:
         with self._global_lock:
             return self._provider_classes.get(resolved)
 
+    def is_factory_default_provider_implementation(
+        self,
+        provider_type: str,
+        provider_instance: object,
+    ) -> bool:
+        """Attest exact bootstrap implementation identity for Factory dispatch."""
+
+        resolved = self._normalize_provider_type(provider_type)
+        with self._global_lock:
+            sealed_class = self._factory_default_provider_classes.get(resolved)
+            registered_class = self._provider_classes.get(resolved)
+            return (
+                sealed_class is not None
+                and registered_class is sealed_class
+                and type(provider_instance) is sealed_class
+            )
+
+    def get_factory_default_provider_instance(self, provider_type: str) -> BaseProvider | None:
+        """Return a trusted default without constructing an untrusted replacement."""
+
+        resolved = self._normalize_provider_type(provider_type)
+        if not resolved:
+            return None
+        with self._global_lock:
+            sealed_class = self._factory_default_provider_classes.get(resolved)
+            if sealed_class is None or self._provider_classes.get(resolved) is not sealed_class:
+                return None
+            return self._get_provider_instance_locked(
+                resolved,
+                now=time.monotonic(),
+                required_class=sealed_class,
+            )
+
+    def _get_provider_instance_locked(
+        self,
+        resolved: str,
+        *,
+        now: float,
+        required_class: type[BaseProvider] | None = None,
+    ) -> BaseProvider | None:
+        """Get/create one instance while ``_global_lock`` is held."""
+
+        existing = self._provider_instances.get(resolved)
+        if existing is not None:
+            if required_class is not None and type(existing) is not required_class:
+                return None
+            age = now - self._instance_timestamps.get(resolved, now)
+            failures = self._instance_failures.get(resolved, 0)
+            if age <= self._INSTANCE_TTL_SECONDS and failures < self._FAILURE_EVICTION_THRESHOLD:
+                return existing
+            logger.debug(
+                "Evicting provider instance: type=%s age=%.1fs failures=%d",
+                resolved,
+                age,
+                failures,
+            )
+            self._provider_instances.pop(resolved, None)
+            self._instance_timestamps.pop(resolved, None)
+            self._instance_failures.pop(resolved, None)
+
+        provider_class = self._provider_classes.get(resolved)
+        if provider_class is None or (required_class is not None and provider_class is not required_class):
+            return None
+        instance = provider_class()
+        self._provider_instances[resolved] = instance
+        self._instance_timestamps[resolved] = time.monotonic()
+        self._instance_failures.pop(resolved, None)
+        return instance
+
     def get_provider_instance(self, provider_type: str) -> BaseProvider | None:
         """Get or create a provider instance.
 
@@ -150,40 +250,10 @@ class ProviderManager:
         if not resolved:
             return None
 
-        now = time.monotonic()
-
         # H-NEW Fix: Hold global_lock throughout check-evict-recreate to prevent TOCTOU race.
         # Another thread could evict/recreate between our check and eviction without this.
         with self._global_lock:
-            # Check under global lock: TTL and failure eviction.
-            existing = self._provider_instances.get(resolved)
-            if existing is not None:
-                age = now - self._instance_timestamps.get(resolved, now)
-                failures = self._instance_failures.get(resolved, 0)
-                if age <= self._INSTANCE_TTL_SECONDS and failures < self._FAILURE_EVICTION_THRESHOLD:
-                    return existing
-                # Evict stale/failed instance
-                logger.debug(
-                    "Evicting provider instance: type=%s age=%.1fs failures=%d",
-                    resolved,
-                    age,
-                    failures,
-                )
-                self._provider_instances.pop(resolved, None)
-                self._instance_timestamps.pop(resolved, None)
-                self._instance_failures.pop(resolved, None)
-
-            # Check if provider class is registered
-            provider_class = self._provider_classes.get(resolved)
-            if provider_class is None:
-                return None
-
-            # Create new instance under global lock to ensure atomicity
-            instance = provider_class()
-            self._provider_instances[resolved] = instance
-            self._instance_timestamps[resolved] = time.monotonic()
-            self._instance_failures.pop(resolved, None)  # reset on fresh instance
-            return instance
+            return self._get_provider_instance_locked(resolved, now=time.monotonic())
 
     def record_provider_failure(self, provider_type: str) -> None:
         """Record a provider failure for TTL-based eviction tracking.

@@ -45,7 +45,9 @@ dependencies = [
     "tantivy>=0.11.0",
     # LLM Providers
     "ollama>=0.1.0",
-    "openai>=1.10.0",
+    # B3.4 physical-attempt qualification: Codex SDK transport shape and
+    # retry semantics are audited against this exact version.
+    "openai==2.41.0",
     "anthropic>=0.18.0",
     # Messaging
     "nats-py>=0.1.0",
@@ -65,6 +67,7 @@ dependencies = [
     # Governance Schemas
     "jsonschema>=4.26.0",
     "referencing>=0.35.0",
+    "blake3>=1.0.0",
 ]
 
 [project.optional-dependencies]

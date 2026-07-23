@@ -85,6 +85,59 @@ def test_build_factory_audit_bundle_includes_machine_readable_evidence() -> None
     assert bundle["evidence_counts"]["event_types"] == {"stage_started": 1, "error": 1}
 
 
+def test_build_factory_audit_bundle_preserves_structured_stage_failure() -> None:
+    run = _make_failed_run()
+    run.metadata.update(
+        {
+            "current_stage": "chief_engineer_review",
+            "last_failed_stage": "chief_engineer_review",
+            "failure": {
+                "stage": "chief_engineer_review",
+                "code": "FACTORY_STAGE_FAILED",
+                "detail": "Chief Engineer portfolio review failed",
+                "recoverable": True,
+                "timestamp": "2026-05-06T00:02:00+00:00",
+            },
+            "stage_results": {
+                "chief_engineer_review": {
+                    "stage": "chief_engineer_review",
+                    "status": "failed",
+                    "metadata": {
+                        "error_code": "chief_engineer.llm_review_failed",
+                        "failure_class": "ROLE_LLM_REVIEW_FAILED",
+                        "responsible_layer": "chief_engineer",
+                        "root_cause_hint": "Request timeout (240.0s)",
+                        "recoverable": False,
+                    },
+                }
+            },
+        }
+    )
+
+    bundle = factory_router_module._build_factory_audit_bundle(
+        run=run,
+        events=[],
+        artifacts=[],
+        generated_at=datetime(2026, 5, 6, tzinfo=timezone.utc),
+    )
+
+    assert bundle["failure"] == {
+        "failure_type": "deterministic",
+        "code": "FACTORY_STAGE_FAILED",
+        "detail": "Chief Engineer portfolio review failed",
+        "phase": "failed",
+        "timestamp": "2026-05-06T00:02:00Z",
+        "recoverable": False,
+        "suggested_action": None,
+        "hops": [],
+        "stage": "chief_engineer_review",
+        "error_code": "chief_engineer.llm_review_failed",
+        "failure_class": "ROLE_LLM_REVIEW_FAILED",
+        "responsible_layer": "chief_engineer",
+        "root_cause_hint": "Request timeout (240.0s)",
+    }
+
+
 def test_get_factory_run_audit_bundle_reads_service_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -162,7 +215,12 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
     assert payload["artifacts"][0]["name"] == "evidence.json"
     assert payload["summary_md"] == "# Summary"
     assert payload["summary_json"] == {"status": "PENDING"}
-    assert payload["evidence_counts"]["events_total"] == 2
+    assert payload["evidence_counts"]["events_total"] == 3
+    assert payload["evidence_counts"]["event_types"] == {
+        "factory_run_admitted": 1,
+        "stage_started": 1,
+        "stage_completed": 1,
+    }
     assert payload["evidence_counts"]["artifacts"] == 1
     assert payload["factory_run_id"] == payload["run_id"]
     assert payload["workspace"] == str(tmp_path)

@@ -8,7 +8,14 @@ from typing import Any
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
+from polaris.cells.roles.kernel.public.directed_effect_contracts import (
+    DirectedEffectRuntimeDependenciesV1,
+)
 from polaris.cells.roles.kernel.public.turn_events import TurnEvent
+from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 
 
 class TransactionKernel(TurnTransactionController):
@@ -25,6 +32,10 @@ class TransactionKernel(TurnTransactionController):
         config: TransactionConfig | None = None,
         workflow_runtime: ExplorationWorkflowRuntime | None = None,
         llm_provider_stream: Callable | None = None,
+        directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
+        directed_effect_required: bool = False,
+        directed_effect_execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+        directed_effect_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     ) -> None:
         super().__init__(
             llm_provider=llm_provider,
@@ -32,6 +43,10 @@ class TransactionKernel(TurnTransactionController):
             config=config,
             workflow_runtime=workflow_runtime,
             llm_provider_stream=llm_provider_stream,
+            directed_effect_runtime=directed_effect_runtime,
+            directed_effect_required=directed_effect_required,
+            directed_effect_execution_attempt=directed_effect_execution_attempt,
+            directed_effect_execution_attempt_authority=directed_effect_execution_attempt_authority,
         )
 
     async def execute(

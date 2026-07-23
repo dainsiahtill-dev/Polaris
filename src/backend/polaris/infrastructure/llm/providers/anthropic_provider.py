@@ -5,6 +5,11 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.llm.engine.provider_native_request import (
+    build_anthropic_native_messages,
+    convert_tool_choice_to_anthropic,
+    convert_tools_to_anthropic,
+)
 from polaris.kernelone.llm.provider_contract import AdapterProviderContract
 from polaris.kernelone.llm.providers import (
     THINKING_PREFIX,
@@ -217,6 +222,31 @@ def _requires_enabled_thinking(config: dict[str, Any], model: str) -> bool:
     return "api.kimi.com/coding" in token or "kimi-for-coding" in token
 
 
+_MIN_ANTHROPIC_REASONING_BUDGET_TOKENS = 1_024
+
+
+def _apply_reasoning_budget_to_thinking(
+    thinking: dict[str, Any] | None,
+    *,
+    config: dict[str, Any],
+    max_tokens: int,
+) -> dict[str, Any] | None:
+    """Bind a semantic reasoning cap only when manual thinking is active."""
+
+    if thinking is None:
+        return None
+    value = config.get("reasoning_budget_tokens")
+    if value is None:
+        return thinking
+    if type(value) is not int or value < _MIN_ANTHROPIC_REASONING_BUDGET_TOKENS:
+        raise ValueError("reasoning_budget_tokens_invalid")
+    if value >= max_tokens:
+        raise ValueError("reasoning_budget_tokens_must_be_less_than_max_tokens")
+    bounded = dict(thinking)
+    bounded["budget_tokens"] = value
+    return bounded
+
+
 def _normalize_anthropic_thinking(value: Any, *, require_enabled: bool = False) -> dict[str, Any] | None:
     """Return a provider-safe Anthropic thinking config.
 
@@ -258,15 +288,16 @@ def _sanitize_anthropic_payload_tool_choice(payload: dict[str, Any], config: dic
 
 def _sanitize_anthropic_payload_options(payload: dict[str, Any], config: dict[str, Any], model: str) -> None:
     require_enabled = _requires_enabled_thinking(config, model)
-    if "thinking" not in payload:
-        if require_enabled:
-            payload["thinking"] = {"type": "enabled"}
+    normalized = _normalize_anthropic_thinking(payload.get("thinking"), require_enabled=require_enabled)
+    normalized = _apply_reasoning_budget_to_thinking(
+        normalized,
+        config=config,
+        max_tokens=int(payload.get("max_tokens") or 0),
+    )
+    if normalized is None:
+        payload.pop("thinking", None)
     else:
-        normalized = _normalize_anthropic_thinking(payload.get("thinking"), require_enabled=require_enabled)
-        if normalized is None:
-            payload.pop("thinking", None)
-        else:
-            payload["thinking"] = normalized
+        payload["thinking"] = normalized
     _sanitize_anthropic_payload_tool_choice(payload, config, model)
 
 
@@ -285,59 +316,7 @@ def _coerce_disable_parallel_tool_use(config: dict[str, Any]) -> bool | None:
 
 
 def _convert_tools_to_anthropic(tools: Any) -> list[dict[str, Any]]:
-    if not isinstance(tools, list):
-        return []
-
-    converted: list[dict[str, Any]] = []
-    for item in tools:
-        if not isinstance(item, dict):
-            continue
-
-        # 已经是 Anthropic 格式
-        if isinstance(item.get("name"), str) and isinstance(item.get("input_schema"), dict):
-            converted.append(dict(item))
-            continue
-
-        # OpenAI function calling 格式 -> Anthropic 格式
-        if str(item.get("type") or "").strip().lower() == "function":
-            function_block = item.get("function")
-            if not isinstance(function_block, dict):
-                continue
-            name = str(function_block.get("name") or "").strip()
-            if not name:
-                continue
-            parameters = function_block.get("parameters")
-            input_schema = parameters if isinstance(parameters, dict) else {"type": "object", "properties": {}}
-            tool: dict[str, Any] = {
-                "name": name,
-                "description": str(function_block.get("description") or ""),
-                "input_schema": input_schema,
-            }
-            for key in ("cache_control", "defer_loading", "strict"):
-                if function_block.get(key) is not None:
-                    tool[key] = function_block[key]
-                elif item.get(key) is not None:
-                    tool[key] = item[key]
-            converted.append(tool)
-            continue
-
-        # 宽松兜底：支持 {name, description, parameters}
-        name = str(item.get("name") or "").strip()
-        if not name:
-            continue
-        parameters = item.get("parameters")
-        input_schema = parameters if isinstance(parameters, dict) else {"type": "object", "properties": {}}
-        tool = {
-            "name": name,
-            "description": str(item.get("description") or ""),
-            "input_schema": input_schema,
-        }
-        for key in ("cache_control", "defer_loading", "strict"):
-            if item.get(key) is not None:
-                tool[key] = item[key]
-        converted.append(tool)
-
-    return converted
+    return convert_tools_to_anthropic(tools)
 
 
 def _convert_tool_choice_to_anthropic(
@@ -345,37 +324,10 @@ def _convert_tool_choice_to_anthropic(
     *,
     disable_parallel_tool_use: bool | None = None,
 ) -> dict[str, Any] | None:
-    def with_parallel_flag(value: dict[str, Any]) -> dict[str, Any]:
-        if disable_parallel_tool_use is not None and value.get("type") in {"auto", "any", "tool"}:
-            value = dict(value)
-            value["disable_parallel_tool_use"] = disable_parallel_tool_use
-        return value
-
-    if isinstance(tool_choice, dict):
-        # 兼容 OpenAI 样式: {"type": "function", "function": {"name": "..."}}
-        if str(tool_choice.get("type") or "").strip().lower() == "function":
-            function_block = tool_choice.get("function")
-            if isinstance(function_block, dict):
-                name = str(function_block.get("name") or "").strip()
-                if name:
-                    return with_parallel_flag({"type": "tool", "name": name})
-        if isinstance(tool_choice.get("type"), str):
-            converted = dict(tool_choice)
-            if str(converted.get("type") or "").strip().lower() == "function":
-                converted["type"] = "tool"
-            return with_parallel_flag(converted)
-        return None
-
-    token = str(tool_choice or "").strip().lower()
-    if not token:
-        return None
-    if token == "none":
-        return {"type": "none"}
-    if token == "auto":
-        return with_parallel_flag({"type": "auto"})
-    if token == "required":
-        return with_parallel_flag({"type": "any"})
-    return with_parallel_flag({"type": "tool", "name": str(tool_choice)})
+    return convert_tool_choice_to_anthropic(
+        tool_choice,
+        disable_parallel_tool_use=disable_parallel_tool_use,
+    )
 
 
 def _supports_tool_choice(config: dict[str, Any], model: str) -> bool:
@@ -440,6 +392,11 @@ def _apply_anthropic_options(payload: dict[str, Any], config: dict[str, Any], mo
         config.get("thinking"),
         require_enabled=_requires_enabled_thinking(config, model),
     )
+    thinking = _apply_reasoning_budget_to_thinking(
+        thinking,
+        config=config,
+        max_tokens=int(payload.get("max_tokens") or 0),
+    )
     if thinking is not None:
         payload["thinking"] = thinking
     system_prompt = config.get("system")
@@ -464,6 +421,32 @@ def _apply_anthropic_tools(payload: dict[str, Any], config: dict[str, Any], mode
     if _supports_tool_choice(config, model):
         payload["tool_choice"] = tool_choice
         return
+
+
+def _provider_native_messages(
+    prompt: str,
+    config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Return exact Anthropic messages/system for the provider wire.
+
+    Factory carries its final role-aware transcript as ``chat_messages``.  It
+    must not be flattened into one user prompt or sent with an invalid
+    ``system`` message role.  Legacy adapter-native ``messages`` remain
+    pass-through for ordinary non-Factory calls.
+    """
+
+    chat_messages = config.get("chat_messages")
+    if isinstance(chat_messages, list) and chat_messages:
+        return build_anthropic_native_messages(chat_messages, fallback_prompt=prompt)
+    adapter_messages = _CONTRACT.extract_messages({"config": config})
+    if adapter_messages:
+        return adapter_messages, None
+    return [{"role": "user", "content": [{"type": "text", "text": prompt}]}], None
+
+
+def _temperature(config: dict[str, Any]) -> float:
+    value = config.get("temperature")
+    return float(value) if value is not None else 0.2
 
 
 class AnthropicProvider(BaseProvider):
@@ -607,19 +590,17 @@ class AnthropicProvider(BaseProvider):
         api_path = str(config.get("api_path") or DEFAULT_MESSAGES_PATH).strip()
         url = join_url(base, api_path, strip_prefixes=["/v1"])
 
-        # FIXED: Use adapter-built messages from config if available.
-        # This is critical for proper transcript handling in multi-turn conversations.
-        # Adapter.build_request() builds proper messages from ConversationState.transcript.
-        adapter_messages = _CONTRACT.extract_messages({"config": config})
-        messages = adapter_messages or [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        messages, message_system = _provider_native_messages(prompt, config)
 
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": _resolve_max_tokens(config, 256),
             "messages": messages,
-            "temperature": float(config.get("temperature") or 0.2),
+            "temperature": _temperature(config),
         }
         _apply_anthropic_options(payload, config, model)
+        if message_system is not None:
+            payload["system"] = message_system
         _apply_anthropic_tools(payload, config, model)
         overrides = config.get("request_overrides")
         if isinstance(overrides, dict):
@@ -694,19 +675,18 @@ class AnthropicProvider(BaseProvider):
         if not api_key:
             raise RuntimeError("API key is required for Anthropic provider")
 
-        # FIXED: Use adapter-built messages from config if available.
-        # This is critical for proper transcript handling in multi-turn conversations.
-        adapter_messages = _CONTRACT.extract_messages({"config": config})
-        messages = adapter_messages or [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        messages, message_system = _provider_native_messages(prompt, config)
 
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": _resolve_max_tokens(config, 256),
             "messages": messages,
-            "temperature": float(config.get("temperature") or 0.2),
+            "temperature": _temperature(config),
             "stream": True,
         }
         _apply_anthropic_options(payload, config, model)
+        if message_system is not None:
+            payload["system"] = message_system
         _apply_anthropic_tools(payload, config, model)
 
         overrides = config.get("request_overrides")

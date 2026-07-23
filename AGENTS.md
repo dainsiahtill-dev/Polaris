@@ -126,11 +126,11 @@ case "$WORK_DIR" in
   *) echo "unsafe WORK_DIR: $WORK_DIR" >&2; exit 2 ;;
 esac
 
-NO_PROXY="*" no_proxy="*" timeout --kill-after=30s 600s \
+NO_PROXY="*" no_proxy="*" timeout --kill-after=30s 6000s \
   python src/backend/scripts/factory_bench/run_factory_bench.py \
   --project-ids "$PROJECT_ID" \
   --work-dir "$WORK_DIR" \
-  --timeout 540 \
+  --timeout 5400 \
   --max-failed 0 \
   --real-run-timeout 120 \
   --launcher-instance-mode isolated \
@@ -143,6 +143,7 @@ NO_PROXY="*" no_proxy="*" timeout --kill-after=30s 600s \
 - 必须保留 `set -euo pipefail`，禁止用 `2>&1 | tail` 隐藏 runner 失败退出码。
 - 必须显式传 `--launcher-instance-mode isolated`，即使当前默认也是 isolated。
 - 必须显式传 `--bench-session-reporting off`。isolated 项目的可见性来自 Instance Registry/Launcher 和该项目自己的 backend/runtime.v2；共享主后端 `/v2/factory/bench/sessions` 只是内部兼容观测桥，不是运行依赖，也不得成为并发压测路径。
+- 完整 L1-L12 可运行性验收必须保留 runner 的 `5400s` 单项目预算和外层 `6000s` 守护预算，禁止把它们缩成 `540s/600s` 后再把 Provider deadline timeout 归因为模型或平台随机失败。R38 实证：三波 Director + QA/safety 先保留 `310s` 后，`540s` Factory 总预算只给配置为 `600s` 的 CE 物理请求留下 `188s`，必然触发 `provider_stream_timeout:188s`。短预算只允许显式的启动/失败路径 smoke，不能作为 runnable 或 `COMPLETED_VERIFIED` 证据。
 - `WORK_DIR` 只能是 `/tmp/factory-bench-*` 或用户明确授权的临时目录；删除前必须做路径 guard。
 - Runner 启动后会在 Launcher 注册 `kind=bench_project` 的内部测试实例，每个项目应有独立 backend/frontend 端口、独立 workspace、独立 `/v2/ws/runtime` 和独立 ContextOS。
 - `timeout` 只会杀 runner；已启动的 isolated backend/frontend 可能继续留在 Launcher 中供观察。异常中断后必须从 Launcher 停止或删除对应测试实例。

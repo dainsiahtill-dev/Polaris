@@ -644,10 +644,10 @@ class TestWorkflowHandoff:
     """测试workflow移交"""
 
     @pytest.mark.asyncio
-    async def test_handoff_triggered_by_async_tool(
+    async def test_unregistered_async_looking_tool_fails_closed(
         self, controller, mock_llm_provider, mock_tool_runtime, basic_context, basic_tool_definitions
     ) -> None:
-        """异步工具触发handoff"""
+        """A tool absent from the captured narrowed set cannot manufacture a handoff."""
         mock_llm_provider.return_value = {
             "content": "提交 PR。",
             "tool_calls": [_native_tool_call("create_pull_request", {"title": "PR"})],
@@ -655,30 +655,13 @@ class TestWorkflowHandoff:
             "usage": {"prompt_tokens": 100, "completion_tokens": 30},
         }
 
-        result = await controller.execute(
-            turn_id="turn_async", context=basic_context, tool_definitions=basic_tool_definitions
-        )
+        with pytest.raises(RuntimeError, match="outside narrowed set: create_pull_request"):
+            await controller.execute(
+                turn_id="turn_async", context=basic_context, tool_definitions=basic_tool_definitions
+            )
 
-        # 移交到workflow
-        assert result["kind"] == "handoff_workflow"
-        # workflow_context存在且携带异步 receipt 的 handoff 语义
-        assert result["workflow_context"] is not None
-        assert result["workflow_context"]["handoff_reason"] == "async_operation"
-        assert result["workflow_context"]["initial_tools"] == ["create_pull_request"]
-        assert result["metrics"]["workflow.handoff_rate"] == 1.0
-        # FIX: 比较字符串值而非枚举值
-        assert result["decision"]["kind"] == TurnDecisionKind.HANDOFF_WORKFLOW.value
-        # At handoff time, pending_async_receipts is empty because tools haven't executed yet
-        # The tool_batch info is preserved in recoverable_context for later execution
-        recoverable = result["workflow_context"]["recoverable_context"]
-        assert "tool_batch" in recoverable
-        assert recoverable["tool_batch"] is not None
-        assert len(recoverable["tool_batch"].get("async_receipts", [])) == 1
-        assert recoverable["tool_batch"].get("async_receipts", [])[0]["tool_name"] == "create_pull_request"
-
-        # handoff 路径不能偷偷执行工具，也不能继续发起第二轮 LLM
+        # An unregistered call must never reach the physical tool runtime.
         assert mock_tool_runtime.call_count == 0
-        assert mock_llm_provider.call_count == 1
 
     @pytest.mark.asyncio
     async def test_many_tools_go_through_tool_batch(

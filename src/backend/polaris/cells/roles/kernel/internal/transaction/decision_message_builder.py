@@ -62,7 +62,11 @@ def _line_conflicts_with_quality_repair(line: str) -> bool:
     )
 
 
-def _sanitize_materialize_positive_task_contract_line(line: str) -> str | None:
+def _sanitize_materialize_positive_task_contract_line(
+    line: str,
+    *,
+    verification_deferred_to_governed_phase: bool = False,
+) -> str | None:
     """Keep positive tool templates while stripping negative benchmark wording."""
     stripped = line.strip()
     lowered = stripped.lower()
@@ -93,6 +97,12 @@ def _sanitize_materialize_positive_task_contract_line(line: str) -> str | None:
             "Step 3: use edit_blocks, edit_file, search_replace, or repo_apply_diff to perform the replacement."
         )
     if stripped.startswith("COMPLETION CHECK:"):
+        if verification_deferred_to_governed_phase:
+            return (
+                "COMPLETION CHECK: Finish this turn only after the required write/edit tools exposed in the "
+                "current physical schema have been emitted. Verification remains mandatory in a later governed "
+                "continuation or quality phase."
+            )
         return (
             "COMPLETION CHECK: Finish only after the required write/edit and verification tools "
             "for this turn have been emitted."
@@ -215,6 +225,21 @@ def _compact_tool_failure_messages(
     return result
 
 
+def _physical_tool_names(tool_definitions: list[dict[str, Any]]) -> list[str]:
+    """Project the exact tool names present in the final physical request."""
+
+    names: list[str] = []
+    for definition in tool_definitions:
+        function_payload = definition.get("function")
+        if isinstance(function_payload, dict):
+            name = str(function_payload.get("name") or "").strip()
+        else:
+            name = str(definition.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 def build_decision_messages(
     context: list[dict[str, Any]],
     tool_definitions: list[dict[str, Any]],
@@ -318,6 +343,22 @@ def build_decision_messages(
             "严禁请求用户确认或等待批准——用户已授权执行，请立即调用工具实施修改。"
         )
     messages.append({"role": "system", "content": single_batch_guard, "metadata": {"plane": "control"}})
+    physical_tool_names = _physical_tool_names(tool_definitions)
+    if physical_tool_names:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "CURRENT TURN PHYSICAL TOOL SCHEMA: "
+                    + ", ".join(physical_tool_names)
+                    + ". Only these tools are callable in this Provider request; this exact schema "
+                    "supersedes broader role-capability lists. Tools not listed here are unavailable "
+                    "in this Provider request. Never claim or promise a tool action that this schema "
+                    "does not expose."
+                ),
+                "metadata": {"plane": "control", "kind": "physical_tool_schema_truth"},
+            }
+        )
     if _is_quality_repair:
         messages.append(
             {
@@ -361,7 +402,12 @@ def build_decision_messages(
             for line in task_contract_hint.split("\n"):
                 if _is_quality_repair and _line_conflicts_with_quality_repair(line):
                     continue
-                positive_line = _sanitize_materialize_positive_task_contract_line(line)
+                positive_line = _sanitize_materialize_positive_task_contract_line(
+                    line,
+                    verification_deferred_to_governed_phase=bool(
+                        _task_contract_metadata.get("verification_deferred_to_governed_phase")
+                    ),
+                )
                 if positive_line is not None:
                     positive_lines.append(positive_line)
             if positive_lines:

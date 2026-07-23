@@ -1,0 +1,79 @@
+card_id: vc-20260722-factory-r28-provider-stream-terminal-stall
+classification: execution_fact_chain
+status: closed
+bench_status: unblocked
+bug_summary: >-
+  During R27 the separately claimed Chief Engineer schema-repair request obtained
+  HTTP 200 and entered physical streaming, then the provider socket reached
+  CLOSE-WAIT while Factory never appended a terminal provider-attempt fact. The
+  backend remained CPU-saturated and the chain stayed in chief_engineer_review
+  until the authorized instance was stopped. Because an independently proven
+  stale cross-instance WebSocket was concurrently loading the same event loop,
+  R27 could not distinguish provider-stream EOF handling from starvation. R28
+  reproduced the missing terminal deterministically: physical stream consumption
+  completed, but an async response/session context whose __aexit__ never returned
+  was awaited without any bound, so neither the durable terminal fact nor the
+  in-flight release could occur. The gate now bounds cleanup, cancels the stuck
+  cleanup task, emits provider_stream_cleanup_timeout as one failed terminal,
+  leaks zero buffered output, and never retries that non-network failure.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  bench_run_id: eaeb3ecee000
+  factory_run_id: factory_1d2ba955276b
+  primary_call_id: ca2de556a9dd4e72b60d9c5197607a3e
+  primary_age_before_repair_seconds: 424
+  primary_lifecycle_warning: LLM_lifecycle_appears_unclosed
+  repair_http_status: 200
+  repair_wire_max_tokens: 8192
+  repair_reasoning_budget_present: true
+  provider_socket_state: CLOSE-WAIT
+  backend_log_last_update_before_stop: "2026-07-23T03:56:23+08:00"
+  backend_stopped_at: "2026-07-22T20:13:21Z"
+  terminal_fact_observed: false
+  terminal_phase: event_wait_timeout
+hypotheses_to_disprove:
+  response_content_iterator_did_not_surface_eof: disproved_by_normal_eof_and_done_tests
+  stream_context_cleanup_hung_before_terminal_append: confirmed_root_cause
+  cross_instance_ws_starvation_prevented_terminal_progress: concurrent_r27_amplifier_closed_by_r27
+root_cause:
+  code: provider_stream_cleanup_unbounded
+  owner: roles.kernel.final_provider_attempt_gate
+  exact_boundary: dispatch_stream_async_response_context_exit
+  prior_behavior: await___aexit___forever_before_terminal_append
+  fixed_behavior: bounded_cleanup_then_one_failed_terminal_and_zero_output_release
+implementation:
+  production_file: >-
+    src/backend/polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_gate.py
+  timeout_seconds: 5
+  cancellation_grace_seconds: 1
+  terminal_error_code: provider_stream_cleanup_timeout
+  retry_classification: non_network_non_retryable
+  buffered_output_on_failure: 0
+  automatic_detection: durable_provider_attempt_terminal_error
+  regression_tests:
+    - test_async_stream_cleanup_timeout_fails_terminal_and_leaks_zero_items
+    - test_factory_governed_stream_cleanup_timeout_is_terminal_and_not_retried
+required_gates:
+  deterministic_eof_reproduction: pass
+  cleanup_timeout_reproduction: pass
+  terminal_fact_exactly_once: pass
+  no_duplicate_physical_retry_after_terminal: pass
+  focused_tests: pass_109
+  roles_kernel_cell_full_tests: pass_2746
+  provider_full_tests: pass_106
+  factory_pipeline_full_tests: pass_1227
+  kernelone_engine_and_anthropic_tests: pass_324
+  static_gates: pass
+  post_edit_codegraph_review: pass
+  stable_source_snapshot: pass
+scheduling:
+  bench_schedulable: true
+  authorization_scope: one_fresh_isolated_l1_04_r29_acceptance_run
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: consume_exactly_one_r29_then_freeze_and_audit

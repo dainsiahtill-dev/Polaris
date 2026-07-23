@@ -149,24 +149,22 @@ class TestParseOperations:
         assert isinstance(ops, list)
 
 
-class TestApplyOperation:
-    """Tests for apply_operation function."""
+class TestMutationAuthorityRemoval:
+    """Raw protocol parsing must never expose a Director mutation authority."""
 
-    def test_apply_operation_imports(self) -> None:
-        """Test that apply_operation can be imported."""
-        from polaris.cells.director.tasking.internal.patch_protocol import (
-            apply_operation,
-        )
+    def test_patch_protocol_has_no_apply_functions(self) -> None:
+        from polaris.cells.director.tasking.internal import patch_protocol
 
-        assert callable(apply_operation)
+        for name in ("apply_operation", "apply_all_operations", "apply_operations_strict"):
+            assert not hasattr(patch_protocol, name)
 
-    def test_apply_all_operations_imports(self) -> None:
-        """Test that apply_all_operations can be imported."""
-        from polaris.cells.director.tasking.internal.patch_protocol import (
-            apply_all_operations,
-        )
+    def test_tasking_public_surfaces_have_no_apply_functions(self) -> None:
+        import polaris.cells.director.tasking as tasking
+        import polaris.cells.director.tasking.public as public
 
-        assert callable(apply_all_operations)
+        for surface in (tasking, public):
+            for name in ("apply_operation", "apply_all_operations", "apply_operations_strict"):
+                assert not hasattr(surface, name)
 
 
 class TestApplyResult:
@@ -222,8 +220,6 @@ class TestExports:
         expected = [
             "ApplyIntegrity",
             "ApplyResult",
-            "apply_all_operations",
-            "apply_operation",
             "parse_all_operations",
             "parse_delete_operations",
             "parse_full_file_blocks",
@@ -233,6 +229,9 @@ class TestExports:
 
         for name in expected:
             assert hasattr(patch_protocol, name), f"Missing export: {name}"
+
+        for name in ("apply_operation", "apply_all_operations", "apply_operations_strict"):
+            assert name not in patch_protocol.__all__
 
     def test_edit_type_exports(self) -> None:
         """Test that EditType is exported."""

@@ -47,6 +47,9 @@ from polaris.cells.roles.kernel.internal.transaction.slm_coprocessor import (
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_continuation_prompt_metadata,
 )
+from polaris.cells.roles.kernel.public.directed_effect_contracts import (
+    DirectedEffectRuntimeDependenciesV1,
+)
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
@@ -59,6 +62,9 @@ def create_role_transaction_kernel(
     role: str,
     profile: RoleProfile,
     request: RoleTurnRequest,
+    *,
+    directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
+    directed_effect_required: bool | None = None,
 ) -> TransactionKernel:
     """Create a kernel-backed TransactionKernel through the public Cell boundary.
 
@@ -70,7 +76,14 @@ def create_role_transaction_kernel(
         create_transaction_kernel,
     )
 
-    return create_transaction_kernel(kernel, role, profile, request)
+    return create_transaction_kernel(
+        kernel,
+        role,
+        profile,
+        request,
+        directed_effect_runtime=directed_effect_runtime,
+        directed_effect_required=directed_effect_required,
+    )
 
 
 __all__ = [

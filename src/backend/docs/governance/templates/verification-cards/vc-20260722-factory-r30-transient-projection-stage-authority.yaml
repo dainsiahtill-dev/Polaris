@@ -1,0 +1,83 @@
+card_id: vc-20260722-factory-r30-transient-projection-stage-authority
+classification: execution_fact_chain
+status: closed
+bench_status: schedulable_once
+bug_summary: >-
+  The single authorized R30 isolated L1-04 run completed PM and Chief Engineer,
+  produced three accepted blueprints, and then admitted the first Director
+  TaskRuntime child. RunCompletionWaiter immediately returned a transient,
+  non-authoritative task_runtime_fact_projection_not_ready diagnostic as if it
+  were a canonical terminal result. Factory therefore returned from stage logic
+  and closed the stage-bound role-evidence authority while the Director child
+  was still active and approaching Provider transport. The child then failed
+  before physical dispatch with factory_role_evidence_authority_closed, produced
+  no source files, and blocked downstream tasks and QA.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  bench_run_id: 468c3f16e20d
+  factory_run_id: factory_27942d18f703
+  director_run_id: director-ed76ca80579f
+  wall_clock_seconds: 232.6
+  terminal_stage: director_dispatch
+  stage_error_code: director.run_status_non_success
+  readiness_reason_code: task_runtime_fact_projection_not_ready
+  director_provider_error: factory_role_evidence_authority_closed
+  task_runtime_rows_at_stage_return:
+    in_progress: 1
+    completed: 1
+    blocked: 2
+  source_files_materialized: 0
+  qa_reached: false
+  completed_verified: false
+final_request_audit:
+  pm_role_identity: pass
+  chief_engineer_role_identity: pass
+  director_request_absent_because_stage_authority_closed_before_transport: true
+  qa_request_absent_because_upstream_failed: true
+  readable_context_refs: 6
+  readable_final_physical_request_refs:
+    - a93fa17a3df11c93ed49b40c
+    - 2e143ded7a3406137ab174d9
+  pm_final_request:
+    model: kimi-for-coding
+    final_request_tokens: 2596
+    context_window_utilization: 0.0099
+    evidence_coverage_pass: true
+  chief_engineer_final_request:
+    model: kimi-for-coding
+    final_request_tokens: 4889
+    context_window_utilization: 0.0187
+    evidence_coverage_pass: true
+primary_root_cause:
+  code: non_authoritative_projection_readiness_returned_as_terminal
+  owner: factory.pipeline.run_completion
+  exact_boundary: RunCompletionWaiter.wait
+  current_behavior: >-
+    canonical_terminal_result emits a blocked diagnostic while TaskRuntime's
+    fact-only projection is temporarily not ready, and wait returns every
+    non-null result without checking canonical_authoritative.
+  required_behavior: >-
+    Return only an explicitly canonical_authoritative terminal result. Treat a
+    transient non-authoritative readiness diagnostic as an observation and
+    continue waiting within the existing absolute deadline. If no authoritative
+    terminal fact arrives before the deadline, fail closed without granting
+    completion or closing the child boundary early.
+required_gates:
+  red_r30_transient_readiness_reproduction: pass
+  authoritative_terminal_after_transient_readiness: pass
+  persistent_missing_terminal_still_fails_closed: pass
+  run_completion_focused_tests: "12 execution-control-plane + 9 stage-wait tests passed"
+  factory_execution_control_plane_tests: "12 passed"
+  factory_pipeline_full_tests: "1230 passed, 2 warnings"
+  static_gates: "ruff, ruff-format, mypy, compileall, diff-check pass"
+  post_edit_codegraph_review: pass_no_concrete_defect
+scheduling:
+  bench_schedulable: true
+  authorized_acceptance_bench_runs: 1
+  authorization_scope: one_fresh_isolated_l1_04_r31_only
+  next_action: run_exactly_one_r31_then_freeze_and_audit_all_final_provider_requests

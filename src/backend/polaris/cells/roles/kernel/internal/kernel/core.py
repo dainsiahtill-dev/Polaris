@@ -33,6 +33,9 @@ from polaris.cells.roles.kernel.internal.output_parser import OutputParser
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker
 from polaris.cells.roles.kernel.public.config import KernelConfig, get_default_config
+from polaris.cells.roles.kernel.public.directed_effect_contracts import (
+    DirectedEffectRuntimeDependenciesV1,
+)
 from polaris.cells.roles.profile.public.service import (
     RoleProfileRegistry,
     RoleTurnRequest,
@@ -105,6 +108,8 @@ class RoleExecutionKernel:
         quality_checker: IQualityChecker | None = None,
         event_emitter: IEventEmitter | None = None,
         context_gateway_config_factory: ContextGatewayConfigFactory | None = None,
+        directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
+        directed_effect_required: bool = False,
     ) -> None:
         """初始化执行内核
 
@@ -133,6 +138,15 @@ class RoleExecutionKernel:
         self._injected_quality_checker = quality_checker
         self._injected_event_emitter = event_emitter
         self._context_gateway_config_factory = context_gateway_config_factory
+        if (
+            directed_effect_runtime is not None
+            and type(directed_effect_runtime) is not DirectedEffectRuntimeDependenciesV1
+        ):
+            raise TypeError("directed_effect_runtime must be exactly DirectedEffectRuntimeDependenciesV1")
+        if directed_effect_required and directed_effect_runtime is None:
+            raise ValueError("directed_effect_required needs directed_effect_runtime")
+        self._directed_effect_runtime = directed_effect_runtime
+        self._directed_effect_required = bool(directed_effect_required)
 
         # M1: 工具网关 DI 支持
         self._tool_gateway = tool_gateway
@@ -217,6 +231,18 @@ class RoleExecutionKernel:
     def context_gateway_config_factory(self) -> ContextGatewayConfigFactory | None:
         """Return the runtime-injected ContextGatewayConfig factory, if any."""
         return self._context_gateway_config_factory
+
+    @property
+    def directed_effect_runtime(self) -> DirectedEffectRuntimeDependenciesV1 | None:
+        """Return the explicitly injected DEO runtime bundle, if any."""
+
+        return self._directed_effect_runtime
+
+    @property
+    def directed_effect_required(self) -> bool:
+        """Whether this production root must fail closed without DEO authority."""
+
+        return self._directed_effect_required
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 主要公开 API

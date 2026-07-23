@@ -1,0 +1,70 @@
+card_id: vc-20260722-factory-r13-stream-terminal-evidence-projection
+classification: execution_fact_projection
+status: complete
+bench_status: closed
+bug_summary: >-
+  The ninth authorized fresh isolated L1-04 run proved R12: the streamed CE
+  Provider call completed and produced a blueprint artifact within 183.5
+  seconds. roles.runtime accumulated final_request_context_audit and
+  context_snapshot_ref from terminal stream event metadata, but discarded that
+  metadata when a RoleTurnResult was present. Factory correctly failed closed
+  with chief_engineer.final_request_audit_missing before Director transport.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: 844b872e8799
+  factory_run_id: factory_6839c0348e4a
+  stage: chief_engineer_review
+  error_code: chief_engineer.final_request_audit_missing
+  wall_clock_seconds: 183.5
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_artifact_materialized: true
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r13/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r13/audits/844b872e8799/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r13/L1-04.chain.log
+root_cause:
+  code: stream_terminal_metadata_projection_dropped
+  summary: >-
+    RoleRuntimeService.execute_role_task merged event metadata into
+    stream_metadata, but the complete-event branch converted only the nested
+    RoleTurnResult through _to_contract_result. The terminal event's audited
+    final-request metadata never reached RoleExecutionResultV1.
+  fix: >-
+    Merge accumulated terminal stream metadata into the contract result after
+    canonical RoleTurnResult projection. This preserves structured output,
+    status, usage, artifacts, errors and turn history while restoring the exact
+    audited context_snapshot_ref and final_request_context_audit. Error and
+    incomplete-stream branches remain fail closed; non-stream execution is
+    unchanged.
+required_gates:
+  regression_test_red_green: pass
+  focused_tests: "13 passed"
+  roles_runtime_full: "696 passed, 2 warnings"
+  factory_pipeline_full: "1219 passed, 2 warnings"
+  roles_adapters_full: "1291 passed, 2 warnings"
+  ruff: pass
+  ruff_format: pass
+  mypy: pass
+  compileall: pass
+  codegraph_structural_review: pass
+  source_snapshot_stability: pass
+source_hashes:
+  roles_runtime_service_sha256: e8bfc94341fe004d90974fe90f7f15156686011f76720b0cfa6bba74013d64a3
+  regression_test_sha256: b4385a150b3cbe6f35bd3e11ef6444defaf6f2cda01e6542119fbc22a1a8b95e
+scheduling:
+  bench_schedulable: true
+  authorization_scope: delegated_to_pre_bench_one_shot_gate
+  next_action: recapture_source_snapshot_then_authorize_one_fresh_isolated_l1_04
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

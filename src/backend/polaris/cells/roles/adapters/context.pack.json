@@ -5,10 +5,13 @@
     "cell.yaml",
     "public/contracts.py",
     "public/service.py",
+    "internal/director/directed_effect_mutation_port.py",
+    "internal/director/execution_tools.py",
     "internal/__init__.py",
     "internal/base.py"
   ],
   "notes": [
-    "Transitional context pack; generated descriptor/impact/verify packs are produced by governance pipeline."
+    "Transitional context pack; generated descriptor/impact/verify packs are produced by governance pipeline.",
+    "DEO-4 closed: the canonical mutation port is the sole exact-instance physical executor consumer; post-consume failures durably recover and the production alias/taint/importlib/re-export fence is frozen."
   ]
 }

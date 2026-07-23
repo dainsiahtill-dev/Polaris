@@ -130,6 +130,8 @@ verification:
   - tests/test_roles_state_ownership.py
   - tests/test_roles_runtime_bus.py
   - polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py
+  - polaris/cells/roles/runtime/public/tests/test_directed_effect_attempt_validation.py
+  - polaris/cells/roles/runtime/public/tests/test_directed_effect_port_wiring.py
   - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
   gaps:
   - Role kernel is converged; business-role cell extraction still has remaining call-site

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
-from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
+from polaris.cells.roles.adapters.internal.director.execution_tools import _create_director_tool_executor
 from polaris.kernelone.events.message_bus import MessageType
 
 
@@ -50,7 +50,7 @@ def _disable_jetstream_publish(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_write_file_tool_broadcasts_file_written_event(tmp_path: Path) -> None:
     bus = RecordingMessageBus()
-    executor = DirectorToolExecutor(str(tmp_path), message_bus=bus)
+    executor = _create_director_tool_executor(str(tmp_path), message_bus=bus)
 
     result = executor.execute_tool(
         "write_file",
@@ -76,7 +76,7 @@ async def test_write_file_tool_broadcasts_file_written_event(tmp_path: Path) -> 
 
 
 def test_write_file_tool_persists_file_edit_event_without_message_bus(tmp_path: Path) -> None:
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool(
         "write_file",
@@ -104,7 +104,7 @@ async def test_edit_file_tool_broadcasts_modify_event(tmp_path: Path) -> None:
     target.parent.mkdir(parents=True)
     target.write_text("export const value = 1;\n", encoding="utf-8")
     bus = RecordingMessageBus()
-    executor = DirectorToolExecutor(str(tmp_path), message_bus=bus)
+    executor = _create_director_tool_executor(str(tmp_path), message_bus=bus)
 
     result = executor.execute_tool(
         "edit_file",
@@ -131,7 +131,7 @@ async def test_edit_file_tool_broadcasts_modify_event(tmp_path: Path) -> None:
 
 def test_write_file_tool_blocks_agents_forbidden_path(tmp_path: Path) -> None:
     (tmp_path / "AGENTS.md").write_text("禁止修改 src/generated/schema.ts\n", encoding="utf-8")
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool(
         "write_file",
@@ -151,7 +151,7 @@ def test_write_file_tool_records_nested_package_manifest_diff(tmp_path: Path) ->
     target = tmp_path / "packages" / "web" / "package.json"
     target.parent.mkdir(parents=True)
     target.write_text(json.dumps({"scripts": {"test": "vitest run"}}, ensure_ascii=False), encoding="utf-8")
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool(
         "write_file",

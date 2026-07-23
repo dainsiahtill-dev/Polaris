@@ -8,7 +8,10 @@ from polaris.cells.director.runtime.public.directed_effect_contracts import (
     DirectorEffectAuthorizationBindingV1,
     DirectorEffectExecutionEvidenceComparisonRequestV1,
     DirectorEffectExecutionEvidenceComparisonResultV1,
+    DirectorEffectExecutionValidationRequestV1,
+    DirectorEffectExecutionValidationResultV1,
     DirectorEffectPublicPolicyEvidenceV1,
+    project_director_effect_public_policy_evidence,
     validate_directed_effect_identity_binding,
     validate_director_effect_authorization_binding,
     validate_director_effect_authorization_evidence,
@@ -16,6 +19,7 @@ from polaris.cells.director.runtime.public.directed_effect_contracts import (
 )
 from polaris.cells.director.runtime.public.directed_effect_policy_contracts import (
     DirectorEffectPolicyBoundSnapshotV1,
+    validate_director_effect_policy_bound_snapshot,
 )
 
 
@@ -43,6 +47,8 @@ def _bound_snapshot_is_canonical(bound_snapshot: object) -> bool:
         canonical = DirectorEffectPolicyBoundSnapshotV1(
             snapshot=bound_snapshot.snapshot,
             authorization_evidence_hash=bound_snapshot.authorization_evidence_hash,
+            authorization_binding=bound_snapshot.authorization_binding,
+            authorization_binding_hash=bound_snapshot.authorization_binding_hash,
             member=bound_snapshot.member,
             member_binding_hash=bound_snapshot.member_binding_hash,
         )
@@ -107,6 +113,8 @@ def compare_directed_effect_execution_evidence(
     if (
         bound_snapshot.member != request.supplied_member
         or bound_snapshot.authorization_evidence_hash != supplied.authorization_evidence.authorization_hash
+        or bound_snapshot.authorization_binding != supplied
+        or bound_snapshot.authorization_binding_hash != supplied.authorization_binding_hash
         or bound_snapshot.snapshot.evidence_hash != supplied.authorization_evidence.bound_policy_snapshot_hash
         or bound_snapshot.snapshot.policy_hash != supplied.authorization_evidence.policy_hash
         or bound_snapshot.snapshot.target_state_hash != supplied.authorization_evidence.target_state_hash
@@ -140,3 +148,69 @@ def compare_directed_effect_execution_evidence(
     ):
         return _denied("deo_authorization_binding_drift")
     return DirectorEffectExecutionEvidenceComparisonResultV1(status="matched", matches=True, error_code=None)
+
+
+def validate_directed_effect_execution(
+    request: DirectorEffectExecutionValidationRequestV1,
+    bound_snapshot: DirectorEffectPolicyBoundSnapshotV1,
+) -> DirectorEffectExecutionValidationResultV1:
+    """Validate one claimed mutation structurally before current-policy revalidation."""
+
+    try:
+        if type(request) is not DirectorEffectExecutionValidationRequestV1:
+            raise TypeError("request must be exactly DirectorEffectExecutionValidationRequestV1")
+        canonical_request = DirectorEffectExecutionValidationRequestV1(
+            actual_normalized_tool_name=request.actual_normalized_tool_name,
+            actual_arguments_hash=request.actual_arguments_hash,
+            current_policy_hash=request.current_policy_hash,
+            current_scope_hash=request.current_scope_hash,
+            current_job_token_evidence_hash=request.current_job_token_evidence_hash,
+            expected_context_id=request.expected_context_id,
+            authorization_evidence=request.authorization_evidence,
+            claim_grant=request.claim_grant,
+        )
+        canonical_bound = validate_director_effect_policy_bound_snapshot(bound_snapshot)
+    except (AttributeError, TypeError, ValueError):
+        return DirectorEffectExecutionValidationResultV1(
+            allowed=False,
+            status="denied",
+            error_code="deo_bound_snapshot_member_mismatch",
+        )
+    if canonical_request != request or canonical_bound != bound_snapshot:
+        return DirectorEffectExecutionValidationResultV1(
+            allowed=False,
+            status="denied",
+            error_code="deo_authorization_hash_drift",
+        )
+    binding = canonical_bound.authorization_binding
+    if binding.authorization_evidence != canonical_request.authorization_evidence:
+        return DirectorEffectExecutionValidationResultV1(
+            allowed=False,
+            status="denied",
+            error_code="deo_authorization_binding_drift",
+        )
+    public_policy = project_director_effect_public_policy_evidence(binding)
+    comparison = compare_directed_effect_execution_evidence(
+        DirectorEffectExecutionEvidenceComparisonRequestV1(
+            baseline_authorization_binding=binding,
+            baseline_public_policy_evidence=public_policy,
+            supplied_authorization_binding=binding,
+            supplied_public_policy_evidence=public_policy,
+            supplied_bound_snapshot=canonical_bound,
+            supplied_member=canonical_bound.member,
+            supplied_grant=canonical_request.claim_grant,
+            supplied_normalized_tool=canonical_request.actual_normalized_tool_name,
+            supplied_arguments_hash=canonical_request.actual_arguments_hash,
+        )
+    )
+    if not comparison.matches:
+        return DirectorEffectExecutionValidationResultV1(
+            allowed=False,
+            status="denied",
+            error_code=comparison.error_code or "deo_authorization_binding_drift",
+        )
+    return DirectorEffectExecutionValidationResultV1(
+        allowed=True,
+        status="allowed",
+        error_code=None,
+    )

@@ -43,6 +43,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_patch_residue_cleanup",
         "deterministic_pre_materialization_declared_target_repair",
         "deterministic_python_package_child_reexport_repair",
+        "deterministic_python_missing_module_alias_repair",
         "deterministic_python_package_shadow_bridge_repair",
         "deterministic_python_readme_required_token_repair",
         "deterministic_python_unittest_missing_target_repair",

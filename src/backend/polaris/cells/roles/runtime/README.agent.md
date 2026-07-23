@@ -93,6 +93,9 @@ Defined in `public/contracts.py`:
 
 ## Design Notes
 - New code should depend on the public contracts only.
+- Guarded Director sessions validate the exact public TaskRuntime execution
+  attempt before request preparation or kernel/controller construction; stream,
+  non-stream, and direct-stream paths share this fail-closed ordering.
 - Direct cross-cell access to `internal/**` is not allowed.
 - Latest-only runtime ports do not keep prompt-driven fallback behavior; retired
   adapter call paths are migration targets and must not gain new behavior.

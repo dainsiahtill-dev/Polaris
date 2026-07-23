@@ -20,11 +20,14 @@ from .contracts import (
     AdmitDirectedEffectParentCommandV1,
     BindRuntimeTaskToFactoryRunCommandV1,
     ClaimDirectedEffectCommandV1,
+    CommitDirectedEffectReceiptCommandV1,
+    DeadLetterDirectedEffectOperationCommandV1,
     DirectedEffectInventoryCodeV1,
     DirectedEffectInventoryResultV1,
     DirectedEffectOperationResultV1,
     DirectedEffectParentReadinessResultV1,
     DirectedEffectParentRegistryResultV1,
+    DirectedEffectRecoverySweepResultV1,
     DirectedEffectStreamEnrollmentResultV1,
     EnrollDirectedEffectOperationStreamCommandV1,
     EnrollDirectedEffectParentRegistryStreamCommandV1,
@@ -36,10 +39,12 @@ from .contracts import (
     GetDirectedEffectParentReadinessQueryV1,
     GetDirectedEffectParentRegistryQueryV1,
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+    MarkDirectedEffectRecoveryPendingCommandV1,
     ObservableTaskRowsProjectionV1,
     OpenTaskRuntimeExecutionAttemptAuthorityCommandV1,
     OwnerReworkExecutionPreparationResultV1,
     PrepareOwnerReworkExecutionCommandV1,
+    ReconcileAmbiguousDirectedEffectsCommandV1,
     RuntimeTaskFactoryRunBindingResultV1,
     SealDirectedEffectInventoryCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
@@ -70,6 +75,9 @@ def _directed_effect_authority_failure(
     command: AdmitDirectedEffectOperationCommandV1
     | ClaimDirectedEffectCommandV1
     | AbortDirectedEffectOperationCommandV1
+    | CommitDirectedEffectReceiptCommandV1
+    | MarkDirectedEffectRecoveryPendingCommandV1
+    | DeadLetterDirectedEffectOperationCommandV1
     | GetDirectedEffectOperationQueryV1
     | GetDirectedEffectParentReadinessQueryV1
     | GetDirectedEffectParentRegistryQueryV1
@@ -215,6 +223,42 @@ def abort_directed_effect_operation(
     return failure if failure is not None else repository.abort(command)
 
 
+def commit_directed_effect_receipt(
+    command: CommitDirectedEffectReceiptCommandV1,
+) -> DirectedEffectOperationResultV1:
+    """Durably bind one physical-effect receipt to its started operation."""
+
+    if not isinstance(command, CommitDirectedEffectReceiptCommandV1):
+        raise TypeError("command must be CommitDirectedEffectReceiptCommandV1")
+    repository = DirectedEffectOperationRepository()
+    failure = _directed_effect_authority_failure(command, repository)
+    return failure if failure is not None else repository.commit_receipt(command)
+
+
+def mark_directed_effect_recovery_pending(
+    command: MarkDirectedEffectRecoveryPendingCommandV1,
+) -> DirectedEffectOperationResultV1:
+    """Persist finite recovery evidence after an ambiguous started effect."""
+
+    if not isinstance(command, MarkDirectedEffectRecoveryPendingCommandV1):
+        raise TypeError("command must be MarkDirectedEffectRecoveryPendingCommandV1")
+    repository = DirectedEffectOperationRepository()
+    failure = _directed_effect_authority_failure(command, repository)
+    return failure if failure is not None else repository.mark_recovery_pending(command)
+
+
+def dead_letter_directed_effect_operation(
+    command: DeadLetterDirectedEffectOperationCommandV1,
+) -> DirectedEffectOperationResultV1:
+    """Durably end an unrecoverable operation without re-running its effect."""
+
+    if not isinstance(command, DeadLetterDirectedEffectOperationCommandV1):
+        raise TypeError("command must be DeadLetterDirectedEffectOperationCommandV1")
+    repository = DirectedEffectOperationRepository()
+    failure = _directed_effect_authority_failure(command, repository)
+    return failure if failure is not None else repository.dead_letter(command)
+
+
 def get_directed_effect_operation(
     query: GetDirectedEffectOperationQueryV1,
 ) -> DirectedEffectOperationResultV1:
@@ -225,6 +269,16 @@ def get_directed_effect_operation(
     repository = DirectedEffectOperationRepository()
     failure = _directed_effect_authority_failure(query, repository)
     return failure if failure is not None else repository.get(query)
+
+
+def reconcile_ambiguous_directed_effects(
+    command: ReconcileAmbiguousDirectedEffectsCommandV1,
+) -> DirectedEffectRecoverySweepResultV1:
+    """Run one bounded TaskRuntime-owned recovery sweep without effect replay."""
+
+    if not isinstance(command, ReconcileAmbiguousDirectedEffectsCommandV1):
+        raise TypeError("command must be ReconcileAmbiguousDirectedEffectsCommandV1")
+    return TaskRuntimeService(command.workspace).reconcile_ambiguous_directed_effects(command)
 
 
 def get_directed_effect_parent_readiness(
@@ -299,6 +353,10 @@ def settle_task_runtime_execution_attempt_typed(
         "settlement_parent_close_proof_required",
         "settlement_parent_registry_invalid",
         "settlement_parent_registry_unavailable",
+        "settlement_directed_effect_unresolved",
+        "settlement_effect_outcome_conflict",
+        "settlement_terminal_intent_conflict",
+        "settlement_parent_close_failed",
         "row_projection_failed",
     }
     if code not in allowed_codes:

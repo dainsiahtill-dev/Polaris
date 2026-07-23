@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -74,7 +74,7 @@ def _build_registry() -> dict[str, Callable[[str], BaseRoleAdapter]]:
     try:
         from ..internal.director_adapter import DirectorAdapter
     except (RuntimeError, ValueError):
-        DirectorAdapter = None  # type: ignore[assignment, misc]  # noqa: N806
+        DirectorAdapter = None  # noqa: N806
     if DirectorAdapter is not None:
         registry["director"] = cast("Callable[[str], BaseRoleAdapter]", DirectorAdapter)
     return registry
@@ -105,6 +105,7 @@ def run_director_materialization_quality_repair_schedule(
     artifact_quality_issues: tuple[dict[str, Any], ...] = (),
     advisor_notes: tuple[Any, ...] = (),
     convergence_verifier: Any | None = None,
+    execution_attempt: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run Director materialization-quality repair schedule as a tuple projection."""
 
@@ -117,6 +118,7 @@ def run_director_materialization_quality_repair_schedule(
             artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
             advisor_notes=tuple(advisor_notes or ()),
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
     )
     return [dict(item) for item in result.tool_results], dict(result.summary)
@@ -147,16 +149,49 @@ def _split_materialization_effect_results(
 
 
 def _materialization_result_has_effect_payload(item: dict[str, Any]) -> bool:
-    """Return whether a projected runtime row represents an actual tool effect."""
+    """Return whether a projected runtime row carries a dispatchable or physical effect.
+
+    Planning/source-tool metadata and a repair-kernel denial are evidence about
+    a callback, not an effect.  Treating those rows as tool results made the
+    Factory quality gate believe that an authority-free repair had executed and
+    caused it to rerun validation against an unchanged workspace.
+    """
 
     result = item.get("result")
     if not isinstance(result, Mapping):
         return False
-    if str(result.get("file") or result.get("source_tool") or "").strip():
+    if bool(item.get("success")) and str(item.get("tool_name") or item.get("tool") or "").strip() in {
+        "write_file",
+        "edit_file",
+        "delete_file",
+        "execute_command",
+        "run_command",
+    }:
         return True
-    if isinstance(result.get("repair_kernel"), Mapping):
+    if result.get("deferred_request") is not None:
         return True
-    return result.get("ok") is not None or result.get("success") is not None
+    if str(result.get("status") or "").strip() in {
+        "deferred_repair_effects_pending",
+        "deferred_command_effect_pending",
+    }:
+        return True
+    if (
+        str(result.get("file") or result.get("path") or "").strip()
+        and str(result.get("operation") or result.get("tool") or result.get("tool_name") or "").strip()
+    ):
+        return True
+    if str(result.get("before_sha256") or result.get("after_sha256") or "").strip():
+        return True
+    if isinstance(result.get("effect_receipt"), Mapping):
+        return True
+    repair_kernel = result.get("repair_kernel")
+    if isinstance(repair_kernel, Mapping):
+        receipts = repair_kernel.get("receipts")
+        if isinstance(receipts, Sequence) and not isinstance(receipts, str | bytes):
+            return any(isinstance(receipt, Mapping) for receipt in receipts)
+        if str(repair_kernel.get("receipt_id") or repair_kernel.get("plan_id") or "").strip():
+            return True
+    return False
 
 
 def _call_materialization_quality_repair_facade(
@@ -232,6 +267,7 @@ def run_director_materialization_quality_repair_schedule_result(
             artifact_quality_issues=artifact_quality_issues,
             advisor_notes=command.advisor_notes,
             convergence_verifier=command.convergence_verifier,
+            execution_attempt=command.execution_attempt,
         ),
         plan_probe_preaudit=plan_probe_preaudit,
         convergence_verifier_present=command.convergence_verifier is not None,

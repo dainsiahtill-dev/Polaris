@@ -8,8 +8,10 @@ purpose: 'Provide the single task lifecycle runtime for PM/Director/QA collabora
   including canonical taskboard rows, execution-attempt authority, the finalized
   DEO-1 durable fact foundation, and the DEO-2A immutable directed-effect inventory:
   strict sealed/ready parent facts, exact member admission, ready-gated claim/abort,
-  and a fresh claim-only hash-bound grant. DEO-2A remains verification_pending;
-  receipt closure, recovery, and terminal admission remain outside this Cell scope.
+  and a fresh claim-only hash-bound grant. DEO-2 and DEO-3 are closed and
+  complete; durable receipt closure, finite recovery, outcome-bound parent
+  close, and terminal admission now belong to this Cell. DEO-4 legacy removal
+  and architecture fencing are closed; pre-bench is the only active gate.
 
   '
 current_modules:
@@ -42,6 +44,10 @@ public_contracts:
   - FinalizeDirectedEffectInventoryAdmissionCommandV1
   - ClaimDirectedEffectCommandV1
   - AbortDirectedEffectOperationCommandV1
+  - CommitDirectedEffectReceiptCommandV1
+  - MarkDirectedEffectRecoveryPendingCommandV1
+  - DeadLetterDirectedEffectOperationCommandV1
+  - ReconcileAmbiguousDirectedEffectsCommandV1
   queries:
   - ListRuntimeTasksQueryV1
   - GetRuntimeTaskQueryV1
@@ -71,6 +77,8 @@ public_contracts:
   - DirectedEffectParentReadinessStateCountV1
   - DirectedEffectParentReadinessProjectionV1
   - DirectedEffectParentReadinessResultV1
+  - DirectedEffectRecoverySweepItemV1
+  - DirectedEffectRecoverySweepResultV1
   - ObservableTaskRowsProjectionV1
   errors:
   - RuntimeTaskRuntimeError
@@ -97,12 +105,22 @@ verification:
   - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py
   - polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py
   - polaris/tests/test_runtime_projection_snapshot_tasks.py
+  - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
   gaps:
-  - DEO-2A Task 7 Step 4 and overall closure remain verification_pending; the
-    recorded Phase A evidence does not make DEO-2A closed or DEO-2B schedulable.
-  - DEO-2B, DEO-2C, DEO-2D, DEO-3, DEO-4, pre-bench, and Bench remain
-    not_schedulable. DEO-3 still owns receipt closure, recovery, and
-    outcome-bound terminal admission.
+  - DEO-2A, DEO-2B, DEO-2C, and DEO-2D are closed and complete. Repository
+    inventory proves one physical mutation consumer and zero unbound mutation
+    surfaces; TaskRuntime remains the sole durable directed-effect authority.
+  - DEO-3 durable receipt settlement and DEO-4 legacy removal are closed and complete under
+    docs/superpowers/plans/2026-07-20-deo-3-durable-receipt-settlement.md.
+    The DEO-4 architecture fence preserves TaskRuntime as the sole durable
+    authority and the canonical mutation port as the sole physical consumer.
+    R36 cross-event-loop asyncio.Lock ownership and R37 degraded-projection
+    fail-fast are closed. The requalified TaskRuntime + Factory fact chain is
+    2126 passed with 12 warnings and architecture is 1411 passed with 8 skipped;
+    the R38 isolated L1-04 run exposed and closed an undersized bench timeout
+    contract (540s total -> 188s CE physical cap). The full acceptance contract
+    is restored to 5400s plus a 6000s outer guard. The one fresh isolated L1-04
+    R39 authorization is consumed; Bench remains frozen pending its full audit.
   smoke_commands: []
 generated_artifacts:
   - generated/context.pack.json

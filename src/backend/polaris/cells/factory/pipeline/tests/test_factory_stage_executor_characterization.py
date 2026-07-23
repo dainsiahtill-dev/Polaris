@@ -90,6 +90,13 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
 
     port = object.__new__(FactoryRoleEvidenceAuthorityPort)
     bindings: list[FactoryRoleEvidenceAuthorityBindingV1] = []
+    grant_caps = {
+        "architect": 1,
+        "pm": 2,
+        "chief_engineer": 1,
+        "director": 512,
+        "qa": 1,
+    }
 
     async def acquire_cutoff(request: object) -> object:
         del request
@@ -107,6 +114,8 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
         assert len(bindings) + count <= 512
 
     def mint_authority_binding(role: str) -> FactoryRoleEvidenceAuthorityBindingV1:
+        if sum(binding.role == role for binding in bindings) >= grant_caps[role]:
+            raise RuntimeError("factory_role_evidence_stage_grant_cardinality_exceeded")
         binding = FactoryRoleEvidenceAuthorityBindingV1(
             schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
             verification_scope="factory",
@@ -135,6 +144,7 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
     port.require_grant_capacity = require_grant_capacity  # type: ignore[method-assign]
     port.mint_authority_binding = mint_authority_binding  # type: ignore[method-assign]
     port.revoke_authority_binding = revoke_authority_binding  # type: ignore[method-assign]
+    port._test_minted_authority_bindings = bindings  # type: ignore[attr-defined]
     return port
 
 
@@ -277,6 +287,47 @@ def _single_task_chief_engineer_result() -> SimpleNamespace:
             "provider_id": "test-provider",
             "model": "test-model",
             "structured_output": payload,
+            "final_request_context_audit": {"context_window_utilization": 0.25},
+            "context_snapshot_ref": "abcdef123456abcdef123456",
+        },
+        usage={},
+    )
+
+
+def _invalid_chief_engineer_stream_result(output: str = '{"construction_plan": <invalid>}') -> SimpleNamespace:
+    return SimpleNamespace(
+        ok=False,
+        status="failed",
+        output=output,
+        error_message="Output validation failed: malformed chief engineer JSON",
+        error_code="output_validation_failed",
+        metadata={
+            "provider_id": "test-provider",
+            "model": "test-model",
+            "final_request_context_audit": {"context_window_utilization": 0.25},
+            "context_snapshot_ref": "abcdef123456abcdef123456",
+            "output_validation": {
+                "success": False,
+                "errors": ["malformed chief engineer JSON"],
+                "suggestions": ["return one JSON object"],
+                "quality_score": 0.0,
+            },
+        },
+        usage={},
+    )
+
+
+def _thinking_only_chief_engineer_result() -> SimpleNamespace:
+    return SimpleNamespace(
+        ok=False,
+        status="failed",
+        output="",
+        error_message="model returned thinking-only response; awaiting user clarification",
+        error_code="model_thinking_only_response",
+        error_category="output_contract_failure",
+        metadata={
+            "provider_id": "test-provider",
+            "model": "test-model",
             "final_request_context_audit": {"context_window_utilization": 0.25},
             "context_snapshot_ref": "abcdef123456abcdef123456",
         },
@@ -839,6 +890,59 @@ def test_read_claimable_director_task_ids_uses_observable_rows(
     assert claimable == ["TASK-1", "TASK-2"]
 
 
+def test_read_claimable_director_task_ids_excludes_trusted_internal_ce_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    factory_run_id = "factory-run-mixed-task-domains"
+
+    def _metadata(external_task_id: str) -> dict[str, str]:
+        return {
+            "factory_run_id": factory_run_id,
+            "factory_stage": "chief_engineer_review",
+            "role": "chief_engineer",
+            "external_task_id": external_task_id,
+            "source_task_id": external_task_id,
+            "materialized_by": "runtime.task_runtime",
+        }
+
+    monkeypatch.setattr(
+        TaskRuntimeService,
+        "query_observable_task_rows_projection",
+        lambda runtime: _authoritative_task_projection(
+            Path(runtime.workspace),
+            (
+                {
+                    "id": 1,
+                    "status": "ready",
+                    "metadata": {
+                        "factory_run_id": factory_run_id,
+                        "pm_task_id": "TASK-2",
+                        "external_task_id": "TASK-2",
+                    },
+                },
+                {
+                    "id": 2,
+                    "status": "pending",
+                    "metadata": _metadata(f"CE-PORTFOLIO-{factory_run_id}"),
+                },
+                {
+                    "id": 3,
+                    "status": "ready",
+                    "metadata": _metadata(f"CE-PORTFOLIO-{factory_run_id}-SCHEMA-REPAIR"),
+                },
+            ),
+        ),
+    )
+
+    claimable = _executor(tmp_path)._read_claimable_director_task_ids(
+        limit=10,
+        factory_run_id=factory_run_id,
+    )
+
+    assert claimable == ["TASK-2"]
+
+
 def test_unresolved_task_ids_use_same_external_identity_as_claims() -> None:
     rows = [
         {"id": 1, "status": "pending", "metadata": {"external_task_id": "TASK-1"}},
@@ -850,6 +954,74 @@ def test_unresolved_task_ids_use_same_external_identity_as_claims() -> None:
     unresolved = OrchestrationStageExecutor._unresolved_task_ids_from_rows(rows)
 
     assert unresolved == ("TASK-1", "TASK-2", "TASK-3")
+
+
+def test_director_dependency_schedule_excludes_trusted_internal_ce_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    executor = _executor(tmp_path)
+    factory_run_id = "factory-run-schema-repair"
+    rows = [
+        {"id": 1, "status": "pending", "metadata": {"external_task_id": "TASK-1"}},
+        {"id": 2, "status": "ready", "metadata": {"external_task_id": "TASK-2"}},
+        {
+            "id": 3,
+            "status": "pending",
+            "metadata": {
+                "factory_run_id": factory_run_id,
+                "factory_stage": "chief_engineer_review",
+                "role": "chief_engineer",
+                "external_task_id": f"CE-PORTFOLIO-{factory_run_id}",
+                "source_task_id": f"CE-PORTFOLIO-{factory_run_id}",
+                "materialized_by": "runtime.task_runtime",
+            },
+        },
+    ]
+    monkeypatch.setattr(executor, "_read_observable_task_rows", lambda **_kwargs: rows)
+
+    schedule = executor._director_dependency_schedule(
+        [
+            {"id": "TASK-1"},
+            {"id": "TASK-2", "depends_on": ["TASK-1"]},
+        ],
+        factory_run_id=factory_run_id,
+    )
+
+    assert schedule.valid is True
+    assert schedule.active_task_ids == ("TASK-1", "TASK-2")
+    assert schedule.blockers == ()
+
+
+def test_director_dependency_schedule_keeps_untrusted_unknown_task_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    executor = _executor(tmp_path)
+    rows = [
+        {"id": 1, "status": "pending", "metadata": {"external_task_id": "TASK-1"}},
+        {
+            "id": 2,
+            "status": "pending",
+            "metadata": {
+                "factory_run_id": "factory-run",
+                "factory_stage": "chief_engineer_review",
+                "role": "chief_engineer",
+                "external_task_id": "UNTRUSTED-INTERNAL-LOOKALIKE",
+                "source_task_id": "UNTRUSTED-INTERNAL-LOOKALIKE",
+                # Deliberately lacks the TaskRuntime materialization provenance.
+            },
+        },
+    ]
+    monkeypatch.setattr(executor, "_read_observable_task_rows", lambda **_kwargs: rows)
+
+    schedule = executor._director_dependency_schedule(
+        [{"id": "TASK-1"}],
+        factory_run_id="factory-run",
+    )
+
+    assert schedule.valid is False
+    assert schedule.blockers == ("unknown_active_task_ids:UNTRUSTED-INTERNAL-LOOKALIKE",)
 
 
 def test_read_claimable_director_task_ids_skips_execution_owned_states(
@@ -1517,12 +1689,16 @@ class TestChiefEngineerHandoffGuards:
         assert blueprint["ce_handoff"]["llm_blueprint_consumed"] is True
         assert len(captured_commands) == 1
         command = captured_commands[0]
-        assert command.context["llm_max_tokens"] == 128_000
+        assert command.stream is True
+        assert command.context["delivery_mode"] == "analyze_only"
+        assert command.context["llm_max_tokens"] == 16_384
+        assert command.context["reasoning_budget_tokens"] == 4_096
         assert command.context["temperature"] == 0.2
         assert command.context["response_format_mode"] == "json"
         assert command.context["chief_engineer_json_contract_required"] is True
         assert command.metadata["max_retries"] == 0
         assert command.metadata["temperature"] == 0.2
+        assert command.metadata["reasoning_budget_tokens"] == 4_096
         assert command.metadata["response_format_mode"] == "json"
         assert command.metadata["chief_engineer_json_contract_required"] is True
         assert command.execution_attempt is not None
@@ -1531,6 +1707,240 @@ class TestChiefEngineerHandoffGuards:
         assert command.execution_attempt.external_task_id == f"CE-PORTFOLIO-{run.id}"
         assert command.execution_attempt.role_id == "chief_engineer"
         assert command.execution_attempt.run_id == run.id
+
+    def test_chief_engineer_schema_repair_uses_separate_claim_and_closes_stage(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+        invalid_output = '{"construction_plan": <invalid>, "scope_for_apply": ["src/cancel.py"]}'
+        results = [_invalid_chief_engineer_stream_result(invalid_output), _single_task_chief_engineer_result()]
+        commands: list[Any] = []
+
+        class _RepairingRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return results.pop(0)
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _RepairingRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-schema-repair",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        context = _factory_stage_context()
+        result = asyncio.run(executor._execute_chief_engineer_review(run, context))
+
+        assert result.status == "success"
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+        ]
+        repair_command = commands[1]
+        assert repair_command.stream is True
+        assert repair_command.metadata["max_retries"] == 0
+        assert repair_command.metadata["validate_output"] is True
+        assert repair_command.metadata["temperature"] == 0.0
+        assert repair_command.metadata["llm_max_tokens"] == 8_192
+        assert repair_command.metadata["reasoning_budget_tokens"] == 2_048
+        assert repair_command.context["chief_engineer_schema_repair"] is True
+        assert repair_command.context["llm_max_tokens"] == 8_192
+        assert repair_command.context["reasoning_budget_tokens"] == 2_048
+        assert repair_command.context["failure_feedback"] == {
+            "schema_version": "factory.chief_engineer_schema_repair.failure_evidence.v1",
+            "failure_class": "output_validation_failed",
+            "failure_stage": "chief_engineer_review",
+            "detail": "Output validation failed: malformed chief engineer JSON",
+            "prior_output_sha256": hashlib.sha256(invalid_output.encode("utf-8")).hexdigest(),
+            "prior_output_chars": len(invalid_output),
+            "evidence_refs": [],
+        }
+        assert invalid_output not in repair_command.objective
+        assert "Do not copy, quote, continue, or textually repair" in repair_command.objective
+        assert hashlib.sha256(invalid_output.encode("utf-8")).hexdigest() in repair_command.objective
+        assert "TASK-CANCEL" in repair_command.objective
+        assert repair_command.execution_attempt is not None
+        assert repair_command.execution_attempt.external_task_id == repair_command.task_id
+        authority_port = context[stage_executor_module.FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY]
+        assert len(authority_port._test_minted_authority_bindings) == 1
+
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        primary_task = task_runtime.get_task(f"CE-PORTFOLIO-{run.id}")
+        repair_task = task_runtime.get_task(f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR")
+        assert primary_task is not None
+        assert repair_task is not None
+        primary_session = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/tasks/task_{primary_task['id']}.session.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        repair_session = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/tasks/task_{repair_task['id']}.session.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert primary_session["status"] == "suspended"
+        assert repair_session["status"] == "completed"
+
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["llm_call_count"] == 2
+        assert [signal["code"] for signal in review["signals"]] == ["chief_engineer.output_schema_repair_started"]
+        assert len(keepers) == 2
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_thinking_only_result_uses_bounded_schema_repair(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+        results = [_thinking_only_chief_engineer_result(), _single_task_chief_engineer_result()]
+        commands: list[Any] = []
+
+        class _RepairingRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return results.pop(0)
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _RepairingRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-thinking-only-repair",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success"
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+        ]
+        repair_command = commands[1]
+        assert repair_command.context["failure_feedback"] == {
+            "schema_version": "factory.chief_engineer_schema_repair.failure_evidence.v1",
+            "failure_class": "thinking_only_response",
+            "failure_stage": "chief_engineer_review",
+            "detail": "model returned thinking-only response; awaiting user clarification",
+            "prior_output_sha256": hashlib.sha256(b"").hexdigest(),
+            "prior_output_chars": 0,
+            "evidence_refs": [],
+        }
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 1
+        assert review["llm_call_count"] == 2
+        assert review["signals"][0]["prior_failure_class"] == "thinking_only_response"
+        assert len(keepers) == 2
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_thinking_only_repair_is_bounded_to_one_attempt(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+        commands: list[Any] = []
+
+        class _AlwaysThinkingOnlyRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return _thinking_only_chief_engineer_result()
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _AlwaysThinkingOnlyRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-thinking-only-bounded",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "failed"
+        assert len(commands) == 2
+        assert commands[-1].task_id.endswith("-SCHEMA-REPAIR")
+        assert len(keepers) == 2
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_schema_repair_objective_is_bounded_and_excludes_corrupt_bytes(self) -> None:
+        invalid_output = '{"construction_plan": <invalid>}' + (" duplicated-corruption" * 4_000)
+        prior_result = _invalid_chief_engineer_stream_result(invalid_output)
+        prior_result.error_message = "schema failure " + ("detail" * 2_000)
+
+        objective = OrchestrationStageExecutor._chief_engineer_schema_repair_objective(
+            prior_result=prior_result,
+            portfolio_task_ids=("TASK-1", "TASK-2"),
+        )
+
+        assert invalid_output not in objective
+        assert len(objective) < 5_000
+        assert hashlib.sha256(invalid_output.encode("utf-8")).hexdigest() in objective
+        assert f"Excluded prior output UTF-8 character count: {len(invalid_output)}" in objective
+        assert 'Validated PM task ids: ["TASK-1", "TASK-2"]' in objective
+        assert "placeholder syntax" in objective
+
+    def test_chief_engineer_schema_repair_is_bounded_to_one_attempt(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+        commands: list[Any] = []
+
+        class _AlwaysInvalidRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return _invalid_chief_engineer_stream_result()
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _AlwaysInvalidRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-schema-repair-bounded",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "failed"
+        assert len(commands) == 2
+        assert commands[-1].task_id.endswith("-SCHEMA-REPAIR")
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["llm_call_count"] == 2
+        assert [signal["code"] for signal in review["signals"]] == [
+            "chief_engineer.output_schema_repair_started",
+            "chief_engineer.llm_review_failed",
+        ]
+        assert len(keepers) == 2
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
 
     def test_chief_engineer_execution_attempt_reuses_claim_on_replay_and_rotates_after_requeue(
         self,
@@ -2106,7 +2516,8 @@ class TestChiefEngineerHandoffGuards:
         assert result.status == "success"
         assert len(calls) == 1
         assert calls[0].task_id == "CE-PORTFOLIO-factory-run-portfolio"
-        assert calls[0].context["llm_max_tokens"] == 128_000
+        assert calls[0].context["delivery_mode"] == "analyze_only"
+        assert calls[0].context["llm_max_tokens"] == 16_384
         assert calls[0].context["task_count"] == 2
         assert len(calls[0].context["pm_task_contract"]["tasks"]) == 2
         review_path = Path(resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-portfolio.review.json"))
@@ -2928,6 +3339,28 @@ class TestTrimCommandOutput:
 
 
 class TestWorkspaceQualityRepairEvidence:
+    @staticmethod
+    def _assert_requires_canonical_attempt(
+        *,
+        results: list[dict[str, Any]],
+        summary: dict[str, Any],
+        source_tool: str,
+        materialized_text: str,
+        original_marker: str,
+    ) -> None:
+        """Factory may discover repairs, but it cannot execute outside roles.kernel."""
+
+        assert results == []
+        assert source_tool in summary["source_tools"]
+        assert summary["write_tool_evidence"] is False
+        assert original_marker in materialized_text
+        non_effect_evidence = summary["non_effect_evidence_results"]
+        assert summary["non_effect_evidence_result_count"] == len(non_effect_evidence)
+        assert any(
+            str((item.get("result") or {}).get("error_code") or "") == "deo_deferred_repair_attempt_required"
+            for item in non_effect_evidence
+        )
+
     def test_compacts_write_hash_and_diff_evidence(self) -> None:
         evidence = OrchestrationStageExecutor._workspace_quality_repair_evidence(
             [
@@ -3024,11 +3457,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in summary["source_tools"]
-        assert 'import { Note } from "./models/Note.js";' in repaired
-        assert "module.exports" not in repaired
-        assert "require(" not in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_esm_commonjs_entrypoint_repair",
+            materialized_text=repaired,
+            original_marker="module.exports = { main, Note };",
+        )
 
     def test_applies_javascript_esm_commonjs_default_imported_module_repair(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3078,13 +3513,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in summary["source_tools"]
-        assert 'import { Note } from "../models/Note.js";' in repaired
-        assert "export default AlchemyEngine;" in repaired
-        assert "export { buildDefaultEngine };" in repaired
-        assert 'export const VERSION = "1.0.0";' in repaired
-        assert "module.exports" not in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_esm_commonjs_entrypoint_repair",
+            materialized_text=repaired,
+            original_marker="module.exports = AlchemyEngine;",
+        )
 
     def test_applies_javascript_esm_commonjs_repair_for_namespace_require_binding(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3119,12 +3554,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in summary["source_tools"]
-        assert 'import * as AlchemyEngine from "./engine/AlchemyEngine.js";' in repaired
-        assert "const engine = new AlchemyEngine.AlchemyEngine();" in repaired
-        assert "const { Note, DreamCard, Recipe } = AlchemyEngine;" in repaired
-        assert "module.exports" not in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_esm_commonjs_entrypoint_repair",
+            materialized_text=repaired,
+            original_marker='const AlchemyEngine = require("./engine/AlchemyEngine");',
+        )
 
     def test_applies_javascript_missing_method_runtime_repair(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3165,12 +3601,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
-        assert "addRecipe(recipe)" in repaired
-        assert "transmute(notes)" in repaired
-        assert "dreamCards: result.dreamCards ?? result.cards ?? []" in repaired
-        assert "rituals: result.rituals ?? []" in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_method_runtime_repair",
+            materialized_text=repaired,
+            original_marker="refine(notes)",
+        )
 
     def test_applies_javascript_missing_method_runtime_repair_aliases_run_to_transmute_result_shape(
         self,
@@ -3210,12 +3647,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
-        assert "run(notes)" in repaired
-        assert "const result = this.transmute(notes);" in repaired
-        assert "cards: result.cards ?? result.dreamCards ?? []" in repaired
-        assert "untouched: result.untouched ?? result.unmatched ?? result.unconsumed ?? result.embers ?? []" in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_method_runtime_repair",
+            materialized_text=repaired,
+            original_marker="transmute(notes)",
+        )
 
     def test_applies_javascript_missing_method_runtime_repair_for_imported_loop_variable_class(
         self,
@@ -3267,13 +3705,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "models" / "Recipe.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
-        assert "matchesAll(notes)" in repaired
-        assert "return this.isSatisfiedBy(notes);" in repaired
-        assert "this.keywords = Array.isArray(keywords) ? keywords.map(String) : [];" in repaired
-        assert "this.absurdityBoost = Number.isFinite(absurdityBoost) ? absurdityBoost : 0;" in repaired
-        assert "this.ritual = ritual;" in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_method_runtime_repair",
+            materialized_text=repaired,
+            original_marker="isSatisfiedBy(notes)",
+        )
 
     def test_applies_javascript_missing_method_runtime_repair_for_constructor_object_contracts(
         self,
@@ -3331,21 +3769,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "models" / "DreamCard.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
-        assert "const normalizedId" in repaired
-        assert "const normalizedNarrative" in repaired
-        assert "this.id = normalizedId;" in repaired
-        assert "this.narrative = normalizedNarrative;" in repaired
-        assert "this.body =" in repaired
-        assert "this.tags = Array.isArray(tags) ? tags.map(String) : [];" in repaired
-        assert "createdAt: this.createdAt instanceof Date ? this.createdAt.toISOString() : this.createdAt" in repaired
-        assert "body: this.body" in repaired
-        assert "tags: this.tags" in repaired
-        assert "this.fragments = Array.isArray(fragments) ? fragments.map(String) : [];" in repaired
-        assert "this.absurdity = Number.isFinite(absurdity) ? absurdity : 0;" in repaired
-        assert "this.ritual = ritual;" in repaired
-        assert "export function composeTitle" in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_method_runtime_repair",
+            materialized_text=repaired,
+            original_marker="DreamCard requires an id",
+        )
 
     def test_applies_javascript_missing_method_runtime_collection_and_refine_alias_repair(
         self,
@@ -3393,13 +3823,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
-        assert "listRecipes()" in repaired
-        assert "return Array.isArray(this.recipes) ? [...this.recipes] : [];" in repaired
-        assert "transmute(notes)" in repaired
-        assert "dreamCards: result.dreamCards ?? result.cards ?? []" in repaired
-        assert "unmatched: result.unmatched ?? result.unconsumed ?? []" in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_method_runtime_repair",
+            materialized_text=repaired,
+            original_marker="registerRecipe(recipe)",
+        )
 
     def test_applies_javascript_typescript_annotation_repair(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3429,11 +3859,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_typescript_annotation_repair" in summary["source_tools"]
-        assert ": unknown" not in repaired
-        assert "): any" not in repaired
-        assert "return undefined" not in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_typescript_annotation_repair",
+            materialized_text=repaired,
+            original_marker=": unknown",
+        )
 
     def test_applies_javascript_missing_export_repair(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3457,10 +3889,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
-        assert "export function run(...args)" in repaired
-        assert "return { ok: true, entrypoint };" in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_export_repair",
+            materialized_text=repaired,
+            original_marker="console.log('dream note app');",
+        )
 
     def test_applies_javascript_missing_export_repair_for_iterable_method_contract(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3486,10 +3921,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
-        assert "export const defaultRecipes = new AlchemyEngine().defaultRecipes();" in repaired
-        assert "export function defaultRecipes" not in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_export_repair",
+            materialized_text=repaired,
+            original_marker="defaultRecipes()",
+        )
 
     def test_applies_javascript_export_contract_repair_for_wrong_existing_function(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3520,10 +3958,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
-        assert "export function refineDreamNotes(...args)" in repaired
-        assert 'summary: values.join(" | ")' in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_export_repair",
+            materialized_text=repaired,
+            original_marker="if (!Array.isArray(cards)) return [];",
+        )
 
     def test_applies_javascript_export_contract_repair_for_text_and_semver(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3563,12 +4004,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
-        assert "function refineDreamNotes(...args)" in repaired
-        assert '"[dream] " + line' in repaired
-        assert "return VERSION;" in repaired
-        assert 'export const VERSION = "0.2.0";' in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_export_repair",
+            materialized_text=repaired,
+            original_marker="function refineDreamNotes(notes)",
+        )
 
     def test_applies_javascript_export_contract_repair_for_app_metadata(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -3618,14 +4060,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
-        assert 'export const APP_NAME = "dream-note-alchemy-furnace";' in repaired
-        assert 'export const APP_VERSION = "0.1.0";' in repaired
-        assert 'export const APP_DESCRIPTION = "Dream note alchemy CLI";' in repaired
-        assert "name: APP_NAME" in repaired
-        assert "version: APP_VERSION" in repaired
-        assert "description: APP_DESCRIPTION" in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_export_repair",
+            materialized_text=repaired,
+            original_marker="return { ok: true };",
+        )
 
     def test_applies_javascript_export_contract_repair_for_asserted_literal_and_note_shape(
         self,
@@ -3677,13 +4118,13 @@ class TestWorkspaceQualityRepairEvidence:
         )
 
         repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
-        assert results
-        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
-        assert 'export const ALCHEMY_FURNACE = "dream-note-alchemy-furnace";' in repaired
-        assert "export function refineDreamNote(...args)" in repaired
-        assert 'const source = typeof args[0] === "string" ? args[0] : "";' in repaired
-        assert "const refined = source.trim();" in repaired
-        assert 'tag: refined.length > 0 ? "dream-fragment" : "empty"' in repaired
+        self._assert_requires_canonical_attempt(
+            results=results,
+            summary=summary,
+            source_tool="deterministic_javascript_missing_export_repair",
+            materialized_text=repaired,
+            original_marker="export function main()",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3934,15 +4375,37 @@ class TestArtifactStore:
             "context_snapshot_ref",
         ]
 
-    def test_chief_engineer_circuit_open_allows_blueprint_projection(self) -> None:
-        ce_result = SimpleNamespace(
-            error_category="provider_backend_failure",
-            error_code="circuit_open",
-            error_message="CircuitOpenError: circuit breaker is open",
-            status="failed",
-        )
-
-        assert OrchestrationStageExecutor._ce_llm_failure_allows_blueprint_projection(ce_result) is True
+    @pytest.mark.parametrize(
+        ("ce_result", "expected"),
+        [
+            (_invalid_chief_engineer_stream_result(), True),
+            (_thinking_only_chief_engineer_result(), True),
+            (
+                SimpleNamespace(
+                    error_category="provider_backend_failure",
+                    error_code="circuit_open",
+                    error_message="CircuitOpenError: circuit breaker is open",
+                    status="failed",
+                ),
+                False,
+            ),
+            (
+                SimpleNamespace(
+                    error_category="semantic_rejection",
+                    error_code="chief_engineer_design_rejected",
+                    error_message="The proposed architecture violates the PM contract",
+                    status="failed",
+                ),
+                False,
+            ),
+        ],
+    )
+    def test_chief_engineer_portfolio_schema_repair_admission_is_narrow(
+        self,
+        ce_result: SimpleNamespace,
+        expected: bool,
+    ) -> None:
+        assert OrchestrationStageExecutor._ce_portfolio_result_allows_schema_repair(ce_result) is expected
 
     def test_emit_audit_event_appends(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -4230,6 +4693,7 @@ class TestQualityGateDeadlineHandling:
             },
             requested_timeout_seconds=1800,
             first_materialization_pending=True,
+            materialization_pending=True,
             dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
@@ -4249,6 +4713,7 @@ class TestQualityGateDeadlineHandling:
             },
             requested_timeout_seconds=1800,
             first_materialization_pending=True,
+            materialization_pending=True,
             dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
@@ -4256,6 +4721,31 @@ class TestQualityGateDeadlineHandling:
         assert decision.reason == ""
         assert decision.minimum_start_budget_seconds == 90.0
         assert 230 <= decision.timeout_seconds <= 235
+
+    def test_director_invalid_dependency_schedule_is_not_reported_as_deadline_exhaustion(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
+        decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 90,
+                "quality_gate_reserved_budget_seconds": 60,
+            },
+            requested_timeout_seconds=180,
+            first_materialization_pending=True,
+            materialization_pending=True,
+            dependency_schedule=build_task_dependency_schedule(
+                [{"id": "TASK-1"}],
+                active_task_ids=("TASK-1", "CE-PORTFOLIO-factory-run"),
+            ),
+        )
+
+        code, detail, status, message = OrchestrationStageExecutor._director_admission_failure_projection(decision)
+
+        assert decision.reason == "invalid_pm_task_dependency_schedule"
+        assert code == "director.dispatch_dependency_schedule_blocker"
+        assert "unknown_active_task_ids:CE-PORTFOLIO-factory-run" in detail
+        assert status == "failed"
+        assert "dependency schedule is invalid" in message
 
     def test_director_dispatch_deadline_admission_uses_standard_budget_after_first_round(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 213.0
@@ -4267,12 +4757,42 @@ class TestQualityGateDeadlineHandling:
             },
             requested_timeout_seconds=1800,
             first_materialization_pending=False,
+            materialization_pending=False,
             dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
         assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
         assert decision.minimum_start_budget_seconds == stage_executor_module.FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
         assert 87 <= decision.timeout_seconds <= 88
+
+    def test_r43_later_materialization_wave_uses_same_minimum_qa_reserve_as_timeout_projection(
+        self,
+    ) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 239.0
+        decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 90,
+                "quality_gate_reserved_budget_seconds": 120,
+            },
+            requested_timeout_seconds=600,
+            first_materialization_pending=False,
+            materialization_pending=True,
+            dependency_schedule=build_task_dependency_schedule(
+                [
+                    {"id": "TASK-2", "depends_on": []},
+                    {"id": "TASK-3", "depends_on": ["TASK-2"]},
+                ]
+            ),
+        )
+
+        assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert decision.minimum_start_budget_seconds == stage_executor_module.FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
+        assert decision.reserved_downstream_seconds == 105
+        assert 128 <= decision.execution_timeout_seconds <= 129
+        assert decision.settlement_timeout_seconds == 5
+        assert decision.reservation_breakdown["qa_finalization"] == 55
+        assert decision.reservation_breakdown["qa_finalization_minimum_reserve_active"] == 1
 
     @pytest.mark.asyncio
     async def test_director_dispatch_deadline_admission_stops_before_llm_turn(self, tmp_path: Path) -> None:
@@ -5315,7 +5835,7 @@ class TestRunWorkspaceQualityChecks:
         )
 
     @pytest.mark.asyncio
-    async def test_repairs_typescript_failures_and_reruns_commands(
+    async def test_typescript_repairs_require_canonical_director_execution_before_rerun(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -5403,13 +5923,16 @@ class TestRunWorkspaceQualityChecks:
 
         passed, artifact = await executor._run_workspace_quality_checks(run, {})
 
-        assert passed is True
-        assert calls == [["npm", "run", "build"], ["npm", "run", "build"]]
+        assert passed is False
+        assert calls == [["npm", "run", "build"]]
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
-        assert payload["passed"] is True
-        assert [item["phase"] for item in payload["commands"]] == ["check", "check_after_repair"]
-        assert "deterministic_typescript_missing_export_repair" in payload["repair"]["source_tools"]
-        assert "deterministic_typescript_tsconfig_lib_repair" in payload["repair"]["source_tools"]
+        assert payload["passed"] is False
+        assert [item["phase"] for item in payload["commands"]] == ["check"]
+        assert payload["repair"]["write_tool_evidence"] is False
+        assert payload["repair"]["tool_results"] == 0
+        assert "export type SimulationState = any;" not in (tmp_path / "src" / "simulation.ts").read_text(
+            encoding="utf-8"
+        )
 
     @pytest.mark.asyncio
     async def test_repair_summary_success_requires_rerun_to_pass(
@@ -6378,7 +6901,7 @@ class TestRunWorkspaceQualityChecks:
         assert repair["tool_results"] == 0
 
     @pytest.mark.asyncio
-    async def test_repairs_typescript_enum_member_separator_and_reruns_commands(
+    async def test_typescript_enum_repair_requires_canonical_director_execution_before_rerun(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -6444,17 +6967,18 @@ class TestRunWorkspaceQualityChecks:
 
         passed, artifact = await executor._run_workspace_quality_checks(run, {})
 
-        assert passed is True
-        assert calls == [["npm", "run", "build"], ["npm", "run", "build"]]
+        assert passed is False
+        assert calls == [["npm", "run", "build"]]
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
-        assert payload["passed"] is True
-        assert [item["phase"] for item in payload["commands"]] == ["check", "check_after_repair"]
-        assert "deterministic_typescript_enum_member_separator_repair" in payload["repair"]["source_tools"]
-        assert "  WaningCrescent," in moonphase.read_text(encoding="utf-8")
+        assert payload["passed"] is False
+        assert [item["phase"] for item in payload["commands"]] == ["check"]
+        assert payload["repair"]["write_tool_evidence"] is False
+        assert payload["repair"]["tool_results"] == 0
+        assert "  WaningCrescent;" in moonphase.read_text(encoding="utf-8")
         assert "  phase: MoonPhase;" in moonphase.read_text(encoding="utf-8")
 
     @pytest.mark.asyncio
-    async def test_repairs_typescript_unresolved_identifier_alias_and_reruns_commands(
+    async def test_typescript_identifier_repair_requires_canonical_director_execution_before_rerun(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -6531,17 +7055,18 @@ class TestRunWorkspaceQualityChecks:
 
         passed, artifact = await executor._run_workspace_quality_checks(run, {})
 
-        assert passed is True
-        assert calls == [["npm", "run", "build"], ["npm", "run", "build"]]
+        assert passed is False
+        assert calls == [["npm", "run", "build"]]
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
-        assert payload["passed"] is True
-        assert [item["phase"] for item in payload["commands"]] == ["check", "check_after_repair"]
-        assert "deterministic_typescript_unresolved_identifier_repair" in payload["repair"]["source_tools"]
+        assert payload["passed"] is False
+        assert [item["phase"] for item in payload["commands"]] == ["check"]
+        assert payload["repair"]["write_tool_evidence"] is False
+        assert payload["repair"]["tool_results"] == 0
         repaired_source = simulation.read_text(encoding="utf-8")
         assert "return newState;" in repaired_source
-        assert "`${state.moonPhase}`;" in repaired_source
-        assert "`${state.humidity}`;" in repaired_source
-        assert "`${state.tick}`;" in repaired_source
+        assert "`${newState.moonPhase}`;" in repaired_source
+        assert "`${newState.humidity}`;" in repaired_source
+        assert "`${newState.tick}`;" in repaired_source
 
 
 # ---------------------------------------------------------------------------
@@ -6753,6 +7278,7 @@ class TestDirectorDispatchLoop:
                 director_first_task_min_seconds=1,
                 director_followup_task_min_seconds=1,
                 quality_gate_reserved_seconds=0,
+                quality_gate_min_start_reserved_seconds=0,
                 safety_seconds=0,
                 director_settlement_barrier_seconds=settlement_seconds,
             )
@@ -8936,7 +9462,11 @@ class TestDirectorDispatchLoop:
         assert "director.run_status_non_success" not in codes
 
     @pytest.mark.asyncio
-    async def test_missing_write_receipt_with_artifacts_stays_failed(self, tmp_path: Path) -> None:
+    async def test_missing_write_receipt_with_artifacts_stays_failed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
         class _MissingWriteReceiptHandoffExecutor(OrchestrationStageExecutor):
             def __init__(self, workspace: Path) -> None:
                 super().__init__(workspace)
@@ -9037,6 +9567,20 @@ class TestDirectorDispatchLoop:
         (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
 
         executor = _MissingWriteReceiptHandoffExecutor(tmp_path)
+        monkeypatch.setattr(
+            TaskRuntimeService,
+            "query_observable_task_rows_projection",
+            lambda runtime: _authoritative_task_projection(
+                Path(runtime.workspace),
+                (
+                    {
+                        "id": 1,
+                        "status": "pending",
+                        "metadata": {"external_task_id": "TASK-1"},
+                    },
+                ),
+            ),
+        )
         tasks = [
             {
                 "id": "TASK-1",
@@ -9108,6 +9652,7 @@ class TestDirectorDispatchLoop:
     @pytest.mark.asyncio
     async def test_idle_claimable_unresolved_artifacts_do_not_enter_quality_gate_handoff(
         self,
+        monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
         class _IdleUnresolvedHandoffExecutor(OrchestrationStageExecutor):
@@ -9226,6 +9771,20 @@ class TestDirectorDispatchLoop:
         (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
 
         executor = _IdleUnresolvedHandoffExecutor(tmp_path)
+        monkeypatch.setattr(
+            TaskRuntimeService,
+            "query_observable_task_rows_projection",
+            lambda runtime: _authoritative_task_projection(
+                Path(runtime.workspace),
+                (
+                    {
+                        "id": 1,
+                        "status": "pending",
+                        "metadata": {"external_task_id": "TASK-1"},
+                    },
+                ),
+            ),
+        )
         tasks = [
             {
                 "id": "TASK-1",
@@ -9789,9 +10348,15 @@ class TestDirectorDispatchLoop:
 
     @pytest.mark.asyncio
     async def test_soft_timeout_settles_before_another_director_round(self, tmp_path: Path) -> None:
+        submitted_deadlines: list[float] = []
+
         class _BarrierService:
             async def execute_director_run(self, **kwargs: object) -> CommandResult:
-                del kwargs
+                options = kwargs.get("options")
+                assert isinstance(options, dict)
+                metadata = options.get("metadata")
+                assert isinstance(metadata, dict)
+                submitted_deadlines.append(float(metadata["factory_director_execution_deadline_epoch_seconds"]))
                 return CommandResult(run_id="director-inflight", status="running", message="submitted")
 
         class _BarrierExecutor(OrchestrationStageExecutor):
@@ -9858,7 +10423,9 @@ class TestDirectorDispatchLoop:
             async def _wait_run_completion(self, *args: object, **kwargs: object) -> CommandResult:
                 del args
                 self.execute_calls += 1
-                self.execution_timeout_seconds = int(kwargs["timeout_seconds"])
+                timeout_seconds = kwargs["timeout_seconds"]
+                assert isinstance(timeout_seconds, int)
+                self.execution_timeout_seconds = timeout_seconds
                 self.taskboard_state.update({"pending": 0, "ready": 0, "in_progress": 1})
                 return CommandResult(
                     run_id="director-inflight",
@@ -9876,7 +10443,9 @@ class TestDirectorDispatchLoop:
             ) -> CommandResult:
                 del args
                 self.settle_calls += 1
-                self.settlement_timeout_seconds = int(kwargs["grace_seconds"])
+                grace_seconds = kwargs["grace_seconds"]
+                assert isinstance(grace_seconds, int)
+                self.settlement_timeout_seconds = grace_seconds
                 self.taskboard_state.update({"in_progress": 0, "completed": 1})
                 target = self.workspace / "src/index.ts"
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -9923,17 +10492,25 @@ class TestDirectorDispatchLoop:
         assert executor.execute_calls == 1
         assert executor.settle_calls == 1
         assert executor.claim_calls == 1
+        assert len(submitted_deadlines) == 1
+        assert submitted_deadlines[0] > time.time()
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
         assert payload["attempts"][0]["settlement_attempted"] is True
         assert payload["attempts"][0]["settled_after_timeout"] is True
         assert executor.execution_timeout_seconds > 0
-        assert executor.settlement_timeout_seconds == 5
+        # An early lifecycle timeout does not prove that the admitted execution
+        # budget was consumed.  The parent barrier must therefore spend the
+        # remaining execution lease before its configured five-second
+        # settlement reserve; otherwise Factory can close the stage authority
+        # while the Director child is only just reaching Provider transport.
+        assert executor.settlement_timeout_seconds > 5
         assert executor.execution_timeout_seconds <= payload["attempts"][0]["execution_timeout_seconds"]
         assert (
             payload["attempts"][0]["execution_timeout_seconds"] + payload["attempts"][0]["settlement_timeout_seconds"]
             == payload["attempts"][0]["timeout_seconds"]
         )
-        assert payload["attempts"][0]["settlement_timeout_seconds"] == executor.settlement_timeout_seconds
+        assert payload["attempts"][0]["settlement_timeout_seconds"] == 5
+        assert executor.settlement_timeout_seconds <= payload["attempts"][0]["timeout_seconds"]
         assert "director.inflight_timeout_settled" in {str(item.get("code") or "") for item in payload["signals"]}
 
     @pytest.mark.asyncio

@@ -13,6 +13,10 @@ from typing import Any, cast
 from polaris.cells.director.runtime.public import (
     DirectedEffectImmutableMapV1,
     DirectorEffectAuthorizationEvidenceV1,
+    DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    DirectorEffectCurrentPolicyEvidenceCaptureResultV1,
+    DirectorEffectCurrentPolicyEvidenceV1,
+    DirectorEffectPolicyBaselineCaptureRequestV1,
     DirectorEffectPolicyBoundSnapshotV1,
     DirectorEffectPolicyMemberBindingRequestV1,
     DirectorEffectPolicyMemberBindingResultV1,
@@ -26,7 +30,11 @@ from polaris.cells.director.runtime.public import (
     hash_directed_effect_policy_member_binding,
     hash_directed_effect_policy_revalidation_evidence,
     hash_director_effect_authorization_evidence,
+    hash_director_effect_policy_operation_subject,
     validate_directed_effect_identity_binding,
+    validate_director_effect_authorization_binding,
+    validate_director_effect_policy_bound_snapshot,
+    validate_director_effect_public_policy_evidence,
 )
 from polaris.cells.director.runtime.public.directed_effect_contracts import (
     DirectedEffectErrorCodeV1,
@@ -45,12 +53,17 @@ from polaris.kernelone.llm.toolkit.executor.command_capability import (
     CommandCapabilityValidationInputV1,
     validate_command_capability,
 )
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-from .execution_tools import DirectorToolExecutor
+from .execution_tools import DirectorToolExecutor as _DirectorToolExecutor
 
 _NO_FILE_HASH = "0" * 64
 _WRITE_TOOLS = frozenset({"write_file", "edit_file", "delete_file"})
 _COMMAND_TOOLS = frozenset({"execute_command", "run_command"})
+_CAPABILITY_SCOPE_VERSION = "director-capability-scope.v1"
+_JOB_TOKEN_VERSION = "job-token-restriction.v1"
+_EXECUTION_ENVELOPE_VERSION = "director-execution-envelope.v1"
+_ALLOWED_COMMANDS_VERSION = "director-allowed-commands.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,17 +124,7 @@ def _operation_hash(
 
 
 def _subject_operation_hash(subject: DirectorEffectPolicyOperationSubjectV1) -> str:
-    return _operation_hash(
-        workspace=subject.workspace,
-        turn_id=subject.turn_id,
-        batch_id=subject.batch_id,
-        tool_call_id=subject.tool_call_id,
-        inventory_ordinal=subject.inventory_ordinal,
-        normalized_tool_name=subject.normalized_tool_name,
-        normalized_arguments=subject.normalized_arguments,
-        effect_type=subject.effect_type,
-        execution_mode=subject.execution_mode,
-    )
+    return hash_director_effect_policy_operation_subject(subject)
 
 
 def _items_to_dict(items: DirectedEffectImmutableItemsV1) -> dict[str, object]:
@@ -194,6 +197,63 @@ class _DirectorEffectPolicySnapshotPort:
         result, _ = self._evaluate(request)
         return result
 
+    async def capture_baseline_snapshot(
+        self,
+        request: DirectorEffectPolicyBaselineCaptureRequestV1,
+    ) -> DirectorEffectPolicySnapshotResultV1:
+        """Own target-state capture so callers cannot manufacture the baseline."""
+
+        values = _items_to_dict(request.normalized_arguments)
+        raw_path = next(
+            (values.get(key) for key in ("path", "file", "filepath") if values.get(key) is not None),
+            "",
+        )
+        expected_target_path = raw_path if isinstance(raw_path, str) else ""
+        current, error = self._read_target_state(
+            normalized_tool_name=request.normalized_tool_name,
+            normalized_arguments=request.normalized_arguments,
+            expected_target_path=expected_target_path,
+        )
+        if current is None:
+            is_no_file = not expected_target_path
+            fallback = DirectorEffectTargetStateEvidenceV1(
+                target_path="" if is_no_file else expected_target_path,
+                exists=False,
+                before_content_hash=_NO_FILE_HASH,
+                minimal_content_evidence=(),
+                agents_policy_hash=_NO_FILE_HASH,
+                target_state_hash=_target_state_hash(
+                    "" if is_no_file else expected_target_path,
+                    False,
+                    _NO_FILE_HASH,
+                    (),
+                    _NO_FILE_HASH,
+                ),
+                is_no_file_state=is_no_file,
+            )
+        else:
+            fallback = current.evidence
+        snapshot_request = DirectorEffectPolicySnapshotRequestV1(
+            subject=request.subject,
+            workspace=request.workspace,
+            normalized_tool_name=request.normalized_tool_name,
+            normalized_arguments=request.normalized_arguments,
+            job_token_restriction_evidence=request.job_token_restriction_evidence,
+            expected_policy_version=request.expected_policy_version,
+            canonical_command=request.canonical_command,
+            path_scope_evidence=request.path_scope_evidence,
+            command_scope_evidence=request.command_scope_evidence,
+            target_state_evidence=fallback,
+        )
+        if error is not None or current is None:
+            return self._snapshot_denial(
+                snapshot_request,
+                error or "deo_target_state_drift",
+                fallback,
+            )
+        result, _ = self._evaluate(snapshot_request, observed=current)
+        return result
+
     def bind_member(
         self,
         request: DirectorEffectPolicyMemberBindingRequestV1,
@@ -201,6 +261,7 @@ class _DirectorEffectPolicySnapshotPort:
         """Purely bind a successful snapshot to one exact sealed member."""
         snapshot = request.snapshot
         authorization = request.authorization_evidence
+        authorization_binding = request.authorization_binding
         if (
             self._snapshot_integrity_error(snapshot) is not None
             or not self._authorization_hash_matches(authorization)
@@ -211,6 +272,20 @@ class _DirectorEffectPolicySnapshotPort:
                 error_code="deo_authorization_evidence_drift",
                 member=None,
                 member_binding_hash=None,
+                authorization_binding_hash=None,
+                bound_snapshot=None,
+            )
+        try:
+            canonical_binding = validate_director_effect_authorization_binding(authorization_binding)
+        except (TypeError, ValueError):
+            canonical_binding = None
+        if canonical_binding != authorization_binding or authorization_binding.authorization_evidence != authorization:
+            return DirectorEffectPolicyMemberBindingResultV1(
+                status="denied",
+                error_code="deo_authorization_binding_drift",
+                member=None,
+                member_binding_hash=None,
+                authorization_binding_hash=None,
                 bound_snapshot=None,
             )
         if not self._member_matches_snapshot(snapshot, request.member):
@@ -219,16 +294,20 @@ class _DirectorEffectPolicySnapshotPort:
                 error_code="deo_member_identity_mismatch",
                 member=None,
                 member_binding_hash=None,
+                authorization_binding_hash=None,
                 bound_snapshot=None,
             )
         member_binding_hash = hash_directed_effect_policy_member_binding(
             snapshot.evidence_hash,
             authorization.authorization_hash,
+            authorization_binding.authorization_binding_hash,
             request.member,
         )
         bound_snapshot = DirectorEffectPolicyBoundSnapshotV1(
             snapshot=snapshot,
             authorization_evidence_hash=authorization.authorization_hash,
+            authorization_binding=authorization_binding,
+            authorization_binding_hash=authorization_binding.authorization_binding_hash,
             member=request.member,
             member_binding_hash=member_binding_hash,
         )
@@ -237,8 +316,207 @@ class _DirectorEffectPolicySnapshotPort:
             error_code=None,
             member=request.member,
             member_binding_hash=member_binding_hash,
+            authorization_binding_hash=authorization_binding.authorization_binding_hash,
             bound_snapshot=bound_snapshot,
         )
+
+    async def capture_current_policy_evidence(
+        self,
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    ) -> DirectorEffectCurrentPolicyEvidenceCaptureResultV1:
+        """Capture all post-claim policy inputs or return the one closed denial."""
+
+        try:
+            binding = validate_director_effect_authorization_binding(request.baseline_authorization_binding)
+            public_policy = validate_director_effect_public_policy_evidence(request.baseline_public_policy_evidence)
+            bound = validate_director_effect_policy_bound_snapshot(request.bound_snapshot)
+            if (
+                binding != request.baseline_authorization_binding
+                or bound != request.bound_snapshot
+                or bound.authorization_binding != binding
+                or public_policy.source_authorization_binding_hash != binding.authorization_binding_hash
+                or request.claim_grant.member != request.claimed_member
+                or not self._claim_grant_is_canonical(request.claim_grant)
+                or str(self._workspace) != binding.authorization_evidence.workspace
+            ):
+                raise ValueError("capture identity mismatch")
+
+            restriction = _restriction_values(request.current_job_token_restriction_evidence)
+            policy_target = self._capture_policy_target_source(request)
+            operation = self._capture_operation_source(request)
+            capability_scope = self._capture_capability_scope_source(
+                request,
+                restriction,
+            )
+            job_token = self._capture_job_token_source(request, restriction)
+            tool_spec = self._capture_tool_spec_source(request)
+            execution_envelope = self._capture_execution_envelope_source(request)
+            allowed_commands = self._capture_allowed_commands_source(
+                request,
+                restriction,
+            )
+            if any(
+                source is None
+                for source in (
+                    policy_target,
+                    operation,
+                    capability_scope,
+                    job_token,
+                    tool_spec,
+                    execution_envelope,
+                    allowed_commands,
+                )
+            ):
+                raise ValueError("current source unavailable")
+            assert policy_target is not None
+            assert operation is not None
+            assert capability_scope is not None
+            assert job_token is not None
+            assert tool_spec is not None
+            assert execution_envelope is not None
+            assert allowed_commands is not None
+            evidence = DirectorEffectCurrentPolicyEvidenceV1(
+                baseline_authorization_binding_hash=binding.authorization_binding_hash,
+                baseline_public_policy_evidence_hash=public_policy.public_policy_evidence_hash,
+                bound_member_hash=bound.member_binding_hash,
+                claim_grant_hash=request.claim_grant.grant_hash,
+                policy_target_version=policy_target[0],
+                policy_target_hash=policy_target[1],
+                operation_version=operation[0],
+                operation_hash=operation[1],
+                capability_scope_version=capability_scope[0],
+                capability_scope_hash=capability_scope[1],
+                job_token_id=job_token[0],
+                job_token_version=job_token[1],
+                job_token_evidence_hash=job_token[2],
+                tool_spec_snapshot_hash=tool_spec[0],
+                alias_binding_hash=tool_spec[1],
+                execution_envelope_version=execution_envelope[0],
+                execution_envelope_hash=execution_envelope[1],
+                allowed_commands_version=allowed_commands[0],
+                allowed_commands_hash=allowed_commands[1],
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return DirectorEffectCurrentPolicyEvidenceCaptureResultV1(
+                status="denied",
+                evidence=None,
+                error_code="deo_current_policy_evidence_unavailable",
+            )
+        return DirectorEffectCurrentPolicyEvidenceCaptureResultV1(
+            status="captured",
+            evidence=evidence,
+            error_code=None,
+        )
+
+    @staticmethod
+    def _claim_grant_is_canonical(grant: DirectedEffectClaimGrantV1) -> bool:
+        try:
+            canonical = DirectedEffectClaimGrantV1(
+                schema_version=grant.schema_version,
+                execution_attempt=grant.execution_attempt,
+                parent_binding=grant.parent_binding,
+                operation=grant.operation,
+                member=grant.member,
+                inventory_hash=grant.inventory_hash,
+                operation_version=grant.operation_version,
+                claim_event_id=grant.claim_event_id,
+                claim_event_seq=grant.claim_event_seq,
+                operation_source_head_seq=grant.operation_source_head_seq,
+                parent_registry_source_head_seq=grant.parent_registry_source_head_seq,
+                grant_hash=grant.grant_hash,
+            )
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return canonical == grant
+
+    def _capture_policy_target_source(
+        self,
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    ) -> tuple[str, str] | None:
+        snapshot = request.bound_snapshot.snapshot
+        baseline = snapshot.baseline_target_state_evidence
+        current, error = self._read_target_state(
+            normalized_tool_name=request.normalized_tool,
+            normalized_arguments=snapshot.subject.normalized_arguments,
+            expected_target_path=baseline.target_path,
+        )
+        if (
+            error is not None
+            or current is None
+            or current.evidence != baseline
+            or not snapshot.policy_version.strip()
+            or not snapshot.policy_hash.strip()
+        ):
+            return None
+        return snapshot.policy_version, snapshot.policy_hash
+
+    @staticmethod
+    def _capture_operation_source(
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    ) -> tuple[str, str] | None:
+        version = str(request.claim_grant.operation_version).strip()
+        if not version:
+            return None
+        return version, _hash_payload(request.claim_grant.operation.to_record())
+
+    @staticmethod
+    def _capture_capability_scope_source(
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+        restriction: _JobRestrictionEvidence,
+    ) -> tuple[str, str] | None:
+        public_policy = request.baseline_public_policy_evidence
+        if (
+            public_policy.capability_scope != restriction.allowed_paths
+            or public_policy.capability_scope_hash != restriction.allowed_paths_hash
+        ):
+            return None
+        return _CAPABILITY_SCOPE_VERSION, restriction.allowed_paths_hash
+
+    @staticmethod
+    def _capture_job_token_source(
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+        restriction: _JobRestrictionEvidence,
+    ) -> tuple[str, str, str] | None:
+        public_policy = request.baseline_public_policy_evidence
+        if (
+            public_policy.job_token_id != restriction.token_id
+            or public_policy.job_token_evidence_hash != restriction.evidence_hash
+        ):
+            return None
+        return restriction.token_id, _JOB_TOKEN_VERSION, restriction.evidence_hash
+
+    @staticmethod
+    def _capture_tool_spec_source(
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    ) -> tuple[str, str] | None:
+        binding = request.baseline_authorization_binding
+        classification = binding.classification_evidence
+        current = ToolSpecRegistry.capture_effective_spec(classification.raw_tool_name)
+        if (
+            not current.registered
+            or current.canonical_tool_name != request.normalized_tool
+            or current.tool_spec_hash != binding.tool_spec_hash
+            or current.snapshot_hash != binding.tool_spec_snapshot_hash
+            or current.alias_binding_hash != binding.alias_binding_hash
+        ):
+            return None
+        return current.snapshot_hash, current.alias_binding_hash
+
+    @staticmethod
+    def _capture_execution_envelope_source(
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    ) -> tuple[str, str] | None:
+        value = request.baseline_public_policy_evidence.execution_envelope_hash
+        return (_EXECUTION_ENVELOPE_VERSION, value) if value else None
+
+    @staticmethod
+    def _capture_allowed_commands_source(
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+        restriction: _JobRestrictionEvidence,
+    ) -> tuple[str, str] | None:
+        if request.baseline_public_policy_evidence.allowed_command_hash != restriction.allowed_commands_hash:
+            return None
+        return _ALLOWED_COMMANDS_VERSION, restriction.allowed_commands_hash
 
     async def revalidate(
         self,
@@ -431,7 +709,7 @@ class _DirectorEffectPolicySnapshotPort:
                 policy_hash=evidence.policy_hash,
                 authorization_hash=evidence.authorization_hash,
             )
-            return canonical == evidence and evidence.authorization_hash == expected_hash
+            return bool(canonical == evidence and evidence.authorization_hash == expected_hash)
         except (AttributeError, TypeError, ValueError):
             return False
 
@@ -544,6 +822,8 @@ class _DirectorEffectPolicySnapshotPort:
             canonical_bound = DirectorEffectPolicyBoundSnapshotV1(
                 snapshot=bound.snapshot,
                 authorization_evidence_hash=bound.authorization_evidence_hash,
+                authorization_binding=bound.authorization_binding,
+                authorization_binding_hash=bound.authorization_binding_hash,
                 member=member,
                 member_binding_hash=bound.member_binding_hash,
             )
@@ -574,6 +854,7 @@ class _DirectorEffectPolicySnapshotPort:
             binding_hash_matches = bound.member_binding_hash == hash_directed_effect_policy_member_binding(
                 snapshot.evidence_hash,
                 bound.authorization_evidence_hash,
+                bound.authorization_binding_hash,
                 member,
             )
         except (AttributeError, TypeError, ValueError):
@@ -860,8 +1141,8 @@ class _DirectorEffectPolicySnapshotPort:
         operation = request.normalized_tool_name
         if operation == "write_file":
             operation = "write_file:modify" if target_read.evidence.exists else "write_file:create"
-        return DirectorToolExecutor._validate_director_policy_for_write(
-            cast(DirectorToolExecutor, self),
+        return _DirectorToolExecutor._validate_director_policy_for_write(
+            cast(_DirectorToolExecutor, self),
             workspace=self._workspace,
             rel_path=target_read.evidence.target_path,
             old_content=target_read.old_content,

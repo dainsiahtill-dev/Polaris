@@ -26,6 +26,7 @@ from polaris.kernelone.events.final_request_evidence import (
     looks_like_workspace_quality_evidence_payload,
     missing_required_refs_from_evidence_coverage,
     missing_required_tools_from_evidence_coverage,
+    role_final_request_policy,
     structured_context_coverage_flags,
     summarize_target_scope_evidence_payload,
     summarize_workspace_quality_evidence_context_slot,
@@ -33,6 +34,7 @@ from polaris.kernelone.events.final_request_evidence import (
 )
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
+from .final_request_metrics import canonical_message_chars
 from .response_types import PreparedLLMRequest
 
 _UNDERUTILIZED_WINDOW_THRESHOLD = 8192
@@ -52,6 +54,7 @@ _OPTIONAL_CONTEXT_QUALITY_FLAGS = frozenset(
         "has_actual_sibling_exports",
     }
 )
+_TOOL_REGISTRY_SOURCE = "polaris.kernelone.tool_execution.ToolSpecRegistry"
 
 
 class FinalRequestEvidenceCoverageError(RuntimeError):
@@ -88,14 +91,7 @@ def _estimate_tokens_from_chars(char_count: int) -> int:
 
 
 def _message_chars(messages: list[dict[str, Any]]) -> int:
-    total = 0
-    for message in messages:
-        if not isinstance(message, dict):
-            total += len(str(message))
-            continue
-        total += len(str(message.get("role") or ""))
-        total += len(str(message.get("content") or ""))
-    return total
+    return canonical_message_chars(messages)
 
 
 def _message_content_chars(messages: list[dict[str, Any]]) -> int:
@@ -128,17 +124,7 @@ def _request_messages(ai_request: Any, fallback: list[dict[str, Any]]) -> list[d
         if raw_messages is None:
             raw_messages = ctx.get("messages")
     if isinstance(raw_messages, list):
-        messages: list[dict[str, Any]] = []
-        for item in raw_messages:
-            if not isinstance(item, dict):
-                continue
-            role = str(item.get("role") or "user")
-            content = str(item.get("content") or "")
-            message = {"role": role, "content": content}
-            name = str(item.get("name") or "").strip()
-            if name:
-                message["name"] = name
-            messages.append(message)
+        messages = [dict(item) for item in raw_messages if isinstance(item, dict)]
         if messages:
             return messages
 
@@ -1261,14 +1247,14 @@ def _evidence_mapping_for_keys(value: Any, *, keys: tuple[str, ...]) -> dict[str
     if "failed_gate_evidence" in accepted_refs:
         merged = merge_failure_evidence_payload({}, value)
         if merged.get("items"):
-            return merged
+            return dict(merged)
     return _first_evidence_mapping(value)
 
 
 def _evidence_ref(value: Any) -> str:
     if not isinstance(value, str):
         return ""
-    return final_request_evidence_ref_for_requirement(value)
+    return str(final_request_evidence_ref_for_requirement(value) or "")
 
 
 def _context_slot_payload(value: Any, *, keys: tuple[str, ...]) -> dict[str, Any]:
@@ -1383,7 +1369,7 @@ def _failed_gate_evidence_payload(ai_request: Any | None) -> dict[str, Any]:
             predicate=looks_like_failure_evidence_payload,
         )
         if found:
-            return summarize_failed_gate_evidence_context_slot(found)
+            return dict(summarize_failed_gate_evidence_context_slot(found))
     return {}
 
 
@@ -1402,7 +1388,7 @@ def _workspace_quality_evidence_payload(ai_request: Any | None) -> dict[str, Any
             predicate=looks_like_workspace_quality_evidence_payload,
         )
         if found:
-            return summarize_workspace_quality_evidence_context_slot(found)
+            return dict(summarize_workspace_quality_evidence_context_slot(found))
     return {}
 
 
@@ -1593,6 +1579,9 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "option_keys": sorted(str(key) for key in options),
         "temperature": options.get("temperature") if isinstance(options.get("temperature"), (int, float)) else None,
         "max_tokens": options.get("max_tokens") if isinstance(options.get("max_tokens"), int) else None,
+        "reasoning_budget_tokens": (
+            options.get("reasoning_budget_tokens") if isinstance(options.get("reasoning_budget_tokens"), int) else None
+        ),
         "has_execution_profile": bool(execution_profile),
         "execution_profile_summary": execution_profile_summary,
         "execution_profile_hash": _stable_digest(execution_profile) if execution_profile else "",
@@ -1855,6 +1844,97 @@ def _available_tool_names(tool_schema_payload: Any) -> list[str]:
     )
 
 
+def _tool_schema_properties(tool_schema: Any) -> dict[str, Any]:
+    if not isinstance(tool_schema, dict):
+        return {}
+    function_payload = tool_schema.get("function")
+    if not isinstance(function_payload, dict):
+        return {}
+    parameters = function_payload.get("parameters")
+    if not isinstance(parameters, dict):
+        return {}
+    properties = parameters.get("properties")
+    return dict(properties) if isinstance(properties, dict) else {}
+
+
+def _tool_schema_registry_coverage(
+    tool_schema_payload: Any,
+    *,
+    missing_required_tools: list[str],
+) -> dict[str, Any]:
+    """Project registry provenance from the exact final provider tool surface.
+
+    The provider request is authoritative.  Registry provenance must therefore
+    be reconstructed from its offered schemas, not trusted from caller-supplied
+    context flags.  B3.5 performs the stricter byte/shape validation again at
+    qualification time; this projection supplies the auditable source and
+    alias coverage that qualification binds to that same request.
+    """
+
+    if not isinstance(tool_schema_payload, list) or not tool_schema_payload:
+        return {
+            "registry_source": "",
+            "aliases_present": False,
+            "arg_aliases_present": False,
+            "schema_hash": "",
+            "missing_schema_tools": _unique_strings(missing_required_tools),
+        }
+
+    missing_schema_tools = list(missing_required_tools)
+    aliases_present = True
+    arg_aliases_present = True
+    for tool_schema in tool_schema_payload:
+        raw_name = _tool_name_from_schema(tool_schema)
+        canonical_name = _canonical_tool_name(raw_name)
+        try:
+            captured = ToolSpecRegistry.capture_effective_spec(raw_name)
+            schema_with_aliases = ToolSpecRegistry.get_llm_schema(
+                canonical_name,
+                include_arg_aliases=True,
+                deterministic=True,
+            )
+            schema_without_aliases = ToolSpecRegistry.get_llm_schema(
+                canonical_name,
+                include_arg_aliases=False,
+                deterministic=True,
+            )
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+            captured = None
+            schema_with_aliases = None
+            schema_without_aliases = None
+
+        if (
+            captured is None
+            or captured.registered is not True
+            or not canonical_name
+            or schema_with_aliases is None
+            or schema_without_aliases is None
+        ):
+            missing_schema_tools.append(canonical_name or raw_name)
+            aliases_present = False
+            arg_aliases_present = False
+            continue
+
+        expected_alias_properties = set(_tool_schema_properties(schema_with_aliases)).difference(
+            _tool_schema_properties(schema_without_aliases)
+        )
+        actual_properties = set(_tool_schema_properties(tool_schema))
+        if not expected_alias_properties.issubset(actual_properties):
+            arg_aliases_present = False
+
+    missing_schema_tools = _unique_strings(missing_schema_tools)
+    if missing_schema_tools:
+        aliases_present = False
+        arg_aliases_present = False
+    return {
+        "registry_source": _TOOL_REGISTRY_SOURCE if not missing_schema_tools else "",
+        "aliases_present": aliases_present,
+        "arg_aliases_present": arg_aliases_present,
+        "schema_hash": _stable_digest(tool_schema_payload),
+        "missing_schema_tools": missing_schema_tools,
+    }
+
+
 def _required_tool_names(ai_request: Any) -> list[str]:
     context_payload = _request_context(ai_request)
     names: list[str] = []
@@ -1965,21 +2045,13 @@ def _required_evidence_refs(
     refs.extend(_mapped_evidence_requirements(envelope_audit_policy.get("required_evidence")))
     if not refs:
         normalized_role = role_id.strip().lower()
-        if normalized_role == "director":
+        try:
             refs.extend(
                 _mapped_evidence_requirements(
-                    (
-                        "pm_task_contract",
-                        "chief_engineer_blueprint",
-                        "target_files_or_declared_scopes",
-                    )
+                    role_final_request_policy(normalized_role).required_present_slots,
                 )
             )
-        elif normalized_role == "chief_engineer":
-            refs.extend(_mapped_evidence_requirements(("pm_task_contract", "target_files_or_declared_scopes")))
-        elif normalized_role == "pm":
-            refs.extend(_mapped_evidence_requirements(("pm_raw_intent",)))
-        else:
+        except ValueError:
             refs.extend(
                 final_request_evidence_refs_for_coverage_flags(
                     coverage,
@@ -2240,13 +2312,10 @@ def _final_request_evidence_coverage(
             }
             for tool in missing_required_tools
         ],
-        "tool_schema_registry_coverage": {
-            "registry_source": str(_request_context(ai_request).get("tool_registry_source") or ""),
-            "aliases_present": bool(_request_context(ai_request).get("tool_aliases")),
-            "arg_aliases_present": bool(_request_context(ai_request).get("tool_arg_aliases")),
-            "schema_hash": _stable_digest(tool_schema_payload) if tool_schema_payload else "",
-            "missing_schema_tools": missing_required_tools,
-        },
+        "tool_schema_registry_coverage": _tool_schema_registry_coverage(
+            tool_schema_payload,
+            missing_required_tools=missing_required_tools,
+        ),
         "structured_evidence": final_request_structured_evidence_from_metadata_summary(request_metadata_summary),
         "workflow_chain": workflow_chain,
         "ledger_evidence": _ledger_evidence(ai_request, receipt_refs=receipt_refs),

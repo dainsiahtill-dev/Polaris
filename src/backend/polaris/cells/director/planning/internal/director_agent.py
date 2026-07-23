@@ -29,7 +29,6 @@ from polaris.cells.roles.runtime.public import (
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.text_ops import write_text_atomic
-from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage import resolve_runtime_path
 
 logger = logging.getLogger(__name__)
@@ -267,7 +266,6 @@ class DirectorAgent(RoleAgent):
         self._current_execution: ExecutionRecord | None = None
         self._execution_history: list[dict[str, Any]] = []
         self._message_bus = message_bus
-        self._command_executor = CommandExecutionService(workspace)
 
     @property
     def worker_pool(self) -> WorkerPool:
@@ -608,38 +606,14 @@ class DirectorAgent(RoleAgent):
         }
 
     def _tool_apply_patch(self, patch: str, target_file: str) -> dict[str, Any]:
-        """Apply a code patch with broadcast support."""
-        from polaris.kernelone.events.file_event_broadcaster import apply_patch_with_broadcast
+        """Reject planning-time patches; planning owns no physical effect."""
 
-        try:
-            # Get current task_id from execution context
-            task_id = ""
-            if self._current_execution:
-                task_id = self._current_execution.task_id
-
-            result = apply_patch_with_broadcast(
-                workspace=self.workspace,
-                target_file=target_file,
-                patch=patch,
-                message_bus=self._message_bus,
-                worker_id=f"director-{id(self)}",
-                task_id=task_id,
-            )
-            # Track file changes in execution record
-            if result.get("ok") and self._current_execution:
-                self._current_execution.files_changed.append(target_file)
-                # Update line counts from result
-                if "added_lines" in result:
-                    self._current_execution.lines_added += result["added_lines"]
-                if "deleted_lines" in result:
-                    self._current_execution.lines_removed += result["deleted_lines"]
-            return result
-        except (RuntimeError, ValueError) as e:
-            return {
-                "ok": False,
-                "error": str(e),
-                "file": target_file,
-            }
+        del patch
+        return {
+            "ok": False,
+            "error": "director_patch_requires_roles_kernel_directed_effect",
+            "file": target_file,
+        }
 
     def _tool_run_command(
         self,
@@ -647,29 +621,10 @@ class DirectorAgent(RoleAgent):
         cwd: str | None = None,
         timeout: int = 60,
     ) -> dict[str, Any]:
-        """Run a validated command without shell expansion."""
-        import shlex
+        """Reject planning-time commands; planning owns no physical effect."""
 
-        try:
-            from polaris.kernelone.process.command_executor import CommandRequest
-
-            # Parse command and execute directly
-            tokens = shlex.split(command)
-            if not tokens:
-                return {"ok": False, "error": "Empty command"}
-            request = CommandRequest(
-                executable=tokens[0],
-                args=tokens[1:],
-                cwd=cwd or self.workspace,
-                timeout_seconds=max(1, int(timeout or 60)),
-            )
-            result = self._command_executor.run(request)
-            return result
-        except (RuntimeError, ValueError) as e:
-            return {
-                "ok": False,
-                "error": str(e),
-            }
+        del command, cwd, timeout
+        return {"ok": False, "error": "director_command_requires_roles_kernel_directed_effect"}
 
     def _tool_spawn_worker(self, worker_id: str | None = None) -> dict[str, Any]:
         """Spawn a new Worker."""

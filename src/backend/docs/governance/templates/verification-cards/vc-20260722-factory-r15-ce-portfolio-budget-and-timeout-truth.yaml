@@ -1,0 +1,77 @@
+card_id: vc-20260722-factory-r15-ce-portfolio-budget-and-timeout-truth
+classification: physical_attempt_conservation
+status: complete
+bench_status: closed
+bug_summary: >-
+  The eleventh authorized fresh isolated L1-04 run proved R14: the qualified
+  CE stream was no longer rejected by the conservation buffer and its final
+  Provider request audit was readable and complete. The request then exhausted
+  the 125-second physical lease without a terminal response. A three-task CE
+  portfolio had inherited the global 128000-token structured-output ceiling,
+  while the Factory deadline proof reserved only 125 seconds for that physical
+  attempt. Empty asyncio.TimeoutError text was projected as a generic provider
+  failure, StreamOrchestrator emitted a second generic materialization error,
+  and roles.runtime retained the last error, destroying the first causal fact.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: 55ca9d019033
+  factory_run_id: factory_4688ad9a898e
+  stage: chief_engineer_review
+  error_code: chief_engineer.llm_review_failed
+  wall_clock_seconds: 157.6
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_artifact_materialized: true
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  requested_output_tokens: 128000
+  physical_attempt_timeout_seconds: 125
+  final_request_context_audit: pass
+  context_snapshot_refs:
+    semantic: aa866bb912e213ae8d4a577c
+    physical: 779f259d94bcfa4bd4066b8e
+    lifecycle_pin: c2da3d9b0efe3ed5f74c67d5
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r15/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r15/audits/55ca9d019033/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r15/L1-04.chain.log
+root_cause:
+  code: ce_portfolio_output_budget_and_timeout_cause_lost
+  summary: >-
+    Factory used the deployment-wide CE structured-output ceiling as the exact
+    request budget even for a tiny portfolio. The physical gate correctly kept
+    the response private until terminalization, but a 128k-scale request could
+    not reliably terminalize inside the conserved 125-second lease. The timeout
+    then crossed three projections that replaced or duplicated the causal error.
+  fix: >-
+    Scale only the Factory CE portfolio request from task count, with a 16384
+    token floor, 4096 tokens per task, and the existing deployment cap as the
+    hard ceiling. Preserve the original per-task CE structured-output policy.
+    Project empty TimeoutError as provider_stream_timeout:<seconds>s, suppress
+    the duplicate no-materialization error after a real Provider ErrorEvent,
+    and retain the first causal error in roles.runtime.
+required_gates:
+  regression_tests_red_green: pass
+  focused_composite: "444 passed"
+  roles_runtime_full: "531 passed, 2 warnings"
+  roles_kernel_full: "2739 passed, 1 warning"
+  factory_pipeline_full: "1219 passed, 2 warnings"
+  ruff: pass
+  ruff_format: pass
+  mypy_source: pass
+  compileall: pass
+  codegraph_structural_review: pass
+scheduling:
+  bench_schedulable: true
+  authorization_scope: delegated_to_pre_bench_one_shot_gate
+  next_action: recapture_source_snapshot_then_authorize_one_fresh_isolated_l1_04
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

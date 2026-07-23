@@ -39,6 +39,14 @@ def _context_metadata(context: Mapping[str, Any]) -> dict[str, Any]:
         "target_task_id",
         "session_id",
         "runtime_session_id",
+        # TransactionKernel accepts only first-class execution identities at
+        # invocation admission.  Keep these explicit context fields attached
+        # to the provider-bound request metadata; run/task/session are
+        # correlation fields and must never be used as an identity fallback.
+        "execution_attempt_id",
+        "turn_request_id",
+        "execution_id",
+        "task_runtime_session_id",
     ):
         value = _string(context.get(key))
         if value and key not in metadata:

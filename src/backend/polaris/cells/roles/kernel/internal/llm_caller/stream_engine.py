@@ -17,11 +17,13 @@ from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_count_from_metadata,
     project_native_tool_call_envelopes_to_metadata,
 )
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FactoryRoleFrozenSemanticRequestV1,
+)
 
 from .context_audit import (
     build_final_provider_request_snapshot,
     build_final_request_context_audit_for_request,
-    enforce_final_request_evidence_coverage,
 )
 from .error_handling import (
     ERROR_CATEGORY_CANCELLED,
@@ -29,6 +31,14 @@ from .error_handling import (
     classify_error,
     is_retryable_error,
 )
+from .factory_dispatch_propagation import (
+    FactorySemanticDispatchPropagationPort,
+    enforce_factory_aware_final_request_evidence_coverage,
+)
+from .final_provider_attempt_qualification import (
+    final_request_snapshot_evidence,
+)
+from .final_request_metrics import validated_final_context_evidence
 from .stream_handler import (
     build_stream_slo_metrics,
     normalize_stream_chunk,
@@ -63,6 +73,16 @@ def _is_stream_cancel_requested(context: Any) -> bool:
     if isinstance(override, dict) and override.get("stream_cancelled"):
         return True
     return bool(getattr(context, "stream_cancelled", False))
+
+
+def _is_consumed_provider_stream_deadline(error_message: str) -> bool:
+    """Return whether the provider already consumed the request deadline.
+
+    The provider stream helper applies one absolute deadline across connection
+    attempts and response-body consumption.  Reconnecting after that terminal
+    error would replay the same request under a fresh timeout budget.
+    """
+    return str(error_message or "").strip().lower().startswith("provider_stream_timeout:")
 
 
 def _usage_int(payload: dict[str, Any], *keys: str) -> int:
@@ -243,6 +263,15 @@ class StreamEngine:
         context_result = prepared.context_result
         prompt_tokens = context_result.token_estimate if context_result else 0
 
+        def _bind_factory_audit(audit: dict[str, Any]) -> dict[str, Any]:
+            frozen = prepared.factory_semantic_request
+            if type(frozen) is not FactoryRoleFrozenSemanticRequestV1:
+                return audit
+            dispatch_port = prepared.factory_dispatch_port
+            if type(dispatch_port) is not FactorySemanticDispatchPropagationPort:
+                raise RuntimeError("factory_dispatch_port_required_for_context_audit_binding")
+            return dispatch_port.bind_final_request_context_audit(audit)
+
         def _with_context_os_audit(payload: dict[str, Any]) -> dict[str, Any]:
             result = dict(payload)
             if context_os_audit:
@@ -250,10 +279,20 @@ class StreamEngine:
             return result
 
         def _with_final_request_context_audit(payload: dict[str, Any], request: Any) -> dict[str, Any]:
-            audit = build_final_request_context_audit_for_request(
-                ai_request=request,
-                prepared=prepared,
-                profile=profile,
+            final_evidence = validated_final_context_evidence(
+                prepared.factory_dispatch_port,
+                expected_port_type=FactorySemanticDispatchPropagationPort,
+            )
+            audit = (
+                final_evidence[1]
+                if final_evidence is not None
+                else _bind_factory_audit(
+                    build_final_request_context_audit_for_request(
+                        ai_request=request,
+                        prepared=prepared,
+                        profile=profile,
+                    )
+                )
             )
             final_tokens = _final_request_context_tokens(audit, prompt_tokens)
             result = dict(payload)
@@ -264,6 +303,12 @@ class StreamEngine:
 
         def _extract_context_snapshot_ref(request: Any) -> str | None:
             """Extract context_snapshot_ref from an AIRequest's context dict, if present."""
+            evidence = validated_final_context_evidence(
+                prepared.factory_dispatch_port,
+                expected_port_type=FactorySemanticDispatchPropagationPort,
+            )
+            if evidence is not None:
+                return evidence[0]
             ctx = getattr(request, "context", None)
             if isinstance(ctx, dict):
                 ref = ctx.get("context_snapshot_ref")
@@ -314,13 +359,24 @@ class StreamEngine:
                 payload["error_type"] = error_type
             return _with_context_os_audit(_with_final_request_context_audit(payload, active_request))
 
-        final_context_audit = build_final_request_context_audit_for_request(
-            ai_request=active_request,
-            prepared=prepared,
-            profile=profile,
+        final_evidence = validated_final_context_evidence(
+            prepared.factory_dispatch_port,
+            expected_port_type=FactorySemanticDispatchPropagationPort,
+        )
+        final_context_audit = (
+            final_evidence[1]
+            if final_evidence is not None
+            else _bind_factory_audit(
+                build_final_request_context_audit_for_request(
+                    ai_request=active_request,
+                    prepared=prepared,
+                    profile=profile,
+                )
+            )
         )
         final_context_tokens = _final_request_context_tokens(final_context_audit, prompt_tokens)
-        enforce_final_request_evidence_coverage(
+        enforce_factory_aware_final_request_evidence_coverage(
+            port=prepared.factory_dispatch_port,
             ai_request=active_request,
             audit=final_context_audit,
         )
@@ -347,6 +403,18 @@ class StreamEngine:
                         prepared=prepared,
                         profile=profile,
                     )
+                    frozen = prepared.factory_semantic_request
+                    if type(frozen) is FactoryRoleFrozenSemanticRequestV1:
+                        provider_request["factory_final_request"] = final_request_snapshot_evidence(frozen)
+                        snapshot_audit = provider_request.get("final_request_context_audit")
+                        if not isinstance(snapshot_audit, dict):
+                            raise RuntimeError("factory_final_request_context_audit_missing")
+                        bound_snapshot_audit = _bind_factory_audit(snapshot_audit)
+                        provider_request["final_request_context_audit"] = bound_snapshot_audit
+                        provider_request["final_request_evidence_coverage"] = bound_snapshot_audit.get(
+                            "final_request_evidence_coverage",
+                            {},
+                        )
                     if _store_context_messages_accepts_provider_request(self._store_context_messages):
                         context_store_hash = await self._store_context_messages(
                             self.workspace,
@@ -375,6 +443,25 @@ class StreamEngine:
                     request_context = getattr(prepared.ai_request, "context", None)
                     if isinstance(request_context, dict):
                         request_context["context_snapshot_ref"] = context_store_hash
+
+        # B3.5 qualification must observe the final, readable snapshot ref;
+        # the pre-store audit above intentionally cannot prove that field.
+        final_context_audit = _with_final_request_context_audit({}, active_request)["final_request_context_audit"]
+        final_context_tokens = _final_request_context_tokens(final_context_audit, prompt_tokens)
+        enforce_factory_aware_final_request_evidence_coverage(
+            port=prepared.factory_dispatch_port,
+            ai_request=active_request,
+            audit=final_context_audit,
+        )
+        if prepared.factory_dispatch_port is not None:
+            request_context = getattr(active_request, "context", None)
+            context_snapshot_ref = (
+                str(request_context.get("context_snapshot_ref") or "") if isinstance(request_context, dict) else ""
+            )
+            prepared.factory_dispatch_port.qualify(
+                final_request_context_audit=final_context_audit,
+                context_snapshot_ref=context_snapshot_ref,
+            )
 
         self._emit_call_start(
             event_emitter=event_emitter,
@@ -480,7 +567,11 @@ class StreamEngine:
                     if event_type == "error":
                         error_message = str(normalized.error or content or "stream_error").strip() or "stream_error"
                         error_category = classify_error(error_message)
-                        if is_retryable_error(error_category) and reconnect_count < max_reconnects:
+                        if (
+                            not _is_consumed_provider_stream_deadline(error_message)
+                            and is_retryable_error(error_category)
+                            and reconnect_count < max_reconnects
+                        ):
                             should_retry = True
                             retry_error_message = error_message
                             retry_error_category = error_category
@@ -624,7 +715,11 @@ class StreamEngine:
             except (RuntimeError, ValueError) as stream_exc:
                 error_message = str(stream_exc or "stream_exception")
                 error_category = classify_error(error_message)
-                if is_retryable_error(error_category) and reconnect_count < max_reconnects:
+                if (
+                    not _is_consumed_provider_stream_deadline(error_message)
+                    and is_retryable_error(error_category)
+                    and reconnect_count < max_reconnects
+                ):
                     should_retry, retry_error_message, retry_error_category = True, error_message, error_category
                 else:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -726,11 +821,10 @@ class StreamEngine:
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
         }
-        final_context_audit = build_final_request_context_audit_for_request(
-            ai_request=active_request,
-            prepared=prepared,
-            profile=profile,
-        )
+        # Provider dispatch may have minted the final physical snapshot during
+        # the stream.  Re-read the sidecar here so terminal events cannot pair
+        # that physical ref with the earlier semantic preparation audit.
+        final_context_audit = _with_final_request_context_audit({}, active_request)["final_request_context_audit"]
         final_context_tokens = _final_request_context_tokens(final_context_audit, prompt_tokens_val)
         yield {
             "type": "context_metadata",
@@ -738,6 +832,7 @@ class StreamEngine:
             "model_context_window": int(final_context_audit.get("context_window_tokens") or 0),
             "context_os_audit": dict(context_os_audit),
             "final_request_context_audit": final_context_audit,
+            "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
             "usage": usage_payload,
             "usage_source": "provider" if provider_usage is not None else "estimate",
         }

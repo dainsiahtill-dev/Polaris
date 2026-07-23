@@ -3481,6 +3481,33 @@ def _project_named_runtime_metadata(record: Mapping[str, Any], *keys: str) -> di
     return {}
 
 
+def _project_factory_stage_failure(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a structured upstream Factory-stage failure without prose parsing."""
+
+    chain = _mapping_copy(record.get("chain"))
+    audit_bundle = _mapping_copy(chain.get("audit_bundle"))
+    failure = _mapping_copy(audit_bundle.get("failure"))
+    stage = str(failure.get("stage") or audit_bundle.get("current_stage") or "").strip()
+    code = str(failure.get("code") or "").strip()
+    error_code = str(failure.get("error_code") or "").strip()
+    failure_class = str(failure.get("failure_class") or "").strip()
+    responsible_layer = str(failure.get("responsible_layer") or "").strip()
+    authoritative = bool(
+        code == "FACTORY_STAGE_FAILED" and stage and error_code and failure_class and responsible_layer
+    )
+    return {
+        **failure,
+        "source": "factory_run.stage_failure",
+        "available": bool(failure),
+        "authoritative": authoritative,
+        "stage": stage,
+        "code": code,
+        "error_code": error_code,
+        "failure_class": failure_class,
+        "responsible_layer": responsible_layer,
+    }
+
+
 def _canonical_execution_verdict(
     *,
     ledger: Mapping[str, Any],
@@ -3583,6 +3610,7 @@ def build_canonical_bench_projection(record: Mapping[str, Any]) -> dict[str, Any
         "physical_evidence": _mapping_copy(ledger.get("physical_evidence")),
     }
     runtime = _project_runtime_status(record)
+    factory_stage_failure = _project_factory_stage_failure(record)
     execution = _canonical_execution_verdict(
         ledger=ledger,
         runtime=runtime,
@@ -3629,6 +3657,7 @@ def build_canonical_bench_projection(record: Mapping[str, Any]) -> dict[str, Any
         "effect": effect,
         "boundary": boundary,
         "runtime": runtime,
+        "factory_stage_failure": factory_stage_failure,
         "ledger": ledger,
         "qa": qa,
         "barrier": _project_named_runtime_metadata(
@@ -3682,6 +3711,25 @@ def _canonical_failure_attribution(projection: Mapping[str, Any]) -> tuple[str, 
     }
     if runtime_error in runtime_categories:
         return "runtime_environment", runtime_categories[runtime_error], runtime_error
+
+    factory_failure = _mapping_copy(projection.get("factory_stage_failure"))
+    if bool(factory_failure.get("authoritative")):
+        stage = str(factory_failure.get("stage") or "").strip().lower()
+        category_by_stage = {
+            "pm_planning": "pm_contract",
+            "chief_engineer_review": "chief_engineer_blueprint",
+            "director_dispatch": "director_tool_execution",
+            "quality_gate": "llm_output",
+        }
+        error_code = str(factory_failure.get("error_code") or "factory_stage_failed").strip()
+        reason = error_code.rsplit(".", 1)[-1]
+        detail = str(
+            factory_failure.get("root_cause_hint")
+            or factory_failure.get("detail")
+            or factory_failure.get("failure_class")
+            or error_code
+        ).strip()
+        return category_by_stage.get(stage, "control_plane"), reason, detail
 
     ledger = _mapping_copy(projection.get("ledger"))
     if ledger.get("source") != "run_ledger" or int(ledger.get("gate_count") or 0) <= 0:

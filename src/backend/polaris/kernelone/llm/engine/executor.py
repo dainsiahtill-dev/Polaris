@@ -54,6 +54,10 @@ from .contracts import (
 from .model_catalog import ModelCatalog
 from .normalizer import ResponseNormalizer
 from .prompt_budget import TokenBudgetManager, compress_chat_messages_to_budget
+from .provider_route_inventory import (
+    factory_provider_implementation_policy_error,
+    factory_provider_route_policy_error,
+)
 from .resilience import ResilienceManager, RetryConfig, TimeoutConfig
 
 if TYPE_CHECKING:
@@ -572,9 +576,38 @@ class AIExecutor:
                 error=provider_policy_error,
                 category=ErrorCategory.CONFIG_ERROR,
             )
+        route_policy_error = factory_provider_route_policy_error(
+            provider_type,
+            mode="invoke",
+            physical_dispatch_port=physical_dispatch_port,
+        )
+        if route_policy_error:
+            return AIResponse.failure(
+                error=route_policy_error,
+                category=ErrorCategory.CONFIG_ERROR,
+            )
 
         # 获取 provider 实例
-        provider_instance = get_provider_manager().get_provider_instance(provider_type)
+        provider_manager = get_provider_manager()
+        provider_instance = (
+            provider_manager.get_provider_instance(provider_type)
+            if physical_dispatch_port is None
+            else provider_manager.get_factory_default_provider_instance(provider_type)
+        )
+        implementation_policy_error = factory_provider_implementation_policy_error(
+            provider_type,
+            mode="invoke",
+            physical_dispatch_port=physical_dispatch_port,
+            implementation_trusted=(
+                physical_dispatch_port is None
+                or provider_manager.is_factory_default_provider_implementation(provider_type, provider_instance)
+            ),
+        )
+        if implementation_policy_error:
+            return AIResponse.failure(
+                error=implementation_policy_error,
+                category=ErrorCategory.CONFIG_ERROR,
+            )
         if provider_instance is None:
             return AIResponse.failure(
                 error=f"Provider not found: {provider_type}",
@@ -653,6 +686,23 @@ class AIExecutor:
             overhead_tokens=payload_overhead,
             logger_prefix="[executor]",
         )
+
+        if physical_dispatch_port is not None:
+            route_binder = getattr(physical_dispatch_port, "bind_provider_route_authority", None)
+            if callable(route_binder):
+                try:
+                    route_binder(
+                        provider_id=str(provider_id),
+                        provider_type=provider_type,
+                        model=str(model or ""),
+                        mode="invoke",
+                        provider_config=invoke_cfg,
+                    )
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    return AIResponse.failure(
+                        error=f"factory_provider_route_authority_invalid:{exc}",
+                        category=ErrorCategory.CONFIG_ERROR,
+                    )
 
         if isinstance(request.context, dict):
             request.context.pop("context_snapshot_ref", None)

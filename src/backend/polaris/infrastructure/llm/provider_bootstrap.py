@@ -17,6 +17,11 @@ from polaris.infrastructure.llm.providers.provider_registry import (
     ProviderManager as InfrastructureProviderManager,
     provider_manager as infrastructure_provider_manager,
 )
+from polaris.kernelone.llm.engine.contracts import get_physical_provider_dispatch_port
+from polaris.kernelone.llm.engine.provider_route_inventory import (
+    factory_provider_implementation_policy_error,
+    factory_provider_route_policy_error,
+)
 from polaris.kernelone.llm.providers import THINKING_PREFIX, BaseProvider
 
 if TYPE_CHECKING:
@@ -152,7 +157,31 @@ class ProviderAdapter:
         if not provider_type:
             raise RuntimeError(f"provider_type_missing:{provider_id}")
 
-        provider = self._manager.get_provider_instance(provider_type)
+        physical_dispatch_port = get_physical_provider_dispatch_port()
+        route_policy_error = factory_provider_route_policy_error(
+            provider_type,
+            mode="stream" if stream else "invoke",
+            physical_dispatch_port=physical_dispatch_port,
+        )
+        if route_policy_error:
+            raise RuntimeError(route_policy_error)
+
+        provider = (
+            self._manager.get_provider_instance(provider_type)
+            if physical_dispatch_port is None
+            else self._manager.get_factory_default_provider_instance(provider_type)
+        )
+        implementation_policy_error = factory_provider_implementation_policy_error(
+            provider_type,
+            mode="stream" if stream else "invoke",
+            physical_dispatch_port=physical_dispatch_port,
+            implementation_trusted=(
+                physical_dispatch_port is None
+                or self._manager.is_factory_default_provider_implementation(provider_type, provider)
+            ),
+        )
+        if implementation_policy_error:
+            raise RuntimeError(implementation_policy_error)
         if provider is None:
             raise RuntimeError(f"provider_not_found:{provider_type}")
 

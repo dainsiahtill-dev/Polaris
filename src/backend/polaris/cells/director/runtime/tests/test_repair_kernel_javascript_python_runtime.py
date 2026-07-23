@@ -572,6 +572,80 @@ def test_python_package_shadow_bridge_runtime_exports_sibling_module_symbol(tmp_
     assert result.execution_result.receipt.source_tool == "deterministic_python_package_shadow_bridge_repair"
 
 
+def test_python_missing_module_alias_runtime_creates_executable_source_root_bridge(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "models" / "weather.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "class Weather:\n"
+        "    def summary(self) -> str:\n"
+        "        return 'temperature=22C'\n",
+        encoding="utf-8",
+    )
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.path.insert(0, 'src'); from weather import Weather; print(Weather().summary())",
+    ]
+    failed = subprocess.run(
+        command,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=10,
+        check=False,
+    )
+    assert failed.returncode != 0
+    writes: list[str] = []
+
+    result = run_runtime_repair(
+        source_tool="deterministic_python_missing_module_alias_repair",
+        workspace=tmp_path,
+        base_files=_read_base_files(tmp_path, ("src/models/weather.py",)),
+        artifact_quality_errors=("ModuleNotFoundError: No module named 'weather'",),
+        writer=_workspace_writer(tmp_path, writes),
+        allowed_paths=("src/weather.py",),
+    )
+
+    assert result.ok is True
+    assert writes == ["src/weather.py"]
+    completed = subprocess.run(
+        command,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=10,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert completed.stdout.strip() == "temperature=22C"
+    assert result.execution_result is not None
+    receipt = result.execution_result.receipt
+    assert receipt.rule_id == "python.missing_module_alias"
+    assert receipt.source_tool == "deterministic_python_missing_module_alias_repair"
+
+
+def test_python_missing_module_alias_runtime_fails_closed_on_ambiguous_source(tmp_path: Path) -> None:
+    base_files = {
+        "src/models/weather.py": "class Weather:\n    pass\n",
+        "src/legacy/weather.py": "class Weather:\n    pass\n",
+    }
+
+    result = run_runtime_repair(
+        source_tool="deterministic_python_missing_module_alias_repair",
+        workspace=tmp_path,
+        base_files=base_files,
+        artifact_quality_errors=("ModuleNotFoundError: No module named 'weather'",),
+        writer=_workspace_writer(tmp_path, []),
+        allowed_paths=("src/weather.py",),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "repair_not_planned"
+    assert not (tmp_path / "src" / "weather.py").exists()
+
+
 def test_python_package_child_reexport_runtime_exports_child_symbol(tmp_path: Path) -> None:
     src_dir = tmp_path / "src"
     package_dir = src_dir / "engine"

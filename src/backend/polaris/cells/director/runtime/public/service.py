@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Sequence
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
     ALLOWED_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
@@ -13,6 +13,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
     FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
+    FILE_ABSENT_HASH,
     CompositionResult,
     RepairAdvisorNote,
     RepairDiagnostic,
@@ -26,6 +27,10 @@ from polaris.cells.director.runtime.internal.repair_kernel.environment import (
     environment_prep_catalog_summary,
     environment_prep_plans_from_requirements,
     environment_refresh_requirements_from_receipts,
+)
+from polaris.cells.director.runtime.internal.repair_kernel.executor import (
+    _can_apply_with_editor,
+    _text_replace_operations_for_patch,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.receipt_projection import (
     build_repair_kernel_result_summary as _build_repair_kernel_result_summary,
@@ -66,6 +71,7 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorInterfaceDiscrepancyReceiptV1,
     DirectorRepairAdvisoryPolicyResultV1,
     DirectorRepairAdvisoryValidationResultV1,
+    DirectorRepairCallbackReceiptProjectionV1,
     DirectorRepairCompositionIssueV1,
     DirectorRepairCompositionSummaryV1,
     DirectorRepairConvergenceResultV1,
@@ -74,6 +80,9 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairCoverageReportV1,
     DirectorRepairCutoverReadinessResultV1,
     DirectorRepairDiagnosticCoverageV1,
+    DirectorRepairEffectPlanV1,
+    DirectorRepairEffectToolNameV1,
+    DirectorRepairEffectV1,
     DirectorRepairEnvironmentPrepCatalogResultV1,
     DirectorRepairEnvironmentPrepPlanV1,
     DirectorRepairEnvironmentRefreshRequirementsResultV1,
@@ -129,6 +138,7 @@ from polaris.cells.director.runtime.public.contracts import (
     RunDirectorRepairConvergenceCommandV1,
     RunDirectorTaskBoundaryQualityLoopCommandV1,
 )
+from polaris.cells.director.runtime.public.directed_effect_contracts import DirectedEffectImmutableItemsV1
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 WriteFileFn = Callable[[str, str], Mapping[str, Any]]
@@ -380,17 +390,19 @@ def attach_director_repair_revalidation_evidence(
 ) -> dict[str, Any]:
     """Project post-check evidence onto a repair summary and return the summary."""
 
-    return project_director_repair_revalidation_evidence(
-        AttachDirectorRepairRevalidationEvidenceV1(
-            summary=dict(summary or {}),
-            residual_artifact_quality_errors=tuple(str(item) for item in residual_artifact_quality_errors),
-            residual_artifact_quality_issues=tuple(dict(item) for item in residual_artifact_quality_issues),
-            command=tuple(str(item) for item in command),
-            exit_code=exit_code,
-            round_number=round_number,
-            metadata=dict(metadata or {}),
-        )
-    ).summary
+    return dict(
+        project_director_repair_revalidation_evidence(
+            AttachDirectorRepairRevalidationEvidenceV1(
+                summary=dict(summary or {}),
+                residual_artifact_quality_errors=tuple(str(item) for item in residual_artifact_quality_errors),
+                residual_artifact_quality_issues=tuple(dict(item) for item in residual_artifact_quality_issues),
+                command=tuple(str(item) for item in command),
+                exit_code=exit_code,
+                round_number=round_number,
+                metadata=dict(metadata or {}),
+            )
+        ).summary
+    )
 
 
 def project_director_repair_revalidation_evidence(
@@ -1068,7 +1080,9 @@ def _repair_diagnostics_from_quality_inputs(
     """
 
     diagnostics = list(normalize_artifact_quality_errors(list(artifact_quality_errors)))
-    index_by_raw = {raw_key: index for index, item in enumerate(diagnostics) if (raw_key := _repair_diagnostic_raw_key(item))}
+    index_by_raw = {
+        raw_key: index for index, item in enumerate(diagnostics) if (raw_key := _repair_diagnostic_raw_key(item))
+    }
     index_by_structural = {
         structural_key: index
         for index, item in enumerate(diagnostics)
@@ -1790,7 +1804,11 @@ def run_director_post_execution_repair_schedule_result(
         source="director.runtime.repair_kernel.scheduler",
         ordered_steps=tuple(_public_post_execution_step(step) for step in run.ordered_steps),
         tool_results=tuple(dict(item) for item in run_payload["tool_results"]),
-        receipt_projections=tuple(dict(item) for item in run_payload["receipt_projections"]),
+        # The result contract normalizes these constructor mappings to frozen DTOs in __post_init__.
+        receipt_projections=cast(
+            tuple[DirectorRepairCallbackReceiptProjectionV1, ...],
+            tuple(dict(item) for item in run_payload["receipt_projections"]),
+        ),
         summary=dict(run_payload["summary"]),
         max_rounds=int(run_payload["max_rounds"]),
         rounds_run=int(run_payload["rounds_run"]),
@@ -1887,7 +1905,11 @@ def run_director_materialization_quality_repair_schedule_result(
         source="director.runtime.repair_kernel.scheduler",
         ordered_steps=tuple(_public_materialization_quality_step(step) for step in run.ordered_steps),
         tool_results=tuple(dict(item) for item in run_payload["tool_results"]),
-        receipt_projections=tuple(dict(item) for item in run_payload["receipt_projections"]),
+        # The result contract normalizes these constructor mappings to frozen DTOs in __post_init__.
+        receipt_projections=cast(
+            tuple[DirectorRepairCallbackReceiptProjectionV1, ...],
+            tuple(dict(item) for item in run_payload["receipt_projections"]),
+        ),
         summary=dict(run_payload["summary"]),
         max_rounds=int(run_payload["max_rounds"]),
         rounds_run=int(run_payload["rounds_run"]),
@@ -2281,9 +2303,7 @@ def project_director_repair_kernel_summary(
     summary = _build_repair_kernel_result_summary(
         stage=command.stage,
         tool_results=[dict(item) for item in command.tool_results],
-        artifact_quality_errors=[
-            str(item) for item in command.artifact_quality_errors if str(item or "").strip()
-        ],
+        artifact_quality_errors=[str(item) for item in command.artifact_quality_errors if str(item or "").strip()],
         repair_diagnostics=_repair_diagnostics_from_quality_inputs(
             command.artifact_quality_errors,
             command.artifact_quality_issues,
@@ -2524,7 +2544,7 @@ def run_director_repair_convergence(
                     "verifier_result_type": type(verifier_input).__name__,
                     "round_number": round_number,
                 },
-        )
+            )
 
         _validate_public_convergence_verifier_evidence(verifier_input, round_number=round_number)
         diagnostics = _repair_diagnostics_from_quality_inputs(
@@ -3226,7 +3246,164 @@ def _to_public_repair_planning_result(
         diagnostics=diagnostics,
         plan_summary=_to_public_repair_plan_summary(planning.plan, advisor_note_count=len(notes)),
         composition_summary=_to_public_repair_composition_summary(planning.composition),
+        effect_plan=_to_public_repair_effect_plan(planning.plan, planning.composition),
         advisor_notes=notes,
+    )
+
+
+def _repair_effect_call_id(*, plan_id: str, operation_id: str, ordinal: int, contingency_kind: str) -> str:
+    identity = sha256_text(f"director-repair-effect-v1|{plan_id}|{operation_id}|{ordinal}|{contingency_kind}")
+    return f"repair-effect-{identity[:24]}"
+
+
+def _repair_effect_operation_id(*, plan_id: str, path: str, operation_ids: Sequence[str]) -> str:
+    joined = "|".join(str(item) for item in operation_ids)
+    return f"repair-patch-{sha256_text(f'{plan_id}|{path}|{joined}')[:24]}"
+
+
+def _to_public_repair_effect_plan(
+    plan: RepairPlan,
+    composition: CompositionResult | None,
+) -> DirectorRepairEffectPlanV1 | None:
+    """Project one immutable forward/rollback plan before any Director tool runs."""
+
+    if composition is None or not composition.ok:
+        return None
+
+    forward_effects: list[DirectorRepairEffectV1] = []
+    rollback_effects: list[DirectorRepairEffectV1] = []
+    for patch in composition.patches:
+        if patch.before_hash == patch.after_hash and patch.exists_before == patch.exists_after:
+            continue
+        text_operations = _text_replace_operations_for_patch(plan.operations, patch.path)
+        use_precise_editor = bool(
+            patch.exists_before
+            and patch.exists_after
+            and len(text_operations) == 1
+            and _can_apply_with_editor(patch.content_before, text_operations)
+        )
+        if use_precise_editor:
+            current = patch.content_before
+            for operation in text_operations:
+                content_before_operation = current
+                start = int(operation.span_start or 0)
+                end = int(operation.span_end or 0)
+                replacement = str(operation.replacement or "")
+                content_after = content_before_operation[:start] + replacement + content_before_operation[end:]
+                call_id = _repair_effect_call_id(
+                    plan_id=plan.plan_id,
+                    operation_id=operation.operation_id,
+                    ordinal=len(forward_effects) + 1,
+                    contingency_kind="forward",
+                )
+                forward_effects.append(
+                    DirectorRepairEffectV1(
+                        call_id=call_id,
+                        operation_id=operation.operation_id,
+                        tool_name="edit_file",
+                        arguments=(
+                            ("file", patch.path),
+                            ("replace", replacement),
+                            ("search", str(operation.expected or "")),
+                        ),
+                        contingency_kind="forward",
+                        target_path=patch.path,
+                        expected_before_hash=sha256_text(current),
+                        expected_after_hash=sha256_text(content_after),
+                        exists_before=True,
+                        exists_after=True,
+                    )
+                )
+                rollback_effects.append(
+                    DirectorRepairEffectV1(
+                        call_id=_repair_effect_call_id(
+                            plan_id=plan.plan_id,
+                            operation_id=operation.operation_id,
+                            ordinal=len(forward_effects),
+                            contingency_kind="rollback",
+                        ),
+                        operation_id=f"rollback-{operation.operation_id}",
+                        tool_name="write_file",
+                        arguments=(("content", content_before_operation), ("file", patch.path)),
+                        contingency_kind="rollback",
+                        activates_after_call_id=call_id,
+                        target_path=patch.path,
+                        expected_before_hash=sha256_text(content_after),
+                        expected_after_hash=sha256_text(content_before_operation),
+                        exists_before=True,
+                        exists_after=True,
+                    )
+                )
+                current = content_after
+            continue
+
+        operation_id = _repair_effect_operation_id(
+            plan_id=plan.plan_id,
+            path=patch.path,
+            operation_ids=patch.operation_ids,
+        )
+        call_id = _repair_effect_call_id(
+            plan_id=plan.plan_id,
+            operation_id=operation_id,
+            ordinal=len(forward_effects) + 1,
+            contingency_kind="forward",
+        )
+        forward_arguments: DirectedEffectImmutableItemsV1
+        forward_tool: DirectorRepairEffectToolNameV1
+        if patch.exists_after:
+            forward_tool = "write_file"
+            forward_arguments = (("content", patch.content_after), ("file", patch.path))
+        else:
+            forward_tool = "delete_file"
+            forward_arguments = (("file", patch.path),)
+        forward_effects.append(
+            DirectorRepairEffectV1(
+                call_id=call_id,
+                operation_id=operation_id,
+                tool_name=forward_tool,
+                arguments=forward_arguments,
+                contingency_kind="forward",
+                target_path=patch.path,
+                expected_before_hash=(patch.before_hash if patch.exists_before else sha256_text(FILE_ABSENT_HASH)),
+                expected_after_hash=(patch.after_hash if patch.exists_after else sha256_text(FILE_ABSENT_HASH)),
+                exists_before=bool(patch.exists_before),
+                exists_after=bool(patch.exists_after),
+            )
+        )
+        rollback_arguments: DirectedEffectImmutableItemsV1
+        rollback_tool: DirectorRepairEffectToolNameV1
+        if patch.exists_before:
+            rollback_tool = "write_file"
+            rollback_arguments = (("content", patch.content_before), ("file", patch.path))
+        else:
+            rollback_tool = "delete_file"
+            rollback_arguments = (("file", patch.path),)
+        rollback_effects.append(
+            DirectorRepairEffectV1(
+                call_id=_repair_effect_call_id(
+                    plan_id=plan.plan_id,
+                    operation_id=operation_id,
+                    ordinal=len(forward_effects),
+                    contingency_kind="rollback",
+                ),
+                operation_id=f"rollback-{operation_id}",
+                tool_name=rollback_tool,
+                arguments=rollback_arguments,
+                contingency_kind="rollback",
+                activates_after_call_id=call_id,
+                target_path=patch.path,
+                expected_before_hash=(patch.after_hash if patch.exists_after else sha256_text(FILE_ABSENT_HASH)),
+                expected_after_hash=(patch.before_hash if patch.exists_before else sha256_text(FILE_ABSENT_HASH)),
+                exists_before=bool(patch.exists_after),
+                exists_after=bool(patch.exists_before),
+            )
+        )
+
+    return DirectorRepairEffectPlanV1(
+        plan_id=plan.plan_id,
+        source_tool=plan.source_tool,
+        effects=tuple(forward_effects + rollback_effects),
+        round_number=1,
     )
 
 

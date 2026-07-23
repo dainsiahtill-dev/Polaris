@@ -9,7 +9,9 @@ from nats.errors import Error as NatsError
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, ReplayPolicy
 from polaris.cells.control_plane.run_ledger.public import (
     FACTORY_SETTLEMENT_BARRIER_SCHEMA_V1,
+    AppendRunLedgerEventCommandV1,
     FactorySettlementBarrierResultV1,
+    RunLedgerAppendResultV1,
 )
 from polaris.cells.events.fact_stream.public import (
     AppendFactEventCommandV1,
@@ -47,6 +49,11 @@ from polaris.cells.factory.pipeline.public import (
     FactoryWorkspaceRunLeaseStateV1,
     FactoryWorkspaceRunLeaseStorageError,
     FactoryWorkspaceRunLeaseV1,
+)
+from polaris.cells.runtime.task_runtime.public import (
+    DirectedEffectRecoverySweepItemV1,
+    DirectedEffectRecoverySweepResultV1,
+    ReconcileAmbiguousDirectedEffectsCommandV1,
 )
 from polaris.infrastructure.messaging.nats.nats_types import JetStreamConstants
 
@@ -381,6 +388,193 @@ async def test_create_runtime_delegates_bootstrap_before_adapter_construction(
         assert commands[0].workspace == str(tmp_path.resolve())
         assert commands[0].streams == fact_stream_bootstrap_streams()
         assert commands[0].maintenance_reason == "factory_settlement_runtime_startup"
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_reconciles_ambiguous_effects_and_projects_run_ledger(
+    tmp_path: Path,
+) -> None:
+    recovery_commands: list[ReconcileAmbiguousDirectedEffectsCommandV1] = []
+    ledger_commands: list[AppendRunLedgerEventCommandV1] = []
+    item = DirectedEffectRecoverySweepItemV1(
+        factory_run_id="factory-1",
+        session_id="session-1",
+        task_id=17,
+        operation_id="effect-1",
+        code="recovery_pending",
+        state="RECOVERY_PENDING",
+        version=4,
+        event_id="event-1",
+        evidence_ref="task-runtime://event-1",
+        evidence_hash="a" * 64,
+    )
+
+    def recover(
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+    ) -> DirectedEffectRecoverySweepResultV1:
+        recovery_commands.append(command)
+        return DirectedEffectRecoverySweepResultV1(
+            ok=True,
+            code="reconciled",
+            workspace=command.workspace,
+            scanned_session_count=1,
+            items=(item,),
+        )
+
+    def append(command: AppendRunLedgerEventCommandV1) -> RunLedgerAppendResultV1:
+        ledger_commands.append(command)
+        return RunLedgerAppendResultV1(receipt={"ok": True})
+
+    runtime = await create_factory_settlement_runtime(
+        str(tmp_path),
+        enable_wake_bridge=False,
+        wake_bridge_required=False,
+        directed_effect_recovery_handler=recover,
+        run_ledger_append_handler=append,
+    )
+    try:
+        assert len(recovery_commands) == 1
+        recovery_command = recovery_commands[0]
+        assert recovery_command.workspace == str(tmp_path.resolve())
+        assert recovery_command.reason == "factory settlement startup recovery"
+        assert len(ledger_commands) == 1
+        event = ledger_commands[0].event
+        assert ledger_commands[0].run_id == "factory-1"
+        assert event["event_type"] == "directed_effect_recovery"
+        assert event["physical_evidence"] == {"effect_recovery": item.to_record()}
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_fails_closed_when_recovery_fact_has_no_factory_authority(
+    tmp_path: Path,
+) -> None:
+    orphan = DirectedEffectRecoverySweepItemV1(
+        factory_run_id="",
+        session_id="session-orphan",
+        task_id=1,
+        operation_id="operation-orphan",
+        code="dead_lettered",
+        state="DEAD_LETTER",
+        version=4,
+        event_id="event-orphan",
+        evidence_ref="task-runtime://event-orphan",
+        evidence_hash="a" * 64,
+    )
+
+    def recover(
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+    ) -> DirectedEffectRecoverySweepResultV1:
+        return DirectedEffectRecoverySweepResultV1(
+            ok=True,
+            code="reconciled",
+            workspace=command.workspace,
+            scanned_session_count=1,
+            items=(orphan,),
+        )
+
+    with pytest.raises(FactorySettlementRuntimeError) as raised:
+        await create_factory_settlement_runtime(
+            str(tmp_path),
+            enable_wake_bridge=False,
+            wake_bridge_required=False,
+            directed_effect_recovery_handler=recover,
+        )
+
+    assert raised.value.code == "factory_settlement_directed_effect_recovery_projection_authority_missing"
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_fails_closed_when_directed_effect_recovery_fails(
+    tmp_path: Path,
+) -> None:
+    def recover(
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+    ) -> DirectedEffectRecoverySweepResultV1:
+        return DirectedEffectRecoverySweepResultV1(
+            ok=False,
+            code="partial_failure",
+            workspace=command.workspace,
+            scanned_session_count=1,
+            failures=({"code": "operation_event_stream_invalid"},),
+        )
+
+    with pytest.raises(FactorySettlementRuntimeError) as raised:
+        await create_factory_settlement_runtime(
+            str(tmp_path),
+            enable_wake_bridge=False,
+            wake_bridge_required=False,
+            directed_effect_recovery_handler=recover,
+        )
+
+    assert raised.value.code == "factory_settlement_directed_effect_recovery_failed"
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_retries_durable_recovery_projection_after_append_failure(
+    tmp_path: Path,
+) -> None:
+    item = DirectedEffectRecoverySweepItemV1(
+        factory_run_id="factory-1",
+        session_id="session-1",
+        task_id=17,
+        operation_id="effect-1",
+        code="dead_lettered",
+        state="DEAD_LETTER",
+        version=4,
+        event_id="event-dead-letter-1",
+        evidence_ref="task-runtime://event-dead-letter-1",
+        evidence_hash="b" * 64,
+    )
+    recover_calls = 0
+    append_attempts: list[AppendRunLedgerEventCommandV1] = []
+
+    def recover(
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+    ) -> DirectedEffectRecoverySweepResultV1:
+        nonlocal recover_calls
+        recover_calls += 1
+        return DirectedEffectRecoverySweepResultV1(
+            ok=True,
+            code="reconciled",
+            workspace=command.workspace,
+            scanned_session_count=1,
+            items=(item,),
+        )
+
+    def fail_append(command: AppendRunLedgerEventCommandV1) -> RunLedgerAppendResultV1:
+        append_attempts.append(command)
+        raise RuntimeError("simulated append failure")
+
+    with pytest.raises(FactorySettlementRuntimeError) as raised:
+        await create_factory_settlement_runtime(
+            str(tmp_path),
+            enable_wake_bridge=False,
+            wake_bridge_required=False,
+            directed_effect_recovery_handler=recover,
+            run_ledger_append_handler=fail_append,
+        )
+    assert raised.value.code == "factory_settlement_directed_effect_recovery_projection_failed"
+
+    def succeed_append(command: AppendRunLedgerEventCommandV1) -> RunLedgerAppendResultV1:
+        append_attempts.append(command)
+        return RunLedgerAppendResultV1(receipt={"ok": True})
+
+    runtime = await create_factory_settlement_runtime(
+        str(tmp_path),
+        enable_wake_bridge=False,
+        wake_bridge_required=False,
+        directed_effect_recovery_handler=recover,
+        run_ledger_append_handler=succeed_append,
+    )
+    try:
+        assert recover_calls == 2
+        assert len(append_attempts) == 2
+        assert append_attempts[0].event == append_attempts[1].event
+        assert append_attempts[1].event["physical_evidence"] == {"effect_recovery": item.to_record()}
     finally:
         await runtime.stop()
 

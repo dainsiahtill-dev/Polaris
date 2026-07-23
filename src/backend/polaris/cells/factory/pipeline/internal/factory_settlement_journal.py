@@ -484,6 +484,7 @@ class FactorySettlementJournal:
         identity: SettlementIdentity,
         *,
         source_fact_seq: int,
+        claim_id: str,
         error_code: str,
         barrier_hash: str,
         evidence_refs: Sequence[str],
@@ -492,6 +493,9 @@ class FactorySettlementJournal:
         """Persist a retryable outcome without acknowledging the wake signal."""
 
         normalized_code = str(error_code or "settlement_retryable_error").strip()
+        normalized_claim_id = str(claim_id or "").strip()
+        if not normalized_claim_id:
+            raise ValueError("claim_id must be a non-empty string")
         payload = self._base_payload(
             identity,
             source_fact_seq=source_fact_seq,
@@ -501,6 +505,7 @@ class FactorySettlementJournal:
         payload.update(
             {
                 "phase": SettlementPendingPhase.WAITING_RETRY.value,
+                "claim_id": normalized_claim_id,
                 "error_code": normalized_code,
             }
         )
@@ -508,7 +513,7 @@ class FactorySettlementJournal:
             status=SettlementJournalStatus.PENDING,
             payload=payload,
             identity=identity,
-            idempotency_suffix=f"pending:waiting_retry:{normalized_code}",
+            idempotency_suffix=f"pending:waiting_retry:{normalized_code}:{normalized_claim_id}",
             snapshot=snapshot,
         )
 

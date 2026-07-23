@@ -10,12 +10,16 @@ import os
 import subprocess
 from dataclasses import fields, replace
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 import pytest
 from polaris.cells.director.runtime.public import (
+    DirectedEffectImmutableItemsV1,
     DirectedEffectImmutableMapV1,
+    DirectorEffectAuthorizationBindingV1,
     DirectorEffectAuthorizationEvidenceV1,
+    DirectorEffectClassificationEvidenceV1,
+    DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
     DirectorEffectPolicyBoundSnapshotV1,
     DirectorEffectPolicyMemberBindingRequestV1,
     DirectorEffectPolicyOperationSubjectV1,
@@ -23,9 +27,11 @@ from polaris.cells.director.runtime.public import (
     DirectorEffectPolicyRevalidationResultV1,
     DirectorEffectPolicySnapshotPortV1,
     DirectorEffectPolicySnapshotRequestV1,
+    DirectorEffectPolicySnapshotResultV1,
     DirectorEffectTargetStateEvidenceV1,
     hash_directed_effect_arguments,
     hash_director_effect_authorization_evidence,
+    project_director_effect_public_policy_evidence,
 )
 from polaris.cells.director.runtime.public.directed_effect_policy_contracts import (
     hash_directed_effect_policy_member_binding,
@@ -46,6 +52,7 @@ from polaris.cells.runtime.task_runtime.public import (
 from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.llm.toolkit.executor.core import AgentAccelToolExecutor
 from polaris.kernelone.process.command_executor import CommandExecutionService
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 T = TypeVar("T")
 
@@ -165,7 +172,7 @@ def _content_hash(content: str) -> str:
 def _forged_replace(instance: T, **changes: object) -> T:
     """Bypass constructor guards to exercise stateless forged-wire rejection."""
     forged = object.__new__(type(instance))
-    for field in fields(instance):
+    for field in fields(cast(Any, instance)):
         object.__setattr__(forged, field.name, changes.get(field.name, getattr(instance, field.name)))
     return forged
 
@@ -401,6 +408,7 @@ async def test_snapshot_and_revalidation_denials_have_full_zero_effect_matrix(
     (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
     port = create_director_effect_policy_snapshot_port(str(workspace))
     request = _write_request(workspace)
+    result: Any
 
     if phase == "snapshot":
         calls = _install_zero_effect_spies(monkeypatch)
@@ -416,6 +424,7 @@ async def test_snapshot_and_revalidation_denials_have_full_zero_effect_matrix(
                 DirectorEffectPolicyMemberBindingRequestV1(
                     snapshot=snapshot,
                     authorization_evidence=authorization,
+                    authorization_binding=_authorization_binding(snapshot, authorization),
                     member=_forged_replace(member, ordinal=2),
                 )
             )
@@ -424,6 +433,7 @@ async def test_snapshot_and_revalidation_denials_have_full_zero_effect_matrix(
                 DirectorEffectPolicyMemberBindingRequestV1(
                     snapshot=snapshot,
                     authorization_evidence=authorization,
+                    authorization_binding=_authorization_binding(snapshot, authorization),
                     member=member,
                 )
             )
@@ -464,7 +474,7 @@ def _job_evidence(
     allowed_commands: tuple[str, ...] = ("pytest -q",),
     allowed_paths: tuple[str, ...] = ("src/a.py",),
     restriction_nonce: str = "restriction-1",
-) -> tuple[tuple[str, object], ...]:
+) -> DirectedEffectImmutableItemsV1:
     return (
         ("allowed_commands", allowed_commands),
         ("allowed_commands_hash", _scope_hash("allowed_commands", allowed_commands)),
@@ -476,7 +486,7 @@ def _job_evidence(
     )
 
 
-def _job_evidence_hash(evidence: tuple[tuple[str, object], ...]) -> str:
+def _job_evidence_hash(evidence: DirectedEffectImmutableItemsV1) -> str:
     return hash_directed_effect_arguments(evidence)
 
 
@@ -484,7 +494,7 @@ def _operation_hash(
     *,
     workspace: Path,
     normalized_tool_name: str,
-    normalized_arguments: tuple[tuple[str, object], ...],
+    normalized_arguments: DirectedEffectImmutableItemsV1,
     effect_type: str,
     execution_mode: str,
     inventory_ordinal: int = 1,
@@ -669,6 +679,7 @@ async def test_agents_evidence_is_workspace_contained_and_fresh_for_commands(tmp
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=command_snapshot,
             authorization_evidence=authorization,
+            authorization_binding=_authorization_binding(command_snapshot, authorization),
             member=member,
         )
     )
@@ -787,13 +798,13 @@ def _claim_grant(member: DirectedEffectInventoryMemberV1, workspace: Path) -> Di
 
 def _authorization(
     request: DirectorEffectPolicySnapshotRequestV1,
-    snapshot: object,
+    snapshot: DirectorEffectPolicySnapshotResultV1,
     workspace: Path,
 ) -> DirectorEffectAuthorizationEvidenceV1:
     job_evidence = _job_evidence()
     allowed_paths = ("src/a.py",)
     allowed_commands = ("pytest -q",)
-    values = {
+    values: dict[str, Any] = {
         "workspace": str(workspace.resolve()),
         "execution_attempt_id": "session-1:1",
         "turn_id": "turn-1",
@@ -821,6 +832,31 @@ def _authorization(
     return DirectorEffectAuthorizationEvidenceV1(
         **values,
         authorization_hash=hash_director_effect_authorization_evidence(**values),
+    )
+
+
+def _authorization_binding(
+    snapshot: DirectorEffectPolicySnapshotResultV1,
+    authorization: DirectorEffectAuthorizationEvidenceV1,
+) -> DirectorEffectAuthorizationBindingV1:
+    subject = snapshot.subject
+    classification = DirectorEffectClassificationEvidenceV1(
+        raw_tool_name=subject.normalized_tool_name,
+        canonical_tool_name=subject.normalized_tool_name,
+        effect_type=subject.effect_type,
+        execution_mode=subject.execution_mode,
+        normalized_arguments=subject.normalized_arguments,
+        arguments_hash=authorization.arguments_hash,
+        tool_spec_hash=authorization.tool_spec_hash,
+        tool_spec_snapshot_hash="a" * 64,
+        alias_binding_hash="a" * 64,
+    )
+    return DirectorEffectAuthorizationBindingV1(
+        authorization_evidence=authorization,
+        classification_evidence=classification,
+        tool_spec_hash=authorization.tool_spec_hash,
+        tool_spec_snapshot_hash=classification.tool_spec_snapshot_hash,
+        alias_binding_hash=classification.alias_binding_hash,
     )
 
 
@@ -1070,10 +1106,13 @@ async def test_static_identity_failures_are_denied_before_all_observation(
         forged_bound = DirectorEffectPolicyBoundSnapshotV1(
             snapshot=snapshot,
             authorization_evidence_hash=bound.authorization_evidence_hash,
+            authorization_binding=bound.authorization_binding,
+            authorization_binding_hash=bound.authorization_binding_hash,
             member=forged_member,
             member_binding_hash=hash_directed_effect_policy_member_binding(
                 snapshot.evidence_hash,
                 bound.authorization_evidence_hash,
+                bound.authorization_binding_hash,
                 forged_member,
             ),
         )
@@ -1106,7 +1145,14 @@ async def test_static_identity_failures_are_denied_before_all_observation(
     assert target.read_text(encoding="utf-8") == "before\n"
 
 
-async def _bound_write_port(workspace: Path) -> tuple[DirectorEffectPolicySnapshotPortV1, object, object, object]:
+async def _bound_write_port(
+    workspace: Path,
+) -> tuple[
+    DirectorEffectPolicySnapshotPortV1,
+    DirectorEffectPolicySnapshotRequestV1,
+    DirectorEffectPolicySnapshotResultV1,
+    DirectorEffectPolicyBoundSnapshotV1,
+]:
     port = create_director_effect_policy_snapshot_port(str(workspace))
     assert isinstance(port, DirectorEffectPolicySnapshotPortV1)
     request = _write_request(workspace)
@@ -1118,11 +1164,122 @@ async def _bound_write_port(workspace: Path) -> tuple[DirectorEffectPolicySnapsh
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=snapshot,
             authorization_evidence=authorization,
+            authorization_binding=_authorization_binding(snapshot, authorization),
             member=member,
         )
     )
     assert bound.status == "allowed"
+    assert bound.bound_snapshot is not None
     return port, request, snapshot, bound.bound_snapshot
+
+
+async def _current_policy_capture_request(
+    workspace: Path,
+) -> tuple[
+    DirectorEffectPolicySnapshotPortV1,
+    DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+]:
+    target = workspace / "src" / "a.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("before\n", encoding="utf-8")
+    (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
+    port = create_director_effect_policy_snapshot_port(str(workspace))
+    snapshot_request = _write_request(workspace)
+    snapshot = await port.snapshot(snapshot_request)
+    assert snapshot.allowed
+    member = _member(snapshot.normalized_operation_hash)
+    captured_spec = ToolSpecRegistry.capture_effective_spec("write_file")
+    authorization = _rehash_authorization(
+        _authorization(snapshot_request, snapshot, workspace),
+        tool_spec_hash=captured_spec.tool_spec_hash,
+    )
+    classification = DirectorEffectClassificationEvidenceV1(
+        raw_tool_name="write_file",
+        canonical_tool_name="write_file",
+        effect_type=member.effect_type,
+        execution_mode=member.execution_mode,
+        normalized_arguments=snapshot.subject.normalized_arguments,
+        arguments_hash=authorization.arguments_hash,
+        tool_spec_hash=captured_spec.tool_spec_hash,
+        tool_spec_snapshot_hash=captured_spec.snapshot_hash,
+        alias_binding_hash=captured_spec.alias_binding_hash,
+    )
+    authorization_binding = DirectorEffectAuthorizationBindingV1(
+        authorization_evidence=authorization,
+        classification_evidence=classification,
+        tool_spec_hash=captured_spec.tool_spec_hash,
+        tool_spec_snapshot_hash=captured_spec.snapshot_hash,
+        alias_binding_hash=captured_spec.alias_binding_hash,
+    )
+    bound = port.bind_member(
+        DirectorEffectPolicyMemberBindingRequestV1(
+            snapshot=snapshot,
+            authorization_evidence=authorization,
+            authorization_binding=authorization_binding,
+            member=member,
+        )
+    )
+    assert bound.bound_snapshot is not None
+    grant = _claim_grant(member, workspace)
+    return port, DirectorEffectCurrentPolicyEvidenceCaptureRequestV1(
+        baseline_authorization_binding=authorization_binding,
+        baseline_public_policy_evidence=project_director_effect_public_policy_evidence(authorization_binding),
+        bound_snapshot=bound.bound_snapshot,
+        claimed_member=member,
+        claim_grant=grant,
+        normalized_tool="write_file",
+        normalized_arguments_hash=authorization.arguments_hash,
+        current_job_token_restriction_evidence=_job_evidence(),
+    )
+
+
+async def test_current_policy_capture_binds_live_sources_after_claim(tmp_path: Path) -> None:
+    port, request = await _current_policy_capture_request(tmp_path / "workspace")
+
+    result = await port.capture_current_policy_evidence(request)
+
+    assert result.status == "captured"
+    assert result.error_code is None
+    assert result.evidence is not None
+    assert result.evidence.claim_grant_hash == request.claim_grant.grant_hash
+    assert result.evidence.bound_member_hash == request.bound_snapshot.member_binding_hash
+    assert (
+        result.evidence.baseline_authorization_binding_hash
+        == request.baseline_authorization_binding.authorization_binding_hash
+    )
+    assert (
+        result.evidence.baseline_public_policy_evidence_hash
+        == request.baseline_public_policy_evidence.public_policy_evidence_hash
+    )
+
+
+@pytest.mark.parametrize(
+    "source_method",
+    (
+        "_capture_policy_target_source",
+        "_capture_operation_source",
+        "_capture_capability_scope_source",
+        "_capture_job_token_source",
+        "_capture_tool_spec_source",
+        "_capture_execution_envelope_source",
+        "_capture_allowed_commands_source",
+    ),
+)
+async def test_missing_or_unversioned_current_source_denies_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_method: str,
+) -> None:
+    port, request = await _current_policy_capture_request(tmp_path / source_method)
+    monkeypatch.setattr(type(port), source_method, lambda *args, **kwargs: None)
+    effect_calls = _install_zero_effect_spies(monkeypatch)
+
+    result = await port.capture_current_policy_evidence(request)
+
+    assert result.status == "denied"
+    assert result.evidence is None
+    assert result.error_code == "deo_current_policy_evidence_unavailable"
+    assert effect_calls == []
 
 
 async def test_member_binding_is_deterministic_stateless_and_forgery_closed(tmp_path: Path) -> None:
@@ -1143,6 +1300,7 @@ async def test_member_binding_is_deterministic_stateless_and_forgery_closed(tmp_
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=snapshot,
             authorization_evidence=authorization,
+            authorization_binding=_authorization_binding(snapshot, authorization),
             member=member,
         )
     )
@@ -1151,6 +1309,7 @@ async def test_member_binding_is_deterministic_stateless_and_forgery_closed(tmp_
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=snapshot,
             authorization_evidence=authorization,
+            authorization_binding=_authorization_binding(snapshot, authorization),
             member=member,
         )
     )
@@ -1161,7 +1320,8 @@ async def test_member_binding_is_deterministic_stateless_and_forgery_closed(tmp_
     assert second.bound_snapshot is not None
 
     async def revalidate(
-        bound_snapshot: object, actual_member: DirectedEffectInventoryMemberV1
+        bound_snapshot: DirectorEffectPolicyBoundSnapshotV1,
+        actual_member: DirectedEffectInventoryMemberV1,
     ) -> DirectorEffectPolicyRevalidationResultV1:
         assert second.bound_snapshot is not None
         canonical_bound = second.bound_snapshot
@@ -1236,6 +1396,7 @@ async def test_bind_member_rejects_each_known_semantic_forgery(
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=snapshot,
             authorization_evidence=authorization,
+            authorization_binding=_authorization_binding(snapshot, authorization),
             member=forged_member,
         )
     )
@@ -1266,13 +1427,19 @@ async def test_bind_member_rejects_authorization_integrity_drift_without_observa
     assert snapshot.allowed
     member = _member(snapshot.normalized_operation_hash)
     authorization = _authorization(request, snapshot, workspace)
+    canonical_binding = _authorization_binding(snapshot, authorization)
     if case == "authorization-hash":
         authorization = _forged_replace(authorization, role_policy_hash="f" * 64)
+        authorization_binding = _forged_replace(
+            canonical_binding,
+            authorization_evidence=authorization,
+        )
     else:
         authorization = _rehash_authorization(
             authorization,
             bound_policy_snapshot_hash="f" * 64,
         )
+        authorization_binding = _authorization_binding(snapshot, authorization)
     effect_calls = _install_zero_effect_spies(monkeypatch)
     observation_calls = _install_pre_observation_spies(monkeypatch, port)
 
@@ -1280,6 +1447,7 @@ async def test_bind_member_rejects_authorization_integrity_drift_without_observa
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=snapshot,
             authorization_evidence=authorization,
+            authorization_binding=authorization_binding,
             member=member,
         )
     )
@@ -1293,6 +1461,43 @@ async def test_bind_member_rejects_authorization_integrity_drift_without_observa
     assert effect_calls == []
     monkeypatch.undo()
     assert target.read_text(encoding="utf-8") == "before\n"
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("tool_spec_hash", "tool_spec_snapshot_hash", "alias_binding_hash", "authorization_binding_hash"),
+)
+async def test_bind_member_rejects_forged_task4_authorization_binding(
+    tmp_path: Path,
+    field_name: str,
+) -> None:
+    """Task5 cannot bind a sealed member to a forged additive Task4 wrapper."""
+    workspace = tmp_path / "workspace"
+    target = workspace / "src" / "a.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("before\n", encoding="utf-8")
+    (workspace / "AGENTS.md").write_text("# policy\n", encoding="utf-8")
+    port = create_director_effect_policy_snapshot_port(str(workspace))
+    request = _write_request(workspace)
+    snapshot = await port.snapshot(request)
+    assert snapshot.allowed
+    member = _member(snapshot.normalized_operation_hash)
+    authorization = _authorization(request, snapshot, workspace)
+    binding = _authorization_binding(snapshot, authorization)
+    forged_binding = _forged_replace(binding, **{field_name: "f" * 64})
+
+    result = port.bind_member(
+        DirectorEffectPolicyMemberBindingRequestV1(
+            snapshot=snapshot,
+            authorization_evidence=authorization,
+            authorization_binding=forged_binding,
+            member=member,
+        )
+    )
+
+    assert result.status == "denied"
+    assert result.error_code == "deo_authorization_binding_drift"
+    assert result.bound_snapshot is None
 
 
 async def test_zero_ordinal_binds_and_seal_derived_ids_are_not_pre_expected(tmp_path: Path) -> None:
@@ -1325,6 +1530,7 @@ async def test_zero_ordinal_binds_and_seal_derived_ids_are_not_pre_expected(tmp_
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=snapshot,
             authorization_evidence=authorization,
+            authorization_binding=_authorization_binding(snapshot, authorization),
             member=first_member,
         )
     )
@@ -1332,6 +1538,7 @@ async def test_zero_ordinal_binds_and_seal_derived_ids_are_not_pre_expected(tmp_
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=snapshot,
             authorization_evidence=authorization,
+            authorization_binding=_authorization_binding(snapshot, authorization),
             member=second_member,
         )
     )
@@ -1358,6 +1565,7 @@ async def test_revalidation_needs_no_in_process_snapshot_state(tmp_path: Path) -
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=snapshot,
             authorization_evidence=authorization,
+            authorization_binding=_authorization_binding(snapshot, authorization),
             member=member,
         )
     )
@@ -1596,10 +1804,12 @@ async def test_snapshot_denials_cover_path_command_director_and_member_boundarie
     )
     allowed_request = _write_request(workspace)
     allowed = await port.snapshot(allowed_request)
+    allowed_authorization = _authorization(allowed_request, allowed, workspace)
     member_binding = port.bind_member(
         DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=allowed,
-            authorization_evidence=_authorization(allowed_request, allowed, workspace),
+            authorization_evidence=allowed_authorization,
+            authorization_binding=_authorization_binding(allowed, allowed_authorization),
             member=_member(allowed.normalized_operation_hash, tool_name="execute_command"),
         )
     )

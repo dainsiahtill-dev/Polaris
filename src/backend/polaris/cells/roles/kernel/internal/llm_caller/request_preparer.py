@@ -38,9 +38,12 @@ from polaris.kernelone.context.context_os.decision_log import build_context_resu
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.events.final_request_evidence import (
     FINAL_REQUEST_EVIDENCE_ANCHOR_SCHEMA,
+    FINAL_REQUEST_EVIDENCE_PROMPT_ANCHOR_SCHEMA,
     FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA,
+    ROLE_FINAL_REQUEST_EVIDENCE_PROMPT_SLOT_SCHEMA,
     ROLE_FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA,
     ROLE_FINAL_REQUEST_POLICY_FACTS_SCHEMA,
+    ROLE_FINAL_REQUEST_POLICY_PROMPT_SCHEMA,
     render_role_final_request_policy_facts,
 )
 from polaris.kernelone.llm.budget_policy import (
@@ -94,6 +97,8 @@ _PROVIDER_POLICY_KEYS = (
     "blocked_provider_types",
     "provider_type_policy",
 )
+_REASONING_BUDGET_OPTION = "reasoning_budget_tokens"
+_MIN_REASONING_BUDGET_TOKENS = 1_024
 _RESIDENT_AGI_ENABLE_KEYS = ("resident_agi_enabled", "enable_resident_agi", "agi_enabled")
 _RESIDENT_AGI_DEFAULT_SCOPES = (
     "final_request_audit",
@@ -127,6 +132,9 @@ _FACTORY_EVIDENCE_PROTOCOL_MARKERS = (
     ROLE_FINAL_REQUEST_EVIDENCE_SLOT_SCHEMA,
     FINAL_REQUEST_EVIDENCE_ANCHOR_SCHEMA,
     ROLE_FINAL_REQUEST_POLICY_FACTS_SCHEMA,
+    FINAL_REQUEST_EVIDENCE_PROMPT_ANCHOR_SCHEMA,
+    ROLE_FINAL_REQUEST_EVIDENCE_PROMPT_SLOT_SCHEMA,
+    ROLE_FINAL_REQUEST_POLICY_PROMPT_SCHEMA,
 )
 
 _FACTORY_EVIDENCE_BEGIN = "polaris.final_request_evidence.v1:begin"
@@ -511,6 +519,34 @@ def _copy_provider_policy_options(*, override: Any, request_options: dict[str, A
             value = policy.get(key)
             if value is not None:
                 request_options[key] = value
+
+
+def _resolve_reasoning_budget_tokens(*, override: Any, max_tokens: int) -> int | None:
+    """Validate one call-scoped manual-thinking budget.
+
+    The value is a semantic hint until a provider route that already requires
+    or enables manual thinking projects it onto its native request.  Keeping it
+    separate from provider-native ``thinking`` avoids forcing unsupported
+    thinking modes onto unrelated providers.
+    """
+
+    if not isinstance(override, dict) or _REASONING_BUDGET_OPTION not in override:
+        return None
+    value = override.get(_REASONING_BUDGET_OPTION)
+    if type(value) is not int or value < _MIN_REASONING_BUDGET_TOKENS:
+        raise ValueError("reasoning_budget_tokens_invalid")
+    if value >= max_tokens:
+        raise ValueError("reasoning_budget_tokens_must_be_less_than_max_tokens")
+    return value
+
+
+def _json_response_contract_requested(override: Any) -> bool:
+    if not isinstance(override, dict):
+        return False
+    mode = str(override.get("response_format_mode") or "").strip().lower()
+    return mode in {"json", "json_object", "json_schema", "native_json_schema", "text_json_fallback"} or bool(
+        override.get("chief_engineer_json_contract_required")
+    )
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -1028,6 +1064,12 @@ class LLMRequestPreparer:
             "max_tokens": request_max_tokens,
             "timeout": request_timeout_seconds,
         }
+        reasoning_budget_tokens = _resolve_reasoning_budget_tokens(
+            override=override,
+            max_tokens=request_max_tokens,
+        )
+        if reasoning_budget_tokens is not None:
+            request_options[_REASONING_BUDGET_OPTION] = reasoning_budget_tokens
         _copy_provider_policy_options(
             override=override if isinstance(override, dict) else None,
             request_options=request_options,
@@ -1049,7 +1091,7 @@ class LLMRequestPreparer:
         native_tool_schemas: list[dict[str, Any]] = []
         native_tool_mode = "disabled"
         native_response_format: dict[str, Any] | None = None
-        response_format_mode = "plain_text"
+        response_format_mode = "text_json_fallback" if _json_response_contract_requested(override) else "plain_text"
         provider_id = str(getattr(profile, "provider_id", "") or "")
         role_native_tool_schemas: list[dict[str, Any]] | None = None
 
@@ -1199,6 +1241,7 @@ class LLMRequestPreparer:
                 temperature=request_options.get("temperature"),
                 max_tokens=request_options.get("max_tokens"),
                 stream=stream,
+                required_tools=_tool_contract_context_fields(override).get("required_tools", []),
             )
             resolved_factory_binding = await _acquire_factory_evidence_binding(
                 authority=factory_authority,
@@ -1307,6 +1350,14 @@ class LLMRequestPreparer:
                 selected_prompt_profile_ids = [
                     str(item).strip() for item in raw_selected_prompt_profile_ids if str(item or "").strip()
                 ]
+        # Projection and Factory qualification can consume a meaningful part of
+        # the admitted Director budget. Re-resolve at the final semantic-request
+        # boundary so the physical timeout cannot replay a stale larger lease.
+        request_timeout_seconds = resolve_timeout_seconds(
+            profile,
+            override if isinstance(override, dict) else None,
+        )
+        request_options["timeout"] = request_timeout_seconds
         # Budget policy blueprint Phase 1 step 3: stamp the ACTUAL resolved
         # budget (observability only) under the single `execution_budget` key.
         execution_budget = _build_execution_budget_projection(
@@ -1327,6 +1378,7 @@ class LLMRequestPreparer:
                 "execution_budget": execution_budget,
                 "native_tool_mode": native_tool_mode,
                 "response_format_mode": response_format_mode,
+                "reasoning_budget_tokens": reasoning_budget_tokens,
                 "interaction_contract": contract.to_metadata(),
                 "context_os_audit": context_os_audit,
                 "capability_profile": capability_profile,
@@ -1380,6 +1432,7 @@ class LLMRequestPreparer:
                 authority=factory_authority,
                 binding=resolved_factory_binding,
                 frozen=frozen_factory_request,
+                workspace=self.workspace,
             )
         return PreparedLLMRequest(
             messages=messages,
@@ -1477,6 +1530,7 @@ class LLMRequestPreparer:
             temperature=request_options.get("temperature"),
             max_tokens=request_options.get("max_tokens"),
             stream=False,
+            required_tools=request_context.get("required_tools", []),
         )
         binding = await _acquire_factory_evidence_binding(
             authority=authority,
@@ -1551,6 +1605,7 @@ class LLMRequestPreparer:
             authority=authority,
             binding=binding,
             frozen=frozen_retry,
+            workspace=self.workspace,
         )
         return replace(
             prepared,

@@ -1206,7 +1206,10 @@ async def test_b33_public_factory_call_zero_transport_stops_before_executor_and_
             "polaris.cells.roles.kernel.internal.llm_caller.invoker.build_final_request_context_audit_for_request",
             return_value={"final_request_token_estimate": 3},
         ),
-        patch("polaris.cells.roles.kernel.internal.llm_caller.invoker.enforce_final_request_evidence_coverage"),
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker."
+            "enforce_factory_aware_final_request_evidence_coverage"
+        ),
         patch(
             "polaris.cells.roles.kernel.internal.llm_caller.invoker.classify_error",
             return_value=ERROR_CATEGORY_RATE_LIMIT,
@@ -3694,7 +3697,8 @@ class TestStreamEngineRunStream:
                 return_value={"final_request_token_estimate": 1},
             ),
             patch(
-                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine.enforce_final_request_evidence_coverage"
+                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
+                "enforce_factory_aware_final_request_evidence_coverage"
             ),
         ):
             events = [
@@ -3723,6 +3727,77 @@ class TestStreamEngineRunStream:
             call.args == (prepared.factory_semantic_request,)
             for call in prepared.factory_dispatch_port.validate_frozen_identity.call_args_list
         )
+
+    async def test_provider_stream_absolute_timeout_is_not_reconnected(self) -> None:
+        """A consumed request deadline is terminal for the role stream.
+
+        The provider helper owns one absolute deadline across its wire retries.
+        Reconnecting that timed-out request here would mint a fresh deadline and
+        replay the same physical request, multiplying the declared timeout.
+        """
+        invoke_count = 0
+        emit_retry = Mock()
+        prepared = _b33_propagating_prepared()
+        context = SimpleNamespace(
+            context_override={
+                "stream_max_reconnects": 1,
+                "stream_retry_backoff_seconds": 0,
+            },
+            stream_cancelled=False,
+            temperature=0.2,
+            max_tokens=128,
+        )
+
+        class _Executor:
+            async def invoke_stream(self, _request: object, *, physical_dispatch_port: object):
+                nonlocal invoke_count
+                invoke_count += 1
+                assert physical_dispatch_port is prepared.factory_dispatch_port
+                yield {"type": "error", "error": "provider_stream_timeout:193s"}
+
+        engine = StreamEngine(
+            workspace="/ws",
+            get_executor=lambda: _Executor(),
+            allow_native_tool_text_fallback_fn=Mock(return_value=False),
+            emit_call_start_event=Mock(),
+            emit_call_error_event=Mock(),
+            emit_call_end_event=Mock(),
+            emit_call_retry_event=emit_retry,
+        )
+
+        with (
+            patch(
+                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine.build_final_request_context_audit_for_request",
+                return_value={"final_request_token_estimate": 1},
+            ),
+            patch(
+                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
+                "enforce_factory_aware_final_request_evidence_coverage"
+            ),
+        ):
+            events = [
+                event
+                async for event in engine.run_stream(
+                    profile=SimpleNamespace(provider_id="provider-a", role_id="chief_engineer"),
+                    prepared=prepared,
+                    context=context,
+                    start_time=time.perf_counter(),
+                    role_id="chief_engineer",
+                    run_id="run-timeout",
+                    task_id=None,
+                    attempt=0,
+                    model="model-a",
+                    call_id="call-timeout",
+                    event_emitter=None,
+                    turn_round=0,
+                )
+            ]
+
+        assert invoke_count == 1
+        assert emit_retry.call_count == 0
+        assert [event.get("error") for event in events if event.get("type") == "error"] == [
+            "provider_stream_timeout:193s"
+        ]
 
     async def test_cancel_before_invoke(self) -> None:
         """取消标志设置时应立即抛出 CancelledError."""

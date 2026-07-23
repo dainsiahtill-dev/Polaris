@@ -16,16 +16,20 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import hashlib
 import json
 import os
 import re
 import shlex
-import subprocess
 import time
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, cast
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
+from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 from polaris.kernelone.quality import (
     artifact_quality_issue_raw,
     artifact_quality_issues_for_errors,
@@ -45,11 +49,14 @@ from .artifact_quality_diagnostics import (
     _relative_import_repair_target_candidates,
 )
 from .contract_verify import resolve_contract_step_verify
-from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
 from .materialization_quality_boundary import run_materialization_quality_public_boundary
 from .materialization_quality_runtime_ports import has_materialization_quality_runtime_repair_coverage
 from .repair_profile_projection import project_repair_kernel_summary
+from .runtime_repair_tool_adapter import (
+    defer_director_command_with_director_tools,
+    run_runtime_repair_with_director_tools,
+)
 from .task_scope_paths import (
     _dedupe_preserve_order,
     _extract_project_declared_target_path_candidates,
@@ -694,19 +701,14 @@ def _normalize_raw_single_target_write_content(content: str) -> str:
     return text
 
 
-def _coerce_raw_single_target_repair_to_write_file(
+def _reject_raw_single_target_repair_body(
     adapter: Any,
     *,
     task_id: str,
     repair_target_files: list[str],
     content: str,
 ) -> list[dict[str, Any]]:
-    """Normalize weak-model raw file bodies into write_file for one exact target.
-
-    This path is deliberately narrow: it only fires after native/tool-text
-    extraction produced no successful write, and only when the platform already
-    pinned the repair to exactly one target file.
-    """
+    """Record that an unstructured LLM body has no mutation authority."""
 
     if len(repair_target_files) != 1:
         return []
@@ -718,39 +720,61 @@ def _coerce_raw_single_target_repair_to_write_file(
         return []
     if _looks_like_tool_receipt_contamination_text(normalized_content):
         return []
-    workspace_full = str(getattr(adapter, "workspace", "") or "")
-    if not workspace_full:
-        return []
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    write_result = DirectorToolExecutor(
-        workspace_full,
-        message_bus=message_bus,
-        worker_id="director",
-    ).execute_tool(
-        "write_file",
-        {"file": target_file, "content": normalized_content},
-        task_id=task_id,
-    )
-    if not bool(write_result.get("ok")):
-        return []
-    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-        adapter._update_task_progress(task_id, "executing", current_file=target_file)
+    del adapter
     return [
         {
-            "tool": "write_file",
-            "tool_name": "write_file",
-            "success": True,
+            "tool": "raw_single_target_body",
+            "tool_name": "raw_single_target_body",
+            "success": False,
+            "status": "blocked",
             "result": {
-                "ok": True,
-                "source_tool": "director_quality_repair_raw_single_target_write_file",
+                "ok": False,
+                "source_tool": "director_quality_repair_raw_single_target_body",
+                "error_code": "raw_single_target_body_not_authoritative",
+                "error_message": "raw LLM response content cannot authorize a workspace mutation",
+                "writes_allowed": False,
+                "task_id": task_id,
                 "file": target_file,
-                "bytes_written": int(write_result.get("bytes_written") or len(normalized_content.encode("utf-8"))),
-                "operation": str(write_result.get("operation") or "modify"),
-                "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                "director_policy": write_result.get("director_policy"),
+                "content_hash_only": hashlib.sha256(normalized_content.encode("utf-8")).hexdigest(),
             },
         }
     ]
+
+
+def _quality_repair_execution_attempt(
+    context: Mapping[str, Any],
+) -> TaskRuntimeExecutionAttemptIdentityV1 | None:
+    authority = context.get("task_runtime_execution_attempt_authority")
+    if type(authority) is not TaskRuntimeExecutionAttemptAuthorityV1:
+        return None
+    typed_authority = cast(TaskRuntimeExecutionAttemptAuthorityV1, authority)
+    snapshot = typed_authority.snapshot(lock_timeout_seconds=5.0)
+    if snapshot.success is not True or snapshot.closed:
+        return None
+    if type(snapshot.identity) is not TaskRuntimeExecutionAttemptIdentityV1:
+        return None
+    return snapshot.identity
+
+
+def _quality_repair_base_files(
+    workspace_root: Path,
+    candidates: Iterable[str],
+) -> dict[str, str]:
+    """Read only explicit repair inputs into the Director Runtime planning snapshot."""
+
+    base_files: dict[str, str] = {}
+    for raw_path in candidates:
+        rel_path = _normalize_declared_task_path(str(raw_path or ""))
+        if not rel_path or rel_path in base_files:
+            continue
+        path = (workspace_root / rel_path).resolve()
+        if not path.is_relative_to(workspace_root) or not path.is_file() or path.is_symlink():
+            continue
+        try:
+            base_files[rel_path] = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+    return base_files
 
 
 def _deterministic_single_missing_quality_repair_to_write_file(
@@ -759,8 +783,10 @@ def _deterministic_single_missing_quality_repair_to_write_file(
     task_id: str,
     repair_target_files: list[str],
     artifact_quality_errors: list[str],
+    context: Mapping[str, Any],
+    base_file_candidates: Iterable[str],
 ) -> list[dict[str, Any]]:
-    """Create narrow, non-domain missing metadata files after LLM repair misses."""
+    """Plan a requirements repair and defer its effects to the governed boundary."""
 
     if len(repair_target_files) != 1:
         return []
@@ -783,37 +809,18 @@ def _deterministic_single_missing_quality_repair_to_write_file(
     workspace_root = Path(workspace_full).resolve()
     if _workspace_path_exists_case_insensitive(workspace_root, target_file) and not required_dependencies:
         return []
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    content = "".join(f"{item}\n" for item in required_dependencies) or "# standard library only\n"
-    write_result = DirectorToolExecutor(
-        workspace_full,
-        message_bus=message_bus,
-        worker_id="director",
-    ).execute_tool(
-        "write_file",
-        {"file": target_file, "content": content},
+    base_files = _quality_repair_base_files(workspace_root, base_file_candidates)
+    return run_runtime_repair_with_director_tools(
+        adapter,
+        workspace_path=workspace_root,
         task_id=task_id,
+        source_tool="deterministic_runtime_dependency_repair",
+        execution_attempt=_quality_repair_execution_attempt(context),
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        allowed_paths=(target_file,),
+        max_rounds=1,
     )
-    if not bool(write_result.get("ok")):
-        return []
-    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-        adapter._update_task_progress(task_id, "executing", current_file=target_file)
-    return [
-        {
-            "tool": "write_file",
-            "tool_name": "write_file",
-            "success": True,
-            "result": {
-                "ok": True,
-                "source_tool": "director_quality_repair_deterministic_missing_requirements_write_file",
-                "file": target_file,
-                "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
-                "operation": str(write_result.get("operation") or "create"),
-                "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                "director_policy": write_result.get("director_policy"),
-            },
-        }
-    ]
 
 
 def _deterministic_single_missing_python_module_alias_to_write_file(
@@ -822,8 +829,10 @@ def _deterministic_single_missing_python_module_alias_to_write_file(
     task_id: str,
     repair_target_files: list[str],
     artifact_quality_errors: list[str],
+    context: Mapping[str, Any],
+    base_file_candidates: Iterable[str],
 ) -> list[dict[str, Any]]:
-    """Create a narrow source-root bridge for tests importing a nested module."""
+    """Plan a Python source-root bridge and defer its physical effects."""
 
     if len(repair_target_files) != 1:
         return []
@@ -839,42 +848,63 @@ def _deterministic_single_missing_python_module_alias_to_write_file(
     workspace_root = Path(workspace_full).resolve()
     if _workspace_path_exists_case_insensitive(workspace_root, target_file):
         return []
-    source_rel = _find_python_module_alias_source(workspace_root, target_file)
-    if not source_rel:
+    source_candidates = _find_python_module_alias_sources(workspace_root, target_file)
+    if len(source_candidates) > 1:
+        return [
+            {
+                "tool": "director_repair_kernel",
+                "tool_name": "director_repair_kernel",
+                "success": False,
+                "result": {
+                    "ok": False,
+                    "source_tool": "deterministic_python_missing_module_alias_repair",
+                    "error_code": "python_module_alias_candidate_ambiguous",
+                    "error_message": "multiple same-name Python modules match the missing top-level alias",
+                    "repair_applied": False,
+                    "candidate_paths": list(source_candidates),
+                    "repair_kernel": {
+                        "owner_cell": "director.runtime",
+                        "execution_skipped": True,
+                        "execution_skip_reason": "ambiguous_source_candidates",
+                        "physical_executor_owned": False,
+                    },
+                },
+            }
+        ]
+    if not source_candidates:
         return []
-    import_module = source_rel[:-3].replace("/", ".")
-    content = (
-        '"""Compatibility exports for tests importing this module from the src root."""\n\n'
-        f"from {import_module} import *  # noqa: F401,F403\n"
-    )
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    write_result = DirectorToolExecutor(
-        workspace_full,
-        message_bus=message_bus,
-        worker_id="director",
-    ).execute_tool(
-        "write_file",
-        {"file": target_file, "content": content},
+    source_rel = source_candidates[0]
+    base_files = _quality_repair_base_files(workspace_root, (*base_file_candidates, source_rel))
+    results = run_runtime_repair_with_director_tools(
+        adapter,
+        workspace_path=workspace_root,
         task_id=task_id,
+        source_tool="deterministic_python_missing_module_alias_repair",
+        execution_attempt=_quality_repair_execution_attempt(context),
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        allowed_paths=(target_file,),
+        max_rounds=1,
     )
-    if not bool(write_result.get("ok")):
-        return []
-    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-        adapter._update_task_progress(task_id, "executing", current_file=target_file)
+    if results:
+        return results
     return [
         {
-            "tool": "write_file",
-            "tool_name": "write_file",
-            "success": True,
+            "tool": "director_repair_kernel",
+            "tool_name": "director_repair_kernel",
+            "success": False,
             "result": {
-                "ok": True,
-                "source_tool": "director_quality_repair_deterministic_python_module_alias_write_file",
-                "file": target_file,
-                "source_file": source_rel,
-                "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
-                "operation": str(write_result.get("operation") or "create"),
-                "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                "director_policy": write_result.get("director_policy"),
+                "ok": False,
+                "source_tool": "deterministic_python_missing_module_alias_repair",
+                "error_code": "director_quality_repair_covered_unplannable",
+                "error_message": "the matched Director Runtime source tool produced no executable plan",
+                "repair_applied": False,
+                "repair_kernel": {
+                    "owner_cell": "director.runtime",
+                    "execution_skipped": True,
+                    "execution_skip_reason": "covered_unplannable",
+                    "physical_executor_owned": False,
+                },
             },
         }
     ]
@@ -1183,15 +1213,6 @@ def _collect_workspace_out_of_scope_diff(
     return result
 
 
-def _first_failing_verify_clause(verify: str, *, cwd: str) -> str:
-    """Clause-level teaching diagnosis — delegates to the KernelOne toolkit
-    (single source of truth for the three verify touchpoints; includes the
-    T2 measured-vs-required residual for machine-measurable clauses)."""
-    from polaris.kernelone.quality.step_verify import first_failing_verify_clause
-
-    return first_failing_verify_clause(verify, cwd=cwd)
-
-
 _VERIFY_TEST_FILE_RE = re.compile(r"^test\s+-[fe]\s+(?P<path>\S+)$")
 _VERIFY_GREP_FILE_RE = re.compile(r"^grep\s+(?:-[A-Za-z]+\s+)*(?P<quote>['\"]).*?(?P=quote)\s+(?P<path>\S+)\s*$")
 _VERIFY_WC_PATH_RE = re.compile(r"wc\s+-l\s*<\s*(?P<path>[^)\]\s]+)")
@@ -1272,86 +1293,21 @@ def _step_verify_target_mismatch_error(step: dict[str, Any], verify: str) -> str
     )
 
 
-_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-_STEP_VERIFY_FAILURE_EXCERPT_MAX_CHARS = 1400
-_STEP_VERIFY_FAILURE_EXCERPT_MAX_LINES = 42
-
-
-def _strip_ansi_for_step_verify_output(text: str) -> str:
-    return _ANSI_ESCAPE_RE.sub("", str(text or "")).replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _step_verify_failure_excerpt(stdout: str, stderr: str) -> str:
-    """Return the actionable failure block instead of a blind output tail.
-
-    Node's TAP runner, Jest/Vitest, and pytest often print the failed assertion
-    near the first failure and end with a long pass/fail summary. A tail-only
-    excerpt leaves the repair model with "1 failed" but no expected/actual
-    values, which causes blind edits.
-    """
-
-    output = _strip_ansi_for_step_verify_output(f"{stdout or ''}\n{stderr or ''}").strip()
-    if not output:
-        return ""
-
-    lines = output.splitlines()
-    blocks: list[str] = []
-    for index, line in enumerate(lines):
-        normalized = line.strip().lower()
-        is_failure_start = (
-            normalized.startswith("not ok ")
-            or normalized.startswith("fail ")
-            or normalized.startswith("failed ")
-            or "assertionerror" in normalized
-            or "err_assertion" in normalized
-            or "expected values to be strictly equal" in normalized
-            or normalized.startswith("e   ")
-        )
-        if not is_failure_start:
-            continue
-
-        start = max(0, index - 2)
-        end = min(len(lines), index + _STEP_VERIFY_FAILURE_EXCERPT_MAX_LINES)
-        for cursor in range(index + 1, min(len(lines), index + _STEP_VERIFY_FAILURE_EXCERPT_MAX_LINES)):
-            next_line = lines[cursor].strip().lower()
-            if cursor > index + 2 and (
-                next_line.startswith("# subtest:")
-                or next_line.startswith("ok ")
-                or next_line.startswith("not ok ")
-                or next_line.startswith("fail ")
-                or next_line.startswith("failed ")
-            ):
-                end = cursor
-                break
-        block = "\n".join(lines[start:end]).strip()
-        if block:
-            blocks.append(block)
-        if len(blocks) >= 2:
-            break
-
-    if not blocks:
-        return output[-_STEP_VERIFY_FAILURE_EXCERPT_MAX_CHARS:]
-
-    excerpt = "\n--- next failure ---\n".join(blocks)
-    if len(excerpt) > _STEP_VERIFY_FAILURE_EXCERPT_MAX_CHARS:
-        excerpt = excerpt[: _STEP_VERIFY_FAILURE_EXCERPT_MAX_CHARS - 14].rstrip() + "\n...[truncated]"
-    return excerpt
-
-
 def _collect_step_verify_errors(
     adapter: Any,
     context: dict[str, Any] | None,
     *,
+    task_id: str,
     task: dict[str, Any] | None = None,
     workspace_name: str = "",
-) -> list[str]:
+) -> tuple[list[str], list[dict[str, Any]]]:
     """写后即查（三层裂变 DO 层自查）: run the construction step's machine
     verify inside the execution turn so the repair ladder sees the failure
     while the feedback loop is still seconds long — the exec→QA→bounce→exec
     market round trip costs ~3 cycles (~30min) per blind retry (live I3-r11).
     """
     if not isinstance(context, dict):
-        return []
+        return [], []
     from polaris.kernelone.quality.step_verify import (
         assess_legacy_step_verify_command_safety,
     )
@@ -1359,66 +1315,70 @@ def _collect_step_verify_errors(
     resolution = resolve_contract_step_verify(context, task=task)
     if resolution.disposition == "deferred":
         _record_deferred_step_verify_obligation(context, resolution.to_dict())
-        return []
+        return [], []
     verify = resolution.command
     if not verify:
-        return []
+        return [], []
     safety = assess_legacy_step_verify_command_safety(verify)
     if not safety.allowed:
-        return [f"step verify command rejected by safety policy: {safety.reason} :: {verify!r}"]
+        return [f"step verify command rejected by safety policy: {safety.reason} :: {verify!r}"], []
     step = context.get("construction_step")
     if isinstance(step, dict):
         target_mismatch = _step_verify_target_mismatch_error(step, verify)
         if target_mismatch:
-            return [target_mismatch]
+            return [target_mismatch], []
     workspace = str(getattr(adapter, "workspace", "") or "")
     if not workspace or not os.path.isdir(workspace):
-        return []
-    environment_prep_errors = _run_step_verify_environment_prep(verify, workspace=workspace)
-    if environment_prep_errors:
-        return environment_prep_errors
-    try:
-        proc = subprocess.run(
-            verify,
-            shell=True,
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=60,
-            check=False,
+        return [], []
+    workspace_path = Path(workspace).resolve()
+    execution_attempt = _quality_repair_execution_attempt(context)
+    commands: list[tuple[str, int, str]] = []
+    for index, plan in enumerate(_step_verify_environment_prep_plans(verify, workspace=workspace)):
+        command = shlex.join(tuple(str(part) for part in plan.get("command") or () if str(part).strip()))
+        if command:
+            commands.append(
+                (
+                    command,
+                    max(1, min(int(plan.get("timeout_seconds") or 120), 300)),
+                    f"00_environment_prep_{index:03d}",
+                )
+            )
+    from polaris.kernelone.quality.step_verify import split_verify_directed_effect_commands
+
+    commands.extend(
+        (clause, 60, f"10_step_verify_{index:03d}")
+        for index, clause in enumerate(split_verify_directed_effect_commands(verify))
+        if str(clause or "").strip()
+    )
+    tool_results: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for command, timeout_seconds, purpose in commands:
+        result = defer_director_command_with_director_tools(
+            workspace_path=workspace_path,
+            task_id=task_id,
+            execution_attempt=execution_attempt,
+            command=command,
+            timeout_seconds=timeout_seconds,
+            purpose=purpose,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return [f"step verify could not run: {exc} :: {verify!r}"]
-    if proc.returncode == 0:
-        return []
-    output_excerpt = _step_verify_failure_excerpt(proc.stdout or "", proc.stderr or "")
-    clause_detail = _first_failing_verify_clause(verify, cwd=workspace)
-    # The actionable clause goes FIRST: downstream teaching channels truncate
-    # (fail_task_stage 600 chars, blueprint step card 240) and a long verify
-    # command would push the diagnosis off the visible end.
-    if clause_detail:
-        errors = [
-            f"step verify failed (exit {proc.returncode}) | {clause_detail} | failure excerpt: {output_excerpt} | full: {verify}".strip()
-        ]
-    else:
-        errors = [f"step verify failed (exit {proc.returncode}): {verify} :: failure excerpt: {output_excerpt}".strip()]
-    if not task:
-        return errors
-    scoped_errors = _filter_npm_script_entrypoint_errors_to_task_write_scope(
-        errors,
-        task=task,
-        workspace_name=workspace_name,
-        context=context,
+        if result.get("success") is True:
+            tool_results.append(result)
+            continue
+        raw_payload = result.get("result")
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+        errors.append(
+            "step verify could not be admitted to directed-effect authority: "
+            f"{payload.get('error_code') or 'deo_deferred_command_request_failed'}"
+        )
+    _record_deferred_step_verify_obligation(
+        context,
+        {
+            **resolution.to_dict(),
+            "disposition": "directed_effect_followup",
+            "deferred_command_count": len(tool_results),
+        },
     )
-    return _filter_missing_workspace_file_errors_to_task_write_scope(
-        scoped_errors,
-        task=task,
-        workspace_full=workspace,
-        workspace_name=workspace_name,
-        context=context,
-    )
+    return errors, tool_results
 
 
 def _record_deferred_step_verify_obligation(
@@ -1525,32 +1485,6 @@ def _node_environment_has_missing_declared_packages(workspace_path: Path) -> boo
         if not in_node_modules or not in_lockfile:
             return True
     return False
-
-
-def _run_step_verify_environment_prep(verify: str, *, workspace: str) -> list[str]:
-    plans = _step_verify_environment_prep_plans(verify, workspace=workspace)
-    if not plans:
-        return []
-    workspace_path = Path(workspace).resolve()
-    errors: list[str] = []
-    try:
-        from .repair_convergence_verifier import _execute_environment_prep_plan
-    except ImportError as exc:
-        return [f"step verify environment prep failed: environment_prep_runner_unavailable: {exc}"]
-    for plan in plans:
-        receipt = _execute_environment_prep_plan(
-            plan,
-            workspace_path=workspace_path,
-            log_root=None,
-            task_id="step-verify",
-            round_number=0,
-        )
-        if receipt.get("status") in {"succeeded", "skipped_fresh"}:
-            continue
-        command = " ".join(str(part) for part in receipt.get("command") or ())
-        error_code = str(receipt.get("error_code") or "environment_prep_failed")
-        errors.append(f"step verify environment prep failed: {error_code}: {command}")
-    return errors
 
 
 def _single_file_step_target(source: Any) -> str:
@@ -2914,6 +2848,8 @@ async def _run_materialization_quality_repair_retry(
                 task_id=target_task_id,
                 repair_target_files=repair_target_files,
                 artifact_quality_errors=repair_quality_errors,
+                context=context,
+                base_file_candidates=changed_files,
             )
         )
         if not repair_tool_results or not has_successful_write_tool(repair_tool_results):
@@ -2923,6 +2859,8 @@ async def _run_materialization_quality_repair_retry(
                     task_id=target_task_id,
                     repair_target_files=repair_target_files,
                     artifact_quality_errors=repair_quality_errors,
+                    context=context,
+                    base_file_candidates=changed_files,
                 )
             )
         summary = {
@@ -2965,7 +2903,7 @@ async def _run_materialization_quality_repair_retry(
             repair_tool_results.extend(fallback_tool_results)
     if not repair_tool_results or not has_successful_write_tool(repair_tool_results):
         repair_tool_results.extend(
-            _coerce_raw_single_target_repair_to_write_file(
+            _reject_raw_single_target_repair_body(
                 adapter,
                 task_id=target_task_id,
                 repair_target_files=repair_target_files,
@@ -2979,6 +2917,8 @@ async def _run_materialization_quality_repair_retry(
                 task_id=target_task_id,
                 repair_target_files=repair_target_files,
                 artifact_quality_errors=repair_quality_errors,
+                context=context,
+                base_file_candidates=changed_files,
             )
         )
     if not repair_tool_results or not has_successful_write_tool(repair_tool_results):
@@ -2988,6 +2928,8 @@ async def _run_materialization_quality_repair_retry(
                 task_id=target_task_id,
                 repair_target_files=repair_target_files,
                 artifact_quality_errors=repair_quality_errors,
+                context=context,
+                base_file_candidates=changed_files,
             )
         )
 
@@ -5660,16 +5602,24 @@ def _python_missing_module_target(module_name: str, workspace_root: Path) -> str
 
 
 def _find_python_module_alias_source(workspace_root: Path, target_rel: str) -> str:
+    candidates = _find_python_module_alias_sources(workspace_root, target_rel)
+    return candidates[0] if len(candidates) == 1 else ""
+
+
+def _find_python_module_alias_sources(workspace_root: Path, target_rel: str) -> tuple[str, ...]:
+    """Return every safe same-name source; authority requires exactly one."""
+
     target = _normalize_declared_task_path(target_rel)
     if not target or not target.startswith("src/") or not target.endswith(".py"):
-        return ""
+        return ()
     module_stem = Path(target).stem
     try:
         root = workspace_root.resolve()
         src_root = (root / "src").resolve()
         src_root.relative_to(root)
     except (OSError, RuntimeError, ValueError):
-        return ""
+        return ()
+    matches: list[str] = []
     for candidate in sorted(src_root.rglob(f"{module_stem}.py")):
         try:
             rel = candidate.resolve().relative_to(root).as_posix()
@@ -5677,8 +5627,8 @@ def _find_python_module_alias_source(workspace_root: Path, target_rel: str) -> s
             continue
         if rel == target or _is_test_like_python_path(rel):
             continue
-        return rel
-    return ""
+        matches.append(rel)
+    return tuple(matches)
 
 
 def _missing_npm_script_entrypoint_repair_target_files(
@@ -6280,36 +6230,14 @@ def _can_accept_existing_workspace_scope(
     """Return whether authoritative evidence permits a no-diff completion.
 
     Provider prose and provider availability never authorize completion. A
-    task requiring fresh materialization must either carry a successful write
-    receipt or be a verification-only task over declared existing targets.
+    task requiring fresh materialization must carry successful write-tool
+    evidence.  Merely labelling a task as verification over declared existing
+    targets is not execution evidence and must not bypass the normal
+    verifier/receipt path.
     """
     if not requires_fresh_materialization:
         return True
-    if write_tool_evidence:
-        return True
-    raw_metadata = task.get("metadata")
-    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
-    raw_adapter_result = metadata.get("adapter_result")
-    adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
-    if (
-        bool(metadata.get("autofix"))
-        or bool(metadata.get("qa_rework_requested"))
-        or bool(adapter_result.get("qa_rework_requested"))
-        or (
-            str(adapter_result.get("qa_rework_reason") or metadata.get("qa_rework_reason") or "").strip()
-            and not bool(adapter_result.get("qa_passed"))
-        )
-    ):
-        return False
-    phase = str(task.get("phase") or metadata.get("phase") or "").strip().lower()
-    return phase in {
-        "verification",
-        "validation",
-        "verify",
-        "qa",
-        "test",
-        "testing",
-    } and _task_has_declared_target_files(task)
+    return bool(write_tool_evidence)
 
 
 def _director_direct_text_patch_only_enabled(context: dict[str, Any]) -> bool:

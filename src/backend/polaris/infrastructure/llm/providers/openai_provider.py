@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import aiohttp
 from polaris.kernelone.context.contracts import (
     ContextBuilderPort,
     TurnEngineContextRequest as ContextRequest,
@@ -21,7 +19,7 @@ from polaris.kernelone.llm.providers import (
 from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
 from polaris.kernelone.llm.response_parser import LLMResponseParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
-from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
@@ -29,10 +27,9 @@ if TYPE_CHECKING:
 from .http_utils import join_url, merge_headers, normalize_base_url, validate_base_url_for_ssrf
 from .provider_helpers import (
     build_chat_messages_payload,
-    get_stream_session,
     health_check_post,
+    invoke_stream_with_retry,
     invoke_with_retry,
-    iter_data_line_payloads,
     list_models_from_api,
 )
 
@@ -726,29 +723,13 @@ class OpenAIProvider(BaseProvider):
         api_key = config.get("api_key")
         headers = _headers(config, api_key)
 
-        session = await get_stream_session(
-            "openai_compat",
-            timeout_seconds=timeout,
-        )
-        async with session.post(
+        async for payload_obj in invoke_stream_with_retry(
             url,
-            headers=headers,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=timeout_seconds_or_none(timeout, default=60)),
-        ) as response:
-            if response.status != 200:
-                error_text = await response.text()
-                raise RuntimeError(f"HTTP {response.status} - {error_text}")
-
-            async for data in iter_data_line_payloads(response.content):
-                if data == "[DONE]":
-                    break
-                try:
-                    payload_obj = json.loads(data)
-                except (RuntimeError, ValueError):
-                    continue
-                if isinstance(payload_obj, dict):
-                    yield payload_obj
+            headers,
+            payload,
+            timeout,
+        ):
+            yield payload_obj
 
 
 _provider = OpenAIProvider()

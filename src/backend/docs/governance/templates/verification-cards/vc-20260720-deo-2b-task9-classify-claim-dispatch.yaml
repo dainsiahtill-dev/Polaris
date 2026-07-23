@@ -1,0 +1,82 @@
+card_id: vc-20260720-deo-2b-task9-classify-claim-dispatch
+bug_summary: >-
+  The canonical ToolBatch path formerly sent mutation-capable calls through the
+  raw executor; Task 9 now prepares the full inventory first and consumes the
+  TaskRuntime directed-effect authority chain just in time.
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_path:
+  files:
+    - polaris/cells/director/runtime/public/directed_effect_policy_contracts.py
+    - polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py
+    - polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py
+    - polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py
+    - polaris/cells/roles/kernel/internal/tool_batch_runtime.py
+    - polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py
+  symptom: >-
+    Historical defect: ToolBatchRuntime._execute_single called
+    executor(tool_name, arguments) for every classification. Required mode now
+    leaves only READ on that path; every mutation uses the injected lifecycle.
+assumptions:
+  - id: A1
+    statement: Classification must finish for the entire batch before any read or mutation executes.
+    status: verified_true
+    evidence: Task 9 locked plan requires complete mixed-batch preparation before the first read.
+  - id: A2
+    statement: Read-only calls retain the raw executor path and exact caller argument shape.
+    status: verified_true
+    evidence: Task 9 explicitly preserves the read-only bypass.
+  - id: A3
+    statement: Mutation calls have one ordered route from exact claim through current-policy capture and mutation port.
+    status: verified_true
+    evidence: Locked order is claim, capture, compare, revalidate, consume, physical effect.
+  - id: A4
+    statement: Current policy evidence has one adapter-owned producer and cannot be caller-constructed authority.
+    status: verified_true
+    evidence: Existing public factory owns the sole policy port object and Task 9 extends that Protocol.
+pre_mortem:
+  failure_point: >-
+    A partial integration could execute a mixed-batch read before mutation
+    preparation, allow unknown tools onto the raw path, capture policy before
+    claim, reuse a grant across members, or leak unconsumed fence contexts.
+  risk_zone:
+    - whole-batch classification and preparation ordering
+    - exact member and grant identity at just-in-time claim
+    - current-policy source version completeness
+    - first-failure stop and remaining-context release
+    - read-only compatibility and canonical raw-call shape
+verification_plan:
+  unit_tests:
+    - Mixed batch prepares every mutation before first read.
+    - Read-only calls skip directed-effect preflight and retain raw execution.
+    - WRITE, ASYNC, and unknown calls never reach raw executor in required mode.
+    - Capture occurs only after exact member claim and binds all baseline hashes.
+    - Missing or unversioned current sources deny before compare, revalidate, consume, or effect.
+    - First denial stops later calls and releases remaining unconsumed contexts.
+    - Earlier successful physical effects are not reported as rolled back.
+  static_gates:
+    - ruff check and format
+    - mypy
+    - compileall
+    - public import and acyclicity
+    - git diff --check
+  broader_gates:
+    - director runtime policy contract suite
+    - roles adapters directed-effect suite
+    - roles kernel ToolBatch and lifecycle suites
+    - catalog hard-fail
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  closed_at: "2026-07-20"
+  evidence:
+    provider_requests: 0
+    physical_effects: 0
+    final_provider_request_qualification: N/A
+    focused_tests: 232 passed
+    production_wiring_tests: 57 passed
+    static_gates: ruff, format, mypy, compileall, and git diff --check passed
+    repeated_race: >-
+      pytest-repeat unavailable; exact test passed once, and the existing
+      32-way fence-consume race stayed green in the focused suite.

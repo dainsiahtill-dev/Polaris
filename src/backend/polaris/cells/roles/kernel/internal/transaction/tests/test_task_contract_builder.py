@@ -141,3 +141,40 @@ def test_single_batch_contract_adds_actual_exports_rule_for_test_targets() -> No
     assert "Package.json scripts must be shell-parseable" in text
     assert "Existing sibling module exports are authoritative for tests" in text
     assert "Do not invent ideal API imports" in text
+
+
+def test_write_only_physical_schema_defers_auto_verification_truthfully() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": "Create main.go and verify that the project builds successfully.",
+        }
+    ]
+    tools = [{"type": "function", "function": {"name": "write_file"}}]
+
+    text, metadata = build_single_batch_task_contract_hint(context, tools)
+
+    assert "Include an available verification step" not in text
+    assert "Include verification tools in the same batch" not in text
+    assert "No verification tool is exposed in this physical request" in text
+    assert "later governed continuation or quality phase" in text
+    assert metadata["verification_deferred_to_governed_phase"] is True
+
+
+def test_exposed_verification_tool_remains_required_in_same_batch() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": "Create main.go and verify that the project builds successfully.",
+        }
+    ]
+    tools = [
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "execute_command"}},
+    ]
+
+    text, metadata = build_single_batch_task_contract_hint(context, tools)
+
+    assert "Include verification tools in the same batch: execute_command" in text
+    assert "No verification tool is exposed" not in text
+    assert metadata["verification_deferred_to_governed_phase"] is False

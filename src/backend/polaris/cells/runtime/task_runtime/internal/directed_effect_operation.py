@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -41,15 +42,19 @@ from ..public.contracts import (
     DIRECTED_EFFECT_INVENTORY_PROJECTION_SCHEMA_V1,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V1,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V2,
+    DIRECTED_EFFECT_OPERATION_SCHEMA_V3,
     DIRECTED_EFFECT_OPERATION_SNAPSHOT_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_BINDING_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_READINESS_PROJECTION_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_REGISTRY_PROJECTION_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
+    DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2,
     AbortDirectedEffectOperationCommandV1,
     AdmitDirectedEffectOperationCommandV1,
     AdmitDirectedEffectParentCommandV1,
     ClaimDirectedEffectCommandV1,
+    CommitDirectedEffectReceiptCommandV1,
+    DeadLetterDirectedEffectOperationCommandV1,
     DirectedEffectClaimGrantV1,
     DirectedEffectInventoryCodeV1,
     DirectedEffectInventoryIntentV1,
@@ -76,9 +81,11 @@ from ..public.contracts import (
     GetDirectedEffectOperationQueryV1,
     GetDirectedEffectParentReadinessQueryV1,
     GetDirectedEffectParentRegistryQueryV1,
+    MarkDirectedEffectRecoveryPendingCommandV1,
     ParentCorrelationV1,
     SealDirectedEffectInventoryCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptSettlementOutcomeV1,
     TaskRuntimeExecutionAttemptValidationCodeV1,
     TaskRuntimeExecutionAttemptValidationVerdictV1,
     ValidateTaskRuntimeExecutionAttemptQueryV1,
@@ -95,8 +102,33 @@ _DIRECTED_EFFECT_ADMISSION_SET_HASH_SCHEMA_V1 = "task-runtime.directed-effect-in
 _OPERATION_EVENT_PREFIX = "task_runtime.directed_effect_operation.v1"
 _TERMINAL_STATES = frozenset({"CLOSED_BY_PARENT", "ABORTED", "DEAD_LETTER"})
 
+
+@dataclass(frozen=True, slots=True)
+class _CloseDirectedEffectByParentCommandV1:
+    workspace: str
+    task_id: int
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    parent_binding: DirectedEffectParentBindingV1
+    tool_call_id: str
+    effect_id: str
+    expected_version: int
+    expected_seq: int
+    intended_effect_fingerprint: str
+    policy_verdict_hash: str
+    expected_receipt_binding_hash: str
+    terminal_intent_hash: str
+    settlement_outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1
+    actor: str = "runtime.task_runtime.settlement"
+
+
 _Command: TypeAlias = (
-    AdmitDirectedEffectOperationCommandV1 | ClaimDirectedEffectCommandV1 | AbortDirectedEffectOperationCommandV1
+    AdmitDirectedEffectOperationCommandV1
+    | ClaimDirectedEffectCommandV1
+    | AbortDirectedEffectOperationCommandV1
+    | CommitDirectedEffectReceiptCommandV1
+    | MarkDirectedEffectRecoveryPendingCommandV1
+    | DeadLetterDirectedEffectOperationCommandV1
+    | _CloseDirectedEffectByParentCommandV1
 )
 _ReadyGatedCommand: TypeAlias = ClaimDirectedEffectCommandV1 | AbortDirectedEffectOperationCommandV1
 _InventoryGuardedCommand: TypeAlias = (
@@ -110,7 +142,15 @@ _AuthorityCommand: TypeAlias = (
 _ReadCommand: TypeAlias = _Command | GetDirectedEffectOperationQueryV1
 _ParentRegistryBoundCommand: TypeAlias = _ReadCommand | _InventoryGuardedCommand
 _ParentBindingReadCommand: TypeAlias = _ReadCommand | GetDirectedEffectParentReadinessQueryV1
-_CommandKind = Literal["admit", "claim", "abort"]
+_CommandKind = Literal[
+    "admit",
+    "claim",
+    "abort",
+    "commit_receipt",
+    "mark_recovery_pending",
+    "dead_letter",
+    "close_by_parent",
+]
 _FactOperation = Literal["read", "append"]
 _StreamKind = Literal["parent_registry", "operation", "inventory_guarded_pair"]
 
@@ -245,6 +285,7 @@ class _ParentRegistry:
     bindings_by_id: Mapping[str, DirectedEffectParentBindingV1]
     sealed_inventories_by_binding_id: Mapping[str, _SealedDirectedEffectInventory]
     ready_inventories_by_binding_id: Mapping[str, _ReadyDirectedEffectInventory]
+    settlement_close_proof: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +311,16 @@ class _NormalizedDirectedEffectReplayDescriptorV1:
     intended_effect_fingerprint: str
     policy_verdict_hash: str
     expected_receipt_binding_hash: str
+    receipt_ref: str
+    receipt_hash: str
+    receipt_binding_hash: str
+    receipt_outcome: str
+    recovery_evidence_ref: str
+    recovery_evidence_hash: str
+    resolution_evidence_ref: str
+    resolution_evidence_hash: str
+    terminal_intent_hash: str
+    settlement_outcome: str
 
     def to_record(self) -> dict[str, str]:
         return {
@@ -279,6 +330,16 @@ class _NormalizedDirectedEffectReplayDescriptorV1:
             "intended_effect_fingerprint": self.intended_effect_fingerprint,
             "policy_verdict_hash": self.policy_verdict_hash,
             "expected_receipt_binding_hash": self.expected_receipt_binding_hash,
+            "receipt_ref": self.receipt_ref,
+            "receipt_hash": self.receipt_hash,
+            "receipt_binding_hash": self.receipt_binding_hash,
+            "receipt_outcome": self.receipt_outcome,
+            "recovery_evidence_ref": self.recovery_evidence_ref,
+            "recovery_evidence_hash": self.recovery_evidence_hash,
+            "resolution_evidence_ref": self.resolution_evidence_ref,
+            "resolution_evidence_hash": self.resolution_evidence_hash,
+            "terminal_intent_hash": self.terminal_intent_hash,
+            "settlement_outcome": self.settlement_outcome,
         }
 
 
@@ -309,6 +370,48 @@ class _Aggregate:
     source_head_seq: int
     last_event_id: str
     transitions: tuple[_CommittedTransition, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectedEffectRecoveryRepositorySweep:
+    """Bounded repository result including the number of sealed members read."""
+
+    results: tuple[DirectedEffectOperationResultV1, ...]
+    scanned_operation_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectedEffectRecoverySweepPreparation:
+    binding: DirectedEffectParentBindingV1
+    members: tuple[DirectedEffectInventoryMemberV1, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectedEffectRecoveryCursor:
+    expected_version: int
+    expected_seq: int
+    observed_state: DirectedEffectOperationStateV1
+
+
+@dataclass(frozen=True, slots=True)
+class _ParentSettlementPreparation:
+    """Immutable facts required to close receipt-backed children and parent."""
+
+    identity: DirectedEffectParentRegistryIdentityV1
+    registry: _ParentRegistry
+    binding: DirectedEffectParentBindingV1
+    reduced: _OperationStreamReduction
+    receipt_records: tuple[dict[str, object], ...]
+    close_candidates: tuple[_Aggregate, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ParentSettlementGuardedClose:
+    """One dual-stream snapshot prepared for the guarded parent close."""
+
+    prepared: GuardedFactSnapshotV1
+    final_registry: _ParentRegistry
+    final_reduced: _OperationStreamReduction
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,6 +448,10 @@ _SettlementPreBarrierCode: TypeAlias = Literal[
     "settlement_parent_close_proof_required",
     "settlement_parent_registry_invalid",
     "settlement_parent_registry_unavailable",
+    "settlement_directed_effect_unresolved",
+    "settlement_effect_outcome_conflict",
+    "settlement_terminal_intent_conflict",
+    "settlement_parent_close_failed",
 ]
 
 
@@ -647,6 +754,21 @@ class DirectedEffectOperationRepository:
 
         del exc, attempt_number
 
+    @staticmethod
+    def _after_settlement_child_close(
+        result: DirectedEffectOperationResultV1,
+        close_index: int,
+    ) -> None:
+        """Deterministic crash seam after one durable child close."""
+
+        del result, close_index
+
+    @staticmethod
+    def _after_settlement_parent_close(receipt: GuardedFactAppendedV1) -> None:
+        """Deterministic crash seam after the outcome-bound parent close."""
+
+        del receipt
+
     def _prepare_guarded_snapshot(
         self,
         command: _Command,
@@ -847,6 +969,519 @@ class DirectedEffectOperationRepository:
                 "registry_version": registry.registry_version,
                 "source_head_seq": registry.source_head_seq,
             },
+        )
+
+    def settle_parent_for_terminal_intent(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        """Close receipt-backed children then their parent under exact stream guards."""
+
+        return self._settle_parent_for_terminal_intent(
+            execution_attempt,
+            outcome=outcome,
+            terminal_intent_hash=terminal_intent_hash,
+            commit=True,
+        )
+
+    def preflight_parent_for_terminal_intent(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        """Validate exact terminal eligibility without mutating either stream."""
+
+        return self._settle_parent_for_terminal_intent(
+            execution_attempt,
+            outcome=outcome,
+            terminal_intent_hash=terminal_intent_hash,
+            commit=False,
+        )
+
+    def _settle_parent_for_terminal_intent(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+        commit: bool,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        """Validate and optionally close one receipt-backed parent."""
+
+        prepared = self._prepare_parent_settlement(
+            execution_attempt,
+            outcome=outcome,
+            terminal_intent_hash=terminal_intent_hash,
+        )
+        if isinstance(prepared, DirectedEffectSettlementPreBarrierVerdictV1):
+            return prepared
+        if not commit:
+            return self._parent_settlement_preflight(prepared)
+        child_close = self._close_parent_settlement_children(
+            prepared,
+            execution_attempt=execution_attempt,
+            outcome=outcome,
+            terminal_intent_hash=terminal_intent_hash,
+        )
+        if child_close is not None:
+            return child_close
+        guarded = self._prepare_parent_settlement_guarded_close(
+            prepared,
+            outcome=outcome,
+            terminal_intent_hash=terminal_intent_hash,
+        )
+        if isinstance(guarded, DirectedEffectSettlementPreBarrierVerdictV1):
+            return guarded
+        return self._append_parent_settlement_close(
+            prepared,
+            guarded=guarded,
+            execution_attempt=execution_attempt,
+            outcome=outcome,
+            terminal_intent_hash=terminal_intent_hash,
+        )
+
+    @staticmethod
+    def _parent_settlement_verdict(
+        allowed: bool,
+        code: _SettlementPreBarrierCode,
+        evidence: Mapping[str, object],
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        return DirectedEffectSettlementPreBarrierVerdictV1(
+            allowed=allowed,
+            code=code,
+            evidence=evidence,
+        )
+
+    def _prepare_parent_settlement(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+    ) -> _ParentSettlementPreparation | DirectedEffectSettlementPreBarrierVerdictV1:
+        identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(execution_attempt)
+        registry = self._load_registry(execution_attempt.workspace, identity)
+        classified = self._classify_parent_settlement_registry(
+            registry,
+            outcome=outcome,
+            terminal_intent_hash=terminal_intent_hash,
+        )
+        if isinstance(classified, DirectedEffectSettlementPreBarrierVerdictV1):
+            return classified
+        binding = classified.open_binding
+        if binding is None:
+            raise AssertionError("classified open registry requires binding")
+        return self._prepare_parent_settlement_operations(
+            execution_attempt,
+            identity=identity,
+            registry=classified,
+            binding=binding,
+            outcome=outcome,
+        )
+
+    def _classify_parent_settlement_registry(
+        self,
+        registry: _ParentRegistry | DirectedEffectOperationResultV1,
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+    ) -> _ParentRegistry | DirectedEffectSettlementPreBarrierVerdictV1:
+        verdict = self._parent_settlement_verdict
+        if isinstance(registry, DirectedEffectOperationResultV1):
+            if registry.code == "stream_lock_missing":
+                return verdict(
+                    True, "settlement_parent_registry_clear", {"registry_state": "unenrolled_or_nonexistent"}
+                )
+            unavailable = registry.code in {
+                "fact_stream_unknown_failure",
+                "stream_lock_timeout",
+                "strict_stream_overload",
+            }
+            return verdict(
+                False,
+                "settlement_parent_registry_unavailable" if unavailable else "settlement_parent_registry_invalid",
+                {
+                    "registry_state": "strict_read_failed",
+                    "registry_result_code": registry.code,
+                    "registry_evidence": dict(registry.evidence),
+                },
+            )
+        if not registry.bindings_by_id:
+            return verdict(
+                True,
+                "settlement_parent_registry_clear",
+                {"registry_state": "strict_empty", "registry_version": registry.registry_version},
+            )
+        if registry.open_binding is not None:
+            return registry
+        proof = registry.settlement_close_proof
+        if proof is None:
+            return verdict(
+                False, "settlement_parent_close_proof_required", {"registry_state": "CLOSED_WITHOUT_OUTCOME_PROOF"}
+            )
+        if proof.get("terminal_intent_hash") != terminal_intent_hash or proof.get("settlement_outcome") != outcome:
+            return verdict(
+                False,
+                "settlement_terminal_intent_conflict",
+                {"registry_state": "CLOSED_WITH_DIFFERENT_TERMINAL_INTENT", "close_proof": dict(proof)},
+            )
+        return verdict(
+            True,
+            "settlement_parent_registry_clear",
+            {"registry_state": "CLOSED_WITH_OUTCOME_PROOF", "close_proof": dict(proof)},
+        )
+
+    def _prepare_parent_settlement_operations(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        identity: DirectedEffectParentRegistryIdentityV1,
+        registry: _ParentRegistry,
+        binding: DirectedEffectParentBindingV1,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+    ) -> _ParentSettlementPreparation | DirectedEffectSettlementPreBarrierVerdictV1:
+        verdict = self._parent_settlement_verdict
+        sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+        ready = registry.ready_inventories_by_binding_id.get(binding.binding_id)
+        if sealed is None or ready is None or ready.inventory_hash != sealed.inventory_hash:
+            return verdict(
+                False, "settlement_parent_close_required", {"registry_state": "OPEN", "reason": "inventory_not_ready"}
+            )
+        operation_read = self._read_stream(
+            execution_attempt.workspace,
+            binding.operation_stream_token,
+            max_events=_MAX_OPERATION_EVENTS,
+            stream_kind="operation",
+        )
+        if isinstance(operation_read, DirectedEffectOperationResultV1):
+            return verdict(
+                False,
+                "settlement_parent_registry_unavailable",
+                {"operation_result_code": operation_read.code, "operation_evidence": dict(operation_read.evidence)},
+            )
+        reduced = self._reduce_operation_stream(operation_read, binding, target=None)
+        if isinstance(reduced, DirectedEffectOperationResultV1):
+            return verdict(
+                False,
+                "settlement_parent_registry_invalid",
+                {"operation_result_code": reduced.code, "operation_evidence": dict(reduced.evidence)},
+            )
+        aggregates = {aggregate.operation.operation_id: aggregate for aggregate in reduced.aggregates}
+        if set(aggregates) != set(ready.ordered_operation_ids):
+            return verdict(
+                False,
+                "settlement_directed_effect_unresolved",
+                {
+                    "reason": "ready_inventory_operation_set_mismatch",
+                    "ready_operation_ids": ready.ordered_operation_ids,
+                    "observed_operation_ids": tuple(sorted(aggregates)),
+                },
+            )
+        classified = self._classify_parent_settlement_aggregates(
+            aggregates, ready.ordered_operation_ids, outcome=outcome
+        )
+        if isinstance(classified, DirectedEffectSettlementPreBarrierVerdictV1):
+            return classified
+        receipt_records, close_candidates = classified
+        return _ParentSettlementPreparation(identity, registry, binding, reduced, receipt_records, close_candidates)
+
+    def _classify_parent_settlement_aggregates(
+        self,
+        aggregates: Mapping[str, _Aggregate],
+        ordered_operation_ids: tuple[str, ...],
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+    ) -> tuple[tuple[dict[str, object], ...], tuple[_Aggregate, ...]] | DirectedEffectSettlementPreBarrierVerdictV1:
+        receipts: list[dict[str, object]] = []
+        candidates: list[_Aggregate] = []
+        for operation_id in ordered_operation_ids:
+            aggregate = aggregates[operation_id]
+            if aggregate.state in {"RECEIPT_COMMITTED", "CLOSED_BY_PARENT"}:
+                classified = self._classify_receipt_backed_settlement_aggregate(aggregate, outcome=outcome)
+                if isinstance(classified, DirectedEffectSettlementPreBarrierVerdictV1):
+                    return classified
+                receipts.append(classified)
+                if aggregate.state == "RECEIPT_COMMITTED":
+                    candidates.append(aggregate)
+                continue
+            if aggregate.state == "ABORTED":
+                continue
+            if aggregate.state == "DEAD_LETTER" and outcome != "completed":
+                continue
+            code: _SettlementPreBarrierCode = (
+                "settlement_effect_outcome_conflict"
+                if aggregate.state == "DEAD_LETTER"
+                else "settlement_directed_effect_unresolved"
+            )
+            return self._parent_settlement_verdict(
+                False, code, {"operation_id": operation_id, "operation_state": aggregate.state}
+            )
+        return tuple(receipts), tuple(candidates)
+
+    def _classify_receipt_backed_settlement_aggregate(
+        self,
+        aggregate: _Aggregate,
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+    ) -> dict[str, object] | DirectedEffectSettlementPreBarrierVerdictV1:
+        transition = self._transition_for_kind(aggregate, "commit_receipt")
+        operation_id = aggregate.operation.operation_id
+        if transition is None:
+            return self._parent_settlement_verdict(
+                False,
+                "settlement_directed_effect_unresolved",
+                {"reason": "receipt_transition_missing", "operation_id": operation_id},
+            )
+        receipt_outcome = str(transition.descriptor.get("receipt_outcome") or "")
+        if outcome == "completed" and receipt_outcome != "succeeded":
+            return self._parent_settlement_verdict(
+                False,
+                "settlement_effect_outcome_conflict",
+                {"operation_id": operation_id, "receipt_outcome": receipt_outcome},
+            )
+        return {
+            "operation_id": operation_id,
+            "receipt_hash": str(transition.descriptor.get("receipt_hash") or ""),
+            "receipt_outcome": receipt_outcome,
+        }
+
+    def _parent_settlement_preflight(
+        self,
+        prepared: _ParentSettlementPreparation,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        return self._parent_settlement_verdict(
+            True,
+            "settlement_parent_registry_clear",
+            {
+                "registry_state": "OPEN_READY_FOR_OUTCOME_BOUND_CLOSE",
+                "binding_id": prepared.binding.binding_id,
+                "operation_source_head_seq": prepared.reduced.source_head_seq,
+                "operation_count": len(prepared.reduced.aggregates),
+                "receipt_count": len(prepared.receipt_records),
+            },
+        )
+
+    def _close_parent_settlement_children(
+        self,
+        prepared: _ParentSettlementPreparation,
+        *,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1 | None:
+        next_expected_seq = prepared.reduced.source_head_seq + 1
+        for close_index, aggregate in enumerate(prepared.close_candidates, start=1):
+            closed = self._close_by_parent(
+                _CloseDirectedEffectByParentCommandV1(
+                    workspace=execution_attempt.workspace,
+                    task_id=execution_attempt.task_id,
+                    execution_attempt=execution_attempt,
+                    parent_binding=prepared.binding,
+                    tool_call_id=aggregate.operation.tool_call_id,
+                    effect_id=aggregate.operation.effect_id,
+                    expected_version=aggregate.version,
+                    expected_seq=next_expected_seq,
+                    intended_effect_fingerprint=aggregate.intended_effect_fingerprint,
+                    policy_verdict_hash=aggregate.policy_verdict_hash,
+                    expected_receipt_binding_hash=aggregate.expected_receipt_binding_hash,
+                    terminal_intent_hash=terminal_intent_hash,
+                    settlement_outcome=outcome,
+                )
+            )
+            if not closed.ok or closed.state != "CLOSED_BY_PARENT":
+                return self._parent_settlement_verdict(
+                    False,
+                    "settlement_parent_close_failed",
+                    {"operation_id": aggregate.operation.operation_id, "operation_result_code": closed.code},
+                )
+            self._after_settlement_child_close(closed, close_index)
+            next_expected_seq += 1
+        return None
+
+    def _prepare_parent_settlement_guarded_close(
+        self,
+        settlement: _ParentSettlementPreparation,
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+    ) -> _ParentSettlementGuardedClose | DirectedEffectSettlementPreBarrierVerdictV1:
+        try:
+            prepared = read_guarded_fact_snapshot(
+                ReadGuardedFactSnapshotCommandV1(
+                    workspace=settlement.identity.workspace,
+                    target_stream=settlement.binding.registry_stream_token,
+                    guard_stream=settlement.binding.operation_stream_token,
+                )
+            )
+        except FactStreamError as exc:
+            return self._parent_settlement_verdict(
+                False,
+                "settlement_parent_close_failed",
+                {"fact_stream_code": exc.code, "fact_stream_details": dict(exc.details)},
+            )
+        registry = self._reduce_registry_from_read(
+            settlement.identity, _StreamRead(prepared.target_records(), prepared.proof.target_head_seq)
+        )
+        if isinstance(registry, DirectedEffectOperationResultV1):
+            return self._parent_settlement_verdict(False, "settlement_parent_registry_invalid", dict(registry.evidence))
+        if registry.open_binding is None:
+            return self._classify_existing_parent_close(
+                registry, outcome=outcome, terminal_intent_hash=terminal_intent_hash
+            )
+        reduced = self._reduce_operation_stream(
+            _StreamRead(prepared.guard_records(), prepared.proof.guard_head_seq), settlement.binding, target=None
+        )
+        if isinstance(reduced, DirectedEffectOperationResultV1):
+            return self._parent_settlement_verdict(False, "settlement_parent_registry_invalid", dict(reduced.evidence))
+        if any(aggregate.state not in _TERMINAL_STATES for aggregate in reduced.aggregates):
+            return self._parent_settlement_verdict(
+                False, "settlement_directed_effect_unresolved", {"reason": "non_terminal_operation_after_child_close"}
+            )
+        return _ParentSettlementGuardedClose(prepared, registry, reduced)
+
+    def _classify_existing_parent_close(
+        self,
+        registry: _ParentRegistry,
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        proof = registry.settlement_close_proof
+        matches = (
+            proof is not None
+            and proof.get("terminal_intent_hash") == terminal_intent_hash
+            and proof.get("settlement_outcome") == outcome
+        )
+        if matches:
+            return self._parent_settlement_verdict(
+                True, "settlement_parent_registry_clear", {"close_proof": dict(proof or {})}
+            )
+        return self._parent_settlement_verdict(
+            False, "settlement_terminal_intent_conflict", {"close_proof": dict(proof or {})}
+        )
+
+    def _append_parent_settlement_close(
+        self,
+        settlement: _ParentSettlementPreparation,
+        *,
+        guarded: _ParentSettlementGuardedClose,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        command = self._parent_settlement_close_command(
+            settlement,
+            guarded=guarded,
+            execution_attempt=execution_attempt,
+            outcome=outcome,
+            terminal_intent_hash=terminal_intent_hash,
+        )
+        try:
+            appended = append_if_guarded_snapshot(command)
+            self._after_settlement_parent_close(appended)
+        except FactStreamError as exc:
+            return self._reconcile_parent_settlement_append_error(
+                settlement, outcome=outcome, terminal_intent_hash=terminal_intent_hash, error=exc
+            )
+        refreshed = self._load_registry(execution_attempt.workspace, settlement.identity)
+        if isinstance(refreshed, DirectedEffectOperationResultV1) or refreshed.settlement_close_proof is None:
+            return self._parent_settlement_verdict(
+                False,
+                "settlement_parent_close_failed",
+                {"reason": "parent_close_not_reconstructable", "event_id": appended.event_id},
+            )
+        return self._parent_settlement_verdict(
+            True,
+            "settlement_parent_registry_clear",
+            {
+                "registry_state": "CLOSED_WITH_OUTCOME_PROOF",
+                "close_proof": dict(refreshed.settlement_close_proof),
+                "event_id": appended.event_id,
+            },
+        )
+
+    def _parent_settlement_close_command(
+        self,
+        settlement: _ParentSettlementPreparation,
+        *,
+        guarded: _ParentSettlementGuardedClose,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+    ) -> AppendIfGuardedSnapshotCommandV1:
+        receipts = settlement.receipt_records
+        receipt_summary_hash = _hash_token(tuple(sorted(receipts, key=lambda item: str(item["operation_id"]))))
+        close_evidence_hash = _hash_token(
+            {
+                "terminal_intent_hash": terminal_intent_hash,
+                "settlement_outcome": outcome,
+                "operation_source_head_seq": guarded.prepared.proof.guard_head_seq,
+                "receipt_summary_hash": receipt_summary_hash,
+            }
+        )
+        payload: dict[str, object] = {
+            "schema_version": DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2,
+            "stable_registry_identity": settlement.identity.to_record(),
+            "previous_version": guarded.final_registry.registry_version,
+            "version": guarded.final_registry.registry_version + 1,
+            "parent_sequence": settlement.binding.parent_sequence,
+            "binding_id": settlement.binding.binding_id,
+            "close_evidence_ref": f"settlement://{terminal_intent_hash}",
+            "close_evidence_hash": close_evidence_hash,
+            "actor": "runtime.task_runtime.settlement",
+            "settlement_outcome": outcome,
+            "terminal_intent_hash": terminal_intent_hash,
+            "operation_source_head_seq": guarded.prepared.proof.guard_head_seq,
+            "receipt_summary_hash": receipt_summary_hash,
+            "receipt_count": len(receipts),
+            "failed_receipt_count": sum(1 for item in receipts if item["receipt_outcome"] == "failed"),
+            "dead_letter_count": sum(
+                1 for aggregate in guarded.final_reduced.aggregates if aggregate.state == "DEAD_LETTER"
+            ),
+            "aborted_count": sum(1 for aggregate in guarded.final_reduced.aggregates if aggregate.state == "ABORTED"),
+        }
+        return AppendIfGuardedSnapshotCommandV1(
+            snapshot_proof=guarded.prepared.proof,
+            event=GuardedFactEventV1(
+                event_type=_PARENT_CLOSED_EVENT_TYPE,
+                source="runtime.task_runtime",
+                payload=payload,
+                aggregate_id=str(execution_attempt.task_id),
+                correlation_id=close_evidence_hash,
+            ),
+            idempotency_key=close_evidence_hash,
+        )
+
+    def _reconcile_parent_settlement_append_error(
+        self,
+        settlement: _ParentSettlementPreparation,
+        *,
+        outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+        terminal_intent_hash: str,
+        error: FactStreamError,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        refreshed = self._load_registry(settlement.identity.workspace, settlement.identity)
+        proof = None if isinstance(refreshed, DirectedEffectOperationResultV1) else refreshed.settlement_close_proof
+        matches = (
+            proof is not None
+            and proof.get("terminal_intent_hash") == terminal_intent_hash
+            and proof.get("settlement_outcome") == outcome
+        )
+        if matches:
+            return self._parent_settlement_verdict(
+                True,
+                "settlement_parent_registry_clear",
+                {"close_proof": dict(proof or {}), "reconciled_after_error": error.code},
+            )
+        return self._parent_settlement_verdict(
+            False,
+            "settlement_parent_close_failed",
+            {"fact_stream_code": error.code, "fact_stream_details": dict(error.details)},
         )
 
     def admit_parent_with_validated_authority(
@@ -1502,6 +2137,458 @@ class DirectedEffectOperationRepository:
             allowed_from=frozenset({"INTENT_COMMITTED"}),
         )
 
+    def commit_receipt(self, command: CommitDirectedEffectReceiptCommandV1) -> DirectedEffectOperationResultV1:
+        return self._mutate(
+            command,
+            kind="commit_receipt",
+            target="RECEIPT_COMMITTED",
+            allowed_from=frozenset({"EFFECT_STARTED", "RECOVERY_PENDING"}),
+        )
+
+    def mark_recovery_pending(
+        self,
+        command: MarkDirectedEffectRecoveryPendingCommandV1,
+    ) -> DirectedEffectOperationResultV1:
+        return self._mutate(
+            command,
+            kind="mark_recovery_pending",
+            target="RECOVERY_PENDING",
+            allowed_from=frozenset({"EFFECT_STARTED"}),
+        )
+
+    def dead_letter(
+        self,
+        command: DeadLetterDirectedEffectOperationCommandV1,
+    ) -> DirectedEffectOperationResultV1:
+        return self._mutate(
+            command,
+            kind="dead_letter",
+            target="DEAD_LETTER",
+            allowed_from=frozenset({"RECOVERY_PENDING"}),
+        )
+
+    def _close_by_parent(
+        self,
+        command: _CloseDirectedEffectByParentCommandV1,
+    ) -> DirectedEffectOperationResultV1:
+        # TaskRuntime owns this private transition and calls it while holding
+        # both execution-session locks. Re-entering the public attempt
+        # validator would reacquire the cooperative session-file lock and
+        # self-deadlock. The guarded FactStream CAS checks remain mandatory.
+        return self._mutate(
+            command,
+            kind="close_by_parent",
+            target="CLOSED_BY_PARENT",
+            allowed_from=frozenset({"RECEIPT_COMMITTED"}),
+            attempt_authority_lock_held=True,
+        )
+
+    def reconcile_ambiguous_started_operations(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        actor: str,
+        reason: str,
+        max_operations: int,
+        deadline_monotonic: float,
+    ) -> _DirectedEffectRecoveryRepositorySweep:
+        """Converge ambiguous operations without re-executing any effect."""
+
+        prepared = self._prepare_ambiguous_recovery_sweep(
+            execution_attempt,
+            max_operations=max_operations,
+            deadline_monotonic=deadline_monotonic,
+        )
+        if isinstance(prepared, _DirectedEffectRecoveryRepositorySweep):
+            return prepared
+        results: list[DirectedEffectOperationResultV1] = []
+        scanned = 0
+        for member in prepared.members:
+            if time.monotonic() >= deadline_monotonic:
+                return self._recovery_deadline_sweep(results, stage="before_operation_read", scanned=scanned)
+            current = self.get(
+                GetDirectedEffectOperationQueryV1(
+                    workspace=execution_attempt.workspace,
+                    task_id=execution_attempt.task_id,
+                    execution_attempt=execution_attempt,
+                    parent_binding=prepared.binding,
+                    tool_call_id=member.tool_call_id,
+                    effect_id=member.effect_id,
+                )
+            )
+            scanned += 1
+            member_sweep = self._reconcile_ambiguous_recovery_member(
+                execution_attempt,
+                binding=prepared.binding,
+                member=member,
+                current=current,
+                actor=actor,
+                reason=reason,
+                scanned=scanned,
+                deadline_monotonic=deadline_monotonic,
+            )
+            results.extend(member_sweep.results)
+            if self._recovery_sweep_hit_deadline(member_sweep):
+                return _DirectedEffectRecoveryRepositorySweep(tuple(results), scanned)
+        return _DirectedEffectRecoveryRepositorySweep(tuple(results), scanned)
+
+    def _prepare_ambiguous_recovery_sweep(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        max_operations: int,
+        deadline_monotonic: float,
+    ) -> _DirectedEffectRecoverySweepPreparation | _DirectedEffectRecoveryRepositorySweep:
+        if time.monotonic() >= deadline_monotonic:
+            return self._recovery_deadline_sweep((), stage="before_registry_read", scanned=0)
+        identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(execution_attempt)
+        registry = self._load_registry(execution_attempt.workspace, identity)
+        if time.monotonic() >= deadline_monotonic:
+            return self._recovery_deadline_sweep((), stage="after_registry_read", scanned=0)
+        if isinstance(registry, DirectedEffectOperationResultV1):
+            return _DirectedEffectRecoveryRepositorySweep(
+                () if registry.code == "stream_lock_missing" else (registry,), 0
+            )
+        binding = registry.open_binding
+        if binding is None:
+            return _DirectedEffectRecoveryRepositorySweep((), 0)
+        sealed = registry.sealed_inventories_by_binding_id.get(binding.binding_id)
+        if sealed is None:
+            return _DirectedEffectRecoveryRepositorySweep((), 0)
+        if len(sealed.members) > max_operations:
+            failure = DirectedEffectOperationResultV1(
+                ok=False,
+                code="strict_stream_overload",
+                evidence={
+                    "reason": "recovery_sweep_operation_limit_exceeded",
+                    "operation_count": len(sealed.members),
+                    "max_operations": max_operations,
+                },
+            )
+            return _DirectedEffectRecoveryRepositorySweep((failure,), 0)
+        return _DirectedEffectRecoverySweepPreparation(binding, sealed.members)
+
+    def _reconcile_ambiguous_recovery_member(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        binding: DirectedEffectParentBindingV1,
+        member: DirectedEffectInventoryMemberV1,
+        current: DirectedEffectOperationResultV1,
+        actor: str,
+        reason: str,
+        scanned: int,
+        deadline_monotonic: float,
+    ) -> _DirectedEffectRecoveryRepositorySweep:
+        if time.monotonic() >= deadline_monotonic:
+            return self._recovery_deadline_sweep(
+                (), operation=current.operation, stage="after_operation_read", scanned=scanned
+            )
+        if not current.ok:
+            results = () if current.code == "operation_not_found" else (current,)
+            return _DirectedEffectRecoveryRepositorySweep(results, scanned)
+        if current.operation is None:
+            return _DirectedEffectRecoveryRepositorySweep((), scanned)
+        if current.state == "DEAD_LETTER":
+            return self._project_recovery_facts_with_deadline(
+                execution_attempt.workspace,
+                binding=binding,
+                operation=current.operation,
+                stage="recovery_projection",
+                scanned=scanned,
+                deadline_monotonic=deadline_monotonic,
+            )
+        if current.state not in {"EFFECT_STARTED", "RECOVERY_PENDING"}:
+            return _DirectedEffectRecoveryRepositorySweep((), scanned)
+        return self._recover_started_or_pending_operation(
+            execution_attempt,
+            binding=binding,
+            member=member,
+            current=current,
+            actor=actor,
+            reason=reason,
+            scanned=scanned,
+            deadline_monotonic=deadline_monotonic,
+        )
+
+    def _recover_started_or_pending_operation(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        binding: DirectedEffectParentBindingV1,
+        member: DirectedEffectInventoryMemberV1,
+        current: DirectedEffectOperationResultV1,
+        actor: str,
+        reason: str,
+        scanned: int,
+        deadline_monotonic: float,
+    ) -> _DirectedEffectRecoveryRepositorySweep:
+        results: list[DirectedEffectOperationResultV1] = []
+        if current.state == "RECOVERY_PENDING":
+            projection = self._project_recovery_facts_with_deadline(
+                execution_attempt.workspace,
+                binding=binding,
+                operation=cast(DirectedEffectOperationIdentityV1, current.operation),
+                stage="pending_projection",
+                scanned=scanned,
+                deadline_monotonic=deadline_monotonic,
+            )
+            results.extend(projection.results)
+            if self._recovery_sweep_hit_deadline(projection) or (
+                len(projection.results) == 1 and not projection.results[0].ok
+            ):
+                return _DirectedEffectRecoveryRepositorySweep(tuple(results), scanned)
+        cursor = self._recovery_cursor(current)
+        if isinstance(cursor, DirectedEffectOperationResultV1):
+            results.append(cursor)
+            return _DirectedEffectRecoveryRepositorySweep(tuple(results), scanned)
+        if current.state == "EFFECT_STARTED":
+            pending = self._commit_restart_recovery_pending(
+                execution_attempt,
+                binding=binding,
+                member=member,
+                current=current,
+                cursor=cursor,
+                actor=actor,
+                reason=reason,
+                scanned=scanned,
+                deadline_monotonic=deadline_monotonic,
+            )
+            results.extend(pending.results)
+            if (
+                self._recovery_sweep_hit_deadline(pending)
+                or not pending.results[-1].ok
+                or pending.results[-1].state != "RECOVERY_PENDING"
+            ):
+                return _DirectedEffectRecoveryRepositorySweep(tuple(results), scanned)
+            cursor = _DirectedEffectRecoveryCursor(
+                pending.results[-1].version, cursor.expected_seq + 1, "RECOVERY_PENDING"
+            )
+        dead_letter = self._commit_restart_dead_letter(
+            execution_attempt,
+            binding=binding,
+            member=member,
+            operation=cast(DirectedEffectOperationIdentityV1, current.operation),
+            cursor=cursor,
+            actor=actor,
+            reason=reason,
+            scanned=scanned,
+            deadline_monotonic=deadline_monotonic,
+        )
+        results.extend(dead_letter.results)
+        return _DirectedEffectRecoveryRepositorySweep(tuple(results), scanned)
+
+    def _project_recovery_facts_with_deadline(
+        self,
+        workspace: str,
+        *,
+        binding: DirectedEffectParentBindingV1,
+        operation: DirectedEffectOperationIdentityV1,
+        stage: str,
+        scanned: int,
+        deadline_monotonic: float,
+    ) -> _DirectedEffectRecoveryRepositorySweep:
+        if time.monotonic() >= deadline_monotonic:
+            return self._recovery_deadline_sweep((), operation=operation, stage=f"before_{stage}", scanned=scanned)
+        projected = self._recovery_fact_projection_results(workspace=workspace, binding=binding, operation=operation)
+        results = (projected,) if isinstance(projected, DirectedEffectOperationResultV1) else projected
+        if time.monotonic() >= deadline_monotonic:
+            return self._recovery_deadline_sweep(results, operation=operation, stage=f"after_{stage}", scanned=scanned)
+        return _DirectedEffectRecoveryRepositorySweep(results, scanned)
+
+    def _recovery_cursor(
+        self,
+        current: DirectedEffectOperationResultV1,
+    ) -> _DirectedEffectRecoveryCursor | DirectedEffectOperationResultV1:
+        source_head_seq = current.evidence.get("source_head_seq")
+        if isinstance(source_head_seq, bool) or not isinstance(source_head_seq, int) or source_head_seq < 0:
+            return self._operation_failure(
+                "strict_stream_corruption",
+                cast(DirectedEffectOperationIdentityV1, current.operation),
+                None,
+                {"reason": "recovery_sweep_source_head_seq_invalid"},
+            )
+        return _DirectedEffectRecoveryCursor(
+            current.version, source_head_seq + 1, cast(DirectedEffectOperationStateV1, current.state)
+        )
+
+    def _commit_restart_recovery_pending(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        binding: DirectedEffectParentBindingV1,
+        member: DirectedEffectInventoryMemberV1,
+        current: DirectedEffectOperationResultV1,
+        cursor: _DirectedEffectRecoveryCursor,
+        actor: str,
+        reason: str,
+        scanned: int,
+        deadline_monotonic: float,
+    ) -> _DirectedEffectRecoveryRepositorySweep:
+        operation = cast(DirectedEffectOperationIdentityV1, current.operation)
+        if time.monotonic() >= deadline_monotonic:
+            return self._recovery_deadline_sweep(
+                (), operation=operation, stage="before_recovery_pending_mutation", scanned=scanned
+            )
+        evidence_hash = _hash_token(
+            {
+                "schema_version": "task-runtime.directed-effect-restart-recovery/1",
+                "operation_id": operation.operation_id,
+                "observed_state": current.state,
+                "reason": reason,
+            }
+        )
+        command = MarkDirectedEffectRecoveryPendingCommandV1(
+            workspace=execution_attempt.workspace,
+            task_id=execution_attempt.task_id,
+            execution_attempt=execution_attempt,
+            parent_binding=binding,
+            tool_call_id=member.tool_call_id,
+            effect_id=member.effect_id,
+            expected_version=cursor.expected_version,
+            expected_seq=cursor.expected_seq,
+            actor=actor,
+            intended_effect_fingerprint=member.intended_effect_fingerprint,
+            policy_verdict_hash=member.policy_verdict_hash,
+            expected_receipt_binding_hash=member.expected_receipt_binding_hash,
+            reason=reason,
+            recovery_evidence_ref=f"recovery://task-runtime/restart/{operation.operation_id}",
+            recovery_evidence_hash=evidence_hash,
+        )
+        recovery = self._mutate(
+            command,
+            kind="mark_recovery_pending",
+            target="RECOVERY_PENDING",
+            allowed_from=frozenset({"EFFECT_STARTED"}),
+            attempt_authority_lock_held=True,
+        )
+        if time.monotonic() >= deadline_monotonic:
+            return self._recovery_deadline_sweep(
+                (recovery,), operation=operation, stage="after_recovery_pending_mutation", scanned=scanned
+            )
+        return _DirectedEffectRecoveryRepositorySweep((recovery,), scanned)
+
+    def _commit_restart_dead_letter(
+        self,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        binding: DirectedEffectParentBindingV1,
+        member: DirectedEffectInventoryMemberV1,
+        operation: DirectedEffectOperationIdentityV1,
+        cursor: _DirectedEffectRecoveryCursor,
+        actor: str,
+        reason: str,
+        scanned: int,
+        deadline_monotonic: float,
+    ) -> _DirectedEffectRecoveryRepositorySweep:
+        if time.monotonic() >= deadline_monotonic:
+            return self._recovery_deadline_sweep(
+                (), operation=operation, stage="before_dead_letter_mutation", scanned=scanned
+            )
+        evidence_hash = _hash_token(
+            {
+                "schema_version": "task-runtime.directed-effect-restart-dead-letter/1",
+                "operation_id": operation.operation_id,
+                "observed_state": cursor.observed_state,
+                "reason": reason,
+            }
+        )
+        command = DeadLetterDirectedEffectOperationCommandV1(
+            workspace=execution_attempt.workspace,
+            task_id=execution_attempt.task_id,
+            execution_attempt=execution_attempt,
+            parent_binding=binding,
+            tool_call_id=member.tool_call_id,
+            effect_id=member.effect_id,
+            expected_version=cursor.expected_version,
+            expected_seq=cursor.expected_seq,
+            actor=actor,
+            intended_effect_fingerprint=member.intended_effect_fingerprint,
+            policy_verdict_hash=member.policy_verdict_hash,
+            expected_receipt_binding_hash=member.expected_receipt_binding_hash,
+            reason=reason,
+            resolution_evidence_ref=f"dead-letter://task-runtime/restart/{operation.operation_id}",
+            resolution_evidence_hash=evidence_hash,
+        )
+        dead_letter = self._mutate(
+            command,
+            kind="dead_letter",
+            target="DEAD_LETTER",
+            allowed_from=frozenset({"RECOVERY_PENDING"}),
+            attempt_authority_lock_held=True,
+        )
+        if time.monotonic() >= deadline_monotonic:
+            return self._recovery_deadline_sweep(
+                (dead_letter,),
+                operation=dead_letter.operation or operation,
+                stage="after_dead_letter_mutation",
+                scanned=scanned,
+            )
+        return _DirectedEffectRecoveryRepositorySweep((dead_letter,), scanned)
+
+    @staticmethod
+    def _recovery_sweep_hit_deadline(sweep: _DirectedEffectRecoveryRepositorySweep) -> bool:
+        return any(result.code == "recovery_deadline_exceeded" for result in sweep.results)
+
+    @staticmethod
+    def _recovery_deadline_sweep(
+        results: tuple[DirectedEffectOperationResultV1, ...] | list[DirectedEffectOperationResultV1],
+        *,
+        stage: str,
+        scanned: int,
+        operation: DirectedEffectOperationIdentityV1 | None = None,
+    ) -> _DirectedEffectRecoveryRepositorySweep:
+        failure = DirectedEffectOperationResultV1(
+            ok=False, code="recovery_deadline_exceeded", operation=operation, evidence={"stage": stage}
+        )
+        return _DirectedEffectRecoveryRepositorySweep((*results, failure), scanned)
+
+    def _recovery_fact_projection_results(
+        self,
+        *,
+        workspace: str,
+        binding: DirectedEffectParentBindingV1,
+        operation: DirectedEffectOperationIdentityV1,
+    ) -> tuple[DirectedEffectOperationResultV1, ...] | DirectedEffectOperationResultV1:
+        """Rehydrate durable recovery facts as an idempotent projection outbox."""
+
+        read = self._read_stream(
+            workspace,
+            binding.operation_stream_token,
+            max_events=_MAX_OPERATION_EVENTS,
+            stream_kind="operation",
+        )
+        if isinstance(read, DirectedEffectOperationResultV1):
+            return read
+        aggregate = self._reduce_operation(read, operation, binding)
+        if isinstance(aggregate, DirectedEffectOperationResultV1):
+            return aggregate
+        projected: list[DirectedEffectOperationResultV1] = []
+        for transition in aggregate.transitions:
+            if transition.state not in {"RECOVERY_PENDING", "DEAD_LETTER"}:
+                continue
+            code: Literal["recovery_pending", "dead_lettered"] = (
+                "recovery_pending" if transition.state == "RECOVERY_PENDING" else "dead_lettered"
+            )
+            prefix = "recovery" if transition.state == "RECOVERY_PENDING" else "resolution"
+            projected.append(
+                DirectedEffectOperationResultV1(
+                    ok=True,
+                    code=code,
+                    operation=operation,
+                    state=transition.state,
+                    version=transition.version,
+                    evidence={
+                        "event_id": transition.event_id,
+                        "source_head_seq": aggregate.source_head_seq,
+                        f"{prefix}_evidence_ref": transition.descriptor.get(f"{prefix}_evidence_ref"),
+                        f"{prefix}_evidence_hash": transition.descriptor.get(f"{prefix}_evidence_hash"),
+                        "replayed_recovery_fact": True,
+                    },
+                )
+            )
+        return tuple(projected)
+
     def get(self, query: GetDirectedEffectOperationQueryV1) -> DirectedEffectOperationResultV1:
         validated = self._validated_parent_binding(query, require_open=False)
         if isinstance(validated, DirectedEffectOperationResultV1):
@@ -1616,6 +2703,7 @@ class DirectedEffectOperationRepository:
         kind: _CommandKind,
         target: DirectedEffectOperationStateV1,
         allowed_from: frozenset[DirectedEffectOperationStateV1 | None],
+        attempt_authority_lock_held: bool = False,
     ) -> DirectedEffectOperationResultV1:
         identity_failure = self._command_identity_failure(
             workspace=command.workspace,
@@ -1629,11 +2717,15 @@ class DirectedEffectOperationRepository:
         drift_codes: list[str] = []
         last_snapshot: GuardedFactSnapshotV1 | None = None
         for attempt_number in range(1, _MAX_GUARDED_ATTEMPTS + 1):
-            attempt_failure = self._guarded_attempt_failure(
-                command,
-                attempt_number=attempt_number,
-                phase="prepare",
-                drift_codes=drift_codes,
+            attempt_failure = (
+                None
+                if attempt_authority_lock_held
+                else self._guarded_attempt_failure(
+                    command,
+                    attempt_number=attempt_number,
+                    phase="prepare",
+                    drift_codes=drift_codes,
+                )
             )
             if attempt_failure is not None:
                 return attempt_failure
@@ -1679,15 +2771,31 @@ class DirectedEffectOperationRepository:
                 )
                 if inventory_failure is not None:
                     return inventory_failure
+            if kind == "commit_receipt":
+                receipt_command = cast(CommitDirectedEffectReceiptCommandV1, command)
+                if receipt_command.receipt_binding_hash != command.expected_receipt_binding_hash:
+                    return self._operation_failure(
+                        "receipt_binding_conflict",
+                        operation,
+                        aggregate,
+                        {
+                            "expected_receipt_binding_hash": command.expected_receipt_binding_hash,
+                            "observed_receipt_binding_hash": receipt_command.receipt_binding_hash,
+                        },
+                    )
             descriptor = self._operation_descriptor(command, kind=kind)
             committed = self._transition_for_kind(aggregate, kind)
             if committed is not None:
-                replay_authority_failure = self._guarded_attempt_failure(
-                    command,
-                    attempt_number=attempt_number,
-                    phase="replay",
-                    operation=operation,
-                    drift_codes=drift_codes,
+                replay_authority_failure = (
+                    None
+                    if attempt_authority_lock_held
+                    else self._guarded_attempt_failure(
+                        command,
+                        attempt_number=attempt_number,
+                        phase="replay",
+                        operation=operation,
+                        drift_codes=drift_codes,
+                    )
                 )
                 if replay_authority_failure is not None:
                     return replay_authority_failure
@@ -1761,12 +2869,16 @@ class DirectedEffectOperationRepository:
             appended: GuardedFactAppendedV1 | None = None
             try:
                 self._after_guarded_prepare(prepared)
-                commit_authority_failure = self._guarded_attempt_failure(
-                    command,
-                    attempt_number=attempt_number,
-                    phase="commit",
-                    operation=operation,
-                    drift_codes=drift_codes,
+                commit_authority_failure = (
+                    None
+                    if attempt_authority_lock_held
+                    else self._guarded_attempt_failure(
+                        command,
+                        attempt_number=attempt_number,
+                        phase="commit",
+                        operation=operation,
+                        drift_codes=drift_codes,
+                    )
                 )
                 if commit_authority_failure is not None:
                     return commit_authority_failure
@@ -1778,12 +2890,16 @@ class DirectedEffectOperationRepository:
                 if exc.code in _GUARDED_REPREPARE_DRIFT_CODES:
                     drift_codes.append(exc.code)
                     self._after_guarded_drift(exc, attempt_number)
-                    reprepare_authority_failure = self._guarded_attempt_failure(
-                        command,
-                        attempt_number=attempt_number,
-                        phase="reprepare",
-                        operation=operation,
-                        drift_codes=drift_codes,
+                    reprepare_authority_failure = (
+                        None
+                        if attempt_authority_lock_held
+                        else self._guarded_attempt_failure(
+                            command,
+                            attempt_number=attempt_number,
+                            phase="reprepare",
+                            operation=operation,
+                            drift_codes=drift_codes,
+                        )
                     )
                     if reprepare_authority_failure is not None:
                         return reprepare_authority_failure
@@ -2995,7 +4111,7 @@ class DirectedEffectOperationRepository:
         record: Mapping[str, Any],
     ) -> _ParentRegistry | DirectedEffectOperationResultV1:
         payload = record.get("payload")
-        expected_payload_fields = {
+        v1_fields = {
             "schema_version",
             "stable_registry_identity",
             "previous_version",
@@ -3007,17 +4123,38 @@ class DirectedEffectOperationRepository:
             "actor",
             "recorded_at",
         }
-        if not isinstance(payload, dict) or set(payload) != expected_payload_fields:
+        v2_fields = (v1_fields - {"recorded_at"}) | {
+            "settlement_outcome",
+            "terminal_intent_hash",
+            "operation_source_head_seq",
+            "receipt_summary_hash",
+            "receipt_count",
+            "failed_receipt_count",
+            "dead_letter_count",
+            "aborted_count",
+        }
+        if not isinstance(payload, dict):
             return self._parent_registry_failure(
                 "strict_stream_corruption",
                 registry,
                 {"reason": "parent_closed_payload_fields_invalid"},
             )
-        if payload.get("schema_version") != DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1:
+        close_schema = payload.get("schema_version")
+        if close_schema not in {
+            DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
+            DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2,
+        }:
             return self._parent_registry_failure(
                 "strict_stream_unknown_schema",
                 registry,
-                {"observed_schema_version": payload.get("schema_version")},
+                {"observed_schema_version": close_schema},
+            )
+        expected_payload_fields = v1_fields if close_schema == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1 else v2_fields
+        if set(payload) != expected_payload_fields:
+            return self._parent_registry_failure(
+                "strict_stream_corruption",
+                registry,
+                {"reason": "parent_closed_payload_fields_invalid"},
             )
         raw_identity = payload.get("stable_registry_identity")
         if not isinstance(raw_identity, Mapping):
@@ -3083,12 +4220,88 @@ class DirectedEffectOperationRepository:
                 registry,
                 {"reason": "parent_closed_evidence_hash_invalid"},
             )
-        if not _is_timezone_aware_timestamp(payload.get("recorded_at")):
+        if close_schema == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1 and not _is_timezone_aware_timestamp(
+            payload.get("recorded_at")
+        ):
             return self._parent_registry_failure(
                 "strict_stream_corruption",
                 registry,
                 {"reason": "parent_closed_recorded_at_invalid"},
             )
+        if close_schema == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2:
+            if payload.get("settlement_outcome") not in {"completed", "failed", "suspended"}:
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_settlement_outcome_invalid"},
+                )
+            if not _is_canonical_sha256(payload.get("terminal_intent_hash")) or not _is_canonical_sha256(
+                payload.get("receipt_summary_hash")
+            ):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_settlement_hash_invalid"},
+                )
+            count_fields = (
+                "operation_source_head_seq",
+                "receipt_count",
+                "failed_receipt_count",
+                "dead_letter_count",
+                "aborted_count",
+            )
+            if any(
+                isinstance(payload.get(field), bool)
+                or not isinstance(payload.get(field), int)
+                or cast(int, payload[field]) < 0
+                for field in count_fields
+            ):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_settlement_counts_invalid"},
+                )
+            receipt_count = cast(int, payload["receipt_count"])
+            failed_receipt_count = cast(int, payload["failed_receipt_count"])
+            dead_letter_count = cast(int, payload["dead_letter_count"])
+            aborted_count = cast(int, payload["aborted_count"])
+            if failed_receipt_count > receipt_count:
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_failed_receipt_count_invalid"},
+                )
+            ready = registry.ready_inventories_by_binding_id.get(str(payload.get("binding_id") or ""))
+            if ready is None or receipt_count + dead_letter_count + aborted_count != len(ready.ordered_operation_ids):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_inventory_counts_invalid"},
+                )
+            if payload.get("settlement_outcome") == "completed" and (failed_receipt_count > 0 or dead_letter_count > 0):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_completed_outcome_conflict"},
+                )
+            terminal_intent_hash = cast(str, payload["terminal_intent_hash"])
+            expected_close_evidence_hash = _hash_token(
+                {
+                    "terminal_intent_hash": terminal_intent_hash,
+                    "settlement_outcome": payload["settlement_outcome"],
+                    "operation_source_head_seq": payload["operation_source_head_seq"],
+                    "receipt_summary_hash": payload["receipt_summary_hash"],
+                }
+            )
+            if (
+                payload.get("close_evidence_ref") != f"settlement://{terminal_intent_hash}"
+                or payload.get("close_evidence_hash") != expected_close_evidence_hash
+            ):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_settlement_evidence_binding_invalid"},
+                )
         event_id = record.get("event_id")
         if not isinstance(event_id, str) or not event_id.strip():
             return self._parent_registry_failure(
@@ -3135,6 +4348,9 @@ class DirectedEffectOperationRepository:
             bindings_by_id=registry.bindings_by_id,
             sealed_inventories_by_binding_id=registry.sealed_inventories_by_binding_id,
             ready_inventories_by_binding_id=registry.ready_inventories_by_binding_id,
+            settlement_close_proof=(
+                dict(payload) if close_schema == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2 else None
+            ),
         )
 
     def _apply_parent_inventory_sealed(
@@ -4034,6 +5250,13 @@ class DirectedEffectOperationRepository:
                     binding=binding,
                     evidence={"reason": "operation_v2_payload_fields_invalid"},
                 )
+        elif schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V3:
+            if set(payload) != common_payload_fields:
+                return self._parent_failure(
+                    "strict_stream_corruption",
+                    binding=binding,
+                    evidence={"reason": "operation_v3_payload_fields_invalid"},
+                )
         else:
             return self._parent_failure(
                 "strict_stream_unknown_schema",
@@ -4137,6 +5360,7 @@ class DirectedEffectOperationRepository:
             return self._parent_failure("strict_stream_corruption", binding=binding)
         descriptor_failure = self._validate_persisted_descriptor(
             descriptor,
+            schema_version=cast(str, schema_version),
             previous_version=previous_version,
             seq=seq,
         )
@@ -4180,10 +5404,11 @@ class DirectedEffectOperationRepository:
     def _validate_persisted_descriptor(
         descriptor: Mapping[str, object],
         *,
+        schema_version: str,
         previous_version: int,
         seq: int,
     ) -> dict[str, object] | None:
-        expected_fields = {
+        base_fields = {
             "command",
             "expected_version",
             "expected_seq",
@@ -4193,11 +5418,27 @@ class DirectedEffectOperationRepository:
             "policy_verdict_hash",
             "expected_receipt_binding_hash",
         }
+        v3_fields = base_fields | {
+            "receipt_ref",
+            "receipt_hash",
+            "receipt_binding_hash",
+            "receipt_outcome",
+            "recovery_evidence_ref",
+            "recovery_evidence_hash",
+            "resolution_evidence_ref",
+            "resolution_evidence_hash",
+            "terminal_intent_hash",
+            "settlement_outcome",
+        }
+        expected_fields = v3_fields if schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V3 else base_fields
         if set(descriptor) != expected_fields:
             return {"reason": "replay_descriptor_fields_invalid"}
         command = descriptor.get("command")
         reason = descriptor.get("reason")
-        if command not in {"admit", "claim", "abort"}:
+        legacy_commands = {"admit", "claim", "abort"}
+        v3_commands = {"commit_receipt", "mark_recovery_pending", "dead_letter", "close_by_parent"}
+        allowed_commands = v3_commands if schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V3 else legacy_commands
+        if command not in allowed_commands:
             return {"reason": "replay_descriptor_command_invalid"}
         expected_version = descriptor.get("expected_version")
         expected_seq = descriptor.get("expected_seq")
@@ -4221,8 +5462,39 @@ class DirectedEffectOperationRepository:
             for field in string_fields
         ):
             return {"reason": "replay_descriptor_semantic_invalid"}
-        if not isinstance(reason, str) or (command == "abort") != bool(reason.strip()):
+        reason_required = command in {"abort", "mark_recovery_pending", "dead_letter"}
+        if not isinstance(reason, str) or reason_required != bool(reason.strip()):
             return {"reason": "replay_descriptor_reason_invalid"}
+        if schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V3:
+            command_evidence = {
+                "commit_receipt": ("receipt_ref", "receipt_hash", "receipt_binding_hash", "receipt_outcome"),
+                "mark_recovery_pending": ("recovery_evidence_ref", "recovery_evidence_hash"),
+                "dead_letter": ("resolution_evidence_ref", "resolution_evidence_hash"),
+                "close_by_parent": ("terminal_intent_hash", "settlement_outcome"),
+            }
+            required = set(command_evidence[command])
+            for field in v3_fields - base_fields:
+                value = descriptor.get(field)
+                if not isinstance(value, str) or (field in required) != bool(value.strip()):
+                    return {"reason": "replay_descriptor_evidence_invalid", "field": field}
+            if command == "commit_receipt" and descriptor.get("receipt_outcome") not in {"succeeded", "failed"}:
+                return {"reason": "replay_descriptor_receipt_outcome_invalid"}
+            if command == "close_by_parent" and descriptor.get("settlement_outcome") not in {
+                "completed",
+                "failed",
+                "suspended",
+            }:
+                return {"reason": "replay_descriptor_settlement_outcome_invalid"}
+            for hash_field in (
+                "receipt_hash",
+                "receipt_binding_hash",
+                "recovery_evidence_hash",
+                "resolution_evidence_hash",
+                "terminal_intent_hash",
+            ):
+                value = descriptor.get(hash_field)
+                if isinstance(value, str) and value and not _is_canonical_sha256(value):
+                    return {"reason": "replay_descriptor_hash_invalid", "field": hash_field}
         return None
 
     def _strict_operation_projection(
@@ -4420,6 +5692,7 @@ class DirectedEffectOperationRepository:
             "guarded_receipt": self._guarded_receipt_record(canonical_receipt),
             "guarded_semantic_digest": canonical_receipt.semantic_digest,
         }
+        evidence.update(self._transition_descriptor_evidence(transition))
         if reconciliation_error is not None:
             evidence.update(
                 {
@@ -4439,8 +5712,24 @@ class DirectedEffectOperationRepository:
         return DirectedEffectOperationResultV1(
             ok=True,
             code=cast(
-                Literal["admitted", "effect_claimed", "aborted"],
-                {"admit": "admitted", "claim": "effect_claimed", "abort": "aborted"}[kind],
+                Literal[
+                    "admitted",
+                    "effect_claimed",
+                    "aborted",
+                    "receipt_committed",
+                    "recovery_pending",
+                    "dead_lettered",
+                    "closed_by_parent",
+                ],
+                {
+                    "admit": "admitted",
+                    "claim": "effect_claimed",
+                    "abort": "aborted",
+                    "commit_receipt": "receipt_committed",
+                    "mark_recovery_pending": "recovery_pending",
+                    "dead_letter": "dead_lettered",
+                    "close_by_parent": "closed_by_parent",
+                }[kind],
             ),
             operation=operation,
             state=target,
@@ -4696,6 +5985,17 @@ class DirectedEffectOperationRepository:
                 aggregate,
                 {"drift_fields": drift_fields, "committed_event_id": committed.event_id},
             )
+        evidence: dict[str, object] = {
+            "event_id": committed.event_id,
+            "appended_seq": committed.seq,
+            "authoritative_append": False,
+            "authoritative_effect_receipt": False,
+            "append_disposition": "exact_replay",
+            "committed_event_id": committed.event_id,
+            "committed_seq": committed.seq,
+            "source_head_seq": aggregate.source_head_seq,
+        }
+        evidence.update(self._transition_descriptor_evidence(committed))
         return DirectedEffectOperationResultV1(
             ok=True,
             code="idempotent_replay",
@@ -4704,17 +6004,30 @@ class DirectedEffectOperationRepository:
             version=aggregate.version,
             snapshot=self._project_snapshot(aggregate),
             idempotent=True,
-            evidence={
-                "event_id": committed.event_id,
-                "appended_seq": committed.seq,
-                "authoritative_append": False,
-                "authoritative_effect_receipt": False,
-                "append_disposition": "exact_replay",
-                "committed_event_id": committed.event_id,
-                "committed_seq": committed.seq,
-                "source_head_seq": aggregate.source_head_seq,
-            },
+            evidence=evidence,
         )
+
+    @staticmethod
+    def _transition_descriptor_evidence(transition: _CommittedTransition) -> dict[str, object]:
+        """Project only durable receipt/recovery/settlement binding fields."""
+
+        evidence: dict[str, object] = {}
+        for field in (
+            "receipt_ref",
+            "receipt_hash",
+            "receipt_binding_hash",
+            "receipt_outcome",
+            "recovery_evidence_ref",
+            "recovery_evidence_hash",
+            "resolution_evidence_ref",
+            "resolution_evidence_hash",
+            "terminal_intent_hash",
+            "settlement_outcome",
+        ):
+            value = transition.descriptor.get(field)
+            if isinstance(value, str) and value:
+                evidence[field] = value
+        return evidence
 
     @staticmethod
     def _transition_for_kind(aggregate: _Aggregate, kind: _CommandKind) -> _CommittedTransition | None:
@@ -4756,16 +6069,61 @@ class DirectedEffectOperationRepository:
 
     @staticmethod
     def _operation_descriptor(command: _Command, *, kind: _CommandKind) -> dict[str, object]:
-        return {
+        descriptor: dict[str, object] = {
             "command": kind,
             "expected_version": command.expected_version,
             "expected_seq": command.expected_seq,
             "actor": command.actor,
-            "reason": command.reason if isinstance(command, AbortDirectedEffectOperationCommandV1) else "",
+            "reason": command.reason
+            if isinstance(
+                command,
+                (
+                    AbortDirectedEffectOperationCommandV1,
+                    MarkDirectedEffectRecoveryPendingCommandV1,
+                    DeadLetterDirectedEffectOperationCommandV1,
+                ),
+            )
+            else "",
             "intended_effect_fingerprint": command.intended_effect_fingerprint,
             "policy_verdict_hash": command.policy_verdict_hash,
             "expected_receipt_binding_hash": command.expected_receipt_binding_hash,
         }
+        if kind in {"commit_receipt", "mark_recovery_pending", "dead_letter", "close_by_parent"}:
+            descriptor.update(
+                {
+                    "receipt_ref": command.receipt_ref
+                    if isinstance(command, CommitDirectedEffectReceiptCommandV1)
+                    else "",
+                    "receipt_hash": command.receipt_hash
+                    if isinstance(command, CommitDirectedEffectReceiptCommandV1)
+                    else "",
+                    "receipt_binding_hash": command.receipt_binding_hash
+                    if isinstance(command, CommitDirectedEffectReceiptCommandV1)
+                    else "",
+                    "receipt_outcome": command.receipt_outcome
+                    if isinstance(command, CommitDirectedEffectReceiptCommandV1)
+                    else "",
+                    "recovery_evidence_ref": command.recovery_evidence_ref
+                    if isinstance(command, MarkDirectedEffectRecoveryPendingCommandV1)
+                    else "",
+                    "recovery_evidence_hash": command.recovery_evidence_hash
+                    if isinstance(command, MarkDirectedEffectRecoveryPendingCommandV1)
+                    else "",
+                    "resolution_evidence_ref": command.resolution_evidence_ref
+                    if isinstance(command, DeadLetterDirectedEffectOperationCommandV1)
+                    else "",
+                    "resolution_evidence_hash": command.resolution_evidence_hash
+                    if isinstance(command, DeadLetterDirectedEffectOperationCommandV1)
+                    else "",
+                    "terminal_intent_hash": command.terminal_intent_hash
+                    if isinstance(command, _CloseDirectedEffectByParentCommandV1)
+                    else "",
+                    "settlement_outcome": command.settlement_outcome
+                    if isinstance(command, _CloseDirectedEffectByParentCommandV1)
+                    else "",
+                }
+            )
+        return descriptor
 
     @staticmethod
     def _operation_event_canonical(
@@ -4776,7 +6134,10 @@ class DirectedEffectOperationRepository:
         descriptor: Mapping[str, object],
     ) -> dict[str, object]:
         return {
-            "schema_version": DIRECTED_EFFECT_OPERATION_SCHEMA_V2,
+            "schema_version": DIRECTED_EFFECT_OPERATION_SCHEMA_V3
+            if descriptor.get("command")
+            in {"commit_receipt", "mark_recovery_pending", "dead_letter", "close_by_parent"}
+            else DIRECTED_EFFECT_OPERATION_SCHEMA_V2,
             "operation": operation.to_record(),
             "parent_binding_id": operation.parent_binding_id,
             "state": state,
@@ -4798,6 +6159,16 @@ class DirectedEffectOperationRepository:
             intended_effect_fingerprint=cast(str, descriptor["intended_effect_fingerprint"]),
             policy_verdict_hash=cast(str, descriptor["policy_verdict_hash"]),
             expected_receipt_binding_hash=cast(str, descriptor["expected_receipt_binding_hash"]),
+            receipt_ref=cast(str, descriptor.get("receipt_ref") or ""),
+            receipt_hash=cast(str, descriptor.get("receipt_hash") or ""),
+            receipt_binding_hash=cast(str, descriptor.get("receipt_binding_hash") or ""),
+            receipt_outcome=cast(str, descriptor.get("receipt_outcome") or ""),
+            recovery_evidence_ref=cast(str, descriptor.get("recovery_evidence_ref") or ""),
+            recovery_evidence_hash=cast(str, descriptor.get("recovery_evidence_hash") or ""),
+            resolution_evidence_ref=cast(str, descriptor.get("resolution_evidence_ref") or ""),
+            resolution_evidence_hash=cast(str, descriptor.get("resolution_evidence_hash") or ""),
+            terminal_intent_hash=cast(str, descriptor.get("terminal_intent_hash") or ""),
+            settlement_outcome=cast(str, descriptor.get("settlement_outcome") or ""),
         )
 
     def _normalized_transition(

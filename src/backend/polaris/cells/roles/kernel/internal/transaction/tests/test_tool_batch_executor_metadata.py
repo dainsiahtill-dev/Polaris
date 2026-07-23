@@ -6,6 +6,11 @@ from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_envelope_refs_from_metadata,
     read_run_ledger_projection,
 )
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     batch_write_failure_error_types,
     batch_write_failures_require_llm_replan,
@@ -19,6 +24,16 @@ from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import 
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_call_audit_refs import tool_invocation_audit_ref
 from polaris.cells.roles.kernel.public.turn_contracts import ToolExecutionMode
+
+
+def _bootstrap_test_fact_stream(tmp_path) -> None:
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="tool_batch_executor_metadata_test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
 
 
 def test_effect_receipts_from_batch_receipts_accepts_top_level_effect_receipts() -> None:
@@ -172,9 +187,7 @@ def test_scope_denied_write_requires_new_llm_invocation_without_widening_scope()
 
     assert batch_write_failure_error_types(receipt) == ("director_write_policy_denied",)
     assert batch_write_failures_require_llm_replan(receipt) is True
-    assert receipt["results"][0]["result"]["director_policy"]["allowed_scope"] == [
-        "src/models/firefly.ts"
-    ]
+    assert receipt["results"][0]["result"]["director_policy"]["allowed_scope"] == ["src/models/firefly.ts"]
 
 
 def test_inactive_session_write_failure_remains_fail_closed() -> None:
@@ -226,6 +239,7 @@ def test_tool_batch_execution_identity_falls_back_to_transaction_authority() -> 
 
 
 def test_failed_tool_batch_lifecycle_is_durable_without_effect_receipt(tmp_path) -> None:
+    _bootstrap_test_fact_stream(tmp_path)
     _append_tool_batch_receipts_to_run_ledger(
         workspace=str(tmp_path),
         run_id="director-run-1",

@@ -1,0 +1,84 @@
+card_id: vc-20260722-factory-r17-director-primary-write-budget
+classification: execution_fact_chain
+status: complete
+bench_status: closed
+bug_summary: >-
+  The thirteenth authorized fresh isolated L1-04 run proved the complete PM
+  and Chief Engineer physical path, accepted three blueprints, and entered
+  Director. Director then sent a primary write-code request with the generic
+  128000-token execution budget while only about 46 seconds remained on the
+  Factory execution deadline. Polaris cancelled the still-active Provider
+  request after about 42 seconds, materialized no source file, failed the first
+  Director task, and dependency-blocked the remaining two tasks.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: e1e3544b000b
+  factory_run_id: factory_886390982871
+  director_run_id: director-2d6a6cb8f485
+  stage: director_dispatch
+  error_code: director_first_call_llm_timeout
+  result_error_code: model_provider_timeout
+  downstream_boundary_error: director.canonical_task_boundary_missing
+  wall_clock_seconds: 302.2
+  backend_fresh: true
+  plan_materialized: true
+  chief_engineer_blueprints_accepted: 3
+  director_reached: true
+  director_provider_request_reached: true
+  director_tasks_total: 3
+  director_tasks_succeeded: 0
+  director_tasks_failed: 1
+  director_tasks_blocked: 2
+  qa_reached: false
+  target_project_effects: 0
+  requested_output_tokens: 128000
+  provider_timeout_ceiling_seconds: 46.0
+  provider_cancelled_after_seconds: 42.2
+  context_snapshot_ref: 5425221fc44785e39a56622d
+  final_request_context_audit: pass
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r17/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r17/audits/e1e3544b000b/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r17/L1-04.chain.log
+root_cause:
+  code: director_primary_write_budget_deadline_mismatch
+  summary: >-
+    KernelOne already defines a 7000-token ceiling for forced-write and
+    first-call materialization requests, but the Director adapter applied that
+    policy only to explicit retry stages. The primary first_call carried a
+    write_code execution profile, target files, and the director.patch_file.v1
+    output contract, yet inherited the generic 128000-token execution budget.
+    Factory deadline re-clamping worked; request size and remaining physical
+    lease did not match.
+  fix: >-
+    Treat a primary first_call as a bounded materialization call only when it
+    has declared target files and an authoritative write_code execution
+    profile or director.patch_file.v1 output contract. Reuse the existing
+    central forced-write output ceiling and preserve existing retry behavior.
+    Review-class first calls remain uncapped by this rule. The final provider
+    boundary now records the applied output-budget evidence before transport.
+required_gates:
+  regression_tests_red_green: pass
+  focused_director_budget_tests: "9 passed"
+  kernelone_budget_policy: "36 passed"
+  director_adapter_full: "432 passed, 2 warnings"
+  roles_adapters_full: "1261 passed, 2 warnings"
+  factory_pipeline_full: "1219 passed, 2 warnings"
+  ruff: pass
+  ruff_format: pass
+  mypy_source: pass
+  compileall: pass
+  codegraph_structural_review: pass
+scheduling:
+  bench_schedulable: true
+  authorization_scope: delegated_to_pre_bench_one_shot_gate
+  next_action: recapture_source_snapshot_then_authorize_one_fresh_isolated_l1_04
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

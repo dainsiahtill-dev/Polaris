@@ -1,0 +1,43 @@
+card_id: vc-20260723-factory-r42-ce-thinking-only-schema-recovery
+classification: factory_role_output_contract
+status: closed
+bench_status: not_schedulable
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  ungoverned_retry_loop: forbidden
+  offline_mainline_blueprint_bypass: forbidden
+defect:
+  project_id: L1-04
+  bench_attempt: R41
+  factory_run_id: factory_c134e87d1bbe
+  exact_error: model returned thinking-only response; awaiting user clarification
+  root: ce_thinking_only_result_bypassed_existing_bounded_schema_repair
+evidence:
+  pm_plan_present: true
+  physical_ce_request_present: true
+  final_request_context_snapshot_ref: f1215054efb6f54c8c96f259
+  physical_request_snapshot_ref: b2514bb374ca1b117a7b2fee
+  generated_blueprints: 0
+  expected_blueprints: 3
+  existing_dead_classifier_has_call_sites: false
+implementation:
+  owner: factory.pipeline
+  targets:
+    - OrchestrationStageExecutor._ce_portfolio_result_allows_schema_repair
+    - OrchestrationStageExecutor._run_chief_engineer_schema_repair
+    - OrchestrationStageExecutor._execute_chief_engineer_review_with_attempt_lease
+  reuse:
+    - existing_separately_claimed_ce_schema_repair
+    - existing_deadline_readmission
+    - existing_factory_role_evidence_authority_binding
+validation:
+  focused_regression: pass
+  factory_stage_characterization: 261_passed
+  factory_pipeline_full: 1237_passed_2_warnings
+  static_gates: pass
+  architecture: 1411_passed_8_skipped
+closure:
+  provider_requests: 0
+  bench_runs: 0
+next_action: none_r42_closed

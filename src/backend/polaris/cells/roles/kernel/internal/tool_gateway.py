@@ -16,12 +16,18 @@ import time
 import urllib.parse
 import uuid
 from collections.abc import Mapping
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.control_plane.run_ledger.public.contracts import AppendRunLedgerEventCommandV1
 from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
 from polaris.cells.control_plane.run_ledger.public.service import append_run_ledger_event
+from polaris.cells.director.runtime.public.directed_effect_contracts import (
+    DirectedEffectImmutableItemsV1,
+    hash_directed_effect_arguments,
+    require_directed_effect_immutable_items,
+)
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     get_available_tools,
     normalize_tool_arguments,
@@ -44,6 +50,65 @@ if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
 
 logger = logging.getLogger(__name__)
+
+_DIRECTED_EFFECT_POLICY_VERSION = "role-tool-policy.v1"
+
+
+def _directed_effect_hash_json(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    import hashlib
+
+    return hashlib.sha256(payload).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class DirectedEffectGatewayPolicyInputsV1:
+    """Immutable current gateway policy inputs for one authoritative DEO guard."""
+
+    role_policy_id: str
+    role_policy_hash: str
+    canonical_allow_list_hash: str
+    capability_scope: tuple[str, ...]
+    capability_scope_hash: str
+    job_token_id: str
+    job_token_evidence_hash: str
+    job_token_restriction_evidence: DirectedEffectImmutableItemsV1
+    execution_envelope_hash: str
+    allowed_command_hash: str
+    policy_version: str
+
+    def __post_init__(self) -> None:
+        for name in ("role_policy_id", "job_token_id", "policy_version"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ValueError(f"{name} must be canonical")
+        for name in (
+            "role_policy_hash",
+            "canonical_allow_list_hash",
+            "capability_scope_hash",
+            "job_token_evidence_hash",
+            "execution_envelope_hash",
+            "allowed_command_hash",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or len(value) != 64 or any(
+                char not in "0123456789abcdef" for char in value
+            ):
+                raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+        if self.capability_scope != tuple(sorted(set(self.capability_scope))):
+            raise ValueError("capability_scope must be sorted and unique")
+        restrictions = require_directed_effect_immutable_items(
+            "job_token_restriction_evidence",
+            self.job_token_restriction_evidence,
+        )
+        if self.job_token_evidence_hash != hash_directed_effect_arguments(restrictions):
+            raise ValueError("job_token_evidence_hash must bind restrictions")
 
 
 class ToolAuthorizationError(Exception):
@@ -172,6 +237,79 @@ class RoleToolGateway:
     def policy_id(self) -> str:
         """策略标识"""
         return self.policy.policy_id
+
+    def capture_directed_effect_policy_inputs(
+        self,
+    ) -> DirectedEffectGatewayPolicyInputsV1:
+        """Capture one canonical policy/JobToken source without exposing mutable state."""
+
+        capability_scope = tuple(sorted(set(self._capability_scope)))
+        token_id = str(self._capability_token.get("token_id") or "").strip()
+        envelope_hash = str(
+            self._capability_token.get("execution_envelope_hash") or ""
+        ).strip()
+        capability_audit_ok = self._capability_token.get("capability_audit_ok")
+        if (
+            not token_id
+            or len(envelope_hash) != 64
+            or any(char not in "0123456789abcdef" for char in envelope_hash)
+            or capability_audit_ok is not True
+        ):
+            raise ValueError("authoritative JobToken evidence unavailable")
+        raw_commands = self._capability_token.get("allowed_commands") or ()
+        if isinstance(raw_commands, str):
+            raw_commands = (raw_commands,)
+        if not isinstance(raw_commands, (list, tuple, set, frozenset)):
+            raise ValueError("allowed_commands must be a sequence")
+        allowed_commands = tuple(
+            sorted({str(item).strip() for item in raw_commands if str(item).strip()})
+        )
+        allowed_commands_hash = hash_directed_effect_arguments(
+            (("allowed_commands", allowed_commands),)
+        )
+        allowed_paths_hash = hash_directed_effect_arguments(
+            (("allowed_paths", capability_scope),)
+        )
+        token_hash = _directed_effect_hash_json(self._capability_token)
+        restrictions: DirectedEffectImmutableItemsV1 = (
+            ("allowed_commands", allowed_commands),
+            ("allowed_commands_hash", allowed_commands_hash),
+            ("allowed_paths", capability_scope),
+            ("allowed_paths_hash", allowed_paths_hash),
+            ("job_token_hash", token_hash),
+            ("job_token_id", token_id),
+        )
+        policy_payload = (
+            asdict(self.policy)
+            if is_dataclass(self.policy) and not isinstance(self.policy, type)
+            else {
+                "whitelist": tuple(getattr(self.policy, "whitelist", ()) or ()),
+                "blacklist": tuple(getattr(self.policy, "blacklist", ()) or ()),
+                "allow_code_write": bool(getattr(self.policy, "allow_code_write", False)),
+                "allow_command_execution": bool(
+                    getattr(self.policy, "allow_command_execution", False)
+                ),
+                "allow_file_delete": bool(
+                    getattr(self.policy, "allow_file_delete", False)
+                ),
+            }
+        )
+        canonical_allow_list = tuple(sorted(self._canonical_tool_whitelist()))
+        return DirectedEffectGatewayPolicyInputsV1(
+            role_policy_id=self.policy_id,
+            role_policy_hash=_directed_effect_hash_json(policy_payload),
+            canonical_allow_list_hash=hash_directed_effect_arguments(
+                (("canonical_allow_list", canonical_allow_list),)
+            ),
+            capability_scope=capability_scope,
+            capability_scope_hash=allowed_paths_hash,
+            job_token_id=token_id,
+            job_token_evidence_hash=hash_directed_effect_arguments(restrictions),
+            job_token_restriction_evidence=restrictions,
+            execution_envelope_hash=envelope_hash,
+            allowed_command_hash=allowed_commands_hash,
+            policy_version=_DIRECTED_EFFECT_POLICY_VERSION,
+        )
 
     # 安全拒绝标记 - 用于在拒绝工具调用时提供人类可读的拒绝原因
     # 这些标记被基准测试用于检测模型是否正确拒绝危险操作

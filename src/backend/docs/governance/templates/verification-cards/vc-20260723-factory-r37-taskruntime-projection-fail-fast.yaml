@@ -1,0 +1,35 @@
+card_id: vc-20260723-factory-r37-taskruntime-projection-fail-fast
+classification: execution_control_plane
+status: closed
+bench_status: not_schedulable_after_r38
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests: 0
+  bench_runs: 0
+defect:
+  symptom: >-
+    Factory detected a degraded TaskRuntime projection but waited through the
+    Director lease and replaced the precise cause with timeout/generic status.
+  prior_wait_seconds: 595
+  root: degraded_projection_collapsed_to_empty_rows_without_terminal_signal
+implementation:
+  source: src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py
+  tests: src/backend/polaris/tests/test_factory_run_service.py
+  codes:
+    - director.task_runtime_fact_projection_unavailable
+    - director.task_runtime_fact_projection_not_ready
+  provider_dispatch_before_failure: false
+validation:
+  focused_regressions: 6_passed
+  factory_run_service: 90_passed
+  cross_layer_authority_matrix: 506_passed
+  ruff: pass
+  format: pass
+  mypy: pass
+  compileall: pass
+  diff_check: pass
+  codegraph_post_edit_review: pass
+  current_fact_chain: 2126_passed_12_warnings
+  current_architecture: 1411_passed_8_skipped
+next_action: close_r38_timeout_budget_contract_then_requalify

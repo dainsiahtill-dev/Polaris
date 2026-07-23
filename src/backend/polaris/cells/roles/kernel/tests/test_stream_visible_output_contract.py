@@ -65,6 +65,7 @@ def _build_kernel() -> RoleExecutionKernel:
 
 def _make_request(message: str = "阅读并总结项目") -> RoleTurnRequest:
     return RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message=message,

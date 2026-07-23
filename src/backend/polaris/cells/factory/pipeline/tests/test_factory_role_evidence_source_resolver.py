@@ -220,6 +220,39 @@ def _control_plane_record(
     return envelope.to_record(include_integrity_digest=True)
 
 
+def _control_plane_non_gate_record(
+    tmp_path: Path,
+    *,
+    seq: int,
+    event_type: str,
+    stage: str,
+) -> dict[str, object]:
+    child_run_id = "child-run-1"
+    nested = RunLedger(tmp_path, run_id=child_run_id).prepare_idempotent_event(
+        {
+            "event_type": event_type,
+            "run_id": child_run_id,
+            "stage": stage,
+        }
+    )
+    envelope = EventEnvelope(
+        event_id=f"fact-{seq}",
+        stream="execution.control_plane",
+        event_type=event_type,
+        event_version=1,
+        seq=seq,
+        occurred_at=f"2026-07-19T00:00:0{seq}+00:00",
+        source="control_plane.run_ledger",
+        payload={
+            "schema_version": "execution.control_plane.fact.v1",
+            "run_id": child_run_id,
+            "event": nested,
+        },
+        metadata={},
+    )
+    return envelope.to_record(include_integrity_digest=True)
+
+
 def test_dynamic_views_use_one_exact_unfiltered_query_and_share_physical_head(tmp_path: Path) -> None:
     run = _run()
     records = (
@@ -283,6 +316,61 @@ def test_dynamic_views_use_one_exact_unfiltered_query_and_share_physical_head(tm
     assert slots["workspace_quality"].state == "present"
     assert slots["verifier_receipts"].state == "present"
     assert len({slot.source_head.canonical_source_ref for slot in slots.values()}) == 3
+
+
+def test_dynamic_views_validate_mixed_control_plane_stream_and_project_only_gate_events(tmp_path: Path) -> None:
+    run = _run()
+    records = (
+        _control_plane_non_gate_record(
+            tmp_path,
+            seq=1,
+            event_type="tool_call_lifecycle",
+            stage="tool_batch",
+        ),
+        _control_plane_non_gate_record(
+            tmp_path,
+            seq=2,
+            event_type="task_boundary_verdict",
+            stage="task_boundary",
+        ),
+        _control_plane_record(
+            tmp_path,
+            seq=3,
+            factory_run_id=run.id,
+            stage="workspace_validation",
+            ok=False,
+            physical_evidence={},
+        ),
+    )
+
+    slots = _dynamic_resolver(tmp_path, run, records)._capture_dynamic_slots(factory_run_id=run.id)
+
+    assert {
+        (slot.source_head.source_head_fact_id, slot.source_head.source_head_sequence) for slot in slots.values()
+    } == {("fact-3", 3)}
+    assert slots["failure_feedback"].state == "present"
+    assert slots["workspace_quality"].state == "present"
+    assert tuple(item.source_fact_sequence for item in slots["failure_feedback"].items) == (3,)
+    assert slots["verifier_receipts"].state == "absent_at_request_time"
+
+
+def test_dynamic_non_gate_outer_nested_event_type_drift_fails_closed(tmp_path: Path) -> None:
+    run = _run()
+    record = deepcopy(
+        _control_plane_non_gate_record(
+            tmp_path,
+            seq=1,
+            event_type="tool_call_lifecycle",
+            stage="tool_batch",
+        )
+    )
+    record["event_type"] = "task_boundary_verdict"
+    record["integrity_digest"] = EventEnvelope.integrity_digest_for_record(record)
+
+    with pytest.raises(FactoryRoleEvidenceAuthorityError) as exc_info:
+        _dynamic_resolver(tmp_path, run, (record,))._capture_dynamic_slots(factory_run_id=run.id)
+
+    assert exc_info.value.code == "factory_role_evidence_dynamic_envelope_invalid"
 
 
 @pytest.mark.parametrize(

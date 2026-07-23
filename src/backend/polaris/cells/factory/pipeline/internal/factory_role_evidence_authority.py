@@ -18,7 +18,7 @@ import threading
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, TypeVar, cast
 
 from polaris.cells.events.fact_stream.public import (
     AppendSegmentedFactEventCommandV1,
@@ -92,6 +92,8 @@ _STAGE_ROLE_AND_GRANT_CAP: dict[str, tuple[str, int]] = {
     "director_dispatch": ("director", 512),
     "quality_gate": ("qa", 1),
 }
+
+_T = TypeVar("_T")
 
 
 class FactoryRoleEvidenceAuthorityError(RuntimeError):
@@ -904,6 +906,11 @@ class FactoryRoleEvidenceAuthorityPort:
         FactoryRoleEvidenceStageAuthorityV1.__post_init__(authority)
         self._authority = authority
         self._run_lock = run_lock
+        self._owner_loop_guard = threading.Lock()
+        try:
+            self._owner_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._owner_loop = None
         self._run_loader = run_loader
         self._admission = admission
         self._source_authority = source_authority
@@ -919,6 +926,47 @@ class FactoryRoleEvidenceAuthorityPort:
         self._grants: dict[str, _FactoryRoleEvidenceGrantState] = {}
         self._active_acquisitions = 0
         self._closed = False
+
+    def _authority_owner_loop(self) -> asyncio.AbstractEventLoop:
+        """Return the Factory loop that owns ``_run_lock``.
+
+        Role attempts can execute in worker event loops, but the cutoff authority
+        must remain serialized with the Factory run lifecycle.  Production
+        captures that loop at construction.  Synchronous test setup has no owner
+        loop to preserve, so its individual operations retain their calling loop.
+        """
+
+        current_loop = asyncio.get_running_loop()
+        with self._owner_loop_guard:
+            owner_loop = self._owner_loop
+            if owner_loop is None:
+                return current_loop
+        if owner_loop.is_closed():
+            raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_owner_loop_unavailable")
+        return owner_loop
+
+    async def _run_on_authority_owner_loop(
+        self,
+        operation: Callable[[], Awaitable[_T]],
+    ) -> _T:
+        """Execute a cutoff operation on the loop that owns the Factory lock."""
+
+        current_loop = asyncio.get_running_loop()
+        owner_loop = self._authority_owner_loop()
+        if current_loop is owner_loop:
+            return await operation()
+        if not owner_loop.is_running():
+            raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_owner_loop_unavailable")
+
+        async def invoke() -> _T:
+            return await operation()
+
+        scheduled = asyncio.run_coroutine_threadsafe(invoke(), owner_loop)
+        try:
+            return await asyncio.wrap_future(scheduled)
+        except asyncio.CancelledError:
+            scheduled.cancel()
+            raise
 
     def _stage_role_and_cap(self) -> tuple[str, int]:
         policy = _STAGE_ROLE_AND_GRANT_CAP.get(self._authority.stage)
@@ -1149,6 +1197,9 @@ class FactoryRoleEvidenceAuthorityPort:
         self,
         request: FactoryRoleEvidenceCutoffRequestV1,
     ) -> FactoryRoleEvidenceCutoffAckV1:
+        owner_loop = self._authority_owner_loop()
+        if asyncio.get_running_loop() is not owner_loop:
+            return await self._run_on_authority_owner_loop(lambda: self.acquire_cutoff(request))
         if type(request) is not FactoryRoleEvidenceCutoffRequestV1:
             raise TypeError("factory_role_evidence_cutoff_request_exact_type_required")
         FactoryRoleEvidenceCutoffRequestV1.__post_init__(request)
@@ -1310,6 +1361,9 @@ class FactoryRoleEvidenceAuthorityPort:
     ) -> FactoryRoleEvidenceCutoffProofV1:
         """Strictly re-read one committed ACK locator into a detached proof."""
 
+        owner_loop = self._authority_owner_loop()
+        if asyncio.get_running_loop() is not owner_loop:
+            return await self._run_on_authority_owner_loop(lambda: self.resolve_cutoff_proof(ack))
         if type(ack) is not FactoryRoleEvidenceCutoffAckV1:
             raise TypeError("factory_role_evidence_cutoff_ack_exact_type_required")
         try:

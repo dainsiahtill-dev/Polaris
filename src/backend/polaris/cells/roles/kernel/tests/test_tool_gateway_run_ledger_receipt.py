@@ -7,6 +7,11 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from polaris.cells.control_plane.run_ledger.public.ledger import RunLedger
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.kernel.tool_executor import (
     derive_role_turn_capability_scope,
     derive_role_turn_capability_token,
@@ -54,6 +59,13 @@ class TestAppendToolReceiptToRunLedger:
     """Verify Run Ledger receipt emission on mutation tool success."""
 
     def test_appends_receipt_for_successful_write(self, tmp_path: Path) -> None:
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=str(tmp_path),
+                maintenance_reason="tool_gateway_run_ledger_receipt_test",
+                streams=fact_stream_bootstrap_streams(),
+            )
+        )
         workspace = str(tmp_path)
         gateway = RoleToolGateway(
             _make_profile(),

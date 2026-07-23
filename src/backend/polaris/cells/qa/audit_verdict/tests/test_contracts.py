@@ -10,6 +10,11 @@ from polaris.cells.audit.evidence.public.contracts import (
     EvidenceAppendedEventV1,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.qa.audit_verdict.public.contracts import (
     FailureSignalV1,
     GetQaVerdictQueryV1,
@@ -373,6 +378,13 @@ class TestQaAuditError:
 def test_run_qa_audit_public_service_executes_typed_command(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="qa-audit-public-service-test",
+        )
+    )
     (workspace / "service.py").write_text("def ok() -> str:\n    return 'ok'\n", encoding="utf-8")
 
     result = run_qa_audit(

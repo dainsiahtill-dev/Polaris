@@ -493,6 +493,7 @@ class ToolExecutionResult(_FrozenMappingModel):
     result: Any = None
     execution_time_ms: int = 0
     effect_receipt: dict[str, Any] | None = None
+    effect_receipt_commit: dict[str, Any] | None = None
 
 
 class BatchReceipt(_FrozenMappingModel):
@@ -601,6 +602,7 @@ class RawLLMResponse(_FrozenMappingModel):
     native_tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     model: str = "unknown"
     usage: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ============ Phase 1: Transaction Kernel Hardening ============

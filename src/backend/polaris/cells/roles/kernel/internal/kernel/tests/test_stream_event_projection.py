@@ -10,6 +10,7 @@ from polaris.cells.roles.kernel.internal.kernel import stream_event_projection a
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion import (
     record_missing_dispatch_lifecycle_receipt,
 )
+from polaris.cells.roles.kernel.internal.quality_checker import QualityResult
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 
@@ -35,6 +36,7 @@ def _make_stream_completion_projector(
             message="implement",
             run_id="run-1",
             task_id="TASK-1",
+            validate_output=False,
         ),
         fingerprint=SimpleNamespace(full_hash="fingerprint"),
         context_gateway=SimpleNamespace(record_projection_outcome=lambda **_: None),
@@ -315,6 +317,7 @@ def test_stream_completion_fails_closed_on_required_write_without_dispatch(
             message="implement",
             run_id="run-1",
             task_id="TASK-1",
+            validate_output=True,
         ),
         fingerprint=SimpleNamespace(full_hash="fingerprint"),
         context_gateway=SimpleNamespace(record_projection_outcome=lambda **_: {"route_weight": 0.17}),
@@ -367,6 +370,148 @@ def test_stream_completion_fails_closed_on_required_write_without_dispatch(
     actual_dispatch = captured["task_boundary"]["tool_dispatch"]
     assert {key: actual_dispatch.get(key) for key in expected_dispatch} == expected_dispatch
     assert publisher.events[-1]["event_type"] == "error"
+
+
+def test_stream_completion_validates_before_task_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    task_boundary_calls: list[dict[str, Any]] = []
+
+    class _RejectingQualityChecker:
+        def validate_output(self, *_args: Any, **_kwargs: Any) -> QualityResult:
+            return QualityResult(
+                success=False,
+                errors=["malformed chief engineer JSON"],
+                suggestions=["return one JSON object"],
+                data=None,
+                quality_score=0.0,
+                quality_passed=False,
+            )
+
+    monkeypatch.setattr(
+        projection,
+        "append_role_turn_task_boundary_verdict",
+        lambda **kwargs: task_boundary_calls.append(dict(kwargs)),
+    )
+    publisher = _Publisher()
+    projector = projection.StreamEventProjector(
+        kernel=SimpleNamespace(
+            workspace=str(tmp_path),
+            _injected_quality_checker=_RejectingQualityChecker(),
+        ),
+        role="chief_engineer",
+        profile=SimpleNamespace(role_id="chief_engineer", model="test-model", provider_id="test-provider"),
+        request=RoleTurnRequest(
+            workspace=str(tmp_path),
+            message="review",
+            run_id="run-1",
+            task_id="CE-PORTFOLIO-run-1",
+            validate_output=True,
+            max_retries=0,
+        ),
+        fingerprint=SimpleNamespace(full_hash="fingerprint"),
+        context_gateway=SimpleNamespace(record_projection_outcome=lambda **_: None),
+        context_result=SimpleNamespace(token_estimate=11),
+        stream_run_id="run-1",
+        uep_publisher=publisher,
+        runtime_tool_policy_audit={"tool_policy_mode": "none"},
+        tool_filter_audit=None,
+        accumulated_content=['{"blueprints": [invalid]}'],
+    )
+
+    result = asyncio.run(
+        projector.project(
+            CompletionEvent(
+                turn_id="turn-invalid-output",
+                status="success",
+                duration_ms=7,
+                llm_calls=1,
+                tool_calls=0,
+                batch_receipt={},
+            )
+        )
+    )
+
+    assert result is not None
+    assert result.should_stop is True
+    assert result.event["type"] == "error"
+    assert result.event["error_type"] == "output_validation_failed"
+    assert result.event["metadata"]["output_validation"]["success"] is False
+    assert task_boundary_calls == []
+    assert all(event["event_type"] != "complete" for event in publisher.events)
+
+
+def test_stream_completion_projects_validated_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    structured_output = {"blueprints": []}
+
+    class _AcceptingQualityChecker:
+        def validate_output(self, *_args: Any, **_kwargs: Any) -> QualityResult:
+            return QualityResult(
+                success=True,
+                errors=[],
+                suggestions=[],
+                data=structured_output,
+                quality_score=100.0,
+                quality_passed=True,
+            )
+
+    monkeypatch.setattr(
+        projection,
+        "append_role_turn_task_boundary_verdict",
+        lambda **_kwargs: {
+            "schema_version": "polaris.task_boundary_verdict.v1",
+            "ok": True,
+            "status": "complete",
+        },
+    )
+    publisher = _Publisher()
+    projector = projection.StreamEventProjector(
+        kernel=SimpleNamespace(
+            workspace=str(tmp_path),
+            _injected_quality_checker=_AcceptingQualityChecker(),
+        ),
+        role="chief_engineer",
+        profile=SimpleNamespace(role_id="chief_engineer", model="test-model", provider_id="test-provider"),
+        request=RoleTurnRequest(
+            workspace=str(tmp_path),
+            message="review",
+            run_id="run-1",
+            task_id="CE-PORTFOLIO-run-1",
+            validate_output=True,
+            max_retries=0,
+        ),
+        fingerprint=SimpleNamespace(full_hash="fingerprint"),
+        context_gateway=SimpleNamespace(record_projection_outcome=lambda **_: None),
+        context_result=SimpleNamespace(token_estimate=11),
+        stream_run_id="run-1",
+        uep_publisher=publisher,
+        runtime_tool_policy_audit={"tool_policy_mode": "none"},
+        tool_filter_audit=None,
+        accumulated_content=['{"blueprints": []}'],
+    )
+
+    result = asyncio.run(
+        projector.project(
+            CompletionEvent(
+                turn_id="turn-valid-output",
+                status="success",
+                duration_ms=7,
+                llm_calls=1,
+                tool_calls=0,
+                batch_receipt={},
+            )
+        )
+    )
+
+    assert result is not None
+    assert result.should_stop is False
+    assert result.event["type"] == "complete"
+    assert result.event["result"].structured_output == structured_output
+    assert result.event["result"].metadata["output_validation"]["success"] is True
 
 
 def test_stream_completion_fails_closed_when_task_boundary_ledger_append_raises(

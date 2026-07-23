@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
+from polaris.cells.roles.adapters.internal.director.execution_tools import _create_director_tool_executor
 
 
 def test_write_file_rejects_collapsed_newline_source_payload(tmp_path) -> None:
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
     collapsed_source = (
         "export class HumidityModel {n  public value: number;n  public unit: string;"
         "n  public location: string;n  public timestamp: Date;n  public isHigh: boolean;"
@@ -29,7 +29,7 @@ def test_write_file_rejects_collapsed_newline_source_payload(tmp_path) -> None:
 
 
 def test_write_file_rejects_source_narration_payload(tmp_path) -> None:
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool(
         "write_file",
@@ -47,7 +47,7 @@ def test_write_file_rejects_source_narration_payload(tmp_path) -> None:
 
 
 def test_write_file_rejects_repair_directive_narration_payload(tmp_path) -> None:
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool(
         "write_file",
@@ -68,7 +68,7 @@ def test_write_file_rejects_repair_directive_narration_payload(tmp_path) -> None
 
 
 def test_write_file_rejects_quality_repair_mode_narration_payload(tmp_path) -> None:
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool(
         "write_file",
@@ -92,7 +92,7 @@ def test_write_file_rejects_destructive_shrink(tmp_path) -> None:
     target = tmp_path / "src" / "big.ts"
     target.parent.mkdir(parents=True)
     target.write_text("".join(f"export const value{i} = {i};\n" for i in range(200)), encoding="utf-8")
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool(
         "write_file",
@@ -111,7 +111,7 @@ def test_write_file_rejects_destructive_shrink(tmp_path) -> None:
 
 
 def test_write_file_allows_normal_single_line_typescript(tmp_path) -> None:
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool(
         "write_file",
@@ -132,7 +132,7 @@ def test_delete_file_is_advertised_and_deletes_single_workspace_file(tmp_path) -
     target = tmp_path / "src" / "stale.ts"
     target.parent.mkdir(parents=True)
     target.write_text("export const stale = true;\n", encoding="utf-8")
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool(
         "delete_file",
@@ -155,7 +155,7 @@ def test_delete_file_is_advertised_and_deletes_single_workspace_file(tmp_path) -
 
 
 def test_delete_file_rejects_missing_file(tmp_path) -> None:
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool("delete_file", {"path": "src/missing.ts"})
 
@@ -167,7 +167,7 @@ def test_delete_file_rejects_missing_file(tmp_path) -> None:
 def test_delete_file_rejects_directory(tmp_path) -> None:
     target = tmp_path / "src" / "dir.ts"
     target.mkdir(parents=True)
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     result = executor.execute_tool("delete_file", {"path": "src/dir.ts"})
 
@@ -180,7 +180,7 @@ def test_delete_file_rejects_directory(tmp_path) -> None:
 def test_delete_file_rejects_path_outside_workspace(tmp_path) -> None:
     outside = tmp_path.parent / f"{tmp_path.name}-outside.ts"
     outside.write_text("export const outside = true;\n", encoding="utf-8")
-    executor = DirectorToolExecutor(str(tmp_path))
+    executor = _create_director_tool_executor(str(tmp_path))
 
     try:
         result = executor.execute_tool("delete_file", {"path": str(outside)})
@@ -190,3 +190,18 @@ def test_delete_file_rejects_path_outside_workspace(tmp_path) -> None:
 
     assert result["ok"] is False
     assert "UNSUPPORTED_PATH_PREFIX" in result["error"]
+
+
+def test_search_code_remains_bound_to_authorized_executor(tmp_path) -> None:
+    source = tmp_path / "src" / "main.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def sentinel_value():\n    return 42\n", encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "search_code",
+        {"query": "sentinel_value"},
+    )
+
+    assert result["ok"] is True
+    assert "sentinel_value" in result["results"]

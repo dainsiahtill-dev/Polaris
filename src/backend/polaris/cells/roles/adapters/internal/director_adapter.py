@@ -15,7 +15,6 @@ from polaris.cells.roles.adapters.internal.director import (
     DirectorAdapter,
     DirectorPatchExecutor,
     DirectorStateTracker,
-    DirectorToolExecutor,
     is_command_allowed,
     is_command_blocked,
 )
@@ -27,7 +26,6 @@ __all__ = [
     "DirectorAdapter",
     "DirectorPatchExecutor",
     "DirectorStateTracker",
-    "DirectorToolExecutor",
     "is_command_allowed",
     "is_command_blocked",
 ]

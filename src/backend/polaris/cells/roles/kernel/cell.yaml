@@ -12,6 +12,12 @@ purpose: 'Provide the shared role execution kernel for prompt construction, outp
 current_modules:
 - polaris.cells.roles.kernel.public.service
 - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
+- polaris.cells.roles.kernel.public.directed_effect_contracts
+- polaris.cells.roles.kernel.public.directed_effect_service
+- polaris.cells.roles.kernel.public.deferred_repair_service
+- polaris.cells.roles.kernel.internal.directed_effect_policy_guard
+- polaris.cells.roles.kernel.internal.directed_effect_dispatch
+- polaris.cells.roles.kernel.internal.directed_effect_lifecycle
 - polaris.cells.roles.kernel.internal.kernel
 - polaris.cells.roles.kernel.internal.prompt_builder
 - polaris.cells.roles.kernel.internal.output_parser
@@ -35,6 +41,9 @@ public_contracts:
   modules:
   - polaris.cells.roles.kernel.public.contracts
   - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
+  - polaris.cells.roles.kernel.public.directed_effect_contracts
+  - polaris.cells.roles.kernel.public.directed_effect_service
+  - polaris.cells.roles.kernel.public.deferred_repair_service
   commands:
   - BuildRolePromptCommandV1
   - ParseRoleOutputCommandV1
@@ -57,6 +66,9 @@ public_contracts:
   - FactoryRoleSemanticRequestIdentityV1
   - FactoryRoleSemanticCandidateV1
   - FactoryRoleFrozenSemanticRequestV1
+  - DeferredDirectorRepairRequestV1
+  - DeferredDirectorRepairEffectBindingV1
+  - DeferredDirectorRepairSynthesisResultV1
   errors:
   - RoleKernelErrorV1
 depends_on:
@@ -104,6 +116,13 @@ verification:
   - polaris/cells/roles/kernel/tests/test_llm_caller_components.py
   - polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py
   - polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py
+  - polaris/cells/roles/kernel/tests/test_directed_effect_contracts.py
+  - polaris/cells/roles/kernel/tests/test_directed_effect_policy_guard.py
+  - polaris/cells/roles/kernel/tests/test_directed_effect_dispatch_fence.py
+  - polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py
+  - polaris/cells/roles/kernel/tests/test_deferred_repair_effects.py
+  - polaris/cells/roles/kernel/tests/test_tool_batch_runtime.py
+  - polaris/cells/roles/kernel/tests/test_directed_effect_runtime_wiring.py
   - polaris/kernelone/llm/engine/tests/test_executor.py
   - polaris/kernelone/llm/engine/stream/tests/test_executor.py
   gaps:
@@ -121,6 +140,8 @@ verification:
   - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry
     full-request qualification remain guarded; B3.3 propagation metadata does not
     authorize provider dispatch.
+  - DEO-2D closes unbound mutation dispatch and bounded deferred-request traversal;
+    DEO-3 still owns durable receipt commit, recovery, and parent close.
   - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the\
     \ single execution engine supporting CHAT and WORKFLOW modes: - kernel.run(role,\
     \ request) — blocking execution with RoleTurnResult - kernel.run_stream(role,\

@@ -1,0 +1,88 @@
+card_id: vc-20260722-factory-r18-provider-stream-absolute-deadline
+classification: execution_fact_chain
+status: closed
+bench_status: unblocked
+bug_summary: >-
+  The fourteenth authorized fresh isolated L1-04 run reached a qualified
+  Chief Engineer physical Provider stream with a readable final-request
+  snapshot and valid role/context coverage. The first wire attempt then
+  consumed the declared 193-second timeout without producing a terminal
+  response. The Provider helper did not enforce its timeout across response
+  body consumption, and the role stream classified the resulting
+  provider_stream_timeout as reconnectable. It replayed the same semantic
+  request under a fresh timeout, extending one logical call to about 493
+  seconds and exhausting the Factory run without reaching Director.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: 000e13cdd2ab
+  factory_run_id: factory_d62938e54720
+  instance_id: >-
+    factory-bench-l1-04-codex-r18-l1-04-run-000e13cdd2ab-a0e51d74e955dc2e
+  stage: chief_engineer_review
+  error_code: chief_engineer_blueprint:llm_review_failed
+  provider_error: provider_stream_timeout:193s
+  wall_clock_seconds: 507.4
+  first_attempt_elapsed_seconds: 300
+  second_attempt_elapsed_seconds: 193
+  provider_wire_attempts: 2
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_artifact_materialized: true
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  semantic_context_snapshot_ref: 37fffc38c39fcc3d6ad8a95e
+  physical_context_snapshot_ref: 4af87b883300a76e64dae908
+  final_request_context_audit: pass
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r18/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r18/audits/000e13cdd2ab/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r18/L1-04.chain.log
+root_cause:
+  code: provider_stream_deadline_reset_across_consumption_and_reconnect
+  summary: >-
+    aiohttp ClientTimeout was not a sufficient boundary for the complete SSE
+    iterator lifecycle. Provider wire retries each received a new transport
+    timeout, while Role StreamEngine treated provider_stream_timeout as a
+    generic retryable timeout and minted a second logical reconnect budget.
+    One declared request timeout therefore multiplied across layers.
+  fix: >-
+    Establish one monotonic absolute deadline before Provider wire retries,
+    pass only the remaining budget to each wire attempt, and wrap the complete
+    response iterator or custom handler in asyncio.timeout. Retry backoff also
+    consumes that same budget. Timeout and cancellation close the response and
+    generator and terminalize the physical attempt. At the role layer,
+    provider_stream_timeout is terminal because its absolute request budget is
+    already consumed; transient network and 429 reconnect behavior remains
+    unchanged.
+required_gates:
+  regression_tests_red_green: pass
+  provider_timeout_consumption_tests: "6 passed"
+  provider_helpers_full: "37 passed"
+  role_stream_reconnect_tests: "2 passed"
+  role_kernel_full: "2743 passed, 1 warning"
+  factory_full: "1219 passed, 2 warnings"
+  ruff: pass
+  ruff_format: pass
+  mypy_source: pass
+  compileall: pass
+  diff_check: pass
+  codegraph_structural_review: pass
+  main_backend_49977_listening: true
+  main_frontend_5173_listening: true
+scheduling:
+  bench_schedulable: true
+  authorization_scope: one_fresh_isolated_l1_04_acceptance_run
+  next_action: >-
+    Run the single pre-bench-authorized fresh isolated L1-04 acceptance after
+    the R19 terminal-replay deadline boundary is closed and the source
+    snapshot is recaptured.
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

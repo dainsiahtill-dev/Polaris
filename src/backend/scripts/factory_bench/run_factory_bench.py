@@ -2229,7 +2229,6 @@ def _start_isolated_bench_project_instance(
             "error_detail": str(exc),
         }
 
-    token = backend_token or _DEFAULT_LOCAL_BACKEND_TOKEN
     if launch_receipt is None:
         return {
             "ok": False,
@@ -2260,7 +2259,6 @@ def _start_isolated_bench_project_instance(
                 "runtime_root": str(receipt["runtime_root"]),
                 "backend_port": None,
                 "frontend_port": None,
-                "token": token,
                 "backend_reload": False,
                 "frontend_vite": True,
                 "start_frontend": True,
@@ -2302,7 +2300,15 @@ def _start_isolated_bench_project_instance(
             "error_type": type(exc).__name__,
             "error_detail": str(exc),
         }
-    if not _wait_backend_health(str(instance.get("backend_url") or ""), str(instance.get("token") or token)):
+    instance_token = str(instance.get("token") or "")
+    if not instance_token:
+        return {
+            "ok": False,
+            "error": "isolated_instance_token_missing",
+            "error_type": "MissingInstanceTokenError",
+            "error_detail": "Instance Supervisor did not return a per-instance token",
+        }
+    if not _wait_backend_health(str(instance.get("backend_url") or ""), instance_token):
         metadata = instance.get("metadata")
         if isinstance(metadata, dict):
             metadata["backend_health"] = "starting"

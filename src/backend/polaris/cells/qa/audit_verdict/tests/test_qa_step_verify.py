@@ -59,13 +59,14 @@ class TestRunStepVerify:
         assert "failing clause [3/3]:" in failure
         assert "wc -l" in failure.split("failing clause", 1)[1]
 
-    def test_quoted_and_inside_pattern_aborts_clause_diagnosis(self, tmp_path: Path) -> None:
+    def test_quoted_and_inside_pattern_is_not_split_as_shell_operator(self, tmp_path: Path) -> None:
         (tmp_path / "a.txt").write_text("plain\n", encoding="utf-8")
         consumer = self._consumer(tmp_path)
         payload = {"construction_step": {"verify": "grep -q 'a && b' ./a.txt && test -f ./a.txt"}}
         failure = consumer._run_step_verify(payload)
         assert "step verify failed" in failure
-        assert "failing clause" not in failure
+        assert "failing clause [1/2]:" in failure
+        assert "grep -q 'a && b' ./a.txt" in failure
 
     def test_state_carrying_chain_aborts_clause_diagnosis(self, tmp_path: Path) -> None:
         """Adversarial review (live repro): cd/VAR= clauses re-run in fresh

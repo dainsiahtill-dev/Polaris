@@ -6,8 +6,6 @@ import hashlib
 import json
 import re
 import shlex
-import subprocess
-import time
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -22,7 +20,6 @@ from polaris.cells.director.runtime.public import (
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.quality import step_verify as _step_verify_module
 from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality_evidence
-from polaris.kernelone.quality.step_verify import run_step_verify
 from polaris.kernelone.storage.layout import resolve_storage_roots
 
 _LOG_FILE_KIND_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -147,21 +144,13 @@ def build_step_verify_convergence_verifier(
                 output = f"Step verify command rejected by safety policy: {reason}\n"
                 residuals = (f"Step verify command rejected by safety policy: {reason}",)
             else:
-                try:
-                    outcome = run_step_verify(command_text, cwd=str(workspace_path))
-                except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                    metadata["failure_reason"] = "step_verify_exception"
-                    metadata["verifier_error_type"] = type(exc).__name__
-                    metadata["verifier_error"] = str(exc)
-                    residuals = (f"Step verify failed: {type(exc).__name__}: {exc}",)
-                else:
-                    if outcome is None:
-                        metadata["failure_reason"] = "step_verify_returned_none"
-                        output = "Step verify could not run or timed out before producing an exit code."
-                        residuals = (f"Step verify failed: command could not run or timed out: {command_text}",)
-                    else:
-                        exit_code, output = outcome
-                        residuals = () if exit_code == 0 else (_step_verify_residual(command_text, exit_code, output),)
+                metadata["failure_reason"] = "directed_effect_verification_required"
+                metadata["revalidation_failure_reason"] = "missing_authoritative_command_receipt"
+                metadata["physical_executor_owned"] = False
+                output = "Step verification must execute through roles.kernel directed-effect authority."
+                residuals = (
+                    f"Step verify pending: missing authoritative execute_command effect receipt: {command_text}",
+                )
 
         raw_output_ref, log_metadata = _write_raw_output_log(
             workspace_path,
@@ -370,7 +359,6 @@ def _execute_environment_prep_plan(
     ecosystem = str(plan.get("ecosystem") or "").strip()
     package_manager = str(plan.get("package_manager") or "").strip()
     freshness_key = str(plan.get("freshness_key") or "").strip()
-    started = time.monotonic()
     manifest_before = _hash_workspace_file(workspace_path, manifest)
     lockfile_before = _hash_workspace_file(workspace_path, lockfile)
     validation_error = _environment_prep_plan_validation_error(plan)
@@ -383,35 +371,11 @@ def _execute_environment_prep_plan(
     cwd = workspace_path
 
     if validation_error is None:
-        try:
-            cwd = _environment_prep_cwd(workspace_path, str(plan.get("cwd") or "."))
-            completed = subprocess.run(
-                list(command),
-                cwd=str(cwd),
-                text=True,
-                capture_output=True,
-                timeout=max(1, int(plan.get("timeout_seconds") or 120)),
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = str(exc.stdout or "")
-            stderr = str(exc.stderr or "")
-            output = f"Environment prep timed out: {' '.join(command)}"
-            exit_code = 124
-            error_code = "environment_prep_timeout"
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            stderr = f"{type(exc).__name__}: {exc}"
-            output = f"Environment prep could not execute: {stderr}"
-            error_code = "environment_prep_execution_error"
-        else:
-            stdout = str(completed.stdout or "")
-            stderr = str(completed.stderr or "")
-            output = stdout + ("\n" if stdout and stderr else "") + stderr
-            exit_code = int(completed.returncode)
-            status = "succeeded" if exit_code == 0 else "failed"
-            error_code = "" if exit_code == 0 else "environment_prep_command_failed"
+        cwd = _environment_prep_cwd(workspace_path, str(plan.get("cwd") or "."))
+        output = "Environment preparation requires a roles.kernel directed-effect command receipt."
+        error_code = "environment_prep_directed_effect_required"
 
-    duration_ms = int((time.monotonic() - started) * 1000)
+    duration_ms = 0
     manifest_after = _hash_workspace_file(workspace_path, manifest)
     lockfile_after = _hash_workspace_file(workspace_path, lockfile)
     raw_output_ref, log_metadata = _write_raw_output_log(

@@ -150,12 +150,14 @@ from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 from .python_runtime import (
     PythonRepairPlanning,
     PythonRepairRun,
+    plan_python_missing_module_alias_repair,
     plan_python_package_child_reexport_repair,
     plan_python_package_shadow_bridge_repair,
     plan_python_readme_required_token_repair,
     plan_python_unittest_missing_target_repair,
     plan_python_unittest_runtime_failure_repair,
     plan_python_unresolved_import_symbol_repair,
+    run_python_missing_module_alias_repair,
     run_python_package_child_reexport_repair,
     run_python_package_shadow_bridge_repair,
     run_python_readme_required_token_repair,
@@ -164,6 +166,7 @@ from .python_runtime import (
     run_python_unresolved_import_symbol_repair,
 )
 from .python_syntax import (
+    PYTHON_MISSING_MODULE_ALIAS_SOURCE_TOOL,
     PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL,
     PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL,
     PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
@@ -1360,6 +1363,21 @@ def _plan_python_package_shadow_bridge(
     mode: str,
 ) -> RuntimeRepairPlanning:
     planning = plan_python_package_shadow_bridge_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_python(planning)
+
+
+def _plan_python_missing_module_alias(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_python_missing_module_alias_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
@@ -2647,6 +2665,30 @@ def _run_python_package_shadow_bridge(
     mode: str,
 ) -> RuntimeRepairRun:
     run = run_python_package_shadow_bridge_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_python(run)
+
+
+def _run_python_missing_module_alias(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_python_missing_module_alias_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -4508,6 +4550,13 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="python.package_shadow_bridge",
         planner=_plan_python_package_shadow_bridge,
         runner=_run_python_package_shadow_bridge,
+    ),
+    PYTHON_MISSING_MODULE_ALIAS_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=PYTHON_MISSING_MODULE_ALIAS_SOURCE_TOOL,
+        language="python",
+        rule_id="python.missing_module_alias",
+        planner=_plan_python_missing_module_alias,
+        runner=_run_python_missing_module_alias,
     ),
     PYTHON_UNRESOLVED_IMPORT_SYMBOL_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=PYTHON_UNRESOLVED_IMPORT_SYMBOL_SOURCE_TOOL,

@@ -50,6 +50,7 @@ from .javascript_syntax import (
     TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
 )
 from .python_syntax import (
+    PYTHON_MISSING_MODULE_ALIAS_SOURCE_TOOL,
     PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL,
     PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL,
     PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
@@ -1374,6 +1375,23 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
+                rule_id="python.requirements_manifest_dependency",
+                source_tool=RUNTIME_DEPENDENCY_SOURCE_TOOL,
+                language="python",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("artifact_quality_error",),
+                raw_terms=("requirements.txt", "must declare"),
+                risk_level="medium",
+                description=(
+                    "Creates or extends requirements.txt only from explicit package declarations in "
+                    "artifact-quality evidence."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="requirements_txt_explicit_dependency_write"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.node_builtin_types_dependency",
                 source_tool=RUNTIME_DEPENDENCY_SOURCE_TOOL,
                 language="generic",
@@ -2078,8 +2096,8 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
-                rule_id="python.module_not_found",
-                source_tool=PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL,
+                rule_id="python.missing_module_alias",
+                source_tool=PYTHON_MISSING_MODULE_ALIAS_SOURCE_TOOL,
                 language="python",
                 phase="quality_repair",
                 archetype=RepairArchetype.WRONG_IMPORT_PATH,
@@ -2087,7 +2105,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 diagnostic_codes=("python_modulenotfounderror",),
                 message_terms=("no module named",),
                 risk_level="medium",
-                description="Covers Python package/module import bridge repairs.",
+                description="Creates an unambiguous source-root alias for a nested Python module.",
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
@@ -2101,6 +2119,19 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 message_terms=("cannot import name", "__init__.py"),
                 risk_level="medium",
                 description="Re-exports symbols found in child package modules from package __init__.py.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="python.package_shadow_bridge",
+                source_tool=PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL,
+                language="python",
+                phase="quality_repair",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=1,
+                diagnostic_codes=("python_importerror",),
+                message_terms=("cannot import name", "__init__.py"),
+                risk_level="medium",
+                description="Bridges a package to an unambiguous same-name sibling module.",
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(

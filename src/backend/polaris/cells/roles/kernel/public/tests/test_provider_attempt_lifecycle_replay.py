@@ -6,7 +6,9 @@ from dataclasses import replace
 from pathlib import Path
 
 from polaris.cells.events.fact_stream.public import (
+    AppendSegmentedFactEventCommandV1,
     BootstrapFactStreamWorkspaceCommandV1,
+    append_segmented_fact_event,
     bootstrap_fact_stream_workspace,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle import (
@@ -25,6 +27,7 @@ from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import 
     AppendFactoryProviderAttemptRecoveryTerminalV1,
     QueryFactoryProviderAttemptLifecycleReplayV1,
     append_factory_provider_attempt_recovery_terminal,
+    factory_provider_attempt_lifecycle_stream,
     factory_provider_attempt_recovery_lease_id,
     query_factory_provider_attempt_lifecycle_replay,
 )
@@ -80,6 +83,7 @@ def _attempt() -> FrozenFinalProviderAttemptV1:
         execution_authority_hash="f" * 64,
         attempt_budget=32,
         authority_attempt_ordinal=1,
+        semantic_candidate_hash="d" * 64,
         semantic_request_hash="a" * 64,
         physical_wire_hash="b" * 64,
         composite_request_hash="c" * 64,
@@ -169,8 +173,42 @@ def test_public_replay_retains_unmatched_durable_start_without_authorizing_dispa
     assert replay.captured_head.total_count == 1
     assert [fact.phase for fact in replay.facts] == ["start"]
     assert replay.facts[0].provider_request_id == attempt.provider_request_id
+    assert replay.facts[0].semantic_candidate_hash == attempt.semantic_candidate_hash
+    assert replay.facts[0].semantic_candidate_hash != replay.facts[0].semantic_request_hash
     assert not hasattr(replay, "reserve")
     assert not hasattr(replay, "physical_attempt_control_port")
+
+
+def test_public_replay_reads_legacy_single_hash_fact_under_old_equality_rule(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    lifecycle = StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(tmp_path),
+        factory_run_id="factory-run-1",
+    )
+    attempt = _attempt()
+    permit = _permit(attempt)
+    payload = lifecycle._base_payload(
+        attempt,
+        context_snapshot_ref="d" * 24,
+        pin_hash="e" * 64,
+    )
+    payload.pop("semantic_candidate_hash")
+    payload.update(lifecycle._factory_identity_payload(permit))
+    append_segmented_fact_event(
+        AppendSegmentedFactEventCommandV1(
+            workspace=str(tmp_path),
+            logical_stream=factory_provider_attempt_lifecycle_stream("factory-run-1"),
+            event_type="provider_attempt.started",
+            source="roles.kernel",
+            payload=payload,
+            idempotency_key=f"{attempt.provider_request_id}:start",
+        )
+    )
+
+    replay = query_factory_provider_attempt_lifecycle_replay(_query(tmp_path))
+
+    assert replay.facts[0].semantic_candidate_hash == attempt.semantic_request_hash
+    assert replay.facts[0].semantic_candidate_hash != attempt.semantic_candidate_hash
 
 
 def test_recovery_terminal_cas_appends_once_and_idempotently_rereads(tmp_path: Path) -> None:

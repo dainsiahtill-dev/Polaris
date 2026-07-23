@@ -1,0 +1,94 @@
+card_id: vc-20260722-factory-r27-cross-instance-ws-isolation
+classification: multi_instance_runtime_isolation
+status: closed
+bench_status: not_schedulable
+bug_summary: >-
+  R27 proved that the R26 reasoning budget reached both physical Kimi requests,
+  but the run was contaminated by an older R24 browser page reconnecting to the
+  reused 49978 port. Factory Bench had copied the shared main token
+  polaris-local-dev into every isolated instance, and /v2/ws/runtime preferred
+  the query workspace over the backend's bound settings workspace. The R27
+  backend therefore accepted the stale page, repeatedly filled its JetStream WS
+  queue, logged keepalive failures, and consumed about 93 percent CPU while the
+  Chief Engineer repair remained non-terminal.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  bench_run_id: eaeb3ecee000
+  factory_run_id: factory_1d2ba955276b
+  instance_id: >-
+    factory-bench-l1-04-codex-r27-l1-04-run-eaeb3ecee000-d474b6dc72ad3a20
+  wall_clock_seconds: 1520.1
+  terminal_phase: event_wait_timeout
+  last_observed_stage: chief_engineer_review
+  plan_materialized: true
+  blueprint_materialized: false
+  director_reached: false
+  qa_reached: false
+  backend_fresh: true
+  backend_port: 49978
+  frontend_port: 5174
+  stale_client_workspace: >-
+    /tmp/factory-bench-l1-04-codex-r24/workspaces/884a62d5528b-7f71392de91355f2/L1-04-94fd04a84e09b5de/ab22ac0dc7bff78a6b2bd151
+  accepted_stale_token: polaris-local-dev
+  queue_full_log_count: 12
+  backend_cpu_percent: 92.9
+  provider_socket_state_before_stop: CLOSE-WAIT
+  primary_reasoning_budget_reached_wire: true
+  repair_reasoning_budget_reached_wire: true
+  instance_stopped_via_launcher: true
+root_cause:
+  code: isolated_instances_reused_shared_token_and_ws_query_overrode_binding
+  summary: >-
+    InstanceSupervisor already generated secure per-instance tokens when a
+    request omitted token, but Factory Bench always supplied its shared backend
+    token. The WebSocket endpoint then accepted an authenticated query workspace
+    without comparing it to the process-bound settings workspace. Port reuse let
+    a stale page become an authenticated cross-instance observer and self-DoS
+    the new backend.
+  fix: >-
+    Factory Bench no longer supplies the shared token to isolated launch
+    requests and requires the Supervisor-returned token for health and all
+    project-scoped HTTP/WS operations. /v2/ws/runtime resolves the process-bound
+    settings workspace as authority and rejects any explicit foreign workspace
+    with close code 1008 before creating subscriptions. The generated token is
+    still propagated by InstanceSupervisor into backend, frontend, and registry.
+required_gates:
+  tdd_red: "2 failed for the intended missing isolation behaviors"
+  tdd_green: "2 passed"
+  focused_full_regressions: "229 passed"
+  provider_free_isolated_smoke:
+    per_instance_token: pass
+    stale_shared_token_close_code: 1008
+    foreign_workspace_close_code: 1008
+    valid_binding_connects: pass
+    main_ports_avoided: pass
+  ruff: pass
+  ruff_format: pass
+  mypy_source: pass
+  compileall: pass
+  git_diff_check: pass
+  codegraph_pre_edit_review: pass
+  codegraph_post_edit_review: pass
+residual_risk:
+  provider_stream_terminal_stall: >-
+    R27 repair remained non-terminal after the provider socket reached
+    CLOSE-WAIT. Cross-instance WS load invalidated that run as a clean provider
+    terminal test. Keep Bench frozen until the physical stream terminal path is
+    bounded and regression-proven independently.
+scheduling:
+  bench_schedulable: false
+  authorization_scope: none
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: close_r28_provider_stream_terminal_stall_then_recapture_source
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"
+  r27_authorization_consumed: true
+

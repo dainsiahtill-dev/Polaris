@@ -1,0 +1,66 @@
+card_id: vc-20260720-deo-2b-task12-final-closure
+bug_summary: >-
+  DEO-2B required complete gates, independent B1-B7 and quality reviews, and
+  truthful TaskRuntime metadata before the selected canonical path could close.
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_path:
+  files:
+    - polaris/cells/runtime/task_runtime/cell.yaml
+    - polaris/cells/runtime/task_runtime/README.agent.md
+    - docs/graph/catalog/cells.yaml
+  symptom: >-
+    TaskRuntime metadata still named Task 8 as active after Tasks 8-11 closed;
+    DEO-2B could not close until complete gates and PASS/PASS reviews succeeded.
+assumptions:
+  - id: A1
+    statement: The selected canonical in-process mutation path satisfies B1-B7.
+    status: verified_true
+    evidence: Independent specification review explicitly returned B1-B7 PASS.
+  - id: A2
+    statement: TaskRuntime remains the sole durable directed-effect authority.
+    status: verified_true
+    evidence: Final metadata and dependency review preserve sole ownership.
+  - id: A3
+    statement: Closure does not schedule later DEO or Bench work.
+    status: verified_true
+    evidence: Final catalog and cell metadata keep all later buckets not_schedulable.
+pre_mortem:
+  failure_point: >-
+    Stale metadata or an over-broad closure claim could falsely authorize later
+    surfaces, receipt/recovery work, or Bench before their independent gates.
+  risk_zone:
+    - task_runtime cell metadata
+    - graph catalog projection
+    - DEO-2B scope and scheduling text
+verification_plan:
+  unit_tests:
+    - complete targeted behavior suite
+    - policy and command-capability suites
+    - TaskRuntime closure suite
+    - KernelOne architecture and release gates
+  static_gates:
+    - ruff check and format
+    - mypy and compileall
+    - YAML parse and catalog hard-fail
+    - git diff --check
+    - independent specification and quality reviews before and after metadata
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  closed_at: "2026-07-20"
+  evidence:
+    provider_requests: 0
+    physical_effects: 0
+    bench_runs: 0
+    final_provider_request_qualification: N/A
+    targeted_behavior_tests: 675 passed
+    policy_snapshot_tests: 117 passed
+    selected_command_capability_tests: 17 passed
+    kernelone_architecture_tests: 18 passed
+    kernelone_release_gate_exit_code: 0
+    closure_tests: 385 passed
+    catalog_issue_count: 0
+    catalog_mismatch_count: 0
+    independent_reviews: PASS/PASS before and after metadata closure

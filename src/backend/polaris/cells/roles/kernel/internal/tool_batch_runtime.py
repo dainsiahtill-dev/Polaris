@@ -23,9 +23,22 @@ from enum import Enum
 from typing import Any, Literal, cast
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.cells.director.runtime.public import (
+    DirectedEffectImmutableItemsV1,
+    require_directed_effect_immutable_items,
+)
+from polaris.cells.roles.kernel.internal.directed_effect_lifecycle import (
+    DirectedEffectLifecycleService,
+)
 from polaris.cells.roles.kernel.internal.speculation.models import (
     CancelToken,
     check_cancel,
+)
+from polaris.cells.roles.kernel.public.directed_effect_contracts import (
+    DeferredDirectorRepairEffectBindingV1,
+    DirectedEffectOperationClaimStatusV1,
+    DirectedEffectRuntimeDependenciesV1,
+    PreparedDirectedEffectBatchV1,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
@@ -37,6 +50,10 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolInvocation,
     TurnId,
 )
+from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +61,23 @@ _READONLY_MODES = {
     ToolExecutionMode.READONLY_PARALLEL,
     ToolExecutionMode.READONLY_SERIAL,
 }
+
+
+def _directed_effect_failure_partition(
+    *,
+    claim_status: DirectedEffectOperationClaimStatusV1 | None,
+    failed_index: int,
+    inventory_ids: tuple[str, ...],
+) -> tuple[int, tuple[str, ...]]:
+    """Choose the exact unclaimed cleanup suffix without guessing claim state."""
+
+    if failed_index < 0 or failed_index >= len(inventory_ids):
+        raise ValueError("failed_index must identify one inventory member")
+    if claim_status == "not_claimed":
+        return failed_index, ()
+    if claim_status == "claimed":
+        return failed_index + 1, (inventory_ids[failed_index],)
+    return len(inventory_ids), inventory_ids[failed_index:]
 
 
 def _eval_injected_read_delay_ms() -> int:
@@ -106,9 +140,12 @@ class ToolResult:
     result: Any = None
     error: str | None = None
     execution_time_ms: int = 0
-    effect_receipt: dict | None = None
+    effect_receipt: dict[str, Any] | None = None
+    effect_receipt_commit: dict[str, Any] | None = None
+    directed_effect_mutation_status: str | None = None
+    directed_effect_claim_status: DirectedEffectOperationClaimStatusV1 | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "call_id": self.call_id,
             "tool_name": self.tool_name,
@@ -117,6 +154,9 @@ class ToolResult:
             "error": self.error,
             "execution_time_ms": self.execution_time_ms,
             "effect_receipt": self.effect_receipt,
+            "effect_receipt_commit": self.effect_receipt_commit,
+            "directed_effect_mutation_status": self.directed_effect_mutation_status,
+            "directed_effect_claim_status": self.directed_effect_claim_status,
         }
 
 
@@ -183,11 +223,132 @@ class ToolBatchRuntime:
 
     def __init__(
         self,
-        executor: Callable,  # async def executor(tool_name, arguments) -> dict
+        executor: Callable[..., Any],  # async def executor(tool_name, arguments) -> dict
         context: ToolExecutionContext | None = None,
+        *,
+        directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
+        directed_effect_required: bool = False,
+        directed_effect_execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+        directed_effect_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
+        prepared_directed_effect_batch: PreparedDirectedEffectBatchV1 | None = None,
+        directed_effect_restrictions_by_call_id: tuple[tuple[str, DirectedEffectImmutableItemsV1], ...] = (),
+        directed_effect_dispatch_call_ids: tuple[str, ...] | None = None,
+        directed_effect_abort_call_ids: tuple[str, ...] = (),
+        directed_effect_repair_bindings_by_call_id: tuple[tuple[str, DeferredDirectorRepairEffectBindingV1], ...] = (),
+        directed_effect_rollback_activation_by_call_id: tuple[tuple[str, str], ...] = (),
     ) -> None:
         self.executor = executor
         self.context = context or ToolExecutionContext()
+        if (
+            directed_effect_runtime is not None
+            and type(directed_effect_runtime) is not DirectedEffectRuntimeDependenciesV1
+        ):
+            raise TypeError("directed_effect_runtime must be exactly DirectedEffectRuntimeDependenciesV1")
+        if directed_effect_execution_attempt is not None:
+            if type(directed_effect_execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1:
+                raise TypeError(
+                    "directed_effect_execution_attempt must be exactly TaskRuntimeExecutionAttemptIdentityV1"
+                )
+            canonical_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(
+                directed_effect_execution_attempt.to_record()
+            )
+            if canonical_attempt != directed_effect_execution_attempt:
+                raise ValueError("directed_effect_execution_attempt must be canonical")
+        if directed_effect_execution_attempt_authority is not None and not isinstance(
+            directed_effect_execution_attempt_authority,
+            TaskRuntimeExecutionAttemptAuthorityV1,
+        ):
+            raise TypeError("directed_effect_execution_attempt_authority must be exact")
+        if directed_effect_required and (
+            directed_effect_runtime is None
+            or directed_effect_execution_attempt is None
+            or directed_effect_execution_attempt_authority is None
+        ):
+            raise ValueError("required directed-effect execution needs runtime dependencies and attempt identity")
+        self.directed_effect_runtime = directed_effect_runtime
+        self.directed_effect_required = bool(directed_effect_required)
+        self.directed_effect_execution_attempt = directed_effect_execution_attempt
+        self.directed_effect_execution_attempt_authority = directed_effect_execution_attempt_authority
+        if (
+            prepared_directed_effect_batch is not None
+            and type(prepared_directed_effect_batch) is not PreparedDirectedEffectBatchV1
+        ):
+            raise TypeError("prepared_directed_effect_batch must be exact")
+        canonical_restrictions: list[tuple[str, DirectedEffectImmutableItemsV1]] = []
+        for call_id, restrictions in directed_effect_restrictions_by_call_id:
+            normalized_call_id = str(call_id).strip()
+            if not normalized_call_id or normalized_call_id != call_id:
+                raise ValueError("directed-effect restriction call id must be canonical")
+            canonical_restrictions.append(
+                (
+                    normalized_call_id,
+                    require_directed_effect_immutable_items(
+                        "current_job_token_restriction_evidence",
+                        restrictions,
+                    ),
+                )
+            )
+        if len(dict(canonical_restrictions)) != len(canonical_restrictions):
+            raise ValueError("directed-effect restriction call ids must be unique")
+        if prepared_directed_effect_batch is not None:
+            prepared_call_ids = tuple(
+                member.member.tool_call_id for member in prepared_directed_effect_batch.prepared_members
+            )
+            if tuple(call_id for call_id, _ in canonical_restrictions) != prepared_call_ids:
+                raise ValueError("directed-effect restrictions must cover exact prepared inventory")
+        elif canonical_restrictions:
+            raise ValueError("directed-effect restrictions require a prepared batch")
+        self.prepared_directed_effect_batch = prepared_directed_effect_batch
+        self.directed_effect_restrictions_by_call_id = tuple(canonical_restrictions)
+        prepared_call_ids = (
+            tuple(member.member.tool_call_id for member in prepared_directed_effect_batch.prepared_members)
+            if prepared_directed_effect_batch is not None
+            else ()
+        )
+        dispatch_call_ids = (
+            prepared_call_ids if directed_effect_dispatch_call_ids is None else directed_effect_dispatch_call_ids
+        )
+        if not isinstance(dispatch_call_ids, tuple) or not isinstance(directed_effect_abort_call_ids, tuple):
+            raise TypeError("directed-effect dispatch and abort call ids must be immutable tuples")
+        if len(set(dispatch_call_ids)) != len(dispatch_call_ids) or len(set(directed_effect_abort_call_ids)) != len(
+            directed_effect_abort_call_ids
+        ):
+            raise ValueError("directed-effect dispatch and abort call ids must be unique")
+        if set(dispatch_call_ids).intersection(directed_effect_abort_call_ids):
+            raise ValueError("directed-effect dispatch and abort call ids must be disjoint")
+        if {*dispatch_call_ids, *directed_effect_abort_call_ids} != set(prepared_call_ids) or len(
+            (*dispatch_call_ids, *directed_effect_abort_call_ids)
+        ) != len(prepared_call_ids):
+            raise ValueError("directed-effect dispatch and abort call ids must partition the prepared inventory")
+        self.directed_effect_dispatch_call_ids = dispatch_call_ids
+        self.directed_effect_abort_call_ids = directed_effect_abort_call_ids
+        repair_bindings = tuple(directed_effect_repair_bindings_by_call_id)
+        if not all(
+            isinstance(call_id, str)
+            and call_id.strip() == call_id
+            and type(binding) is DeferredDirectorRepairEffectBindingV1
+            and binding.tool_call_id == call_id
+            for call_id, binding in repair_bindings
+        ):
+            raise ValueError("directed-effect repair bindings must be canonical")
+        if len(dict(repair_bindings)) != len(repair_bindings):
+            raise ValueError("directed-effect repair binding call ids must be unique")
+        if repair_bindings and set(dict(repair_bindings)) != set(prepared_call_ids):
+            raise ValueError("directed-effect repair bindings must cover exact prepared inventory")
+        activation_pairs = tuple(directed_effect_rollback_activation_by_call_id)
+        if len(dict(activation_pairs)) != len(activation_pairs):
+            raise ValueError("directed-effect rollback activation call ids must be unique")
+        if activation_pairs and (
+            {rollback_id for rollback_id, _ in activation_pairs} != set(directed_effect_abort_call_ids)
+            or any(forward_id not in set(dispatch_call_ids) for _, forward_id in activation_pairs)
+        ):
+            raise ValueError("directed-effect rollback activation must bind the dispatch partition")
+        if repair_bindings and not activation_pairs:
+            raise ValueError("deferred repair bindings require rollback activation mapping")
+        if activation_pairs and not repair_bindings:
+            raise ValueError("rollback activation mapping requires deferred repair bindings")
+        self.directed_effect_repair_bindings_by_call_id = repair_bindings
+        self.directed_effect_rollback_activation_by_call_id = activation_pairs
 
         # Phase 4.4: Result caching
         self._result_cache: dict[str, dict[str, Any]] = {}
@@ -368,6 +529,199 @@ class ToolBatchRuntime:
 
         return redundant
 
+    @staticmethod
+    def _thaw_directed_effect_value(value: object) -> object:
+        items = getattr(value, "items", None)
+        if isinstance(items, tuple):
+            if all(isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in items):
+                return {key: ToolBatchRuntime._thaw_directed_effect_value(item) for key, item in items}
+            return [ToolBatchRuntime._thaw_directed_effect_value(item) for item in items]
+        if isinstance(value, tuple):
+            return [ToolBatchRuntime._thaw_directed_effect_value(item) for item in value]
+        return value
+
+    def _release_directed_effect_batch(self) -> None:
+        runtime = self.directed_effect_runtime
+        prepared = self.prepared_directed_effect_batch
+        if runtime is None or prepared is None:
+            return
+        try:
+            release = runtime.fence_admin_port.release_batch(
+                prepared.parent_binding.correlation.batch_id,
+                prepared.execution_attempt,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            logger.exception("directed-effect batch fence release failed")
+            return
+        if not release.ok or release.status not in {"released", "absent"}:
+            logger.error(
+                "directed-effect batch fence release denied: batch_id=%s error=%s",
+                prepared.parent_binding.correlation.batch_id,
+                release.error_code or "deo_context_release_failed",
+            )
+
+    def _deferred_repair_invocation(self, call_id: str) -> ToolInvocation:
+        """Rebuild one rollback invocation from its sealed immutable effect binding."""
+
+        binding = dict(self.directed_effect_repair_bindings_by_call_id).get(call_id)
+        if binding is None or binding.tool_call_id != call_id:
+            raise RuntimeError("directed_effect_repair_binding_unavailable")
+        return ToolInvocation(
+            call_id=ToolCallId(call_id),
+            tool_name=binding.effect.tool_name,
+            arguments={key: self._thaw_directed_effect_value(value) for key, value in binding.effect.arguments},
+        )
+
+    async def _execute_directed_effect(
+        self,
+        tool: ToolInvocation,
+    ) -> ToolResult:
+        """Claim, register, revalidate, consume, then physically execute one mutation."""
+
+        start_ms = int(time.time() * 1000)
+        call_id = str(tool.call_id)
+        tool_name = str(tool.tool_name)
+        runtime = self.directed_effect_runtime
+        prepared = self.prepared_directed_effect_batch
+        authority = self.directed_effect_execution_attempt_authority
+        restrictions = dict(self.directed_effect_restrictions_by_call_id).get(call_id)
+        repair_binding = dict(self.directed_effect_repair_bindings_by_call_id).get(call_id)
+        if runtime is None or prepared is None or authority is None or restrictions is None:
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                status=ToolExecutionStatus.ERROR,
+                error="directed_effect_prepared_context_unavailable",
+                directed_effect_claim_status="not_claimed",
+            )
+        index = dict(prepared.call_id_index).get(call_id)
+        if index is None:
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                status=ToolExecutionStatus.ERROR,
+                error="directed_effect_member_not_prepared",
+                directed_effect_claim_status="not_claimed",
+            )
+        lifecycle = DirectedEffectLifecycleService(
+            policy_snapshot_port=runtime.policy_snapshot_port,
+        )
+        claim = await lifecycle.claim_execution_context(
+            prepared_batch=prepared,
+            execution_attempt_authority=authority,
+            tool_call_id=call_id,
+            current_job_token_restriction_evidence=restrictions,
+        )
+        context = claim.context
+        if claim.status != "claimed" or context is None:
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                status=ToolExecutionStatus.ERROR,
+                error=str(claim.error_code or "directed_effect_claim_denied"),
+                execution_time_ms=int(time.time() * 1000) - start_ms,
+                directed_effect_claim_status=claim.operation_claim_status,
+            )
+        try:
+            registration = runtime.fence_admin_port.register(context)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                status=ToolExecutionStatus.ERROR,
+                error="directed_effect_fence_registration_failed",
+                execution_time_ms=int(time.time() * 1000) - start_ms,
+                directed_effect_claim_status="claimed",
+            )
+        if (
+            registration.ok is not True
+            or registration.status != "registered"
+            or registration.context_id != context.context_id
+        ):
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                status=ToolExecutionStatus.ERROR,
+                error=str(registration.error_code or "directed_effect_fence_registration_denied"),
+                execution_time_ms=int(time.time() * 1000) - start_ms,
+                directed_effect_claim_status="claimed",
+            )
+        prepared_member = prepared.prepared_members[index]
+        bound_snapshot = prepared_member.policy_binding.bound_snapshot
+        if bound_snapshot is None:
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                status=ToolExecutionStatus.ERROR,
+                error="directed_effect_bound_snapshot_unavailable",
+                execution_time_ms=int(time.time() * 1000) - start_ms,
+                directed_effect_claim_status="claimed",
+            )
+        normalized_arguments = bound_snapshot.authorization_binding.classification_evidence.normalized_arguments
+        try:
+            mutation = await runtime.mutation_port.execute_mutation(
+                context,
+                context.normalized_tool_name,
+                normalized_arguments,
+                repair_binding,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                status=ToolExecutionStatus.ERROR,
+                error="directed_effect_mutation_port_failed",
+                execution_time_ms=int(time.time() * 1000) - start_ms,
+                directed_effect_mutation_status="unknown",
+                directed_effect_claim_status="claimed",
+            )
+        if mutation.status != "executed" or not mutation.ok or mutation.tool_result is None:
+            failure_payload = None
+            if mutation.tool_result is not None:
+                failure_payload = {
+                    key: self._thaw_directed_effect_value(value) for key, value in mutation.tool_result.payload
+                }
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                status=ToolExecutionStatus.ERROR,
+                result=failure_payload,
+                error=str(mutation.error_code or "directed_effect_mutation_failed"),
+                execution_time_ms=int(time.time() * 1000) - start_ms,
+                directed_effect_mutation_status=mutation.status,
+                directed_effect_claim_status="claimed",
+            )
+        payload = {key: self._thaw_directed_effect_value(value) for key, value in mutation.tool_result.payload}
+        result_payload = payload.get("result", payload)
+        effect_receipt = payload.get("effect_receipt")
+        effect_receipt_commit = payload.get("effect_receipt_commit")
+        if effect_receipt is None and isinstance(result_payload, dict):
+            effect_receipt = result_payload.get("effect_receipt")
+        if effect_receipt_commit is None and isinstance(result_payload, dict):
+            effect_receipt_commit = result_payload.get("effect_receipt_commit")
+        if not isinstance(effect_receipt, dict):
+            return ToolResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                status=ToolExecutionStatus.ERROR,
+                result=result_payload,
+                error="missing_effect_receipt",
+                execution_time_ms=int(time.time() * 1000) - start_ms,
+                directed_effect_mutation_status=mutation.status,
+                directed_effect_claim_status="claimed",
+            )
+        return ToolResult(
+            call_id=call_id,
+            tool_name=tool_name,
+            status=ToolExecutionStatus.SUCCESS,
+            result=result_payload,
+            execution_time_ms=int(time.time() * 1000) - start_ms,
+            effect_receipt=effect_receipt,
+            effect_receipt_commit=(effect_receipt_commit if isinstance(effect_receipt_commit, dict) else None),
+            directed_effect_mutation_status=mutation.status,
+            directed_effect_claim_status="claimed",
+        )
+
     async def execute_batch(
         self,
         tool_batch: ToolBatch,
@@ -394,6 +748,15 @@ class ToolBatchRuntime:
         serial_writes = execution_plan["serial_writes"]
         async_receipts = execution_plan["async_receipts"]
 
+        if self.directed_effect_required and (serial_writes or async_receipts):
+            prepared = self.prepared_directed_effect_batch
+            if prepared is None:
+                raise RuntimeError("directed_effect_batch_not_prepared")
+            planned_call_ids = tuple(str(tool.call_id) for tool in [*serial_writes, *async_receipts])
+            dispatch_call_ids = self.directed_effect_dispatch_call_ids
+            if set(planned_call_ids) != set(dispatch_call_ids) or len(planned_call_ids) != len(dispatch_call_ids):
+                raise RuntimeError("directed_effect_prepared_inventory_mismatch")
+
         receipts: list[BatchReceipt] = []
 
         # 1. 并行执行只读工具
@@ -406,22 +769,163 @@ class ToolBatchRuntime:
             result = await self._execute_single(tool, turn_id, context=effective_context)
             receipts.append(self._result_to_receipt([result], turn_id))
 
-        # 3. 串行执行写工具
-        for tool in serial_writes:
-            result = await self._execute_single(tool, turn_id, context=effective_context)
-            if result.status == ToolExecutionStatus.SUCCESS and not result.effect_receipt:
-                logger.error(
-                    "Write tool %s (call_id=%s) succeeded without effect_receipt; marking the tool lifecycle as failed",
-                    result.tool_name,
-                    result.call_id,
-                )
-                result = self._missing_effect_receipt_result(result)
-            receipts.append(self._result_to_receipt([result], turn_id))
+        mutation_tools = [*serial_writes, *async_receipts]
+        if mutation_tools and self.directed_effect_required:
+            mutation_by_call_id = {str(tool.call_id): tool for tool in mutation_tools}
+            prepared = self.prepared_directed_effect_batch
+            ordered_call_ids = tuple(self.directed_effect_dispatch_call_ids)
+            all_dispatched_succeeded = True
+            successful_forward_call_ids: list[str] = []
+            failed_result: ToolResult | None = None
+            failed_index = -1
+            release_fence = False
+            try:
+                for index, call_id in enumerate(ordered_call_ids):
+                    mutation_tool = mutation_by_call_id.get(call_id)
+                    if mutation_tool is None:
+                        result = ToolResult(
+                            call_id=call_id,
+                            tool_name="unknown",
+                            status=ToolExecutionStatus.ERROR,
+                            error="directed_effect_prepared_inventory_mismatch",
+                        )
+                    else:
+                        result = await self._execute_directed_effect(mutation_tool)
+                    receipts.append(self._result_to_receipt([result], turn_id))
+                    if result.status is not ToolExecutionStatus.SUCCESS:
+                        all_dispatched_succeeded = False
+                        failed_result = result
+                        failed_index = index
+                        break
+                    successful_forward_call_ids.append(call_id)
+                if all_dispatched_succeeded and self.directed_effect_abort_call_ids:
+                    runtime = self.directed_effect_runtime
+                    authority = self.directed_effect_execution_attempt_authority
+                    if runtime is None or authority is None or prepared is None:
+                        raise RuntimeError("directed_effect_abort_authority_unavailable")
+                    DirectedEffectLifecycleService(
+                        policy_snapshot_port=runtime.policy_snapshot_port,
+                    ).abort_unclaimed_members(
+                        prepared_batch=prepared,
+                        execution_attempt_authority=authority,
+                        tool_call_ids=self.directed_effect_abort_call_ids,
+                        reason="contingency_not_activated",
+                    )
+                    release_fence = True
+                elif all_dispatched_succeeded:
+                    release_fence = True
+                elif (
+                    not all_dispatched_succeeded
+                    and prepared is not None
+                    and self.directed_effect_rollback_activation_by_call_id
+                ):
+                    runtime = self.directed_effect_runtime
+                    authority = self.directed_effect_execution_attempt_authority
+                    if runtime is None or authority is None:
+                        raise RuntimeError("directed_effect_abort_authority_unavailable")
+                    if failed_result is None or failed_index < 0:
+                        raise RuntimeError("directed_effect_failed_result_unavailable")
+                    failed_receipt_index = len(receipts) - 1
+                    lifecycle = DirectedEffectLifecycleService(
+                        policy_snapshot_port=runtime.policy_snapshot_port,
+                    )
+                    activation_by_rollback = dict(self.directed_effect_rollback_activation_by_call_id)
+                    activated_forward_ids = set(successful_forward_call_ids)
+                    if failed_result.directed_effect_mutation_status == "executed":
+                        activated_forward_ids.add(failed_result.call_id)
+                    ambiguous_forward_ids = (
+                        {failed_result.call_id}
+                        if failed_result.directed_effect_mutation_status in {"failed", "unknown"}
+                        else set()
+                    )
+                    activated_rollbacks = tuple(
+                        rollback_id
+                        for rollback_id, forward_id in self.directed_effect_rollback_activation_by_call_id
+                        if forward_id in activated_forward_ids
+                    )
+                    aborted_ids: list[str] = []
+                    executed_rollback_ids: list[str] = []
+                    preserved_ids: list[str] = []
+                    inventory_ids = tuple(member.member.tool_call_id for member in prepared.prepared_members)
+                    failed_member_index = dict(prepared.call_id_index)[failed_result.call_id]
+                    cleanup_start, initially_preserved_ids = _directed_effect_failure_partition(
+                        claim_status=failed_result.directed_effect_claim_status,
+                        failed_index=failed_member_index,
+                        inventory_ids=inventory_ids,
+                    )
+                    preserved_ids.extend(initially_preserved_ids)
 
-        # 4. 异步工具(不等待结果)
-        for tool in async_receipts:
-            receipt = await self._submit_async(tool, turn_id)
-            receipts.append(receipt)
+                    for call_id in inventory_ids[cleanup_start:]:
+                        if call_id in ordered_call_ids:
+                            lifecycle.abort_unclaimed_members(
+                                prepared_batch=prepared,
+                                execution_attempt_authority=authority,
+                                tool_call_ids=(call_id,),
+                                reason="deferred_repair_forward_failed",
+                            )
+                            aborted_ids.append(call_id)
+                            continue
+                        activating_forward = activation_by_rollback.get(call_id)
+                        if activating_forward is None:
+                            raise RuntimeError("directed_effect_rollback_activation_unavailable")
+                        if activating_forward in ambiguous_forward_ids:
+                            preserved_ids.extend(
+                                item
+                                for item in inventory_ids[dict(prepared.call_id_index)[call_id] :]
+                                if item not in preserved_ids
+                            )
+                            break
+                        if activating_forward in activated_forward_ids:
+                            rollback_result = await self._execute_directed_effect(
+                                self._deferred_repair_invocation(call_id)
+                            )
+                            receipts.append(self._result_to_receipt([rollback_result], turn_id))
+                            if rollback_result.status is not ToolExecutionStatus.SUCCESS:
+                                preserved_ids.extend(
+                                    item
+                                    for item in inventory_ids[dict(prepared.call_id_index)[call_id] :]
+                                    if item not in preserved_ids
+                                )
+                                break
+                            executed_rollback_ids.append(call_id)
+                            continue
+                        lifecycle.abort_unclaimed_members(
+                            prepared_batch=prepared,
+                            execution_attempt_authority=authority,
+                            tool_call_ids=(call_id,),
+                            reason="deferred_repair_forward_failed",
+                        )
+                        aborted_ids.append(call_id)
+                    if receipts:
+                        failed_receipt = receipts[failed_receipt_index]
+                        raw_results = [dict(row) for row in failed_receipt.raw_results]
+                        if raw_results:
+                            raw_results[0]["directed_effect_activated_rollback_call_ids"] = list(activated_rollbacks)
+                            raw_results[0]["directed_effect_executed_rollback_call_ids"] = list(executed_rollback_ids)
+                            raw_results[0]["directed_effect_aborted_call_ids"] = list(aborted_ids)
+                            raw_results[0]["directed_effect_preserved_call_ids"] = list(preserved_ids)
+                        receipts[failed_receipt_index] = failed_receipt.model_copy(update={"raw_results": raw_results})
+            finally:
+                # Failure/ambiguity keeps process-local fences for DEO-3
+                # reconciliation. Release only after a complete success path
+                # has terminalized every inactive inventory member.
+                if release_fence:
+                    self._release_directed_effect_batch()
+        else:
+            # Compatibility path for roles/runs where DEO is not enabled.
+            for tool in serial_writes:
+                result = await self._execute_single(tool, turn_id, context=effective_context)
+                if result.status == ToolExecutionStatus.SUCCESS and not result.effect_receipt:
+                    logger.error(
+                        "Write tool %s (call_id=%s) succeeded without effect_receipt; marking the tool lifecycle as failed",
+                        result.tool_name,
+                        result.call_id,
+                    )
+                    result = self._missing_effect_receipt_result(result)
+                receipts.append(self._result_to_receipt([result], turn_id))
+            for tool in async_receipts:
+                receipt = await self._submit_async(tool, turn_id)
+                receipts.append(receipt)
 
         return receipts
 
@@ -486,7 +990,7 @@ class ToolBatchRuntime:
                     )
                 )
             else:
-                successful_results.append(result)  # type: ignore[arg-type]
+                successful_results.append(result)
 
         # 每个工具生成一个receipt
         receipts: list[BatchReceipt] = []
@@ -510,7 +1014,7 @@ class ToolBatchRuntime:
                 )
             else:
                 # result is ToolResult after isinstance check excludes Exception
-                receipt = self._result_to_receipt([result], turn_id)  # type: ignore[list-item]
+                receipt = self._result_to_receipt([result], turn_id)
             receipts.append(receipt)
 
         return receipts
@@ -585,10 +1089,15 @@ class ToolBatchRuntime:
             if isinstance(result, dict):
                 payload = result.get("result", result)
                 effect_receipt = result.get("effect_receipt")
+                effect_receipt_commit = result.get("effect_receipt_commit")
                 if effect_receipt is None and isinstance(payload, dict):
                     nested_receipt = payload.get("effect_receipt")
                     if isinstance(nested_receipt, dict):
                         effect_receipt = nested_receipt
+                if effect_receipt_commit is None and isinstance(payload, dict):
+                    nested_commit = payload.get("effect_receipt_commit")
+                    if isinstance(nested_commit, dict):
+                        effect_receipt_commit = nested_commit
 
                 success_flag = result.get("success")
                 if success_flag is None:
@@ -611,6 +1120,7 @@ class ToolBatchRuntime:
                     error=error_value,
                     execution_time_ms=execution_time_ms,
                     effect_receipt=effect_receipt,
+                    effect_receipt_commit=(effect_receipt_commit if isinstance(effect_receipt_commit, dict) else None),
                 )
             else:
                 return ToolResult(
@@ -675,7 +1185,7 @@ class ToolBatchRuntime:
                 ToolExecutionResult(
                     call_id=ToolCallId(call_id),
                     tool_name=tool_name,
-                    status=cast("Literal['success', 'error', 'pending', 'timeout', 'aborted']", "pending"),
+                    status="pending",
                     result={
                         "async": True,
                         "submitted_at": submitted_at,
@@ -719,6 +1229,18 @@ class ToolBatchRuntime:
             effect_receipt=None,
         )
 
+    @staticmethod
+    def _effect_receipt_commit_for_result(result: ToolResult) -> dict[str, Any] | None:
+        if isinstance(result.effect_receipt_commit, dict):
+            return dict(result.effect_receipt_commit)
+        if not isinstance(result.result, dict) or not isinstance(result.effect_receipt, dict):
+            return None
+        nested_receipt = result.result.get("effect_receipt")
+        nested_commit = result.result.get("effect_receipt_commit")
+        if nested_receipt != result.effect_receipt or not isinstance(nested_commit, dict):
+            return None
+        return dict(nested_commit)
+
     def _result_to_receipt(self, results: list[ToolResult], turn_id: TurnId | None = None) -> BatchReceipt:
         """将执行结果转换为BatchReceipt"""
         if not results:
@@ -750,6 +1272,7 @@ class ToolBatchRuntime:
                     result=r.result,
                     execution_time_ms=r.execution_time_ms,
                     effect_receipt=r.effect_receipt,
+                    effect_receipt_commit=self._effect_receipt_commit_for_result(r),
                 )
                 for r in results
             ],
@@ -757,7 +1280,14 @@ class ToolBatchRuntime:
             failure_count=failure_count,
             pending_async_count=0,
             has_pending_async=False,
-            raw_results=[r.to_dict() for r in results],
+            raw_results=[
+                {
+                    **r.to_dict(),
+                    "effect_receipt_commit": self._effect_receipt_commit_for_result(r),
+                }
+                for r in results
+            ],
+            effect_receipts=[dict(r.effect_receipt) for r in results if isinstance(r.effect_receipt, dict)],
         )
 
     @classmethod

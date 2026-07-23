@@ -1296,8 +1296,9 @@ def test_execute_method_delegates_post_execution_language_repairs_to_bridge() ->
     assert "deterministic_cpp_standard_include_repair" in bridge_source
     assert "deterministic_cpp_struct_getter_field_access_repair" in bridge_source
     assert "run_all_java_post_repairs" not in bridge_source
-    assert "deterministic_java_accessor_alias_repair" in bridge_source
-    assert "run_director_repair" in bridge_source
+    assert 'source_tool="deterministic_java_post_repair"' in bridge_source
+    assert "deterministic_java_accessor_alias_repair" not in bridge_source
+    assert "run_runtime_repair_with_director_tools" in bridge_source
     assert "run_director_post_execution_repair_schedule" in bridge_source
     assert "query_director_repair_post_execution_schedule" in bridge_source
     assert "_POST_EXECUTION_REPAIR_RUNNERS" in bridge_source
@@ -1315,8 +1316,9 @@ def test_post_execution_bridge_does_not_call_legacy_java_test_dependency_tail() 
     assert "java_repairs" not in bridge_source
     assert "run_all_java_post_repairs" not in bridge_source
     assert "repair_java_test_dependencies" not in bridge_source
-    assert "deterministic_java_test_dependency_repair" in bridge_source
-    assert "_run_java_test_dependency_runtime_repair" in bridge_source
+    assert "deterministic_java_test_dependency_repair" not in bridge_source
+    assert "_run_java_test_dependency_runtime_repair" not in bridge_source
+    assert 'source_tool="deterministic_java_post_repair"' in java_runner_source
     assert "repair_java_test_dependencies" not in java_runner_source
 
 
@@ -1428,7 +1430,6 @@ def test_runtime_public_service_does_not_own_language_repair_execution_flow() ->
     public_init_source = _read_text(DIRECTOR_RUNTIME_PUBLIC_INIT_PATH)
 
     assert "polaris.cells.director.runtime.internal.repair_kernel.composer" not in modules
-    assert "polaris.cells.director.runtime.internal.repair_kernel.executor" not in modules
     assert "polaris.cells.director.runtime.internal.repair_kernel.policy_gate" not in modules
     assert "polaris.cells.director.runtime.internal.repair_kernel.typescript_syntax" not in modules
     assert "polaris.cells.director.runtime.internal.repair_kernel.typescript_runtime" not in modules
@@ -1436,6 +1437,8 @@ def test_runtime_public_service_does_not_own_language_repair_execution_flow() ->
     assert "RepairPolicyGate" not in calls
     assert "RepairPolicyContext" not in calls
     assert "TransactionalRepairExecutor" not in calls
+    assert "_text_replace_operations_for_patch" in source
+    assert "_can_apply_with_editor" in source
     assert "build_typescript_object_literal_comma_plan" not in source
     assert "plan_director_repair" in source
     assert "run_director_repair" in source
@@ -1564,16 +1567,17 @@ def test_go_bare_import_string_repair_runs_through_director_runtime_kernel() -> 
         DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_ROOT / "schedule_catalog.py"
     )
     assert "run_runtime_repair_with_director_tools" in source
-    assert "executor_factory=DirectorToolExecutor" in source
+    assert "executor_factory=DirectorToolExecutor" not in source
+    assert "execution_attempt=execution_attempt" in source
     assert "run_director_repair" not in source
     assert "RunDirectorRepairCommandV1" not in source
     assert "plan_director_repair" in bridge_source
     assert "PlanDirectorRepairCommandV1" in bridge_source
-    assert "run_director_repair" in bridge_source
-    assert "RunDirectorRepairCommandV1" in bridge_source
-    assert "planning_preflight" in bridge_source
-    assert '"write_file"' in bridge_source
-    assert '"edit_file"' in bridge_source
+    assert "run_director_repair" not in bridge_source
+    assert "RunDirectorRepairCommandV1" not in bridge_source
+    assert "create_deferred_director_repair_request" in bridge_source
+    assert '"execution_authority": "roles.kernel"' in bridge_source
+    assert '"physical_executor_owned": False' in bridge_source
     assert "repair_go_bare_import_strings(" not in source
 
 

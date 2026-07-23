@@ -3,10 +3,10 @@
 ## Purpose
 
 Own task lifecycle transitions for runtime taskboard state, execution-attempt
-authority, the closed DEO-1 durable fact foundation, and DEO-2A's immutable
-directed-effect inventory. DEO-2A records strict inventory seal/ready facts,
-exact member admission, ready-gated claim/abort, and fresh claim-only grants;
-it does not own receipt closure, recovery, or terminal admission.
+authority, the closed DEO-1 durable fact foundation, the closed DEO-2
+zero-unbound-mutation boundary, and the closed DEO-3 durable receipt, recovery,
+parent-close, and terminal-admission protocol. DEO-4 legacy removal and the
+repository architecture fence are also closed.
 
 ## Implementation
 
@@ -88,6 +88,7 @@ it does not own receipt closure, recovery, or terminal admission.
 - `polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py`
 - `polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py`
 - `polaris/tests/test_runtime_projection_snapshot_tasks.py`
+- `polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py`
 
 ## Current Governance Status
 
@@ -109,8 +110,26 @@ Task 7 focused inventory/operation/fence/concurrency coverage `443 passed in
 check/format, mypy with no issues in four production files, compileall, and
 `git diff --check` are green in that evidence set.
 
-Task 7 Step 4, DEO-2A overall closure, and DEO-2B schedulability remain
-`verification_pending`, so DEO-2B is not yet schedulable. DEO-2C, DEO-2D,
-DEO-3, DEO-4, pre-bench, and Bench remain `not_schedulable`. DEO-3 remains the
-highest-risk P0 child/terminal close, receipt, and recovery path. No Bench was
-run.
+DEO-2A and DEO-2B are `closed` and `complete`. DEO-2B proves only the selected
+canonical in-process grant-consuming Director path: TaskRuntime issues the
+durable claim grant, roles.kernel constructs the PID-bound process-local
+context, director.runtime validates policy, and the adapter mutation port
+revalidates, consumes, then performs the effect. TaskRuntime remains the sole
+durable directed-effect authority. This closure does not claim migration of
+the 38 other mutation surfaces, removal of every raw seam, receipt authority,
+parent close, recovery, or terminal admission.
+
+DEO-2A/2B/2C/2D, DEO-3, and DEO-4 are closed and complete. DEO-3 established the
+durable receipt, finite recovery, outcome-bound parent-close, and canonical
+terminal-admission path under
+`docs/superpowers/plans/2026-07-20-deo-3-durable-receipt-settlement.md`. DEO-4
+removed the final unscoped physical executor seam and froze exact process-local
+instance authority plus the production alias/taint/importlib/re-export fence.
+Pre-bench is the sole active gate; Provider and Bench remain
+`not_schedulable`. No Bench was run.
+
+Task 6 closure proves exact fresh-grant context construction and the
+consume-only Director adapter boundary. Frozen evidence is `264 passed` in the
+directed-effect matrix plus `841 passed in 148.31s` for TaskRuntime; static,
+catalog, import, and diff gates are green. It does not claim production wiring,
+receipt authority, terminal admission, or Provider-context qualification.

@@ -1,9 +1,10 @@
 # Final Provider Attempt Qualification Blueprint
 
-Status: locked; B3.0-B3.3 closed; B3.4 specification CLEAR and implementation active; B3.5-B3.6 pending
-Date: 2026-07-19
+Status: locked; B3.0-B3.6 closed
+Date: 2026-07-20
 Scope: `factory.pipeline` + `roles.kernel` + KernelOne LLM effect boundary
-Bench: `not_schedulable`
+Bench: `not_schedulable` by the independent DEO-2/3/4 execution-control gate;
+this blueprint no longer blocks Provider dispatch
 
 ## 1. Objective
 
@@ -36,7 +37,7 @@ Verified current facts:
    Factory-controlled Architect, PM initial/recovery, Chief Engineer, Director
    direct/fanout-child, and QA task-creation seam. B3.2 now consumes that exact
    carrier, resolves the committed post-cutoff proof and freezes the semantic
-   request; physical provider dispatch remains fail-closed pending B3.4-B3.5.
+   request; physical provider dispatch remains fail-closed pending B3.5.
 3. `RequestPreparer` builds the pre-anchor candidate from the pre-cutoff
    carrier, acquires the durable ACK, resolves the exact post-cutoff proof,
    injects the canonical evidence block and freezes the final semantic request.
@@ -586,12 +587,17 @@ it now would authorize I/O before qualification is complete.
   specification and quality/security reviews both returned `CLEAR`, with
   P0/P1/P2 all zero.
 - `FPR=N/A`: B3.3 performs zero physical provider transport. Provider and
-  Bench remain forbidden and Bench remains `not_schedulable`. B3.4
-  implementation is the next and only active bucket after independent
-  specification and quality/security rereviews both returned `CLEAR` with
-  P0/P1/P2 all zero.
+  Bench remain forbidden and Bench remains `not_schedulable`. B3.4 is closed;
+  B3.5 snapshot qualification is the next and only active bucket.
 
-### B3.4 locked implementation contract (CLEAR; implementation active)
+### B3.4 locked implementation contract (CLOSED)
+
+Closure evidence (2026-07-20): focused B3.4 matrix `459 passed`, Provider/
+Engine broad regression `692 passed`, complete Factory Pipeline `1205 passed`,
+KernelOne aggregate release gate exit `0`, changed-file Ruff/format/Mypy/
+compileall/diff/lock/YAML gates all green, and independent implementation plus
+quality/security reviews both returned `CLEAR` with P0/P1 zero. This closure
+does not authorize Provider or Bench; B3.5 remains required.
 
 B3.4 closes physical-attempt admission and conservation only. It does not
 qualify final provider context, enable the B3.3 public Factory barrier, call a
@@ -1085,3 +1091,42 @@ or satisfy the physical provider-attempt inventory.
 
 No real role provider call and no Bench run is authorized until B3.0-B3.5 are
 green and both reviews clear.
+
+## 10. B3.5-B3.6 Closure Record (2026-07-20)
+
+This record supersedes every earlier statement in this blueprint that marks
+B3.5 or B3.6 pending, describes the B3.2 zero-transport stop as the current
+Factory path, or names this blueprint as a remaining Bench schedulability
+blocker. It does not supersede the independent DEO-2/3/4 and pre-bench gates.
+
+B3.5 is closed. Every Factory Architect, PM, Chief Engineer, Director and QA
+sync, structured and stream physical entrypoint now uses one port-owned
+qualification path. That path validates the exact provider-native wire
+request, route authority, readable same-workspace 24-hex ContextOS snapshot,
+native plus semantic token/window metrics, role identity, complete
+message/tool/tool-choice/response-format coverage and the frozen Factory
+evidence binding before reservation or transport. Missing coverage, wrong
+role, unreadable or mismatched evidence clears prior qualification state,
+appends exactly one stable non-physical rejection fact and leaves transport,
+reservation, lifecycle and attempt budget untouched. Ordinary non-Factory
+dispatch remains unchanged.
+
+B3.6 is closed. Current acceptance evidence:
+
+- focused B3.5 qualification, propagation and role-request suites:
+  `298 passed`, followed by the rejection-coverage amendment matrix at
+  `290 passed` and the complete two-file role gate at `161 passed`;
+- complete Factory Pipeline regression after the final amendment:
+  `1205 passed, 2 warnings in 616.04s`;
+- KernelOne architecture release tests: `18 passed`;
+- KernelOne aggregate release gate: exit `0`;
+- strict changed-file Mypy, Ruff check/format, compileall, catalog/structural
+  gates, YAML parse and `git diff --check`: green;
+- independent code-quality/security review: `CLEAR`;
+- independent final specification review after the prequalification rejection
+  amendment: `SPEC CLEAR`, P0/P1/P2 all zero.
+
+The remaining real-call final-request audit is a Bench acceptance observation,
+not missing dispatch implementation: each physical attempt must still be read
+back through `/v2/context/{hash}/final-request` and compared role-by-role when
+the independent execution-control and pre-bench gates authorize Provider use.

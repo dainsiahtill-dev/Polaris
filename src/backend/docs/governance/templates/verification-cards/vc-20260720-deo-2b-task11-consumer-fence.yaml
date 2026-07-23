@@ -1,0 +1,60 @@
+card_id: vc-20260720-deo-2b-task11-consumer-fence
+bug_summary: >-
+  The existing guarded suite lacked the planned exact production claimant and
+  consumer inventory, so extra authority constructors or consumers could be
+  added without a structural regression. Task 11 freezes the canonical chain.
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_path:
+  files:
+    - polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_inventory.py
+    - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py
+    - polaris/tests/architecture/test_deo_2b_canonical_path.py
+  symptom: >-
+    The former guarded suite stayed green after Tasks 1-10 because it had no
+    exact production claimant, constructor, validator, and consumer allowlist.
+assumptions:
+  - id: A1
+    statement: TaskRuntime remains the sole directed-effect grant issuer.
+    status: verified_true
+    evidence: Singleton constructor assertion and complete lifecycle test pass.
+  - id: A2
+    statement: Production authority has one exact claimant and consumer chain.
+    status: verified_true
+    evidence: Exact AST inventory and canonical-path singleton assertions pass.
+  - id: A3
+    statement: Exact replay cannot mint a second claim grant or append state.
+    status: verified_true
+    evidence: Integrated replay returns claim_grant None with unchanged streams.
+pre_mortem:
+  failure_point: >-
+    A future constructor, hidden claim call, raw executor edge, or extra consumer
+    could create a second authority path while behavioral happy paths stay green.
+  risk_zone:
+    - TaskRuntime grant construction
+    - roles.kernel lifecycle claim and context construction
+    - adapter mutation consumption
+    - public re-exports and tool-batch call sites
+verification_plan:
+  unit_tests:
+    - complete command identity, CAS, hash, nested-grant, and replay lifecycle
+    - exact claimant, constructor, validator, and consumer inventory
+  static_gates:
+    - canonical-path singleton AST assertions
+    - ruff check and format
+    - mypy
+    - compileall
+    - git diff --check
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  closed_at: "2026-07-20"
+  evidence:
+    provider_requests: 0
+    physical_effects: 0
+    bench_runs: 0
+    final_provider_request_qualification: N/A
+    locked_regression_tests: 373 passed in 147.78s
+    task_runtime_production_changed: false
+    static_gates: ruff, format, mypy, compileall, and git diff --check passed

@@ -337,6 +337,7 @@ _MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS = (
 )
 _MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS = (
     "deterministic_python_unittest_runtime_failure_repair",
+    "deterministic_python_missing_module_alias_repair",
     "deterministic_python_package_shadow_bridge_repair",
     "deterministic_unresolved_import_symbol_repair",
 )

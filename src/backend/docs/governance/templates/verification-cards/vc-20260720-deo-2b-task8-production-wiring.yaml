@@ -1,0 +1,83 @@
+card_id: vc-20260720-deo-2b-task8-production-wiring
+bug_summary: >-
+  The Director production composition root still creates a bare
+  RoleRuntimeService, so the existing directed-effect policy, fence, mutation,
+  and fresh TaskRuntime attempt dependencies never reach ToolBatchRuntime.
+classification: structural
+status: verified_closed
+bench_status: not_schedulable
+bug_path:
+  files:
+    - polaris/cells/roles/adapters/internal/director/adapter.py
+    - polaris/cells/roles/runtime/public/service.py
+    - polaris/cells/roles/kernel/internal/kernel/core.py
+    - polaris/cells/roles/kernel/internal/kernel/transaction_factory.py
+    - polaris/cells/roles/kernel/internal/transaction_kernel.py
+    - polaris/cells/roles/kernel/internal/turn_transaction_controller.py
+    - polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py
+    - polaris/cells/roles/kernel/internal/tool_batch_runtime.py
+  symptom: >-
+    Production Director sessions can build the normal transaction chain without
+    carrying any directed-effect dependency bundle or immutable fresh attempt.
+assumptions:
+  - id: A1
+    statement: DirectedEffectRuntimeDependenciesV1 is the sole typed kernel bundle.
+    status: verified_true
+    evidence: The public frozen dataclass carries only policy snapshot, fence admin, and mutation Protocols.
+  - id: A2
+    statement: One policy-port object must serve both pre-seal binding and physical-prelude revalidation.
+    status: verified_true
+    evidence: The mutation factory already requires DirectorEffectPolicySnapshotPortV1 and Task 8 locks object identity.
+  - id: A3
+    statement: A fresh execution attempt can be obtained only from the public process-local TaskRuntime authority.
+    status: verified_true
+    evidence: Task 7 closed the canonical snapshot and heartbeat helper without private-state access.
+  - id: A4
+    statement: Legacy uninjected callers remain compatible only when directed effects are not required.
+    status: verified_true
+    evidence: The locked plan explicitly reserves None compatibility for DEO-2C while the Director root sets required true.
+pre_mortem:
+  failure_point: >-
+    A partial wire could reconstruct ports, lose object identity, hide a
+    singleton, put authority in generic metadata/tool arguments, or omit the
+    alternate controller path.
+  risk_zone:
+    - constructor identity across runtime and kernel layers
+    - adapter versus kernel Cell dependency direction
+    - stream, non-stream, and alternate controller parity
+verification_plan:
+  unit_tests:
+    - Director root creates policy before mutation and shares exact fence views.
+    - Runtime injects the exact same bundle into every cached kernel.
+    - Stream, non-stream, and alternate controller construction reach ToolBatchRuntime with exact identity.
+    - Required mode rejects missing bundle or fresh attempt before effects.
+    - Legacy uninjected callers remain compatible.
+  static_gates:
+    - ruff check and format
+    - mypy
+    - compileall
+    - public import and acyclicity
+    - git diff --check
+  broader_gates:
+    - roles runtime public suite
+    - roles kernel transaction suite
+    - roles adapters directed-effect suite
+    - catalog hard-fail
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  closed_at: "2026-07-20"
+  evidence:
+    focused_tests: 104 passed
+    runtime_adapter_tests: 328 passed
+    ruff: green
+    mypy: green
+    compileall: green
+    public_import: green
+    acyclicity: green
+    yaml_parse: green
+    catalog_hard_fail: issue_count=0 mismatch_count=0
+    diff_check: green
+    provider_requests: 0
+    physical_effects: 0
+    final_provider_request_qualification: N/A

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.fs import KernelFileSystem
-from polaris.kernelone.fs.contracts import FileWriteReceipt, KernelFileSystemAdapter
+from polaris.kernelone.fs.contracts import DurabilityMode, FileWriteReceipt, KernelFileSystemAdapter
 from polaris.kernelone.fs.registry import get_default_adapter, set_default_adapter
 
 
@@ -49,7 +49,15 @@ class _TestFileSystemAdapter(KernelFileSystemAdapter):
         p.write_bytes(content)
         return len(content)
 
-    def append_text(self, path: str, content: str, *, encoding: str = "utf-8") -> int:
+    def append_text(
+        self,
+        path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+        durability: DurabilityMode = "buffered",
+    ) -> int:
+        del durability
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a", encoding=encoding) as handle:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -95,11 +96,14 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from polaris.cells.runtime.task_runtime.public.contracts import (
         BindRuntimeTaskToFactoryRunCommandV1,
+        DirectedEffectRecoverySweepItemV1,
+        DirectedEffectRecoverySweepResultV1,
         ExpiredFactoryRunSessionFenceResultV1,
         FenceExpiredFactoryRunSessionsCommandV1,
         ObservableTaskRowsProjectionV1,
         OwnerReworkExecutionPreparationResultV1,
         PrepareOwnerReworkExecutionCommandV1,
+        ReconcileAmbiguousDirectedEffectsCommandV1,
         RuntimeTaskFactoryRunBindingCodeV1,
         RuntimeTaskFactoryRunBindingResultV1,
     )
@@ -114,6 +118,12 @@ _OWNER_REWORK_HANDOFFS_METADATA_KEY = "owner_rework_handoffs"
 _OWNER_REWORK_EXECUTION_AUTHORIZATION_METADATA_KEY = "owner_rework_execution_authorization"
 _OWNER_REWORK_ROUTE_SCHEMA_V1 = "task-market.owner-rework-route/1"
 _OWNER_REWORK_RESOLVED_ONLY_DEPENDENCY_MODE = "resolved_only"
+_PENDING_TERMINAL_INTENT_SCHEMA_V1 = "task-runtime.pending-terminal-intent/1"
+_PENDING_TERMINAL_INTENT_METADATA_KEY = "pending_terminal_intent"
+_DEPENDENCY_SATISFACTION_METADATA_KEY = "task_runtime_dependency_satisfaction"
+_DEPENDENCY_SATISFACTION_SCHEMA_V1 = "task-runtime.dependency-satisfaction/1"
+_DIRECTED_EFFECT_RECOVERY_LEASE_SCHEMA_V1 = "task-runtime.directed-effect-recovery-lease/1"
+_DIRECTED_EFFECT_RECOVERY_LEASE_LOGICAL_PATH = "runtime/tasks/directed_effect_recovery.lease.json"
 _REEXECUTION_METADATA_DROP_KEYS = frozenset(
     {
         "adapter_phase",
@@ -130,9 +140,23 @@ _REEXECUTION_METADATA_DROP_KEYS = frozenset(
         "resume_count",
         "resume_state",
         "runtime_execution",
+        _DEPENDENCY_SATISFACTION_METADATA_KEY,
         "workflow_run_id",
     }
 )
+
+
+def _canonical_sha256(value: object) -> str:
+    """Hash one JSON value using the stable UTF-8 representation."""
+
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class TaskExecutionSessionWriteConflictError(RuntimeError):
@@ -146,6 +170,41 @@ class _LockedSessionSuspendResult:
     session: TaskExecutionSession | None
     session_written: bool
     blocker: DirectedEffectSettlementPreBarrierVerdictV1 | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectedEffectRecoverySessionSweep:
+    """One session's recovery facts while both session locks remain held."""
+
+    items: tuple[DirectedEffectRecoverySweepItemV1, ...] = ()
+    failures: tuple[dict[str, Any], ...] = ()
+    scanned_session_count: int = 0
+    scanned_operation_count: int = 0
+    stop_sweep: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectedEffectRecoveryTaskCatalog:
+    """Bounded task/session discovery facts for one recovery lease."""
+
+    task_rows_by_id: Mapping[int, dict[str, Any]]
+    task_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedTerminalSettlement:
+    """Durable terminal intent and its TaskRuntime-owned parent authority."""
+
+    repository: DirectedEffectOperationRepository
+    intent: Mapping[str, Any]
+    terminal_intent_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class _DependencySatisfactionDecision:
+    """TaskRuntime-owned proof that a failed task may release dependents."""
+
+    evidence: Mapping[str, Any]
 
 
 class _ExecutionEventFailureEvidence(TypedDict):
@@ -338,12 +397,12 @@ def _is_terminal_task_row_update_status(status: TaskStatus | str | None) -> bool
     if status is None:
         return False
     if isinstance(status, TaskStatus):
-        return status.is_terminal
+        return cast(bool, status.is_terminal)
     token = str(status or "").strip()
     if not token:
         return False
     try:
-        return TaskStatus(token).is_terminal
+        return cast(bool, TaskStatus(token).is_terminal)
     except ValueError:
         return False
 
@@ -406,6 +465,39 @@ class TaskRuntimeService:
         """Deterministic test seam after the cooperative session lock is held."""
 
         del operation, identity
+
+    @staticmethod
+    def _after_directed_effect_recovery_lease_acquired(*, lease_id: str, owner_epoch: str) -> None:
+        """Deterministic test seam after durable startup authority is acquired."""
+
+        del lease_id, owner_epoch
+
+    def _directed_effect_recovery_deadline_result(
+        self,
+        *,
+        stage: str,
+        scanned_session_count: int = 0,
+        owner_epoch: str = "",
+    ) -> DirectedEffectRecoverySweepResultV1:
+        """Return one typed hard-deadline failure without hiding prior facts."""
+
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            DirectedEffectRecoverySweepResultV1,
+        )
+
+        failure: dict[str, Any] = {
+            "code": "recovery_deadline_exceeded",
+            "stage": stage,
+        }
+        if owner_epoch:
+            failure["owner_epoch"] = owner_epoch
+        return DirectedEffectRecoverySweepResultV1(
+            ok=False,
+            code="partial_failure",
+            workspace=str(Path(self.workspace).expanduser().resolve()),
+            scanned_session_count=scanned_session_count,
+            failures=(failure,),
+        )
 
     def admit_directed_effect_parent(
         self,
@@ -576,8 +668,141 @@ class TaskRuntimeService:
     ) -> DirectedEffectSettlementPreBarrierVerdictV1:
         """Strictly check one session while both session locks are held."""
 
+        if self._has_pending_terminal_intent(session):
+            return self._fulfilled_terminal_intent_pre_barrier_locked(session)
         identity = self._execution_attempt_identity_from_session(session)
         return DirectedEffectOperationRepository().settlement_pre_barrier(identity)
+
+    def _fulfilled_terminal_intent_pre_barrier_locked(
+        self,
+        session: TaskExecutionSession,
+    ) -> DirectedEffectSettlementPreBarrierVerdictV1:
+        """Accept a preserved terminal intent only with its exact durable close proof."""
+
+        pending_intent = self._pending_terminal_intent(session)
+        proof_raw = session.metadata.get("terminal_settlement_proof")
+        proof = proof_raw if isinstance(proof_raw, Mapping) else None
+
+        def conflict(reason: str) -> DirectedEffectSettlementPreBarrierVerdictV1:
+            return DirectedEffectSettlementPreBarrierVerdictV1(
+                allowed=False,
+                code="settlement_terminal_intent_conflict",
+                evidence={
+                    "reason": reason,
+                    "pending_terminal_intent": dict(pending_intent or {}),
+                    "pending_terminal_intent_valid": pending_intent is not None,
+                    "terminal_settlement_proof": dict(proof or {}),
+                    "terminal_settlement_proof_valid": proof is not None,
+                },
+            )
+
+        required_keys = {
+            "schema_version",
+            "identity_hash",
+            "outcome",
+            "summary_hash",
+            "metadata_hash",
+            "terminal_transition_id",
+            "terminal_intent_hash",
+        }
+        if pending_intent is None or set(pending_intent) != required_keys:
+            return conflict("pending_terminal_intent_invalid")
+        body = {key: pending_intent[key] for key in required_keys - {"terminal_intent_hash"}}
+        terminal_intent_hash = str(pending_intent.get("terminal_intent_hash") or "").strip()
+        outcome = cast(
+            Literal["completed", "failed", "suspended"],
+            str(pending_intent.get("outcome") or "").strip(),
+        )
+        current_identity = self._execution_attempt_identity_from_session(session)
+        settlement_lease_expires_at = str(session.metadata.get("settlement_identity_lease_expires_at") or "").strip()
+        if not settlement_lease_expires_at:
+            return conflict("settlement_identity_lease_missing")
+        settlement_identity_record = current_identity.to_record()
+        settlement_identity_record["lease_expires_at"] = settlement_lease_expires_at
+        try:
+            settlement_identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(settlement_identity_record)
+        except (TypeError, ValueError):
+            return conflict("settlement_identity_invalid")
+        terminal_transition_id = str(session.terminal_transition_id or "").strip()
+        if (
+            pending_intent.get("schema_version") != _PENDING_TERMINAL_INTENT_SCHEMA_V1
+            or outcome not in {"completed", "failed", "suspended"}
+            or terminal_intent_hash != _canonical_sha256(body)
+            or pending_intent.get("identity_hash") != _canonical_sha256(settlement_identity.to_record())
+            or not terminal_transition_id
+            or pending_intent.get("terminal_transition_id") != terminal_transition_id
+        ):
+            return conflict("pending_terminal_intent_binding_invalid")
+        for hash_field in ("identity_hash", "summary_hash", "metadata_hash", "terminal_intent_hash"):
+            value = str(pending_intent.get(hash_field) or "")
+            if (
+                len(value) != 64
+                or value != value.lower()
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                return conflict(f"pending_terminal_intent_{hash_field}_invalid")
+        if proof is None:
+            return conflict("terminal_settlement_proof_missing")
+        if (
+            str(proof.get("terminal_intent_hash") or "").strip() != terminal_intent_hash
+            or str(proof.get("settlement_outcome") or "").strip() != outcome
+            or not str(proof.get("registry_state") or "").strip()
+        ):
+            return conflict("terminal_settlement_proof_binding_invalid")
+        expected_status = {"completed": "completed", "failed": "failed", "suspended": "suspended"}[outcome]
+        if session.status != expected_status:
+            return conflict("terminal_session_outcome_mismatch")
+
+        return DirectedEffectOperationRepository().preflight_parent_for_terminal_intent(
+            settlement_identity,
+            outcome=outcome,
+            terminal_intent_hash=terminal_intent_hash,
+        )
+
+    @staticmethod
+    def _pending_terminal_intent(session: TaskExecutionSession) -> Mapping[str, Any] | None:
+        """Return the persisted terminal fence, preserving malformed evidence."""
+
+        raw = session.metadata.get(_PENDING_TERMINAL_INTENT_METADATA_KEY)
+        return raw if isinstance(raw, Mapping) else None
+
+    @staticmethod
+    def _has_pending_terminal_intent(session: TaskExecutionSession) -> bool:
+        """Return whether any terminal intent marker, valid or malformed, exists."""
+
+        return _PENDING_TERMINAL_INTENT_METADATA_KEY in session.metadata
+
+    @staticmethod
+    def _build_pending_terminal_intent(
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        *,
+        terminal_transition_id: str,
+    ) -> dict[str, Any]:
+        """Build the exact durable intent that fences heartbeat and stale reclaim."""
+
+        body: dict[str, Any] = {
+            "schema_version": _PENDING_TERMINAL_INTENT_SCHEMA_V1,
+            "identity_hash": _canonical_sha256(command.identity.to_record()),
+            "outcome": command.outcome,
+            "summary_hash": hashlib.sha256(command.summary.encode("utf-8")).hexdigest(),
+            "metadata_hash": _canonical_sha256(_json_compatible_copy(dict(command.metadata))),
+            "terminal_transition_id": terminal_transition_id,
+        }
+        return {**body, "terminal_intent_hash": _canonical_sha256(body)}
+
+    def _after_terminal_intent_write(
+        self,
+        session: TaskExecutionSession,
+        terminal_intent: Mapping[str, Any],
+    ) -> None:
+        """Deterministic crash seam after the durable intent write."""
+
+        del session, terminal_intent
+
+    def _after_terminal_session_write(self, session: TaskExecutionSession) -> None:
+        """Deterministic crash seam after the durable terminal session write."""
+
+        del session
 
     @staticmethod
     def _directed_effect_inactive_block_record(
@@ -979,7 +1204,7 @@ class TaskRuntimeService:
             projection APIs instead.
         """
 
-        return self._board.list_all()
+        return cast(list[Task], self._board.list_all())
 
     def _reset_authority_conflicts(
         self,
@@ -1098,22 +1323,651 @@ class TaskRuntimeService:
         session: TaskExecutionSession,
         task_row: Mapping[str, Any] | None = None,
     ) -> str:
-        """Resolve one session's Factory authority without parsing prompt text."""
+        """Resolve Factory authority from the locked session, then exact row identity."""
 
         row = task_row or {}
         metadata = row.get("metadata")
         metadata_map = metadata if isinstance(metadata, Mapping) else {}
         session_metadata = session.metadata if isinstance(session.metadata, Mapping) else {}
+        session_metadata_owner = str(session_metadata.get("factory_run_id") or "").strip()
+        if session_metadata_owner:
+            return session_metadata_owner
+
         fact = metadata_map.get("task_runtime_execution_fact")
         fact_map = fact if isinstance(fact, Mapping) else {}
-        return str(
-            row.get("factory_run_id")
-            or metadata_map.get("factory_run_id")
-            or fact_map.get("factory_run_id")
-            or session_metadata.get("factory_run_id")
-            or session.run_id
-            or ""
+        runtime_execution = metadata_map.get("runtime_execution")
+        runtime_map = runtime_execution if isinstance(runtime_execution, Mapping) else {}
+        row_session_id = str(
+            row.get("session_id") or runtime_map.get("session_id") or fact_map.get("session_id") or ""
         ).strip()
+        row_attempt = row.get("claim_attempt") or runtime_map.get("attempt") or fact_map.get("attempt")
+        if isinstance(row_attempt, bool) or not isinstance(row_attempt, (int, str)):
+            return ""
+        try:
+            row_attempt_value = int(row_attempt)
+        except (TypeError, ValueError):
+            return ""
+        # ``lease_expires_at`` is intentionally excluded.  Heartbeats rotate
+        # that deadline while TaskBoard/fact projections may lag; ownership is
+        # bound to the stable execution-attempt identity, not one volatile
+        # lease snapshot.  Requiring session_id + attempt still prevents a
+        # stale row from lending Factory authority to a replacement attempt.
+        if row_session_id != session.session_id or row_attempt_value != session.attempt:
+            return ""
+        return str(
+            row.get("factory_run_id") or metadata_map.get("factory_run_id") or fact_map.get("factory_run_id") or ""
+        ).strip()
+
+    def reconcile_ambiguous_directed_effects(
+        self,
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+    ) -> DirectedEffectRecoverySweepResultV1:
+        """Recover ambiguous effects under a TaskRuntime-minted durable lease."""
+
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            DirectedEffectRecoverySweepResultV1,
+        )
+
+        canonical_workspace = str(Path(self.workspace).expanduser().resolve())
+        if command.workspace != canonical_workspace:
+            return DirectedEffectRecoverySweepResultV1(
+                ok=False,
+                code="partial_failure",
+                workspace=canonical_workspace,
+                scanned_session_count=0,
+                failures=({"code": "workspace_mismatch"},),
+            )
+        deadline_monotonic = time.monotonic() + command.deadline_seconds
+        lease_id = uuid.uuid4().hex
+        owner_epoch = uuid.uuid4().hex
+        owner_pid = os.getpid()
+        remaining_seconds = deadline_monotonic - time.monotonic()
+        if remaining_seconds <= 0:
+            return DirectedEffectRecoverySweepResultV1(
+                ok=False,
+                code="partial_failure",
+                workspace=canonical_workspace,
+                scanned_session_count=0,
+                failures=({"code": "recovery_deadline_exceeded"},),
+            )
+
+        try:
+            with self._board._file_lock(
+                self._directed_effect_recovery_lease_file_lock_path(),
+                timeout_seconds=min(command.lock_timeout_seconds, remaining_seconds),
+            ):
+                lease_failure = self._claim_directed_effect_recovery_lease_locked(
+                    command=command,
+                    lease_id=lease_id,
+                    owner_epoch=owner_epoch,
+                    owner_pid=owner_pid,
+                    deadline_monotonic=deadline_monotonic,
+                )
+                if lease_failure is not None:
+                    return DirectedEffectRecoverySweepResultV1(
+                        ok=False,
+                        code="partial_failure",
+                        workspace=canonical_workspace,
+                        scanned_session_count=0,
+                        failures=(lease_failure,),
+                    )
+                result: DirectedEffectRecoverySweepResultV1 | None = None
+                release_error: Exception | None = None
+                try:
+                    self._after_directed_effect_recovery_lease_acquired(
+                        lease_id=lease_id,
+                        owner_epoch=owner_epoch,
+                    )
+                    if time.monotonic() >= deadline_monotonic:
+                        result = self._directed_effect_recovery_deadline_result(
+                            stage="after_recovery_lease_hook",
+                            owner_epoch=owner_epoch,
+                        )
+                    else:
+                        result = self._reconcile_ambiguous_directed_effects_under_lease(
+                            command,
+                            owner_epoch=owner_epoch,
+                            deadline_monotonic=deadline_monotonic,
+                        )
+                finally:
+                    try:
+                        self._release_directed_effect_recovery_lease_locked(
+                            lease_id=lease_id,
+                            owner_epoch=owner_epoch,
+                            owner_pid=owner_pid,
+                        )
+                    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                        release_error = exc
+                if release_error is not None:
+                    prior_failures = result.failures if result is not None else ()
+                    return DirectedEffectRecoverySweepResultV1(
+                        ok=False,
+                        code="partial_failure",
+                        workspace=canonical_workspace,
+                        scanned_session_count=(result.scanned_session_count if result is not None else 0),
+                        items=(result.items if result is not None else ()),
+                        failures=(
+                            *prior_failures,
+                            {"code": "recovery_lease_release_failed", "error": str(release_error)},
+                        ),
+                    )
+                if result is None:
+                    raise RuntimeError("directed effect recovery completed without a result")
+                return result
+        except TaskBoardFileLockTimeoutError:
+            if time.monotonic() >= deadline_monotonic:
+                return self._directed_effect_recovery_deadline_result(
+                    stage="after_recovery_lease_lock_wait",
+                    owner_epoch=owner_epoch,
+                )
+            return DirectedEffectRecoverySweepResultV1(
+                ok=False,
+                code="partial_failure",
+                workspace=canonical_workspace,
+                scanned_session_count=0,
+                failures=({"code": "recovery_lease_lock_timeout"},),
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return DirectedEffectRecoverySweepResultV1(
+                ok=False,
+                code="partial_failure",
+                workspace=canonical_workspace,
+                scanned_session_count=0,
+                failures=({"code": "recovery_lease_invalid", "error": str(exc)},),
+            )
+
+    def _reconcile_ambiguous_directed_effect_session_locked(
+        self,
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+        *,
+        task_id: int,
+        current: TaskExecutionSession | None,
+        task_row: Mapping[str, Any],
+        owner_epoch: str,
+        deadline_monotonic: float,
+        remaining_operations: int,
+    ) -> _DirectedEffectRecoverySessionSweep:
+        """Recover one session while its local and cooperative file locks are held."""
+
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            DirectedEffectRecoverySweepItemV1,
+        )
+
+        if self._directed_effect_recovery_deadline_reached(deadline_monotonic):
+            return _DirectedEffectRecoverySessionSweep(
+                failures=(
+                    {
+                        "code": "recovery_deadline_exceeded",
+                        "stage": "after_session_read",
+                        "task_id": task_id,
+                        "owner_epoch": owner_epoch,
+                    },
+                ),
+                stop_sweep=True,
+            )
+        if current is None or current.status not in {"active", "suspended"}:
+            return _DirectedEffectRecoverySessionSweep()
+
+        current_owner = self._session_factory_run_id(current, task_row)
+        if not current_owner:
+            return _DirectedEffectRecoverySessionSweep(
+                failures=(
+                    {
+                        "code": "recovery_factory_run_id_missing",
+                        "task_id": task_id,
+                        "session_id": current.session_id,
+                        "owner_epoch": owner_epoch,
+                    },
+                )
+            )
+        if command.factory_run_id and current_owner != command.factory_run_id:
+            return _DirectedEffectRecoverySessionSweep()
+        if current.status == "active" and not self._directed_effect_recovery_session_is_expired(current):
+            return _DirectedEffectRecoverySessionSweep(
+                failures=(
+                    {
+                        "code": "recovery_active_session_unexpired",
+                        "task_id": task_id,
+                        "session_id": current.session_id,
+                        "factory_run_id": current_owner,
+                        "lease_expires_at": current.lease_expires_at,
+                        "owner_epoch": owner_epoch,
+                    },
+                ),
+                scanned_session_count=1,
+            )
+        if remaining_operations <= 0:
+            return _DirectedEffectRecoverySessionSweep(
+                failures=(
+                    {
+                        "code": "recovery_operation_limit_exceeded",
+                        "task_id": task_id,
+                        "session_id": current.session_id,
+                        "max_operations": command.max_operations,
+                    },
+                ),
+                scanned_session_count=1,
+                stop_sweep=True,
+            )
+
+        identity = self._execution_attempt_identity_from_session(current)
+        repository_sweep = DirectedEffectOperationRepository().reconcile_ambiguous_started_operations(
+            identity,
+            actor=command.actor,
+            reason=command.reason,
+            max_operations=remaining_operations,
+            deadline_monotonic=deadline_monotonic,
+        )
+        items: list[DirectedEffectRecoverySweepItemV1] = []
+        failures: list[dict[str, Any]] = []
+        for result in repository_sweep.results:
+            state = result.state
+            if not result.ok or result.operation is None:
+                failures.append(
+                    {
+                        "code": result.code,
+                        "task_id": task_id,
+                        "session_id": current.session_id,
+                        "operation_id": (result.operation.operation_id if result.operation is not None else ""),
+                        "evidence": dict(result.evidence),
+                    }
+                )
+                continue
+            if state == "RECOVERY_PENDING" and result.code == "recovery_pending":
+                code: Literal["recovery_pending", "dead_lettered"] = "recovery_pending"
+                evidence_prefix = "recovery"
+            elif state == "DEAD_LETTER" and result.code == "dead_lettered":
+                code = "dead_lettered"
+                evidence_prefix = "resolution"
+            else:
+                failures.append(
+                    {
+                        "code": "recovery_fact_state_invalid",
+                        "task_id": task_id,
+                        "session_id": current.session_id,
+                        "operation_id": result.operation.operation_id,
+                        "state": state,
+                        "result_code": result.code,
+                    }
+                )
+                continue
+            try:
+                items.append(
+                    DirectedEffectRecoverySweepItemV1(
+                        factory_run_id=current_owner,
+                        session_id=current.session_id,
+                        task_id=task_id,
+                        operation_id=result.operation.operation_id,
+                        code=code,
+                        state=state,
+                        version=result.version,
+                        event_id=str(result.evidence.get("event_id") or ""),
+                        evidence_ref=str(result.evidence.get(f"{evidence_prefix}_evidence_ref") or ""),
+                        evidence_hash=str(result.evidence.get(f"{evidence_prefix}_evidence_hash") or ""),
+                    )
+                )
+            except (TypeError, ValueError) as exc:
+                failures.append(
+                    {
+                        "code": "recovery_fact_projection_invalid",
+                        "task_id": task_id,
+                        "session_id": current.session_id,
+                        "operation_id": result.operation.operation_id,
+                        "error": str(exc),
+                    }
+                )
+
+        deadline_exceeded = time.monotonic() >= deadline_monotonic or any(
+            failure.get("code") == "recovery_deadline_exceeded" for failure in failures
+        )
+        if deadline_exceeded and not any(failure.get("code") == "recovery_deadline_exceeded" for failure in failures):
+            failures.append(
+                {
+                    "code": "recovery_deadline_exceeded",
+                    "stage": "after_repository_sweep",
+                    "task_id": task_id,
+                    "session_id": current.session_id,
+                    "owner_epoch": owner_epoch,
+                }
+            )
+        return _DirectedEffectRecoverySessionSweep(
+            items=tuple(items),
+            failures=tuple(failures),
+            scanned_session_count=1,
+            scanned_operation_count=repository_sweep.scanned_operation_count,
+            stop_sweep=deadline_exceeded,
+        )
+
+    @staticmethod
+    def _after_directed_effect_recovery_session_read(
+        *,
+        task_id: int,
+        session_id: str,
+    ) -> None:
+        """Test seam reached while both session authorities remain held."""
+
+        del task_id, session_id
+
+    def _read_directed_effect_recovery_session_locked(
+        self,
+        task_id: int,
+    ) -> TaskExecutionSession | None:
+        """Read one recovery candidate while the caller holds both session locks."""
+
+        return self._read_session_locked(task_id, raise_infrastructure_errors=True)
+
+    @staticmethod
+    def _after_directed_effect_recovery_session_file_lock_acquired(*, task_id: int) -> None:
+        """Test seam reached before recovery starts session I/O."""
+
+        del task_id
+
+    @staticmethod
+    def _directed_effect_recovery_deadline_reached(deadline_monotonic: float) -> bool:
+        """Return whether the repository-owned recovery deadline has elapsed."""
+
+        return time.monotonic() >= deadline_monotonic
+
+    @staticmethod
+    def _directed_effect_recovery_session_is_expired(session: TaskExecutionSession) -> bool:
+        """Evaluate active-session recovery eligibility without changing attempt identity."""
+
+        return session.is_expired(now=utc_now())
+
+    def _reconcile_ambiguous_directed_effects_under_lease(
+        self,
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+        *,
+        owner_epoch: str,
+        deadline_monotonic: float,
+    ) -> DirectedEffectRecoverySweepResultV1:
+        """Run one recovery sweep while the durable maintenance lock is held."""
+
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            DirectedEffectRecoverySweepResultV1,
+        )
+
+        catalog = self._discover_directed_effect_recovery_tasks(
+            command,
+            owner_epoch=owner_epoch,
+            deadline_monotonic=deadline_monotonic,
+        )
+        if isinstance(catalog, DirectedEffectRecoverySweepResultV1):
+            return catalog
+        items: list[DirectedEffectRecoverySweepItemV1] = []
+        failures: list[dict[str, Any]] = []
+        scanned_session_count = 0
+        scanned_operation_count = 0
+        for task_id in catalog.task_ids:
+            session_sweep = self._reconcile_directed_effect_recovery_task(
+                command,
+                task_id=task_id,
+                task_row=catalog.task_rows_by_id.get(task_id, {}),
+                owner_epoch=owner_epoch,
+                deadline_monotonic=deadline_monotonic,
+                scanned_operation_count=scanned_operation_count,
+            )
+            items.extend(session_sweep.items)
+            failures.extend(session_sweep.failures)
+            scanned_session_count += session_sweep.scanned_session_count
+            scanned_operation_count += session_sweep.scanned_operation_count
+            if session_sweep.stop_sweep:
+                break
+        if self._recovery_result_needs_deadline_failure(failures, deadline_monotonic=deadline_monotonic):
+            failures.append(
+                {
+                    "code": "recovery_deadline_exceeded",
+                    "stage": "before_recovery_result",
+                    "owner_epoch": owner_epoch,
+                }
+            )
+        return DirectedEffectRecoverySweepResultV1(
+            ok=not failures,
+            code="reconciled" if not failures else "partial_failure",
+            workspace=str(Path(self.workspace).expanduser().resolve()),
+            scanned_session_count=scanned_session_count,
+            items=tuple(items),
+            failures=tuple(failures),
+        )
+
+    def _discover_directed_effect_recovery_tasks(
+        self,
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+        *,
+        owner_epoch: str,
+        deadline_monotonic: float,
+    ) -> _DirectedEffectRecoveryTaskCatalog | DirectedEffectRecoverySweepResultV1:
+        from polaris.cells.runtime.task_runtime.public.contracts import (
+            DirectedEffectRecoverySweepResultV1,
+        )
+
+        if time.monotonic() >= deadline_monotonic:
+            return self._directed_effect_recovery_deadline_result(
+                stage="before_tasks_directory", owner_epoch=owner_epoch
+            )
+        tasks_dir = self._board.tasks_dir
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        if time.monotonic() >= deadline_monotonic:
+            return self._directed_effect_recovery_deadline_result(
+                stage="before_task_projection", owner_epoch=owner_epoch
+            )
+        projection = self.query_observable_task_rows_projection()
+        if time.monotonic() >= deadline_monotonic:
+            return self._directed_effect_recovery_deadline_result(
+                stage="after_task_projection", owner_epoch=owner_epoch
+            )
+        rows = {
+            task_id: dict(row)
+            for row in projection.rows
+            if (task_id := self.normalize_task_id(row.get("id"))) is not None
+        }
+        if time.monotonic() >= deadline_monotonic:
+            return self._directed_effect_recovery_deadline_result(
+                stage="after_task_projection_materialization", owner_epoch=owner_epoch
+            )
+        discovered = self._scan_directed_effect_recovery_session_catalog(
+            tasks_dir, owner_epoch=owner_epoch, deadline_monotonic=deadline_monotonic
+        )
+        if isinstance(discovered, DirectedEffectRecoverySweepResultV1):
+            return discovered
+        if len(discovered) > command.max_sessions:
+            failure = {
+                "code": "recovery_session_limit_exceeded",
+                "session_count": len(discovered),
+                "max_sessions": command.max_sessions,
+                "owner_epoch": owner_epoch,
+            }
+            return DirectedEffectRecoverySweepResultV1(
+                ok=False,
+                code="partial_failure",
+                workspace=str(Path(self.workspace).expanduser().resolve()),
+                scanned_session_count=0,
+                failures=(failure,),
+            )
+        return _DirectedEffectRecoveryTaskCatalog(rows, tuple(sorted(discovered)))
+
+    def _scan_directed_effect_recovery_session_catalog(
+        self,
+        tasks_dir: Path,
+        *,
+        owner_epoch: str,
+        deadline_monotonic: float,
+    ) -> set[int] | DirectedEffectRecoverySweepResultV1:
+        if time.monotonic() >= deadline_monotonic:
+            return self._directed_effect_recovery_deadline_result(
+                stage="before_session_catalog_scan", owner_epoch=owner_epoch
+            )
+        task_ids: set[int] = set()
+        for session_path in tasks_dir.glob("task_*.session.json"):
+            if time.monotonic() >= deadline_monotonic:
+                return self._directed_effect_recovery_deadline_result(
+                    stage="during_session_catalog_scan", owner_epoch=owner_epoch
+                )
+            match = _TASK_SESSION_FILE_PATTERN.fullmatch(session_path.name)
+            if match is not None:
+                task_ids.add(int(match.group(1)))
+        if time.monotonic() >= deadline_monotonic:
+            return self._directed_effect_recovery_deadline_result(
+                stage="after_session_catalog_scan", owner_epoch=owner_epoch
+            )
+        return task_ids
+
+    def _reconcile_directed_effect_recovery_task(
+        self,
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+        *,
+        task_id: int,
+        task_row: Mapping[str, Any],
+        owner_epoch: str,
+        deadline_monotonic: float,
+        scanned_operation_count: int,
+    ) -> _DirectedEffectRecoverySessionSweep:
+        remaining = deadline_monotonic - time.monotonic()
+        if remaining <= 0:
+            return _DirectedEffectRecoverySessionSweep(
+                failures=({"code": "recovery_deadline_exceeded", "task_id": task_id, "owner_epoch": owner_epoch},),
+                stop_sweep=True,
+            )
+        session_lock = self._get_session_lock(task_id)
+        if not session_lock.acquire(timeout=min(command.lock_timeout_seconds, remaining)):
+            if time.monotonic() >= deadline_monotonic:
+                return _DirectedEffectRecoverySessionSweep(
+                    failures=(
+                        {
+                            "code": "recovery_deadline_exceeded",
+                            "stage": "after_session_lock_wait",
+                            "task_id": task_id,
+                            "owner_epoch": owner_epoch,
+                        },
+                    ),
+                    stop_sweep=True,
+                )
+            return _DirectedEffectRecoverySessionSweep(
+                failures=({"code": "recovery_session_lock_timeout", "task_id": task_id, "owner_epoch": owner_epoch},)
+            )
+        try:
+            if time.monotonic() >= deadline_monotonic:
+                return _DirectedEffectRecoverySessionSweep(
+                    failures=(
+                        {
+                            "code": "recovery_deadline_exceeded",
+                            "stage": "after_session_lock_acquire",
+                            "task_id": task_id,
+                            "owner_epoch": owner_epoch,
+                        },
+                    ),
+                    stop_sweep=True,
+                )
+            try:
+                with self._board._file_lock(
+                    self._session_file_lock_path(task_id),
+                    timeout_seconds=min(command.lock_timeout_seconds, max(0.0, deadline_monotonic - time.monotonic())),
+                ):
+                    return self._reconcile_directed_effect_recovery_task_file_locked(
+                        command,
+                        task_id=task_id,
+                        task_row=task_row,
+                        owner_epoch=owner_epoch,
+                        deadline_monotonic=deadline_monotonic,
+                        remaining_operations=command.max_operations - scanned_operation_count,
+                    )
+            except TaskBoardFileLockTimeoutError:
+                if time.monotonic() >= deadline_monotonic:
+                    return _DirectedEffectRecoverySessionSweep(
+                        failures=(
+                            {
+                                "code": "recovery_deadline_exceeded",
+                                "stage": "after_session_file_lock_wait",
+                                "task_id": task_id,
+                                "owner_epoch": owner_epoch,
+                            },
+                        ),
+                        stop_sweep=True,
+                    )
+                return _DirectedEffectRecoverySessionSweep(
+                    failures=({"code": "recovery_file_lock_timeout", "task_id": task_id, "owner_epoch": owner_epoch},)
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                return _DirectedEffectRecoverySessionSweep(
+                    failures=(
+                        {
+                            "code": "recovery_file_lock_failed",
+                            "task_id": task_id,
+                            "owner_epoch": owner_epoch,
+                            "error": str(exc),
+                        },
+                    )
+                )
+        finally:
+            session_lock.release()
+
+    def _reconcile_directed_effect_recovery_task_file_locked(
+        self,
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+        *,
+        task_id: int,
+        task_row: Mapping[str, Any],
+        owner_epoch: str,
+        deadline_monotonic: float,
+        remaining_operations: int,
+    ) -> _DirectedEffectRecoverySessionSweep:
+        self._after_directed_effect_recovery_session_file_lock_acquired(task_id=task_id)
+        if self._directed_effect_recovery_deadline_reached(deadline_monotonic):
+            return _DirectedEffectRecoverySessionSweep(
+                failures=(
+                    {
+                        "code": "recovery_deadline_exceeded",
+                        "stage": "before_session_read",
+                        "task_id": task_id,
+                        "owner_epoch": owner_epoch,
+                    },
+                ),
+                stop_sweep=True,
+            )
+        try:
+            current = self._read_directed_effect_recovery_session_locked(task_id)
+        except (OSError, UnicodeError, RuntimeError, ValueError) as exc:
+            return _DirectedEffectRecoverySessionSweep(
+                failures=(
+                    {"code": "session_corrupt", "task_id": task_id, "owner_epoch": owner_epoch, "error": str(exc)},
+                )
+            )
+        self._after_directed_effect_recovery_session_read(
+            task_id=task_id, session_id=current.session_id if current is not None else ""
+        )
+        try:
+            return self._reconcile_ambiguous_directed_effect_session_locked(
+                command,
+                task_id=task_id,
+                current=current,
+                task_row=task_row,
+                owner_epoch=owner_epoch,
+                deadline_monotonic=deadline_monotonic,
+                remaining_operations=remaining_operations,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return _DirectedEffectRecoverySessionSweep(
+                failures=(
+                    {
+                        "code": "recovery_repository_failure",
+                        "task_id": task_id,
+                        "session_id": current.session_id if current is not None else "",
+                        "owner_epoch": owner_epoch,
+                        "error": str(exc),
+                    },
+                ),
+                stop_sweep=True,
+            )
+
+    @staticmethod
+    def _recovery_result_needs_deadline_failure(
+        failures: list[dict[str, Any]],
+        *,
+        deadline_monotonic: float,
+    ) -> bool:
+        return time.monotonic() >= deadline_monotonic and not any(
+            failure.get("code") == "recovery_deadline_exceeded" for failure in failures
+        )
 
     def fence_expired_factory_run_sessions(
         self,
@@ -1184,11 +2038,10 @@ class TaskRuntimeService:
             fenced_session_ids: list[str] = []
             execution_events: list[dict[str, Any]] = []
             fence_failures: list[dict[str, Any]] = []
-            for task_id, observed_session in candidates:
-                session_lock = self._get_session_lock(task_id)
+            for task_id, session in candidates:
                 with (
-                    session_lock,
-                    self._board._file_lock(self._session_file_lock_path(task_id)),
+                    self._get_session_lock(session.task_id),
+                    self._board._file_lock(self._session_file_lock_path(session.task_id)),
                 ):
                     current = self._read_session_locked(task_id)
                     if current is None:
@@ -1196,7 +2049,7 @@ class TaskRuntimeService:
                             {
                                 "kind": "session_disappeared_before_fence",
                                 "task_id": str(task_id),
-                                "session_id": observed_session.session_id,
+                                "session_id": session.session_id,
                             }
                         )
                         continue
@@ -1205,7 +2058,7 @@ class TaskRuntimeService:
                         task_rows_by_id.get(task_id, {}),
                     )
                     if (
-                        current.session_id != observed_session.session_id
+                        current.session_id != session.session_id
                         or current.status != "active"
                         or owner != authority
                         or not current.is_expired(now=utc_now())
@@ -1221,6 +2074,25 @@ class TaskRuntimeService:
                             }
                         )
                         continue
+                    if self._has_pending_terminal_intent(current):
+                        pending_intent = self._pending_terminal_intent(current)
+                        fulfillment = self._fulfilled_terminal_intent_pre_barrier_locked(current)
+                        if not fulfillment.allowed:
+                            fence_failures.append(
+                                {
+                                    "kind": "terminal_fence_pending",
+                                    "code": "terminal_fence_pending",
+                                    "task_id": str(task_id),
+                                    "session_id": current.session_id,
+                                    "evidence": {
+                                        "pending_terminal_intent": dict(pending_intent or {}),
+                                        "pending_terminal_intent_valid": pending_intent is not None,
+                                        "fulfillment_code": fulfillment.code,
+                                        "fulfillment_evidence": dict(fulfillment.evidence),
+                                    },
+                                }
+                            )
+                            continue
                     pre_barrier = self._directed_effect_inactive_pre_barrier_locked(current)
                     if not pre_barrier.allowed:
                         fence_failures.append(
@@ -4005,6 +4877,18 @@ class TaskRuntimeService:
                 identity=identity,
                 evidence_anchor=evidence_anchor,
             )
+        if self._has_pending_terminal_intent(session):
+            pending_intent = self._pending_terminal_intent(session)
+            return self._execution_attempt_heartbeat_verdict(
+                success=False,
+                code="terminal_fence_pending",
+                identity=identity,
+                evidence_anchor={
+                    **evidence_anchor,
+                    "pending_terminal_intent": dict(pending_intent or {}),
+                    "pending_terminal_intent_valid": pending_intent is not None,
+                },
+            )
         if session.is_expired(now=utc_now()):
             return self._execution_attempt_heartbeat_verdict(
                 success=False,
@@ -4241,51 +5125,128 @@ class TaskRuntimeService:
         the second, idempotent projection phase.
         """
 
+        loaded = self._load_settlement_session_locked(command)
+        if not isinstance(loaded, TaskExecutionSession):
+            return loaded
+        if loaded.status == "active":
+            return self._settle_active_execution_attempt_locked(command, loaded)
+        return self._settle_replayed_execution_attempt_locked(command, loaded)
+
+    def _load_settlement_session_locked(
+        self,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+    ) -> TaskExecutionSession | tuple[dict[str, Any], None]:
         identity = command.identity
         session = self._read_session_locked(identity.task_id)
         if session is None:
             return self._execution_attempt_settlement_result(False, "session_not_found", command), None
-        mismatch_code = self._execution_attempt_mismatch_code(
-            identity,
-            session,
-            allow_terminal_settlement_lease=True,
-        )
-        if mismatch_code is not None:
-            return self._execution_attempt_settlement_result(False, mismatch_code, command, session=session), None
+        mismatch = self._execution_attempt_mismatch_code(identity, session, allow_terminal_settlement_lease=True)
+        if mismatch is not None:
+            return self._execution_attempt_settlement_result(False, mismatch, command, session=session), None
+        return session
 
-        expected_status = command.outcome
-        if session.status == "active":
-            if session.is_expired(now=utc_now()):
-                return self._execution_attempt_settlement_result(
-                    False,
-                    "session_lease_expired",
-                    command,
-                    session=session,
-                ), None
-            pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
-            if not pre_barrier.allowed:
-                return self._execution_attempt_settlement_result(
-                    False,
-                    cast(TaskRuntimeExecutionAttemptSettlementCodeV1, pre_barrier.code),
-                    command,
-                    session=session,
-                    evidence={"directed_effect_pre_barrier": dict(pre_barrier.evidence)},
-                ), None
-            session.metadata["settlement_identity_lease_expires_at"] = identity.lease_expires_at
-            if command.outcome == "completed":
-                session.mark_completed(result_summary=command.summary)
-            elif command.outcome == "failed":
-                session.mark_failed(error=command.summary)
-            else:
-                session.mark_suspended(reason=command.summary, resumable=True)
+    def _settle_active_execution_attempt_locked(
+        self,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        session: TaskExecutionSession,
+    ) -> tuple[dict[str, Any], TaskExecutionSession | None]:
+        if session.is_expired(now=utc_now()):
+            return self._execution_attempt_settlement_result(
+                False, "session_lease_expired", command, session=session
+            ), None
+        prepared = self._prepare_terminal_settlement_intent_locked(command, session)
+        if not isinstance(prepared, _PreparedTerminalSettlement):
+            return prepared
+        parent = prepared.repository.settle_parent_for_terminal_intent(
+            command.identity,
+            outcome=command.outcome,
+            terminal_intent_hash=prepared.terminal_intent_hash,
+        )
+        if not parent.allowed:
+            return self._execution_attempt_settlement_result(
+                False,
+                cast(TaskRuntimeExecutionAttemptSettlementCodeV1, parent.code),
+                command,
+                session=session,
+                evidence={"directed_effect_settlement": dict(parent.evidence)},
+            ), None
+        self._apply_terminal_settlement_to_session(
+            command, session, parent=parent, terminal_intent_hash=prepared.terminal_intent_hash
+        )
+        if not self._write_session_locked(session):
+            return self._execution_attempt_settlement_result(
+                False, "session_terminal_preserved", command, session=session
+            ), None
+        self._after_terminal_session_write(session)
+        return self._execution_attempt_settlement_result(True, "settled", command, session=session), session
+
+    def _prepare_terminal_settlement_intent_locked(
+        self,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        session: TaskExecutionSession,
+    ) -> _PreparedTerminalSettlement | tuple[dict[str, Any], None]:
+        transition_id = str(session.terminal_transition_id or "").strip()
+        if not transition_id:
+            transition_id = f"task-transition-{uuid.uuid4().hex}"
+            session.terminal_transition_id = transition_id
+        expected = self._build_pending_terminal_intent(command, terminal_transition_id=transition_id)
+        had_pending = self._has_pending_terminal_intent(session)
+        pending = self._pending_terminal_intent(session) if had_pending else None
+        if had_pending and (pending is None or dict(pending) != expected):
+            evidence = {"pending_terminal_intent": dict(pending or {}), "expected_terminal_intent": expected}
+            return self._execution_attempt_settlement_result(
+                False, "settlement_terminal_intent_conflict", command, session=session, evidence=evidence
+            ), None
+        terminal_intent_hash = str(expected["terminal_intent_hash"])
+        repository = DirectedEffectOperationRepository()
+        preflight = repository.preflight_parent_for_terminal_intent(
+            command.identity, outcome=command.outcome, terminal_intent_hash=terminal_intent_hash
+        )
+        if not preflight.allowed:
+            return self._execution_attempt_settlement_result(
+                False,
+                cast(TaskRuntimeExecutionAttemptSettlementCodeV1, preflight.code),
+                command,
+                session=session,
+                evidence={"directed_effect_pre_barrier": dict(preflight.evidence)},
+            ), None
+        if not had_pending:
+            session.metadata[_PENDING_TERMINAL_INTENT_METADATA_KEY] = expected
+            session.metadata["settlement_identity_lease_expires_at"] = command.identity.lease_expires_at
             if not self._write_session_locked(session):
                 return self._execution_attempt_settlement_result(
-                    False,
-                    "session_terminal_preserved",
-                    command,
-                    session=session,
+                    False, "session_terminal_preserved", command, session=session
                 ), None
-        elif session.status != expected_status:
+            self._after_terminal_intent_write(session, expected)
+        return _PreparedTerminalSettlement(repository, expected, terminal_intent_hash)
+
+    @staticmethod
+    def _apply_terminal_settlement_to_session(
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        session: TaskExecutionSession,
+        *,
+        parent: DirectedEffectSettlementPreBarrierVerdictV1,
+        terminal_intent_hash: str,
+    ) -> None:
+        proof_raw = parent.evidence.get("close_proof")
+        proof = dict(proof_raw) if isinstance(proof_raw, Mapping) else {}
+        proof.setdefault("terminal_intent_hash", terminal_intent_hash)
+        proof.setdefault("settlement_outcome", command.outcome)
+        proof.setdefault("registry_state", str(parent.evidence.get("registry_state") or "strict_empty"))
+        session.metadata["terminal_settlement_proof"] = proof
+        if command.outcome == "completed":
+            session.mark_completed(result_summary=command.summary)
+        elif command.outcome == "failed":
+            session.mark_failed(error=command.summary)
+        else:
+            session.mark_suspended(reason=command.summary, resumable=True)
+
+    def _settle_replayed_execution_attempt_locked(
+        self,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        session: TaskExecutionSession,
+    ) -> tuple[dict[str, Any], TaskExecutionSession | None]:
+        if session.status != command.outcome:
             return self._execution_attempt_settlement_result(
                 False,
                 "terminal_outcome_conflict",
@@ -4293,24 +5254,23 @@ class TaskRuntimeService:
                 session=session,
                 evidence={"persisted_outcome": session.status},
             ), None
+        if self._has_pending_terminal_intent(session):
+            pending = self._pending_terminal_intent(session)
+            expected = self._build_pending_terminal_intent(
+                command, terminal_transition_id=str(session.terminal_transition_id or "").strip()
+            )
+            if pending is None or dict(pending) != expected:
+                evidence = {"pending_terminal_intent": dict(pending or {}), "expected_terminal_intent": expected}
+                return self._execution_attempt_settlement_result(
+                    False, "settlement_terminal_intent_conflict", command, session=session, evidence=evidence
+                ), None
         elif not str(session.terminal_transition_id or "").strip():
-            # Legacy settled sessions can be recovered only after their durable
-            # projection key is persisted under the same identity fence.
             session.ensure_terminal_transition_id()
             if not self._write_session_locked(session):
                 return self._execution_attempt_settlement_result(
-                    False,
-                    "session_terminal_preserved",
-                    command,
-                    session=session,
+                    False, "session_terminal_preserved", command, session=session
                 ), None
-
-        return self._execution_attempt_settlement_result(
-            True,
-            "settled",
-            command,
-            session=session,
-        ), session
+        return self._execution_attempt_settlement_result(True, "settled", command, session=session), session
 
     def _project_settled_execution_attempt(
         self,
@@ -4370,6 +5330,187 @@ class TaskRuntimeService:
         finally:
             projection_lock.release()
 
+    def _failed_materialization_dependency_satisfaction(
+        self,
+        *,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        task: Task,
+        session: TaskExecutionSession,
+    ) -> _DependencySatisfactionDecision | None:
+        """Prove that a failed Director task still committed usable capability.
+
+        A failed task remains terminal-failed.  This proof authorizes only the
+        narrower dependency effect: later PM tasks may consume the declared
+        files that the Director already committed.  Callers cannot assert the
+        result with a boolean.  TaskRuntime derives it from the task row, the
+        DEO terminal settlement proof, and regular files rooted inside the
+        bound workspace.
+
+        Fail closed unless every effect receipt succeeded and at least one
+        declared target is a real, non-symlink regular file.  This keeps a
+        quality failure repairable without treating an unrelated or ambiguous
+        write as task completion.
+        """
+
+        if command.outcome != "failed" or session.role_id != "director":
+            return None
+
+        task_metadata = task.metadata if isinstance(task.metadata, Mapping) else {}
+        adapter_result_raw = task_metadata.get("adapter_result")
+        if not isinstance(adapter_result_raw, Mapping):
+            return None
+        adapter_result = dict(adapter_result_raw)
+        if adapter_result.get("write_tool_evidence") is not True:
+            return None
+
+        proof_raw = session.metadata.get("terminal_settlement_proof")
+        if not isinstance(proof_raw, Mapping):
+            return None
+        proof = dict(proof_raw)
+        if (
+            str(proof.get("registry_state") or "").strip().upper() != "CLOSED_WITH_OUTCOME_PROOF"
+            or str(proof.get("settlement_outcome") or "").strip().lower() != "failed"
+        ):
+            return None
+
+        def _proof_count(name: str) -> int | None:
+            value = proof.get(name)
+            if value is None or isinstance(value, bool):
+                return None
+            try:
+                normalized = int(value)
+            except (TypeError, ValueError):
+                return None
+            return normalized if normalized >= 0 else None
+
+        receipt_count = _proof_count("receipt_count")
+        if receipt_count is None or receipt_count <= 0:
+            return None
+        if any(_proof_count(name) != 0 for name in ("failed_receipt_count", "dead_letter_count", "aborted_count")):
+            return None
+
+        stable_identity_raw = proof.get("stable_registry_identity")
+        if not isinstance(stable_identity_raw, Mapping):
+            return None
+        stable_identity = dict(stable_identity_raw)
+        identity_record = command.identity.to_record()
+        for field_name in (
+            "workspace",
+            "task_id",
+            "external_task_id",
+            "role_id",
+            "worker_id",
+            "run_id",
+            "session_id",
+            "attempt",
+        ):
+            if stable_identity.get(field_name) != identity_record.get(field_name):
+                return None
+
+        digest_pattern = re.compile(r"^[0-9a-f]{64}$")
+        close_evidence_hash = str(proof.get("close_evidence_hash") or "").strip().lower()
+        receipt_summary_hash = str(proof.get("receipt_summary_hash") or "").strip().lower()
+        if not digest_pattern.fullmatch(close_evidence_hash) or not digest_pattern.fullmatch(receipt_summary_hash):
+            return None
+
+        def _relative_path(value: object) -> str | None:
+            raw = str(value or "").strip().replace("\\", "/")
+            if not raw:
+                return None
+            path = Path(raw)
+            if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+                return None
+            return path.as_posix()
+
+        def _declared_or_reported_paths(source: Mapping[str, Any], keys: tuple[str, ...]) -> set[str]:
+            paths: set[str] = set()
+            for key in keys:
+                values = source.get(key)
+                if not isinstance(values, (list, tuple)):
+                    continue
+                for value in values:
+                    normalized = _relative_path(value)
+                    if normalized is not None:
+                        paths.add(normalized)
+            return paths
+
+        declared_paths = _declared_or_reported_paths(task_metadata, ("target_files", "scope_paths"))
+        if not declared_paths:
+            return None
+
+        reported_paths = _declared_or_reported_paths(adapter_result, ("new_files", "modified_files"))
+        workspace_root = Path(self.workspace).expanduser().resolve()
+        materialized_paths: list[str] = []
+        for relative_path in sorted(declared_paths.intersection(reported_paths)):
+            unresolved_candidate = workspace_root / relative_path
+            if unresolved_candidate.is_symlink():
+                continue
+            try:
+                resolved_candidate = unresolved_candidate.resolve(strict=True)
+                resolved_candidate.relative_to(workspace_root)
+            except (OSError, ValueError):
+                continue
+            if resolved_candidate.is_file():
+                materialized_paths.append(relative_path)
+        if not materialized_paths:
+            return None
+
+        evidence = {
+            "schema_version": _DEPENDENCY_SATISFACTION_SCHEMA_V1,
+            "kind": "failed_director_materialization",
+            "task_id": command.identity.task_id,
+            "external_task_id": command.identity.external_task_id,
+            "run_id": command.identity.run_id,
+            "session_id": command.identity.session_id,
+            "terminal_transition_id": str(session.terminal_transition_id or "").strip(),
+            "materialized_paths": materialized_paths,
+            "adapter_result_hash": _canonical_sha256(
+                {
+                    "new_files": list(adapter_result.get("new_files") or []),
+                    "modified_files": list(adapter_result.get("modified_files") or []),
+                    "write_tool_evidence": True,
+                }
+            ),
+            "close_evidence_ref": str(proof.get("close_evidence_ref") or "").strip(),
+            "close_evidence_hash": close_evidence_hash,
+            "receipt_summary_hash": receipt_summary_hash,
+            "receipt_count": receipt_count,
+            "failed_receipt_count": 0,
+            "dead_letter_count": 0,
+            "aborted_count": 0,
+        }
+        evidence["evidence_hash"] = _canonical_sha256(evidence)
+        return _DependencySatisfactionDecision(evidence=evidence)
+
+    @staticmethod
+    def _stored_dependency_satisfaction(
+        row: Mapping[str, Any],
+        *,
+        session: TaskExecutionSession,
+    ) -> dict[str, Any]:
+        """Return a replay-safe stored satisfaction receipt or an empty mapping."""
+
+        metadata_raw = row.get("metadata")
+        metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+        evidence_raw = metadata.get(_DEPENDENCY_SATISFACTION_METADATA_KEY)
+        if not isinstance(evidence_raw, Mapping):
+            return {}
+        evidence = dict(evidence_raw)
+        if evidence.get("schema_version") != _DEPENDENCY_SATISFACTION_SCHEMA_V1:
+            return {}
+        if (
+            str(evidence.get("terminal_transition_id") or "").strip()
+            != str(session.terminal_transition_id or "").strip()
+        ):
+            return {}
+        evidence_hash = str(evidence.pop("evidence_hash", "") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", evidence_hash):
+            return {}
+        if _canonical_sha256(evidence) != evidence_hash:
+            return {}
+        evidence["evidence_hash"] = evidence_hash
+        return evidence
+
     def _project_settled_execution_attempt_locked(
         self,
         command: SettleTaskRuntimeExecutionAttemptCommandV1,
@@ -4379,19 +5520,41 @@ class TaskRuntimeService:
     ) -> dict[str, Any]:
         """Project one settled snapshot while the independent projection lock is held."""
 
+        dependency_decision = self._failed_materialization_dependency_satisfaction(
+            command=command,
+            task=task,
+            session=session,
+        )
         projected_row = self._board.get(command.identity.task_id)
         if projected_row is not None:
-            receipt = self._settlement_projection_receipt(projected_row.to_dict())
+            projected_record = projected_row.to_dict()
+            receipt = self._settlement_projection_receipt(projected_record)
             if self._settlement_projection_receipt_matches(receipt, command=command, session=session):
-                return self._execution_attempt_settlement_result(
+                stored_satisfaction = self._stored_dependency_satisfaction(
+                    projected_record,
+                    session=session,
+                )
+                result = self._execution_attempt_settlement_result(
                     True,
                     "settlement_idempotent",
                     command,
                     session=session,
                     idempotent=True,
-                    evidence={"task": projected_row.to_dict(), "projection_receipt": receipt},
+                    evidence={
+                        "task": projected_record,
+                        "projection_receipt": receipt,
+                        "dependency_satisfaction": stored_satisfaction,
+                    },
                 )
+                if command.outcome == "completed" or stored_satisfaction:
+                    result["dependency_events"] = self._apply_dependency_completion_side_effects(
+                        completed_task_id=command.identity.task_id,
+                        dependent_rows_before=self._dependent_rows_blocked_by(command.identity.task_id),
+                        dependency_satisfaction=stored_satisfaction,
+                    )
+                return result
 
+        details: dict[str, Any]
         if command.outcome == "completed":
             status = TaskStatus.COMPLETED
             effective_status, resume_state, assignee = "completed", "", None
@@ -4404,6 +5567,13 @@ class TaskRuntimeService:
             status = TaskStatus.BLOCKED
             effective_status, resume_state, assignee = "pending", "resumable", ""
             details = {"reason": sanitize_summary(command.summary)}
+        extra_metadata = dict(command.metadata)
+        if dependency_decision is not None:
+            dependency_satisfaction = dict(dependency_decision.evidence)
+            extra_metadata[_DEPENDENCY_SATISFACTION_METADATA_KEY] = dependency_satisfaction
+            details["dependency_satisfaction"] = dependency_satisfaction
+        else:
+            dependency_satisfaction = {}
         try:
             updated = self._board.update(
                 command.identity.task_id,
@@ -4413,7 +5583,7 @@ class TaskRuntimeService:
                     session=session,
                     effective_status=effective_status,
                     resume_state=resume_state,
-                    extra_metadata=dict(command.metadata),
+                    extra_metadata=extra_metadata,
                 ),
                 allow_terminal_status=command.outcome in {"completed", "failed"},
                 allow_execution_status=True,
@@ -4473,12 +5643,18 @@ class TaskRuntimeService:
             command,
             session=session,
             idempotent=False,
-            evidence={"task": row, "execution_event": event, "projection_receipt": projection_receipt},
+            evidence={
+                "task": row,
+                "execution_event": event,
+                "projection_receipt": projection_receipt,
+                "dependency_satisfaction": dependency_satisfaction,
+            },
         )
-        if command.outcome == "completed":
+        if command.outcome == "completed" or dependency_satisfaction:
             dependency_events = self._apply_dependency_completion_side_effects(
                 completed_task_id=command.identity.task_id,
                 dependent_rows_before=self._dependent_rows_blocked_by(command.identity.task_id),
+                dependency_satisfaction=dependency_satisfaction,
             )
             result["dependency_events"] = dependency_events
         return result
@@ -4527,7 +5703,7 @@ class TaskRuntimeService:
             idempotent=idempotent,
             evidence=dict(evidence or {}),
         )
-        result = verdict.to_record()
+        result = cast(dict[str, Any], verdict.to_record())
         if session is not None:
             result["session"] = session.to_dict()
         result.update(dict(evidence or {}))
@@ -4659,6 +5835,19 @@ class TaskRuntimeService:
         if session.status != "active":
             return _LockedSessionSuspendResult(session=None, session_written=False)
 
+        if self._has_pending_terminal_intent(session):
+            terminal_snapshot = self._find_projected_runtime_execution_session_locked(task_id)
+            if self._terminal_projection_can_restore_pending_intent_locked(
+                task_id,
+                active_session=session,
+                terminal_session=terminal_snapshot,
+            ):
+                assert terminal_snapshot is not None
+                return _LockedSessionSuspendResult(
+                    session=session,
+                    session_written=self._write_session_locked(session),
+                )
+
         pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
         if not pre_barrier.allowed:
             return _LockedSessionSuspendResult(
@@ -4672,15 +5861,64 @@ class TaskRuntimeService:
             session_written=self._write_session_locked(session),
         )
 
+    def _terminal_projection_can_restore_pending_intent_locked(
+        self,
+        task_id: int,
+        *,
+        active_session: TaskExecutionSession,
+        terminal_session: TaskExecutionSession | None,
+    ) -> bool:
+        """Authorize compatibility restore only for one exact, already-settled attempt."""
+
+        if not self._same_terminal_session(terminal_session, active_session):
+            return False
+        assert terminal_session is not None
+        task = self._task_entity_for_terminal_session_reconcile(task_id)
+        terminal_task_status = _terminal_task_status_for_session(terminal_session.status)
+        if task is None or not task.is_terminal or terminal_task_status is None or task.status != terminal_task_status:
+            return False
+        for field in (
+            "task_id",
+            "session_id",
+            "attempt",
+            "run_id",
+            "worker_id",
+            "role_id",
+            "origin",
+            "selection_source",
+            "external_task_id",
+        ):
+            if getattr(active_session, field) != getattr(terminal_session, field):
+                return False
+        if active_session.terminal_transition_id != terminal_session.terminal_transition_id:
+            return False
+        active_intent = self._pending_terminal_intent(active_session)
+        terminal_intent = self._pending_terminal_intent(terminal_session)
+        if active_intent is None or terminal_intent is None or dict(active_intent) != dict(terminal_intent):
+            return False
+        active_proof = active_session.metadata.get("terminal_settlement_proof")
+        terminal_proof = terminal_session.metadata.get("terminal_settlement_proof")
+        if (
+            not isinstance(active_proof, Mapping)
+            or not isinstance(terminal_proof, Mapping)
+            or dict(active_proof) != dict(terminal_proof)
+        ):
+            return False
+        if active_session.metadata.get("settlement_identity_lease_expires_at") != terminal_session.metadata.get(
+            "settlement_identity_lease_expires_at"
+        ):
+            return False
+        return self._fulfilled_terminal_intent_pre_barrier_locked(terminal_session).allowed
+
     def list_ready(self) -> list[Task]:
         raise RuntimeError("TaskRuntimeService.list_ready is retired; use list_ready_task_rows()")
 
     def wait_ready(self, timeout: float | None = None) -> bool:
         self.refresh_dependency_unblocks()
-        return self._board.wait_ready(timeout=timeout)
+        return cast(bool, self._board.wait_ready(timeout=timeout))
 
     def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
-        return self._board.add_ready_listener(listener)
+        return cast(Callable[[], None], self._board.add_ready_listener(listener))
 
     def list_ready_task_rows(self) -> list[dict[str, Any]]:
         """Return ready rows after the compatibility dependency refresh.
@@ -4997,6 +6235,126 @@ class TaskRuntimeService:
         """Return the cooperative cross-process lock path for one session file."""
 
         return Path(self._kernel_fs.resolve_path(f"runtime/tasks/.task_{int(task_id)}.session.json.lock"))
+
+    def _directed_effect_recovery_lease_file_lock_path(self) -> Path:
+        """Return the single cross-process recovery authority lock for this workspace."""
+
+        return Path(self._kernel_fs.resolve_path("runtime/tasks/.directed_effect_recovery.lease.lock"))
+
+    @staticmethod
+    def _directed_effect_recovery_lease_record(body: Mapping[str, Any]) -> dict[str, Any]:
+        detached = _json_compatible_copy(dict(body))
+        if not isinstance(detached, dict):
+            raise TypeError("directed effect recovery lease body must be an object")
+        return {**detached, "record_hash": _canonical_sha256(detached)}
+
+    def _read_directed_effect_recovery_lease_locked(self) -> dict[str, Any] | None:
+        if not self._kernel_fs.exists(_DIRECTED_EFFECT_RECOVERY_LEASE_LOGICAL_PATH):
+            return None
+        payload = self._kernel_fs.read_json(_DIRECTED_EFFECT_RECOVERY_LEASE_LOGICAL_PATH)
+        if not isinstance(payload, dict):
+            raise ValueError("directed effect recovery lease must be an object")
+        body = {key: value for key, value in payload.items() if key != "record_hash"}
+        if payload.get("record_hash") != _canonical_sha256(body):
+            raise ValueError("directed effect recovery lease hash mismatch")
+        if payload.get("schema_version") != _DIRECTED_EFFECT_RECOVERY_LEASE_SCHEMA_V1:
+            raise ValueError("directed effect recovery lease schema mismatch")
+        if payload.get("workspace") != str(Path(self.workspace).expanduser().resolve()):
+            raise ValueError("directed effect recovery lease workspace mismatch")
+        if payload.get("status") not in {"active", "released"}:
+            raise ValueError("directed effect recovery lease status invalid")
+        for field_name in ("lease_id", "owner_epoch"):
+            value = payload.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"directed effect recovery lease {field_name} invalid")
+        owner_pid = payload.get("owner_pid")
+        if isinstance(owner_pid, bool) or not isinstance(owner_pid, int) or owner_pid <= 0:
+            raise ValueError("directed effect recovery lease owner_pid invalid")
+        expires_at_epoch = payload.get("expires_at_epoch")
+        if isinstance(expires_at_epoch, bool) or not isinstance(expires_at_epoch, (int, float)):
+            raise ValueError("directed effect recovery lease expires_at_epoch invalid")
+        return dict(payload)
+
+    def _claim_directed_effect_recovery_lease_locked(
+        self,
+        *,
+        command: ReconcileAmbiguousDirectedEffectsCommandV1,
+        lease_id: str,
+        owner_epoch: str,
+        owner_pid: int,
+        deadline_monotonic: float,
+    ) -> dict[str, Any] | None:
+        existing = self._read_directed_effect_recovery_lease_locked()
+        now_epoch = time.time()
+        if (
+            existing is not None
+            and existing.get("status") == "active"
+            and float(existing["expires_at_epoch"]) > now_epoch
+        ):
+            return {
+                "code": "recovery_lease_active",
+                "lease_id": str(existing["lease_id"]),
+                "owner_pid": int(existing["owner_pid"]),
+                "owner_epoch": str(existing["owner_epoch"]),
+                "expires_at_epoch": float(existing["expires_at_epoch"]),
+                "factory_run_id": str(existing.get("factory_run_id") or ""),
+            }
+        remaining_seconds = deadline_monotonic - time.monotonic()
+        if remaining_seconds <= 0:
+            return {"code": "recovery_deadline_exceeded"}
+        body = {
+            "schema_version": _DIRECTED_EFFECT_RECOVERY_LEASE_SCHEMA_V1,
+            "workspace": str(Path(self.workspace).expanduser().resolve()),
+            "status": "active",
+            "lease_id": lease_id,
+            "owner_epoch": owner_epoch,
+            "owner_pid": owner_pid,
+            "factory_run_id": command.factory_run_id,
+            "authority_kind": command.authority_kind,
+            "actor": command.actor,
+            "reason": command.reason,
+            "acquired_at_epoch": now_epoch,
+            "expires_at_epoch": now_epoch + remaining_seconds,
+            "replaced_expired_lease_id": (
+                str(existing.get("lease_id") or "")
+                if existing is not None and existing.get("status") == "active"
+                else ""
+            ),
+        }
+        self._kernel_fs.write_json_atomic(
+            _DIRECTED_EFFECT_RECOVERY_LEASE_LOGICAL_PATH,
+            self._directed_effect_recovery_lease_record(body),
+            indent=2,
+            ensure_ascii=False,
+        )
+        return None
+
+    def _release_directed_effect_recovery_lease_locked(
+        self,
+        *,
+        lease_id: str,
+        owner_epoch: str,
+        owner_pid: int,
+    ) -> None:
+        current = self._read_directed_effect_recovery_lease_locked()
+        if current is None:
+            raise ValueError("directed effect recovery lease disappeared before release")
+        if (
+            current.get("status") != "active"
+            or current.get("lease_id") != lease_id
+            or current.get("owner_epoch") != owner_epoch
+            or current.get("owner_pid") != owner_pid
+        ):
+            raise ValueError("directed effect recovery lease authority changed before release")
+        body = {key: value for key, value in current.items() if key != "record_hash"}
+        body["status"] = "released"
+        body["released_at_epoch"] = time.time()
+        self._kernel_fs.write_json_atomic(
+            _DIRECTED_EFFECT_RECOVERY_LEASE_LOGICAL_PATH,
+            self._directed_effect_recovery_lease_record(body),
+            indent=2,
+            ensure_ascii=False,
+        )
 
     def _settlement_projection_file_lock_path(self, task_id: int) -> Path:
         """Return the independent cooperative lock for settlement projections."""
@@ -6109,18 +7467,22 @@ class TaskRuntimeService:
         *,
         completed_task_id: int,
         dependent_rows_before: list[dict[str, Any]],
+        dependency_satisfaction: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Apply and record dependent-row changes caused by a completed task.
+        """Apply and record dependent-row changes caused by satisfied capability.
 
         The operation is O(d) over rows that explicitly blocked on the
-        completed task, where d is the number of direct dependents captured
-        before the parent transition. Each changed dependent row produces an
-        execution event so Run Ledger projections can explain the unblock
-        without re-reading raw task files.
+        parent task, where d is the number of direct dependents captured before
+        the parent transition.  The normal case is terminal completion.  A
+        failed Director task may also supply TaskRuntime-owned materialization
+        proof; the failed status remains unchanged while only its committed
+        file capability satisfies the dependency.
         """
 
         events: list[dict[str, Any]] = []
         should_notify_ready = False
+        satisfaction = dict(dependency_satisfaction or {})
+        satisfaction_kind = str(satisfaction.get("kind") or "completed").strip()
         for before_row in dependent_rows_before:
             dependent_id = self.normalize_task_id(before_row.get("id"))
             if dependent_id is None:
@@ -6164,6 +7526,9 @@ class TaskRuntimeService:
                     session=None,
                     details={
                         "completed_task_id": completed_task_id,
+                        "dependency_satisfied_task_id": completed_task_id,
+                        "dependency_satisfaction_kind": satisfaction_kind,
+                        "dependency_satisfaction_evidence": satisfaction,
                         "previous_blockers": previous_blockers,
                         "active_blockers": active_blockers,
                     },
@@ -6407,12 +7772,15 @@ class TaskRuntimeService:
             O(1) retained event memory and two bounded FactStream queries.
         """
 
-        return query_fact_stream_head(
-            QueryFactStreamHeadV1(
-                workspace=self.workspace,
-                stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
-            )
-        ).next_expected_seq
+        return cast(
+            int,
+            query_fact_stream_head(
+                QueryFactStreamHeadV1(
+                    workspace=self.workspace,
+                    stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
+                )
+            ).next_expected_seq,
+        )
 
     def _append_execution_fact_with_cas(
         self,
@@ -6521,9 +7889,12 @@ class TaskRuntimeService:
                     "fact_stream": TASK_RUNTIME_EXECUTION_STREAM_V1,
                 },
             }
-            return get_log_jetstream_publisher().publish(
-                subject=f"hp.runtime.{workspace_key}.event.factory.{factory_run_id}",
-                payload=envelope,
+            return cast(
+                bool,
+                get_log_jetstream_publisher().publish(
+                    subject=f"hp.runtime.{workspace_key}.event.factory.{factory_run_id}",
+                    payload=envelope,
+                ),
             )
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("Task runtime factory progress publish failed: %s", exc)

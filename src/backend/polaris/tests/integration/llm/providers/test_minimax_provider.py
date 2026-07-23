@@ -657,7 +657,7 @@ class TestMiniMaxProviderExceptions:
             )
 
         monkeypatch.setattr(
-            "polaris.infrastructure.llm.providers.minimax_provider.get_stream_session",
+            "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
             _mock_get_stream_session,
         )
 

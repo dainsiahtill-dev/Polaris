@@ -47,7 +47,6 @@ from polaris.kernelone.events.typed import (
     TaskSubmitted as TypedTaskSubmitted,
     get_default_adapter as get_typed_adapter,
 )
-from polaris.kernelone.process.command_executor import CommandExecutionService
 
 logger = logging.getLogger(__name__)
 
@@ -896,63 +895,16 @@ class DirectorService(DirectorCodeIntelMixin):
         return await executor.execute(task)
 
     async def _run_command(self, command: str | None, timeout: int) -> TaskResult:
-        """Execute a command using the secure CommandExecutionService.
-
-        Args:
-            command: The command string to execute.
-            timeout: Maximum execution time in seconds.
-
-        Returns:
-            TaskResult with execution outcome.
-        """
+        """Reject legacy command execution outside roles.kernel DEO admission."""
         from polaris.domain.entities import TaskResult
 
-        if not command:
-            return TaskResult(
-                success=False,
-                output="",
-                error="Director task command is required; refusing to mark no-op work as completed.",
-                duration_ms=0,
-            )
-
-        start = datetime.now(timezone.utc)
-        cmd_svc = CommandExecutionService(self.config.workspace)
-
-        try:
-            request = cmd_svc.parse_command(command, timeout_seconds=timeout)
-        except ValueError as e:
-            return TaskResult(
-                success=False,
-                output="",
-                error=f"Command parse error: {e}",
-                duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
-            )
-
-        try:
-            result = cmd_svc.run(request)
-            duration_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
-
-            if result.get("timed_out"):
-                return TaskResult(
-                    success=False,
-                    output=result.get("stdout", ""),
-                    error=f"Timed out after {timeout}s",
-                    duration_ms=duration_ms,
-                )
-
-            return TaskResult(
-                success=result.get("ok", False) and result.get("returncode", -1) == 0,
-                output=result.get("stdout", ""),
-                error=result.get("stderr", "") or result.get("error", ""),
-                duration_ms=duration_ms,
-            )
-        except Exception as e:  # noqa: BLE001
-            return TaskResult(
-                success=False,
-                output="",
-                error=str(e),
-                duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
-            )
+        del command, timeout
+        return TaskResult(
+            success=False,
+            output="",
+            error="director_command_requires_roles_kernel_directed_effect",
+            duration_ms=0,
+        )
 
     async def _check_nag(self) -> None:
         nag = self.todo.on_round_complete()

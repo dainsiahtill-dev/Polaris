@@ -13,6 +13,8 @@ from polaris.kernelone.fs import guarded_regular_file_snapshot as snapshot_modul
 from polaris.kernelone.fs.guarded_regular_file_snapshot import (
     GuardedRegularFileSnapshotError,
     GuardedRegularFileSnapshotV1,
+    guarded_compare_and_create_regular_file,
+    guarded_compare_and_remove_regular_file,
     guarded_compare_and_replace_regular_file,
     read_guarded_regular_file_snapshot,
 )
@@ -481,6 +483,80 @@ def test_guarded_compare_replace_success_is_exact_durable_and_public(tmp_path: P
     import polaris.kernelone.fs as public_fs
 
     assert public_fs.guarded_compare_and_replace_regular_file is guarded_compare_and_replace_regular_file
+
+
+def test_guarded_compare_create_requires_commit_time_absence_and_is_public(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    target = root / "nested" / "created.txt"
+    target.parent.mkdir(parents=True)
+
+    created = guarded_compare_and_create_regular_file(
+        root,
+        "nested/created.txt",
+        b"created\n",
+        max_bytes=64,
+    )
+
+    assert created.content == b"created\n"
+    assert target.read_bytes() == b"created\n"
+    with pytest.raises(GuardedRegularFileSnapshotError) as exc_info:
+        guarded_compare_and_create_regular_file(
+            root,
+            "nested/created.txt",
+            b"overwrite\n",
+            max_bytes=64,
+        )
+    assert exc_info.value.code == "guarded_create_expected_mismatch"
+    assert target.read_bytes() == b"created\n"
+
+    import polaris.kernelone.fs as public_fs
+
+    assert public_fs.guarded_compare_and_create_regular_file is guarded_compare_and_create_regular_file
+
+
+def test_guarded_compare_remove_deletes_only_exact_snapshot_and_is_public(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "remove.txt"
+    target.write_bytes(b"expected")
+    expected = read_guarded_regular_file_snapshot(root, "remove.txt", 64)
+
+    guarded_compare_and_remove_regular_file(root, expected, max_bytes=64)
+
+    assert not target.exists()
+    assert list(root.glob(".remove.txt.*.tmp")) == []
+
+    import polaris.kernelone.fs as public_fs
+
+    assert public_fs.guarded_compare_and_remove_regular_file is guarded_compare_and_remove_regular_file
+
+
+def test_guarded_compare_remove_rejects_precommit_drift_without_deleting_concurrent_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "remove.txt"
+    target.write_bytes(b"expected")
+    expected = read_guarded_regular_file_snapshot(root, "remove.txt", 64)
+
+    def replace_before_final_revalidation(parent_fd: int, leaf_name: str) -> None:
+        del parent_fd, leaf_name
+        target.write_bytes(b"concurrent")
+
+    monkeypatch.setattr(
+        snapshot_module,
+        "_before_guarded_remove_revalidation",
+        replace_before_final_revalidation,
+    )
+
+    with pytest.raises(GuardedRegularFileSnapshotError) as exc_info:
+        guarded_compare_and_remove_regular_file(root, expected, max_bytes=64)
+
+    assert exc_info.value.code == "guarded_remove_expected_mismatch"
+    assert target.read_bytes() == b"concurrent"
+    assert list(root.glob(".remove.txt.*.tmp")) == []
 
 
 def test_guarded_compare_replace_rejects_old_snapshot_mismatch_without_mutation(tmp_path: Path) -> None:

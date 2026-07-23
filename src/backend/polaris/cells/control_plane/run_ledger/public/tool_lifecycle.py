@@ -8,6 +8,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public.directed_effect_receipt_validation import (
+    directed_effect_receipt_v2_errors,
+)
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
     FailureClassV1,
     FailureEvidenceV1,
@@ -258,16 +261,50 @@ def _result_items(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def _effect_receipt_from_result(item: dict[str, Any]) -> dict[str, Any]:
+def _effect_receipt_and_commit_from_result(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     direct = item.get("effect_receipt")
     if isinstance(direct, dict):
-        return dict(direct)
+        commit = item.get("effect_receipt_commit")
+        if isinstance(commit, dict):
+            return dict(direct), dict(commit)
+        # Historical/current ToolBatchRuntime rows copied the authoritative
+        # receipt to the result envelope while leaving its TaskRuntime commit
+        # inside the nested physical result.  Consume that preserved commit
+        # only when the nested receipt is byte-for-byte the same mapping; a
+        # mismatched nested pair must never authorize the direct receipt.
+        result = item.get("result")
+        if isinstance(result, dict):
+            nested = result.get("effect_receipt")
+            nested_commit = result.get("effect_receipt_commit")
+            if isinstance(nested, dict) and nested == direct and isinstance(nested_commit, dict):
+                return dict(direct), dict(nested_commit)
+        return dict(direct), {}
     result = item.get("result")
     if isinstance(result, dict):
         nested = result.get("effect_receipt")
         if isinstance(nested, dict):
-            return dict(nested)
-    return {}
+            commit = result.get("effect_receipt_commit")
+            return dict(nested), dict(commit) if isinstance(commit, dict) else {}
+    return {}, {}
+
+
+def _canonical_sha256(value: Any) -> str:
+    token = _clean_string(value)
+    return token if len(token) == 64 and all(character in "0123456789abcdef" for character in token) else ""
+
+
+def _effect_receipt_from_result(item: dict[str, Any]) -> dict[str, Any]:
+    """Prefer TaskRuntime-committed DEO-3 receipts; keep legacy receipts readable."""
+
+    effect, commit = _effect_receipt_and_commit_from_result(item)
+    if not effect:
+        return {}
+    if _clean_string(effect.get("schema_version")) != "roles.adapters.director_physical_effect_receipt.v2":
+        return effect
+
+    if directed_effect_receipt_v2_errors(effect, commit, prefix="receipt"):
+        return {}
+    return {**effect, "task_runtime_receipt_commit": commit}
 
 
 def _effect_receipt_refs(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -281,15 +318,29 @@ def _effect_receipt_refs(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]
         if receipt_hash in seen:
             continue
         seen.add(receipt_hash)
+        commit = effect.get("task_runtime_receipt_commit")
+        commit_map = commit if isinstance(commit, dict) else {}
+        declared_receipt_hash = _canonical_sha256(effect.get("receipt_hash"))
+        authoritative_v2 = (
+            _clean_string(effect.get("schema_version")) == "roles.adapters.director_physical_effect_receipt.v2"
+        )
         refs.append(
             {
-                "receipt_hash": receipt_hash,
-                "operation": _clean_string(effect.get("operation")),
-                "file": _clean_string(effect.get("file") or effect.get("path")),
+                "receipt_hash": declared_receipt_hash or receipt_hash,
+                "receipt_ref": _clean_string(commit_map.get("receipt_ref")),
+                "projection_hash": receipt_hash,
+                "operation": _clean_string(
+                    effect.get("normalized_tool_name") if authoritative_v2 else effect.get("operation")
+                ),
+                "file": "" if authoritative_v2 else _clean_string(effect.get("file") or effect.get("path")),
                 "tool_name": _clean_string(item.get("tool_name")),
                 "call_id": _clean_string(item.get("call_id")),
-                "before_hash": _clean_string(effect.get("before_hash")),
-                "after_hash": _clean_string(effect.get("after_hash")),
+                "before_hash": "" if authoritative_v2 else _clean_string(effect.get("before_hash")),
+                "after_hash": "" if authoritative_v2 else _clean_string(effect.get("after_hash")),
+                "receipt_outcome": _clean_string(effect.get("receipt_outcome")),
+                "task_runtime_code": _clean_string(commit_map.get("code")),
+                "task_runtime_state": _clean_string(commit_map.get("state")),
+                "task_runtime_event_id": _clean_string(commit_map.get("event_id")),
             }
         )
     return refs
@@ -420,6 +471,12 @@ def build_tool_call_lifecycle_receipt(
     batch_refs = _batch_receipt_refs(receipt_rows)
     effect_refs = _effect_receipt_refs(receipt_rows)
     missing_write_effects = _successful_write_results_without_effect_receipts(receipt_rows)
+    failed_effect_refs = [
+        ref
+        for ref in effect_refs
+        if _clean_string(ref.get("receipt_outcome")).lower() == "failed"
+        or _clean_string(ref.get("task_runtime_state")) in {"RECOVERY_PENDING", "DEAD_LETTER"}
+    ]
     result_count = len(_result_items(receipt_rows))
     dispatched_count = _int_value(dispatched_tool_calls_count)
     if dispatched_count <= 0 and result_count > 0:
@@ -448,6 +505,9 @@ def build_tool_call_lifecycle_receipt(
         status = status or "blocked"
         failure = failure or FailureClassV1.MISSING_EFFECT_RECEIPT.value
         dropped.extend(missing_write_effects)
+    elif failed_effect_refs:
+        status = status or "blocked"
+        failure = failure or FailureClassV1.TOOL_RESULT_FAILED.value
     elif result_count > 0:
         status = status or "dispatched"
     else:
@@ -2246,6 +2306,9 @@ def project_native_tool_call_envelopes_to_metadata(
 
 _COMPLETION_DISPATCH_EVIDENCE_KEYS: tuple[str, ...] = (
     "final_request_context_audit",
+    "context_snapshot_ref",
+    "context_snapshot_degraded",
+    "context_snapshot_degraded_reason",
     "required_tools",
     "tool_call_lifecycle",
     "tool_call_lifecycle_receipt",

@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
@@ -25,6 +25,11 @@ from polaris.cells.director.runtime.public.repair_kernel_contracts import (
     build_substantive_node_test_script as _build_substantive_node_test_script,
     is_overstrict_node_test_script_contract as _is_overstrict_node_test_script_contract,
     remove_patch_residue_lines as _remove_patch_residue_lines,
+)
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
 )
 from polaris.cells.roles.adapters.internal.director import (
     execute_method as execute_method_module,
@@ -78,7 +83,6 @@ from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge
     run_python_static_smoke,
 )
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
-from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _build_materialization_quality_failure_evidence_context,
     _build_materialization_quality_workspace_evidence_context,
@@ -124,6 +128,7 @@ def _run_go_materialization_quality_schedule(
 ) -> list[dict[str, Any]]:
     """Run Go materialization repair through the typed roles adapter boundary."""
 
+    workspace = Path(adapter.workspace)
     result = roles_adapters_public_service.run_director_materialization_quality_repair_schedule_result(
         RunDirectorMaterializationQualityRepairScheduleCommandV1(
             adapter_port=adapter,
@@ -131,18 +136,195 @@ def _run_go_materialization_quality_schedule(
             task_id=task_id,
             artifact_quality_errors=tuple(artifact_quality_errors),
             advisor_notes=tuple(advisor_notes),
+            execution_attempt=_test_execution_attempt(workspace, task_id),
         )
     )
-    return [dict(item) for item in result.tool_results]
+    return _project_deferred_repair_results_for_test(
+        workspace,
+        [dict(item) for item in result.tool_results],
+    )
 
 
 def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
     """Create a DirectorAdapter with mocked heavy dependencies."""
+    workspace = Path(tmp_path)
+    workspace.mkdir(parents=True, exist_ok=True)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            maintenance_reason="director-adapter-pure-test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
     if task_runtime is None:
-        adapter = DirectorAdapter(workspace=str(tmp_path))
+        adapter = DirectorAdapter(workspace=str(workspace))
     else:
-        adapter = DirectorAdapter(workspace=str(tmp_path), task_runtime=task_runtime)
+        adapter = DirectorAdapter(workspace=str(workspace), task_runtime=task_runtime)
     return adapter
+
+
+def _test_execution_attempt(workspace: Path, task_id: str) -> TaskRuntimeExecutionAttemptIdentityV1:
+    """Return exact attempt identity for test-only deferred-effect projection."""
+
+    return TaskRuntimeExecutionAttemptIdentityV1(
+        workspace=workspace.resolve().as_posix(),
+        task_id=91,
+        external_task_id=task_id,
+        session_id=f"session-{task_id}",
+        attempt=1,
+        role_id="director",
+        worker_id="director-test-worker",
+        run_id=f"run-{task_id}",
+        lease_expires_at="2099-01-01T00:00:00Z",
+    )
+
+
+def _test_execution_attempt_context(workspace: Path, task_id: str) -> dict[str, Any]:
+    return {
+        "task_runtime_execution_attempt_authority": create_task_runtime_execution_attempt_authority(
+            _test_execution_attempt(workspace, task_id)
+        )
+    }
+
+
+def _project_deferred_repair_results_for_test(
+    workspace: Path,
+    tool_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Apply deferred effects only inside the test fixture.
+
+    Production remains plan-only at the roles adapter boundary.  These tests
+    retain their planner/content assertions by projecting forward effects in
+    their isolated temporary workspace.
+    """
+
+    projected: list[dict[str, Any]] = []
+    for item in tool_results:
+        result = item.get("result")
+        result_payload = dict(result) if isinstance(result, dict) else {}
+        request = result_payload.get("deferred_request")
+        if item.get("tool_name") != "deferred_director_repair" or request is None:
+            projected.append(dict(item))
+            continue
+        repair_kernel = dict(result_payload.get("repair_kernel") or {})
+        planning = dict(repair_kernel.get("planning") or {})
+        repair_kernel.update(
+            {
+                "status": "applied",
+                "planning_preflight": planning,
+                "metadata": {"requires_revalidation": True},
+            }
+        )
+        for effect in request.plan.effects:
+            if effect.contingency_kind != "forward":
+                continue
+            arguments = dict(effect.arguments)
+            target = workspace / effect.target_path
+            if effect.tool_name == "write_file":
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(str(arguments["content"]), encoding="utf-8")
+            elif effect.tool_name == "edit_file":
+                original = target.read_text(encoding="utf-8")
+                search = str(arguments["search"])
+                assert search in original
+                target.write_text(original.replace(search, str(arguments["replace"]), 1), encoding="utf-8")
+            else:
+                target.unlink()
+            projected.append(
+                {
+                    "tool": effect.tool_name,
+                    "tool_name": effect.tool_name,
+                    "success": True,
+                    "result": {
+                        "ok": True,
+                        "source_tool": request.plan.source_tool,
+                        "file": effect.target_path,
+                        "repair_kernel": repair_kernel,
+                    },
+                }
+            )
+    return projected
+
+
+def _install_test_deferred_projection(
+    monkeypatch: pytest.MonkeyPatch,
+    module: Any,
+    workspace: Path,
+) -> None:
+    """Wrap one bridge so old planner tests consume deferred effects safely."""
+
+    original = module.run_runtime_repair_with_director_tools
+
+    def _run(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        task_id = str(kwargs.get("task_id") or "director-repair-test")
+        if type(kwargs.get("execution_attempt")) is not TaskRuntimeExecutionAttemptIdentityV1:
+            kwargs["execution_attempt"] = _test_execution_attempt(workspace, task_id)
+        return _project_deferred_repair_results_for_test(
+            workspace,
+            original(*args, **kwargs),
+        )
+
+    monkeypatch.setattr(module, "run_runtime_repair_with_director_tools", _run)
+
+
+def _install_all_test_deferred_projections(
+    monkeypatch: pytest.MonkeyPatch,
+    workspace: Path,
+) -> None:
+    """Project every Director repair bridge only for isolated legacy tests."""
+
+    from polaris.cells.roles.adapters.internal.director import (
+        execute_method_repair_bridge,
+        materialization_quality_callback_ports,
+        post_execution_repair_bridge,
+        runtime_repair_tool_adapter,
+    )
+
+    original = runtime_repair_tool_adapter.run_runtime_repair_with_director_tools
+
+    def _run(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        task_id = str(kwargs.get("task_id") or "director-repair-test")
+        if type(kwargs.get("execution_attempt")) is not TaskRuntimeExecutionAttemptIdentityV1:
+            kwargs["execution_attempt"] = _test_execution_attempt(workspace, task_id)
+        return _project_deferred_repair_results_for_test(
+            workspace,
+            original(*args, **kwargs),
+        )
+
+    for module in (
+        runtime_repair_tool_adapter,
+        execute_method_repair_bridge,
+        materialization_quality_callback_ports,
+        post_execution_repair_bridge,
+        quality_gate_module,
+    ):
+        monkeypatch.setattr(module, "run_runtime_repair_with_director_tools", _run)
+
+
+def _run_test_materialization_quality_repair_schedule(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    artifact_quality_errors: list[str],
+    artifact_quality_issues: tuple[dict[str, Any], ...] = (),
+    advisor_notes: tuple[Any, ...] = (),
+    convergence_verifier: Any | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Run production planning and project its deferred effects in test scope."""
+
+    workspace = Path(adapter.workspace)
+    results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
+        adapter,
+        task=task,
+        task_id=task_id,
+        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_issues=artifact_quality_issues,
+        advisor_notes=advisor_notes,
+        convergence_verifier=convergence_verifier,
+        execution_attempt=_test_execution_attempt(workspace, task_id),
+    )
+    return _project_deferred_repair_results_for_test(workspace, results), summary
 
 
 def test_quality_repair_context_projects_structured_failure_and_workspace_evidence() -> None:
@@ -190,6 +372,149 @@ def test_prepare_role_dialogue_context_bounds_forced_write_retry_budget() -> Non
     assert context["director_forced_write_output_budget"]["max_tokens"] == 7000
 
 
+def test_prepare_role_dialogue_context_derives_stable_distinct_subinvocation_identity() -> None:
+    original = {
+        "metadata": {
+            "task_runtime_session_id": "task-runtime-session-7",
+            "runtime_execution": {
+                "session_id": "task-runtime-session-7",
+                "lease_id": "lease-7",
+            },
+        }
+    }
+
+    first, _ = _prepare_role_dialogue_context(
+        original,
+        timeout_seconds=60.0,
+        stage_label="first_call",
+    )
+    replay, _ = _prepare_role_dialogue_context(
+        original,
+        timeout_seconds=60.0,
+        stage_label="first_call",
+    )
+    repair, _ = _prepare_role_dialogue_context(
+        original,
+        timeout_seconds=60.0,
+        stage_label="quality_repair",
+    )
+
+    first_metadata = first["metadata"]
+    repair_metadata = repair["metadata"]
+    first_runtime_metadata = DirectorAdapter._build_role_runtime_metadata(first, max_retries=0)
+    repair_runtime_metadata = DirectorAdapter._build_role_runtime_metadata(repair, max_retries=0)
+    assert first_metadata["turn_request_id"] == replay["metadata"]["turn_request_id"]
+    assert first_metadata["turn_request_id"] != repair_metadata["turn_request_id"]
+    assert first_runtime_metadata["turn_request_id"] == first_metadata["turn_request_id"]
+    assert repair_runtime_metadata["turn_request_id"] == repair_metadata["turn_request_id"]
+    assert first["turn_request_id"] == first_metadata["turn_request_id"]
+    assert repair["turn_request_id"] == repair_metadata["turn_request_id"]
+    for key in (
+        "execution_attempt_id",
+        "execution_id",
+        "task_runtime_session_id",
+    ):
+        assert key not in first_metadata
+        assert key not in repair_metadata
+    assert "runtime_execution" not in first_metadata
+    assert "runtime_execution" not in repair_metadata
+    assert first_metadata["director_role_subinvocation"] == {
+        "schema_version": "director.role_subinvocation.v1",
+        "parent_execution_scope_kind": "task_runtime_session_id",
+        "parent_execution_scope_id": "task-runtime-session-7",
+        "stage_label": "first_call",
+        "turn_request_id": first_metadata["turn_request_id"],
+    }
+    assert repair_metadata["director_role_subinvocation"]["stage_label"] == "quality_repair"
+    assert original["metadata"]["task_runtime_session_id"] == "task-runtime-session-7"
+    assert original["metadata"]["runtime_execution"]["session_id"] == "task-runtime-session-7"
+
+
+def test_prepare_role_dialogue_context_rejects_conflicting_parent_execution_identity() -> None:
+    with pytest.raises(RuntimeError, match="director_role_invocation_parent_identity_mismatch"):
+        _prepare_role_dialogue_context(
+            {
+                "metadata": {
+                    "execution_attempt_id": "attempt-a",
+                    "task_runtime_session_id": "attempt-b",
+                }
+            },
+            timeout_seconds=60.0,
+            stage_label="quality_repair",
+        )
+
+
+def test_prepare_role_dialogue_context_reuses_original_parent_when_reprepared() -> None:
+    original = {
+        "metadata": {
+            "execution_attempt_id": "task-attempt-11",
+            "runtime_execution": {"lease_id": "lease-11"},
+        }
+    }
+
+    first, _ = _prepare_role_dialogue_context(
+        original,
+        timeout_seconds=60.0,
+        stage_label="first_call",
+    )
+    repeated_first, _ = _prepare_role_dialogue_context(
+        first,
+        timeout_seconds=60.0,
+        stage_label="first_call",
+    )
+    sibling_repair, _ = _prepare_role_dialogue_context(
+        first,
+        timeout_seconds=60.0,
+        stage_label="quality_repair",
+    )
+    direct_repair, _ = _prepare_role_dialogue_context(
+        original,
+        timeout_seconds=60.0,
+        stage_label="quality_repair",
+    )
+
+    assert repeated_first["turn_request_id"] == first["turn_request_id"]
+    assert sibling_repair["turn_request_id"] == direct_repair["turn_request_id"]
+    assert sibling_repair["turn_request_id"] != first["turn_request_id"]
+    assert sibling_repair["director_role_subinvocation"]["parent_execution_scope_id"] == "task-attempt-11"
+    assert "runtime_execution" not in sibling_repair["metadata"]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda context: context["director_role_subinvocation"].update(
+            {"parent_execution_scope_id": "different-parent"}
+        ),
+        lambda context: context["metadata"].update({"execution_attempt_id": "different-parent"}),
+        lambda context: context["metadata"].update(
+            {"runtime_execution": {"session_id": "different-parent"}}
+        ),
+    ),
+)
+def test_prepare_role_dialogue_context_rejects_conflicting_prior_subinvocation_evidence(
+    mutate: Any,
+) -> None:
+    prepared, _ = _prepare_role_dialogue_context(
+        {
+            "metadata": {
+                "execution_attempt_id": "task-attempt-12",
+                "runtime_execution": {"lease_id": "lease-12"},
+            }
+        },
+        timeout_seconds=60.0,
+        stage_label="first_call",
+    )
+    mutate(prepared)
+
+    with pytest.raises(RuntimeError, match="director_role_invocation_prior_evidence_mismatch"):
+        _prepare_role_dialogue_context(
+            prepared,
+            timeout_seconds=60.0,
+            stage_label="quality_repair",
+        )
+
+
 def test_prepare_role_dialogue_context_caps_existing_large_forced_write_budget() -> None:
     context, timeout = _prepare_role_dialogue_context(
         {
@@ -215,6 +540,54 @@ def test_prepare_role_dialogue_context_caps_existing_large_forced_write_budget()
     }
 
 
+def test_prepare_role_dialogue_context_caps_primary_write_code_call_budget() -> None:
+    context, timeout = _prepare_role_dialogue_context(
+        {
+            "target_files": [
+                "go.mod",
+                "models/capsule.go",
+                "models/exhibit.go",
+                "models/gallery.go",
+                "main.go",
+            ],
+            "task_execution_profile": {
+                "schema_version": "task.execution_profile.v1",
+                "task_type": "write_code",
+            },
+            "task_execution_contract": {
+                "schema_version": "task.execution_contract.v1",
+                "context_budget": {"output_budget_tokens": 128_000},
+            },
+        },
+        timeout_seconds=42.0,
+        stage_label="first_call",
+    )
+
+    assert timeout == 42.0
+    assert context["llm_max_tokens"] == 7000
+    budget = context["director_forced_write_output_budget"]
+    assert budget["stage_label"] == "first_call"
+    assert budget["max_tokens"] == 7000
+
+
+def test_prepare_role_dialogue_context_does_not_cap_primary_review_call_budget() -> None:
+    context, timeout = _prepare_role_dialogue_context(
+        {
+            "target_files": ["src/service.go"],
+            "task_execution_profile": {
+                "schema_version": "task.execution_profile.v1",
+                "task_type": "review",
+            },
+        },
+        timeout_seconds=42.0,
+        stage_label="first_call",
+    )
+
+    assert timeout == 42.0
+    assert "llm_max_tokens" not in context
+    assert "director_forced_write_output_budget" not in context
+
+
 def test_prepare_role_dialogue_context_timeout_override_is_not_shadowed_by_ceiling() -> None:
     context, timeout = _prepare_role_dialogue_context(
         {
@@ -230,6 +603,42 @@ def test_prepare_role_dialogue_context_timeout_override_is_not_shadowed_by_ceili
     assert context["llm_call_timeout_ceiling_seconds"] == 420.0
     assert context["request_timeout_ceiling_seconds"] == 420.0
     assert context["director_role_call_timeout_budget"]["timeout_seconds"] == 420.0
+
+
+def test_prepare_role_dialogue_context_reclamps_at_provider_boundary() -> None:
+    with patch(
+        "polaris.cells.roles.adapters.internal.director.execution.time.time",
+        return_value=100.0,
+    ):
+        context, timeout = _prepare_role_dialogue_context(
+            {"factory_director_execution_deadline_epoch_seconds": 112.5},
+            timeout_seconds=50.0,
+            stage_label="first_call",
+        )
+
+    assert timeout == 12.5
+    assert context["llm_call_timeout_ceiling_seconds"] == 12.5
+    assert context["request_timeout_ceiling_seconds"] == 12.5
+    assert context["timeout_ceiling_seconds"] == 12.5
+
+
+def test_prepare_role_dialogue_context_rejects_expired_factory_deadline() -> None:
+    with (
+        patch(
+            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            return_value=113.0,
+        ),
+        pytest.raises(RuntimeError, match="factory_director_execution_deadline_exhausted"),
+    ):
+        _prepare_role_dialogue_context(
+            {
+                "metadata": {
+                    "factory_director_execution_deadline_epoch_seconds": 112.5,
+                }
+            },
+            timeout_seconds=50.0,
+            stage_label="first_call",
+        )
 
 
 def test_prepare_role_dialogue_context_injects_current_task_write_boundary() -> None:
@@ -589,21 +998,28 @@ def _run_runtime_director_repair(
     task_id: str = "task-1",
     use_editor: bool = True,
 ) -> list[dict[str, Any]]:
+    """Plan through the production deferred boundary, then apply in test-only memory scope.
+
+    These legacy assertions exercise repair planner semantics.  The production
+    adapter must never regain a physical executor merely to keep them green.
+    """
+
     workspace = Path(tmp_path)
     base_files = {
         relative_path: (workspace / relative_path).read_text(encoding="utf-8") for relative_path in relative_paths
     }
-    return run_runtime_repair_with_director_tools(
+    deferred = run_runtime_repair_with_director_tools(
         _make_adapter(tmp_path),
         workspace_path=workspace,
         task_id=task_id,
         source_tool=source_tool,
-        executor_factory=DirectorToolExecutor,
+        execution_attempt=_test_execution_attempt(workspace, task_id),
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=relative_paths,
         use_editor=use_editor,
     )
+    return _project_deferred_repair_results_for_test(workspace, deferred)
 
 
 def _write_substantive_node_test_script(tmp_path: Any) -> None:
@@ -874,10 +1290,6 @@ async def test_execute_director_task_does_not_call_llm_when_exact_claim_conflict
 def test_deterministic_materialization_repair_cleans_scaffold_marker_from_reported_source(
     tmp_path: Any,
 ) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "main.ts").write_text(
         'console.log("Hello from Polaris TypeScript scaffold.");\n',
@@ -887,7 +1299,7 @@ def test_deterministic_materialization_repair_cleans_scaffold_marker_from_report
         "Artifact quality scan failed: deterministic scaffold marker 'Polaris TypeScript scaffold' in src/main.ts"
     ]
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         _make_adapter(tmp_path),
         task={"metadata": {"target_files": ["src/main.ts"]}},
         task_id="task-1",
@@ -904,10 +1316,6 @@ def test_deterministic_materialization_repair_cleans_scaffold_marker_from_report
 def test_deterministic_materialization_repair_cleans_scaffold_marker_from_go_source(
     tmp_path: Any,
 ) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     (tmp_path / "go.mod").write_text("module example\n\ngo 1.21\n", encoding="utf-8")
     (tmp_path / "main.go").write_text(
         "package main\n\n// output reflects real state rather than a static placeholder.\nfunc main() {}\n",
@@ -918,7 +1326,7 @@ def test_deterministic_materialization_repair_cleans_scaffold_marker_from_go_sou
         "main.go:(?<![.:'\"-])\\bplaceholder\\b(?!\\s*[=:])(?![-'\"])"
     ]
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         _make_adapter(tmp_path),
         task={"metadata": {"target_files": ["main.go"]}},
         task_id="task-1",
@@ -935,10 +1343,6 @@ def test_deterministic_materialization_repair_cleans_scaffold_marker_from_go_sou
 def test_deterministic_materialization_repair_routes_typescript_missing_export(
     tmp_path: Any,
 ) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "main.ts").write_text(
         "import { GardenSimulator } from './product';\nnew GardenSimulator().report();\n",
@@ -953,7 +1357,7 @@ def test_deterministic_materialization_repair_routes_typescript_missing_export(
         "src/main.ts(1,10): error TS2305: Module '\"./product\"' has no exported member 'GardenSimulator'."
     ]
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         _make_adapter(tmp_path),
         task={"metadata": {"target_files": ["src/main.ts", "src/product.ts"]}},
         task_id="task-1",
@@ -1138,10 +1542,6 @@ def test_deterministic_typescript_duplicate_object_property_repair_removes_repor
 
 
 def test_deterministic_materialization_repair_routes_vitest_globals(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
     (tests_dir / "index.test.ts").write_text(
@@ -1168,7 +1568,7 @@ def test_deterministic_materialization_repair_routes_vitest_globals(tmp_path: An
         "tests/index.test.ts(3,5): error TS2304: Cannot find name 'expect'."
     ]
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         _make_adapter(tmp_path),
         task={"target_files": ["tests/index.test.ts"]},
         task_id="task-1",
@@ -1241,7 +1641,7 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
     monkeypatch.setattr(
         execute_method_module, "_collect_materialization_quality_errors", fake_collect_materialization_quality_errors
     )
-    monkeypatch.setattr(execute_method_module, "_collect_step_verify_errors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(execute_method_module, "_collect_step_verify_errors", lambda *args, **kwargs: ([], []))
     monkeypatch.setattr(
         execute_method_module,
         "run_python_static_smoke",
@@ -1250,7 +1650,7 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
     monkeypatch.setattr(
         execute_method_module,
         "run_python_runtime_smoke",
-        lambda *args, **kwargs: [],
+        lambda *args, **kwargs: ([], []),
     )
     monkeypatch.setattr(
         execute_method_module, "_filter_satisfied_declared_target_missing_errors", lambda errors, workspace: errors
@@ -1353,9 +1753,9 @@ async def test_phase_quality_repair_loop_stops_on_plan_probe_task_boundary_triag
     monkeypatch.setattr(
         execute_method_module, "_collect_materialization_quality_errors", fake_collect_materialization_quality_errors
     )
-    monkeypatch.setattr(execute_method_module, "_collect_step_verify_errors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(execute_method_module, "_collect_step_verify_errors", lambda *args, **kwargs: ([], []))
     monkeypatch.setattr(execute_method_module, "run_python_static_smoke", lambda *args, **kwargs: [])
-    monkeypatch.setattr(execute_method_module, "run_python_runtime_smoke", lambda *args, **kwargs: [])
+    monkeypatch.setattr(execute_method_module, "run_python_runtime_smoke", lambda *args, **kwargs: ([], []))
     monkeypatch.setattr(
         execute_method_module, "_filter_satisfied_declared_target_missing_errors", lambda errors, workspace: errors
     )
@@ -1495,7 +1895,7 @@ def test_go_bare_import_string_repair_uses_director_runtime_kernel(
     assert result["repair_kernel"]["planning_preflight"]["source_tool"] == "deterministic_go_bare_import_string_repair"
     assert result["repair_kernel"]["planning"]["advisor_notes"][0]["advisor_source"] == "resident_agi"
     assert result["repair_kernel"]["planning"]["advisor_notes"][0]["authoritative"] is False
-    assert adapter.progress[-1] == ("task-go", "executing", "cmd/app/main.go")
+    assert adapter.progress == []
 
 
 def test_runtime_bridge_planning_preflight_blocks_unknown_source_tool(
@@ -1512,15 +1912,22 @@ def test_runtime_bridge_planning_preflight_blocks_unknown_source_tool(
         def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
             raise AssertionError("progress must not update when planning preflight fails")
 
-    def executor_factory(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("executor must not be created when planning preflight fails")
-
     results = run_runtime_repair_with_director_tools(
         FakeAdapter(),
         workspace_path=tmp_path,
         task_id="task-unknown-repair",
         source_tool="deterministic_future_language_repair",
-        executor_factory=executor_factory,
+        execution_attempt=TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=tmp_path.resolve().as_posix(),
+            task_id=92,
+            external_task_id="task-unknown-repair",
+            session_id="session-unknown-repair",
+            attempt=1,
+            role_id="director",
+            worker_id="director-test-worker",
+            run_id="run-unknown-repair",
+            lease_expires_at="2099-01-01T00:00:00Z",
+        ),
         base_files={"src/main.future": "broken\n"},
         artifact_quality_errors=("future-lang compiler: unknown diagnostic",),
     )
@@ -1530,8 +1937,8 @@ def test_runtime_bridge_planning_preflight_blocks_unknown_source_tool(
     result = results[0]["result"]
     assert result["error_code"] == "unsupported_repair_source_tool"
     assert result["repair_kernel"]["execution_skipped"] is True
-    assert result["repair_kernel"]["execution_skip_reason"] == "planning_preflight_failed"
-    assert result["repair_kernel"]["planning_preflight"]["planned"] is False
+    assert result["repair_kernel"]["execution_skip_reason"] == "unsupported_repair_source_tool"
+    assert result["repair_kernel"]["planning"]["planned"] is False
 
 
 def test_cpp_post_include_path_repair_uses_director_runtime_kernel(
@@ -1578,7 +1985,7 @@ def test_cpp_post_include_path_repair_uses_director_runtime_kernel(
         def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
             self.progress.append((task_id, state, current_file))
 
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    _install_test_deferred_projection(monkeypatch, post_execution_repair_bridge, tmp_path)
 
     adapter = FakeAdapter()
     results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
@@ -1588,7 +1995,7 @@ def test_cpp_post_include_path_repair_uses_director_runtime_kernel(
     )
 
     relative_path = "src/engine/generator.cpp"
-    assert writes == [("write_file", "task-cpp", relative_path)]
+    assert writes == []
     assert '#include "../models/postcard.hpp"' in target.read_text(encoding="utf-8")
     assert len(results) == 1
     result = results[0]["result"]
@@ -1596,7 +2003,7 @@ def test_cpp_post_include_path_repair_uses_director_runtime_kernel(
     assert result["file"] == relative_path
     assert result["repair_kernel"]["owner_cell"] == "director.runtime"
     assert result["repair_kernel"]["status"] == "applied"
-    assert adapter.progress[-1] == ("task-cpp", "executing", relative_path)
+    assert adapter.progress == []
 
 
 def test_cpp_post_standard_include_repair_uses_director_runtime_kernel(
@@ -1640,7 +2047,7 @@ def test_cpp_post_standard_include_repair_uses_director_runtime_kernel(
         def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
             self.progress.append((task_id, state, current_file))
 
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    _install_test_deferred_projection(monkeypatch, post_execution_repair_bridge, tmp_path)
 
     adapter = FakeAdapter()
     results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
@@ -1650,7 +2057,7 @@ def test_cpp_post_standard_include_repair_uses_director_runtime_kernel(
     )
 
     relative_path = "src/models/seed.hpp"
-    assert writes == [("write_file", "task-cpp-standard", relative_path)]
+    assert writes == []
     assert "#include <cstdint>" in target.read_text(encoding="utf-8")
     assert len(results) == 1
     result = results[0]["result"]
@@ -1658,7 +2065,7 @@ def test_cpp_post_standard_include_repair_uses_director_runtime_kernel(
     assert result["file"] == relative_path
     assert result["repair_kernel"]["owner_cell"] == "director.runtime"
     assert result["repair_kernel"]["status"] == "applied"
-    assert adapter.progress[-1] == ("task-cpp-standard", "executing", relative_path)
+    assert adapter.progress == []
 
 
 def test_cpp_post_missing_private_members_repair_uses_director_runtime_kernel(
@@ -1712,7 +2119,7 @@ def test_cpp_post_missing_private_members_repair_uses_director_runtime_kernel(
         def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
             self.progress.append((task_id, state, current_file))
 
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    _install_test_deferred_projection(monkeypatch, post_execution_repair_bridge, tmp_path)
 
     adapter = FakeAdapter()
     results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
@@ -1722,7 +2129,7 @@ def test_cpp_post_missing_private_members_repair_uses_director_runtime_kernel(
     )
 
     relative_path = "src/models/poem.hpp"
-    assert writes == [("write_file", "task-cpp-private-members", relative_path)]
+    assert writes == []
     assert "private:\n    std::string title_;" in target.read_text(encoding="utf-8")
     assert len(results) == 1
     result = results[0]["result"]
@@ -1730,7 +2137,7 @@ def test_cpp_post_missing_private_members_repair_uses_director_runtime_kernel(
     assert result["file"] == relative_path
     assert result["repair_kernel"]["owner_cell"] == "director.runtime"
     assert result["repair_kernel"]["status"] == "applied"
-    assert adapter.progress[-1] == ("task-cpp-private-members", "executing", relative_path)
+    assert adapter.progress == []
 
 
 def test_cpp_post_placeholder_declaration_repair_uses_director_runtime_kernel(
@@ -1783,7 +2190,7 @@ def test_cpp_post_placeholder_declaration_repair_uses_director_runtime_kernel(
         def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
             self.progress.append((task_id, state, current_file))
 
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    _install_test_deferred_projection(monkeypatch, post_execution_repair_bridge, tmp_path)
 
     adapter = FakeAdapter()
     results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
@@ -1793,7 +2200,7 @@ def test_cpp_post_placeholder_declaration_repair_uses_director_runtime_kernel(
     )
 
     relative_path = "src/engine/generator.hpp"
-    assert writes == [("write_file", "task-cpp-placeholder", relative_path)]
+    assert writes == []
     assert "std::render_return_type" not in target.read_text(encoding="utf-8")
     assert len(results) == 1
     result = results[0]["result"]
@@ -1801,7 +2208,7 @@ def test_cpp_post_placeholder_declaration_repair_uses_director_runtime_kernel(
     assert result["file"] == relative_path
     assert result["repair_kernel"]["owner_cell"] == "director.runtime"
     assert result["repair_kernel"]["status"] == "applied"
-    assert adapter.progress[-1] == ("task-cpp-placeholder", "executing", relative_path)
+    assert adapter.progress == []
 
 
 def test_cpp_post_struct_getter_field_access_repair_uses_director_runtime_kernel(
@@ -1854,7 +2261,7 @@ def test_cpp_post_struct_getter_field_access_repair_uses_director_runtime_kernel
         def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
             self.progress.append((task_id, state, current_file))
 
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    _install_test_deferred_projection(monkeypatch, post_execution_repair_bridge, tmp_path)
 
     adapter = FakeAdapter()
     results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
@@ -1864,7 +2271,7 @@ def test_cpp_post_struct_getter_field_access_repair_uses_director_runtime_kernel
     )
 
     relative_path = "src/main.cpp"
-    assert writes == [("write_file", "task-cpp-struct-getter", relative_path)]
+    assert writes == []
     assert "card.poem" in target.read_text(encoding="utf-8")
     assert len(results) == 1
     result = results[0]["result"]
@@ -1872,7 +2279,7 @@ def test_cpp_post_struct_getter_field_access_repair_uses_director_runtime_kernel
     assert result["file"] == relative_path
     assert result["repair_kernel"]["owner_cell"] == "director.runtime"
     assert result["repair_kernel"]["status"] == "applied"
-    assert adapter.progress[-1] == ("task-cpp-struct-getter", "executing", relative_path)
+    assert adapter.progress == []
 
 
 def test_java_post_accessor_alias_repair_uses_director_runtime_kernel(
@@ -1924,13 +2331,13 @@ def test_java_post_accessor_alias_repair_uses_director_runtime_kernel(
         def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
             self.progress.append((task_id, state, current_file))
 
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    _install_test_deferred_projection(monkeypatch, post_execution_repair_bridge, tmp_path)
 
     adapter = FakeAdapter()
     results = post_execution_repair_bridge._run_java_post_repairs(adapter, tmp_path, task_id="task-java")
 
     relative_path = "src/main/java/demo/RhythmMonster.java"
-    assert writes == [("write_file", "task-java", relative_path)]
+    assert writes == []
     assert "public int temperament()" in target.read_text(encoding="utf-8")
     assert len(results) == 1
     result = results[0]["result"]
@@ -1938,7 +2345,7 @@ def test_java_post_accessor_alias_repair_uses_director_runtime_kernel(
     assert result["file"] == relative_path
     assert result["repair_kernel"]["owner_cell"] == "director.runtime"
     assert result["repair_kernel"]["status"] == "applied"
-    assert adapter.progress[-1] == ("task-java", "executing", relative_path)
+    assert adapter.progress == []
 
 
 def test_rust_post_repairs_run_remaining_rules_through_runtime_bridge(
@@ -2053,7 +2460,7 @@ def test_post_execution_advisory_overlay_flows_into_runtime_receipt(
         max_rounds: int = 1,
     ) -> DirectorRepairPostExecutionScheduleRunResultV1:
         assert "java.post_execution" in runner_step_ids
-        assert max_rounds == 3
+        assert max_rounds == 1
         step = post_execution_repair_bridge.DirectorRepairPostExecutionStepV1(
             step_id="java.post_execution",
             language="java",
@@ -2079,7 +2486,7 @@ def test_post_execution_advisory_overlay_flows_into_runtime_receipt(
             stopped_reason="test_java_advisory",
         )
 
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    _install_test_deferred_projection(monkeypatch, post_execution_repair_bridge, tmp_path)
     monkeypatch.setattr(
         post_execution_repair_bridge,
         "run_director_post_execution_repair_schedule_result",
@@ -2114,7 +2521,7 @@ def test_post_execution_advisory_overlay_flows_into_runtime_receipt(
 
     assert summary is not None
     assert len(tool_results) == 1
-    receipt_notes = tool_results[0]["result"]["repair_kernel"]["advisor_notes"]
+    receipt_notes = tool_results[0]["result"]["repair_kernel"]["planning"]["advisor_notes"]
     assert receipt_notes[0]["advisor_source"] == "resident_agi"
     assert receipt_notes[0]["authoritative"] is False
     assert receipt_notes[0]["suggested_rules"][0]["pattern"] == "getTemperament"
@@ -2776,7 +3183,7 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert receipt["round_number"] == 1
     assert receipt["errors_before"] == 2
     assert receipt["errors_after"] == 0
-    assert receipt["revalidation_evidence"]["metadata"]["max_rounds"] == 3
+    assert receipt["revalidation_evidence"]["metadata"]["max_rounds"] == 1
     shadow = kernel_summary["dark_launch_comparison"]
     assert shadow["matched"] is True
     assert shadow["baseline_source_tools"] == ["deterministic_rust_dependency_repair"]
@@ -2806,7 +3213,7 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     ]
     assert scheduler_bridge["active_step_ids"] == ["rust.dependency_resolution"]
     assert scheduler_bridge["observed_max_round"] == 1
-    assert scheduler_bridge["configured_max_rounds"] == 3
+    assert scheduler_bridge["configured_max_rounds"] == 1
     assert scheduler_bridge["source_tools"] == ["deterministic_rust_dependency_repair"]
     assert scheduler_bridge["phases"] == {"dependency_resolution": 1}
     assert scheduler_bridge["priorities"] == {"0": 1}
@@ -2849,8 +3256,9 @@ def test_phase_pre_materialization_quality_passes_artifact_quality_convergence_v
         task_id: str,
         resident_agi_repair_advisory_overlay: dict[str, Any] | None = None,
         convergence_verifier: Any = None,
+        execution_attempt: Any = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-        del adapter, resident_agi_repair_advisory_overlay
+        del adapter, resident_agi_repair_advisory_overlay, execution_attempt
         captured["bridge"] = {
             "task_id": task_id,
             "convergence_verifier": convergence_verifier,
@@ -2943,8 +3351,9 @@ def test_phase_pre_materialization_quality_passes_verifier_to_materialization_br
         task_id: str,
         artifact_quality_errors: list[str],
         convergence_verifier: Any = None,
+        execution_attempt: Any = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        del adapter
+        del adapter, execution_attempt
         captured["materialization_bridge"] = {
             "task": task,
             "task_id": task_id,
@@ -2959,8 +3368,9 @@ def test_phase_pre_materialization_quality_passes_verifier_to_materialization_br
         task_id: str,
         resident_agi_repair_advisory_overlay: dict[str, Any] | None = None,
         convergence_verifier: Any = None,
+        execution_attempt: Any = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-        del adapter, task_id, resident_agi_repair_advisory_overlay, convergence_verifier
+        del adapter, task_id, resident_agi_repair_advisory_overlay, convergence_verifier, execution_attempt
         return [], None
 
     monkeypatch.setattr(execute_method_module, "build_artifact_quality_convergence_verifier", fake_factory)
@@ -3031,8 +3441,9 @@ def test_phase_pre_materialization_quality_omits_verifier_when_factory_fails(
         task_id: str,
         resident_agi_repair_advisory_overlay: dict[str, Any] | None = None,
         convergence_verifier: Any = None,
+        execution_attempt: Any = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-        del adapter, task_id, resident_agi_repair_advisory_overlay
+        del adapter, task_id, resident_agi_repair_advisory_overlay, execution_attempt
         captured["convergence_verifier"] = convergence_verifier
         return [], None
 
@@ -4363,6 +4774,9 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         ]
 
         class FakeRuntimeService:
+            def __init__(self, **_kwargs: Any) -> None:
+                pass
+
             async def execute_role_session(self, command: ExecuteRoleSessionCommandV1) -> RoleExecutionResultV1:
                 assert command.role == "director"
                 assert command.stream is False
@@ -5453,6 +5867,41 @@ class TestDirectorFailureClosure:
         assert "kernel contract retry failed" in str(result.get("error") or "")
 
     @pytest.mark.asyncio
+    async def test_primary_write_call_projects_bounded_output_budget_to_runtime(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        captured: dict[str, Any] = {}
+
+        async def _capture_dialogue(message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+            captured["message"] = message
+            captured["context"] = dict(context or {})
+            return {"content": "done", "success": True}
+
+        adapter._invoke_role_dialogue = _capture_dialogue  # type: ignore[method-assign]
+
+        result = await adapter._invoke_role_dialogue_with_timeout(
+            "materialize files",
+            context={
+                "target_files": ["go.mod", "main.go", "models/pet.go"],
+                "task_execution_profile": {
+                    "schema_version": "task.execution_profile.v1",
+                    "task_type": "write_code",
+                },
+                "task_execution_contract": {
+                    "schema_version": "task.execution_contract.v1",
+                    "context_budget": {"output_budget_tokens": 128_000},
+                },
+            },
+            timeout_seconds=42.0,
+            stage_label="first_call",
+        )
+
+        assert result["success"] is True
+        assert captured["message"] == "materialize files"
+        runtime_context = captured["context"]
+        assert runtime_context["llm_max_tokens"] == 7000
+        assert runtime_context["director_forced_write_output_budget"]["stage_label"] == "first_call"
+
+    @pytest.mark.asyncio
     async def test_execute_fails_claimed_task_on_unhandled_runtime_error(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         task = adapter.task_runtime.create_task_row(
@@ -5572,8 +6021,8 @@ class TestDirectorFailureClosure:
         )
 
         assert result["success"] is False
-        assert result["error_code"] == "director_materialized_out_of_scope"
-        assert result["failure_class"] == FailureClassV1.BLUEPRINT_SCOPE_MISMATCH.value
+        assert result["error_code"] == "incomplete_materialization"
+        assert result["failure_class"] == FailureClassV1.INCOMPLETE_MATERIALIZATION.value
         updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
@@ -5582,6 +6031,7 @@ class TestDirectorFailureClosure:
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("new_files") == []
         assert adapter_result.get("modified_files") == []
+        assert adapter_result.get("out_of_scope_files") == ["src/server/moderation.ts"]
 
     @pytest.mark.asyncio
     async def test_execute_keeps_failed_no_write_separate_from_sibling_diff(self, tmp_path: Any) -> None:
@@ -6316,7 +6766,9 @@ class TestDirectorFailureClosure:
     async def test_execute_repairs_typescript_return_object_property_semicolon(
         self,
         tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         adapter = _make_adapter(tmp_path)
         task = adapter.task_runtime.create_task_row(
             subject="Create task model summary",
@@ -6377,7 +6829,9 @@ export function summary() {
     async def test_execute_declares_runtime_dependency_when_quality_repair_repeats_undeclared_import(
         self,
         tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         (tmp_path / "package.json").write_text(
             """
 {
@@ -6449,7 +6903,7 @@ export function summary() {
         source_tools = _source_tools_from_tool_results(result["tool_results"])
         assert result["success"] is True
         assert stage_labels == ["first_call"]
-        assert '"typeorm":' not in package_text
+        assert '"typeorm": "^0.3.20"' in package_text
         assert "from 'typeorm'" not in tenant_text
         assert "@Entity" not in tenant_text
         assert "tasks: unknown[] = [];" in tenant_text
@@ -6460,7 +6914,9 @@ export function summary() {
     async def test_execute_declares_mongoose_runtime_dependency_for_audit_log_model(
         self,
         tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         (tmp_path / "package.json").write_text(
             """
 {
@@ -6561,7 +7017,9 @@ export function summary() {
     async def test_execute_declares_uuid_and_winston_runtime_dependencies_for_audit_log(
         self,
         tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         (tmp_path / "package.json").write_text(
             """
 {
@@ -6661,7 +7119,9 @@ export function summary() {
     async def test_execute_repairs_tenant_middleware_escaped_newline_and_node_types(
         self,
         tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         (tmp_path / "package.json").write_text(
             """
 {
@@ -6761,7 +7221,9 @@ export function summary() {
     async def test_execute_repairs_zod_type_class_name_collision(
         self,
         tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         (tmp_path / "package.json").write_text(
             """
 {
@@ -7318,10 +7780,11 @@ export function summary() {
         )
         adapter = _make_adapter(tmp_path)
         task = adapter.task_runtime.create_task_row(
-            subject="Strengthen multiplayer card integration tests",
+            subject="Verify existing multiplayer card integration tests",
             description="Verify multiplayer card integration tests according to acceptance criteria.",
             metadata={
                 "phase": "verify",
+                "qa_rework_verification_only": True,
                 "scope_paths": ["tests/integration/multiplayer-flow.test.ts"],
                 "target_files": ["tests/integration/multiplayer-flow.test.ts"],
                 "acceptance": ["No placeholder tests remain"],
@@ -7348,7 +7811,7 @@ export function summary() {
         assert evidence.get("ok") is True
 
     @pytest.mark.asyncio
-    async def test_execute_repairs_overstrict_node_test_contract_before_llm(self, tmp_path: Any) -> None:
+    async def test_execute_does_not_preflight_accept_overstrict_node_test_contract(self, tmp_path: Any) -> None:
         script = tmp_path / "scripts" / "test.mjs"
         script.parent.mkdir(parents=True, exist_ok=True)
         script.write_text(
@@ -7416,12 +7879,20 @@ export function summary() {
             },
         )
         task_id = str(task["id"])
+        dialogue_calls = 0
 
-        async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _quality_repair_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            nonlocal dialogue_calls
             del args, kwargs
-            raise AssertionError("deterministic test script repair should finish before LLM dialogue")
+            dialogue_calls += 1
+            return {"content": "", "success": False, "error": "quality_repair_required"}
 
-        adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _quality_repair_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
             task_id=task_id,
@@ -7430,13 +7901,11 @@ export function summary() {
         )
 
         rewritten = script.read_text(encoding="utf-8")
-        assert result["success"] is True
-        assert result["materialization_mode"] == "write_tool_and_workspace_diff"
-        assert result["tools_executed"] >= 1
-        assert result["changed_files"] == ["scripts/test.mjs"]
-        assert rewritten == _build_substantive_node_test_script()
-        assert "missing validation contract" not in rewritten
-        assert "test file lacks executable check contract" in rewritten
+        assert result["success"] is False
+        assert result["error_code"] == "incomplete_materialization"
+        assert dialogue_calls >= 1
+        assert any(signal.get("code") == "incomplete_materialization" for signal in result["decision_signals"])
+        assert "missing validation contract" in rewritten
 
     def test_detects_legacy_overstrict_node_export_contract(self) -> None:
         legacy_script = (
@@ -7587,7 +8056,12 @@ export function summary() {
         assert result.returncode == 0, result.stderr
         assert "card3d behavior checks passed" in result.stdout
 
-    def test_deterministic_patch_residue_cleanup_removes_declared_marker(self, tmp_path: Any) -> None:
+    def test_deterministic_patch_residue_cleanup_removes_declared_marker(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         target = tmp_path / "src" / "assets" / "card-assets.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
@@ -7637,7 +8111,12 @@ export function summary() {
         assert target.read_text(encoding="utf-8") == original
 
     @pytest.mark.asyncio
-    async def test_execute_completes_scaffold_marker_cleanup_without_llm_call(self, tmp_path: Any) -> None:
+    async def test_execute_completes_scaffold_marker_cleanup_without_llm_call(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         source = tmp_path / "src" / "server" / "app.ts"
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_text(
@@ -8183,29 +8662,11 @@ class TestExistingWorkspaceTaskEvidence:
 
 
 class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
-    """Runtime smoke must not penalize a long-running __main__ block.
+    """Runtime smoke is deferred to the authoritative Director command port.
 
-    Live factory-bench L4-23 (2026-06-17, after the static-smoke
-    fix): the model wrote ``gateway/server.py`` whose ``__main__``
-    block launches an HTTP server with ``serve_forever()`` — the
-    canonical pattern for a Python web gateway. The runtime smoke
-    killed the process after 5s and reported it as a timeout
-    failure, which requeued the parent task and broke
-    integration_qa. The script itself is correct:
-    ``python3 gateway/server.py`` really starts the server on
-    127.0.0.1:8080 and waits for connections. The platform must
-    not penalize a long-running, contract-compliant __main__
-    block as a quality failure.
-
-    Strategy: when the runtime smoke hits its timeout, check
-    whether the process is still alive. If yes, the model wrote
-    a process that intentionally runs forever (server/daemon) —
-    kill it and do NOT add it to ``artifact_quality_errors``. If
-    the process already exited (perhaps during the cleanup),
-    the timeout itself is the failure — report it as before.
-    The smoke's job is to surface CALL-TIME errors, not loop
-    semantics; a long-running server is contract-compliant for
-    web-gateway / daemon / game-loop L4-L8 briefs.
+    The adapter only detects eligible scripts and emits an attempt-bound command
+    request. Timeout classification and process cleanup belong to the physical
+    tool lifecycle and its receipt, never to an adapter-local subprocess.
     """
 
     def test_long_running_main_block_is_not_a_failure(self, tmp_path: Any) -> None:
@@ -8225,15 +8686,19 @@ class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
             encoding="utf-8",
         )
 
-        errors = run_python_runtime_smoke(
+        errors, tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-server-bb-1",
             all_affected_files=["server.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-server-bb-1"),
             timeout_seconds=1.0,
         )
 
-        # Long-running process: smoke should NOT flag it as a failure.
         assert errors == [], errors
+        assert len(tool_results) == 1
+        request = tool_results[0]["result"]["deferred_request"]
+        assert request.command.endswith("server.py")
+        assert request.timeout_seconds == 1
 
     def test_clean_main_block_still_passes(self, tmp_path: Any) -> None:
         """A clean main that exits within timeout is still a pass."""
@@ -8243,62 +8708,34 @@ class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
             encoding="utf-8",
         )
 
-        errors = run_python_runtime_smoke(
+        errors, tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-ok-bb-1",
             all_affected_files=["ok.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-ok-bb-1"),
             timeout_seconds=1.0,
         )
 
         assert errors == [], errors
+        assert len(tool_results) == 1
 
-    def test_subprocess_timeout_expired_process_killed(self, tmp_path: Any) -> None:
-        """Sanity: when a long-running process is killed, the
-        subprocess handle must be cleaned up so no zombie lingers.
-        This guards against the regression where the smoke leaves
-        a leaked subprocess after returning no errors."""
+    def test_scheduling_never_spawns_an_adapter_child_process(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         (tmp_path / "server.py").write_text(
             "import time\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.5)\n",
             encoding="utf-8",
         )
 
-        # Find one leftover python3 process owned by this test pid
-        # BEFORE running. (None expected, but the assertion is that
-        # the count does not GROW after running.)
-        import os
-        import subprocess
-
-        my_pid = os.getpid()
-        before = (
-            subprocess.run(
-                ["pgrep", "-P", str(my_pid), "python3"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            .stdout.strip()
-            .split()
-        )
-        errors = run_python_runtime_smoke(
+        errors, tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-zombie-bb-1",
             all_affected_files=["server.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-zombie-bb-1"),
             timeout_seconds=0.5,
         )
-        after = (
-            subprocess.run(
-                ["pgrep", "-P", str(my_pid), "python3"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            .stdout.strip()
-            .split()
-        )
         assert errors == [], errors
-        # No new zombie child of this test process
-        assert len(after) <= len(before), (before, after)
+        assert len(tool_results) == 1
+        assert tool_results[0]["result"]["deferred_request"].timeout_seconds == 1
 
 
 class TestDeterministicPythonStaticSmoke:
@@ -8416,16 +8853,19 @@ class TestDeterministicPythonRuntimeSmoke:
             encoding="utf-8",
         )
 
-        errors = run_python_runtime_smoke(
+        errors, tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-1",
             all_affected_files=["calculator.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-py-runtime-1"),
             timeout_seconds=10.0,
         )
 
-        assert len(errors) == 1, errors
-        assert "calculator.py" in errors[0]
-        assert "ValueError" in errors[0] or "Traceback" in errors[0]
+        assert errors == []
+        assert len(tool_results) == 1
+        request = tool_results[0]["result"]["deferred_request"]
+        assert request.command.endswith("calculator.py")
+        assert request.purpose.startswith("20_python_runtime_smoke_")
 
     def test_python_runtime_smoke_passes_clean_main(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -8434,14 +8874,16 @@ class TestDeterministicPythonRuntimeSmoke:
             encoding="utf-8",
         )
 
-        errors = run_python_runtime_smoke(
+        errors, tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-2",
             all_affected_files=["hello.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-py-runtime-2"),
             timeout_seconds=10.0,
         )
 
         assert errors == [], errors
+        assert len(tool_results) == 1
 
     def test_python_runtime_smoke_sets_workspace_pythonpath_for_test_scripts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -8460,14 +8902,17 @@ class TestDeterministicPythonRuntimeSmoke:
             encoding="utf-8",
         )
 
-        errors = run_python_runtime_smoke(
+        errors, tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-test-import",
             all_affected_files=["tests/test_guess_number.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-py-runtime-test-import"),
             timeout_seconds=10.0,
         )
 
         assert errors == [], errors
+        assert len(tool_results) == 2
+        assert {item["result"]["purpose"].split("_")[0] for item in tool_results} == {"20", "30"}
 
     def test_python_runtime_smoke_runs_unittest_discover_for_touched_tests(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -8486,17 +8931,19 @@ class TestDeterministicPythonRuntimeSmoke:
             encoding="utf-8",
         )
 
-        errors = run_python_runtime_smoke(
+        errors, tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-py-unittest-discover",
             all_affected_files=["tests/test_weather.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-py-unittest-discover"),
             timeout_seconds=10.0,
         )
 
-        assert len(errors) == 1, errors
-        assert "python -m unittest discover" in errors[0]
-        assert "tests/test_weather.py" in errors[0]
-        assert "AttributeError" in errors[0]
+        assert errors == []
+        assert len(tool_results) == 1
+        request = tool_results[0]["result"]["deferred_request"]
+        assert "unittest discover" in request.command
+        assert request.purpose == "30_python_unittest_discover"
 
     def test_python_runtime_smoke_skips_module_without_main(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -8508,28 +8955,32 @@ class TestDeterministicPythonRuntimeSmoke:
             encoding="utf-8",
         )
 
-        errors = run_python_runtime_smoke(
+        errors, tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-3",
             all_affected_files=["library.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-py-runtime-3"),
             timeout_seconds=10.0,
         )
 
         assert errors == [], errors
+        assert tool_results == []
 
     def test_python_runtime_smoke_skips_non_python_files(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         (tmp_path / "readme.md").write_text("# title\n", encoding="utf-8")
         (tmp_path / "config.toml").write_text("x = 1\n", encoding="utf-8")
 
-        errors = run_python_runtime_smoke(
+        errors, tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-4",
             all_affected_files=["readme.md", "config.toml"],
+            context=_test_execution_attempt_context(tmp_path, "task-py-runtime-4"),
             timeout_seconds=10.0,
         )
 
         assert errors == [], errors
+        assert tool_results == []
 
     def test_python_runtime_smoke_terminates_hung_process(self, tmp_path: Any) -> None:
         """The smoke test must kill the child process after the
@@ -8555,22 +9006,26 @@ class TestDeterministicPythonRuntimeSmoke:
         # are not blocked by a leaked process.
         import time
 
-        first = run_python_runtime_smoke(
+        first_errors, first_tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-5",
             all_affected_files=["hung.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-py-runtime-5"),
             timeout_seconds=0.5,
         )
-        assert first == [], first
+        assert first_errors == []
+        assert len(first_tool_results) == 1
         started = time.monotonic()
-        second = run_python_runtime_smoke(
+        second_errors, second_tool_results = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-5b",
             all_affected_files=["hung.py"],
+            context=_test_execution_attempt_context(tmp_path, "task-py-runtime-5b"),
             timeout_seconds=0.5,
         )
         elapsed = time.monotonic() - started
-        assert second == [], second
+        assert second_errors == []
+        assert len(second_tool_results) == 1
         assert elapsed < 5.0, f"second smoke took {elapsed:.2f}s -- leaked process"
 
 
@@ -8824,6 +9279,9 @@ class TestDirectorRuntimeFallback:
         captured: dict[str, Any] = {}
 
         class FakeRoleRuntimeService:
+            def __init__(self, **_kwargs: Any) -> None:
+                pass
+
             async def execute_role_session(self, command: ExecuteRoleSessionCommandV1) -> RoleExecutionResultV1:
                 captured["command"] = command
                 return RoleExecutionResultV1(
@@ -8871,6 +9329,9 @@ class TestDirectorRuntimeFallback:
         adapter = _make_adapter(tmp_path)
 
         class FakeRoleRuntimeService:
+            def __init__(self, **_kwargs: Any) -> None:
+                pass
+
             async def execute_role_session(self, command: ExecuteRoleSessionCommandV1) -> RoleExecutionResultV1:
                 return RoleExecutionResultV1(
                     ok=False,
@@ -8913,7 +9374,7 @@ class TestDirectorRuntimeFallback:
         adapter = _make_adapter(tmp_path)
 
         class UnavailableRoleRuntimeService:
-            def __init__(self) -> None:
+            def __init__(self, **_kwargs: Any) -> None:
                 raise ImportError("runtime boundary unavailable")
 
         monkeypatch.setattr(
@@ -8933,6 +9394,9 @@ class TestDirectorRuntimeFallback:
         adapter = _make_adapter(tmp_path)
 
         class FailingRoleRuntimeService:
+            def __init__(self, **_kwargs: Any) -> None:
+                pass
+
             async def execute_role_session(self, command: ExecuteRoleSessionCommandV1) -> RoleExecutionResultV1:
                 del command
                 raise RuntimeError("runtime provider failed")
@@ -8998,10 +9462,6 @@ def test_scaffold_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
     """§8 integrity: a declared TS target with no clean nearby source must never
     be fabricated — and the historical opt-in env vars are now permanently inert,
     so setting them re-arms nothing (the re-activation footgun is gone)."""
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     adapter = SimpleNamespace(
         workspace=str(tmp_path),
         _execution=SimpleNamespace(_message_bus=None),
@@ -9017,7 +9477,7 @@ def test_scaffold_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
     ]
 
     def _run() -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        return run_materialization_quality_repair_schedule(
+        return _run_test_materialization_quality_repair_schedule(
             adapter,
             task=task,
             task_id="task-1",
@@ -9045,10 +9505,6 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
     """§8 regression: Director must not fabricate business-domain service code
     unless a legacy benchmark explicitly opts into the synthesizer."""
     monkeypatch.delenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", raising=False)
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     task = {
         "subject": "Audit service",
         "description": "Create audit service and middleware.",
@@ -9067,7 +9523,7 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
         "unresolved relative import './audit.entity' in src/services/audit.service.ts",
     ]
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task=task,
         task_id="task-1",
@@ -9081,7 +9537,7 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
 
     # The opt-in env var is now permanently inert: setting it fabricates nothing.
     monkeypatch.setenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", "1")
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task=task,
         task_id="task-1",
@@ -9094,10 +9550,6 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
 
 
 def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     src = tmp_path / "src"
     src.mkdir(parents=True)
     garden = src / "Garden.ts"
@@ -9113,7 +9565,7 @@ def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path:
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/Garden.ts", "src/moon.ts"]},
         task_id="task-2",
@@ -9131,10 +9583,6 @@ def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path:
 
 
 def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     src = tmp_path / "src"
     src.mkdir(parents=True)
     main = src / "main.ts"
@@ -9148,7 +9596,7 @@ def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": []},
         task_id="task-unused-import",
@@ -9167,10 +9615,6 @@ def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any
 
 
 def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     (tmp_path / "src" / "models").mkdir(parents=True)
     (tmp_path / "src" / "models" / "firefly.ts").write_text("export class Firefly {}\n", encoding="utf-8")
     (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n', encoding="utf-8")
@@ -9195,7 +9639,7 @@ def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_p
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": []},
         task_id="task-npm-test",
@@ -9216,10 +9660,6 @@ def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_p
 
 
 def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     model_dir = tmp_path / "src" / "models"
     model_dir.mkdir(parents=True)
     flower = model_dir / "flower.ts"
@@ -9264,7 +9704,7 @@ def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_pa
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/flower.ts"]},
         task_id="task-1",
@@ -9293,9 +9733,6 @@ def test_typescript_return_object_comma_repair_fixes_inline_missing_property_com
 ) -> None:
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import (
         typescript_repairs as typescript_repairs_module,
-    )
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     def _forbid_legacy_fallback(*args: object, **kwargs: object) -> str:
@@ -9341,7 +9778,7 @@ def test_typescript_return_object_comma_repair_fixes_inline_missing_property_com
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/Flight.ts"]},
         task_id="task-1",
@@ -9362,17 +9799,13 @@ def test_typescript_return_object_comma_repair_fixes_inline_missing_property_com
     for item in repair_results:
         repair_kernel = dict((item.get("result") or {}).get("repair_kernel") or {})
         assert repair_kernel["owner_cell"] == "director.runtime"
-        assert repair_kernel["authority_hash"]
-        assert repair_kernel["projection_hash"]
+        assert repair_kernel["execution_deferred"] is True
+        assert repair_kernel["execution_authority"] == "roles.kernel"
         assert repair_kernel["metadata"]["requires_revalidation"] is True
     assert "flightTime, landed:" in repaired
 
 
 def test_typescript_return_object_comma_repair_fixes_previous_line_missing_comma(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     model_dir = tmp_path / "src" / "models"
     model_dir.mkdir(parents=True)
     flight = model_dir / "Flight.ts"
@@ -9398,7 +9831,7 @@ def test_typescript_return_object_comma_repair_fixes_previous_line_missing_comma
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/Flight.ts"]},
         task_id="task-1",
@@ -9415,10 +9848,6 @@ def test_typescript_return_object_comma_repair_fixes_previous_line_missing_comma
 
 
 def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     model_dir = tmp_path / "src" / "models"
     model_dir.mkdir(parents=True)
     moonphase = model_dir / "moonphase.ts"
@@ -9445,7 +9874,7 @@ def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_p
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/moonphase.ts"]},
         task_id="task-1",
@@ -9476,10 +9905,6 @@ def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_p
 
 
 def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     engine_dir = tmp_path / "src" / "engine"
     engine_dir.mkdir(parents=True)
     renderer = engine_dir / "renderer.ts"
@@ -9501,7 +9926,7 @@ def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/engine/renderer.ts"]},
         task_id="task-1",
@@ -9522,10 +9947,6 @@ def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp
 
 
 def test_typescript_comma_expected_repair_accepts_plain_tsc_error_format(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     model_dir = tmp_path / "src" / "models"
     model_dir.mkdir(parents=True)
     flower = model_dir / "Flower.ts"
@@ -9555,7 +9976,7 @@ def test_typescript_comma_expected_repair_accepts_plain_tsc_error_format(tmp_pat
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/Flower.ts"]},
         task_id="task-1",
@@ -9883,7 +10304,6 @@ def test_step_verify_environment_prep_runs_when_node_modules_is_stale(tmp_path: 
 
 def test_step_verify_runs_environment_prep_before_verify(
     tmp_path: Any,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polaris.cells.roles.adapters.internal.director import quality_gate as quality_gate_module
 
@@ -9891,29 +10311,25 @@ def test_step_verify_runs_environment_prep_before_verify(
         json.dumps({"scripts": {"test": "vitest run"}, "devDependencies": {"vitest": "^1.6.0"}}) + "\n",
         encoding="utf-8",
     )
-    calls: list[tuple[str, str]] = []
-
-    def fake_environment_prep(verify: str, *, workspace: str) -> list[str]:
-        calls.append((verify, workspace))
-        (tmp_path / "node_modules").mkdir()
-        return []
-
-    def fake_run(*args: Any, **kwargs: Any) -> SimpleNamespace:
-        assert args[0] == "npm run test"
-        assert kwargs["cwd"] == str(tmp_path)
-        assert (tmp_path / "node_modules").is_dir()
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(quality_gate_module, "_run_step_verify_environment_prep", fake_environment_prep)
-    monkeypatch.setattr(quality_gate_module.subprocess, "run", fake_run)
-
-    errors = quality_gate_module._collect_step_verify_errors(
+    task_id = "task-step-prep"
+    context = {
+        "construction_step": {"verify": "npm run test"},
+        **_test_execution_attempt_context(tmp_path, task_id),
+    }
+    errors, tool_results = quality_gate_module._collect_step_verify_errors(
         SimpleNamespace(workspace=str(tmp_path)),
-        {"construction_step": {"verify": "npm run test"}},
+        context,
+        task_id=task_id,
     )
 
     assert errors == []
-    assert calls == [("npm run test", str(tmp_path))]
+    requests = [item["result"]["deferred_request"] for item in tool_results]
+    assert [request.purpose for request in requests] == [
+        "00_environment_prep_000",
+        "10_step_verify_000",
+    ]
+    assert requests[0].command.startswith("npm ")
+    assert requests[1].command == "npm run test"
 
 
 def test_node_tap_multi_failure_quality_repair_preserves_batch(tmp_path: Any) -> None:
@@ -10259,10 +10675,6 @@ def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any)
     """§8 regression: missing test files should not be masked by fabricated
     placeholder tests in production/director hot paths."""
     monkeypatch.delenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", raising=False)
-    from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
-    )
-
     (tmp_path / "package.json").write_text(
         json.dumps({"scripts": {"test": "vitest run"}}, ensure_ascii=False),
         encoding="utf-8",
@@ -10277,7 +10689,7 @@ def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any)
         "npm package manifest has test runner script but no test/spec files exist in package.json",
     ]
 
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["package.json"]},
         task_id="task-1",
@@ -10290,7 +10702,7 @@ def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any)
 
     # The opt-in env var is now permanently inert: setting it fabricates nothing.
     monkeypatch.setenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", "1")
-    results, summary = run_materialization_quality_repair_schedule(
+    results, summary = _run_test_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["package.json"]},
         task_id="task-1",
@@ -10699,7 +11111,12 @@ class TestQualityRepairMissingTargetContract:
         assert not (tmp_path / "src" / "router.tsx").exists()
 
     @pytest.mark.asyncio
-    async def test_quality_repair_uses_deterministic_typescript_semantic_repair_before_llm(self, tmp_path) -> None:
+    async def test_quality_repair_uses_deterministic_typescript_semantic_repair_before_llm(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -11766,70 +12183,114 @@ class TestQualityRepairMissingTargetContract:
         assert record["artifact_quality_issues"][0]["code"] == "unresolved_relative_import"
         assert record["artifact_quality_issues"][0]["metadata"]["importer_path"] == "src/engine/rules.js"
 
-    def test_step_verify_missing_downstream_file_is_deferred(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
+    def test_step_verify_failure_classification_waits_for_authoritative_receipt(self, tmp_path: Any) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _collect_step_verify_errors,
         )
 
-        class _Proc:
-            returncode = 1
-            stdout = ""
-            stderr = "Could not find 'tests/product.test.js'\n"
+        task_id = "task-source-files"
+        context: dict[str, Any] = {
+            "construction_step": {"verify": "npm test"},
+            **_test_execution_attempt_context(tmp_path, task_id),
+        }
 
-        monkeypatch.setattr(director_quality_gate.subprocess, "run", lambda *_args, **_kwargs: _Proc())
-        monkeypatch.setattr(director_quality_gate, "_first_failing_verify_clause", lambda *_args, **_kwargs: "")
-        context: dict[str, Any] = {"construction_step": {"verify": "npm test"}}
-
-        errors = _collect_step_verify_errors(
+        errors, tool_results = _collect_step_verify_errors(
             SimpleNamespace(workspace=str(tmp_path)),
             context,
+            task_id=task_id,
             task={"target_files": ["src/engine/rules.js", "src/engine/runner.js"]},
             workspace_name=tmp_path.name,
         )
 
         assert errors == []
-        assert context["director_task_boundary_deferred_quality_errors"] == [
-            {
-                "schema_version": "director.task_boundary.deferred_quality_errors.v1",
-                "reason": "missing_workspace_file_outside_current_task_target_files",
-                "artifact_quality_errors": [
-                    "step verify failed (exit 1): npm test :: failure excerpt: Could not find 'tests/product.test.js'"
-                ],
-                "target_files": ["tests/product.test.js"],
-            }
-        ]
+        assert len(tool_results) == 1
+        request = tool_results[0]["result"]["deferred_request"]
+        assert request.command == "npm test"
+        assert request.execution_attempt.external_task_id == task_id
 
-    def test_step_verify_declared_downstream_test_owner_is_deferred_before_execution(
-        self,
-        tmp_path: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
+    def test_step_verify_normalizes_exact_private_row_id_to_bound_external_task_id(self, tmp_path: Any) -> None:
+        """A claimed TaskRuntime row exposes both private and external ids.
+
+        Director execution uses the private row id internally, while deferred
+        directed effects are bound to the PM/CE external task id.  Only that
+        exact identity pair may be normalized; otherwise the request must stay
+        fail-closed.
+        """
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _collect_step_verify_errors,
         )
 
-        def _unexpected_run(*_args: Any, **_kwargs: Any) -> None:
-            raise AssertionError("downstream-owned project verifier must not execute in the source task")
+        context: dict[str, Any] = {
+            "construction_step": {"verify": "go test ./..."},
+            **_test_execution_attempt_context(tmp_path, "TASK-1"),
+        }
 
-        monkeypatch.setattr(director_quality_gate.subprocess, "run", _unexpected_run)
+        errors, tool_results = _collect_step_verify_errors(
+            SimpleNamespace(workspace=str(tmp_path)),
+            context,
+            task_id="91",
+            task={"target_files": ["go.mod", "main.go"]},
+            workspace_name=tmp_path.name,
+        )
+
+        assert errors == []
+        assert len(tool_results) == 1
+        request = tool_results[0]["result"]["deferred_request"]
+        assert request.task_id == "TASK-1"
+        assert request.execution_attempt.task_id == 91
+        assert request.execution_attempt.external_task_id == "TASK-1"
+
+    def test_step_verify_rejects_task_id_outside_bound_private_external_pair(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _collect_step_verify_errors,
+        )
+
+        context: dict[str, Any] = {
+            "construction_step": {"verify": "go test ./..."},
+            **_test_execution_attempt_context(tmp_path, "TASK-1"),
+        }
+
+        errors, tool_results = _collect_step_verify_errors(
+            SimpleNamespace(workspace=str(tmp_path)),
+            context,
+            task_id="unrelated-task",
+            task={"target_files": ["go.mod", "main.go"]},
+            workspace_name=tmp_path.name,
+        )
+
+        assert errors == [
+            "step verify could not be admitted to directed-effect authority: deo_deferred_command_request_invalid"
+        ]
+        assert tool_results == []
+
+    def test_step_verify_declared_downstream_test_owner_is_deferred_before_execution(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _collect_step_verify_errors,
+        )
+
+        task_id = "task-source-owner"
         context: dict[str, Any] = {
             "construction_step": {"verify": "npm run test"},
             "project_declared_target_files": [
                 "src/index.ts",
                 "tests/simulation.test.ts",
             ],
+            **_test_execution_attempt_context(tmp_path, task_id),
         }
 
-        errors = _collect_step_verify_errors(
+        errors, tool_results = _collect_step_verify_errors(
             SimpleNamespace(workspace=str(tmp_path)),
             context,
+            task_id=task_id,
             task={"target_files": ["src/index.ts"]},
             workspace_name=tmp_path.name,
         )
 
         assert errors == []
+        assert tool_results == []
         assert context["director_task_boundary_deferred_verification_obligations"] == [
             {
                 "schema_version": "director.contract_step_verify_resolution.v1",
@@ -11840,49 +12301,28 @@ class TestQualityRepairMissingTargetContract:
             }
         ]
 
-    def test_step_verify_package_script_entrypoint_outside_task_scope_is_deferred(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
+    def test_step_verify_package_script_entrypoint_outside_task_scope_is_deferred(self, tmp_path: Any) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _collect_step_verify_errors,
         )
 
-        class _Proc:
-            returncode = 1
-            stdout = ""
-            stderr = "script 'verify' references missing local entrypoint: ./scripts/verify-package.js\n"
+        task_id = "task-entrypoint-owner"
+        context: dict[str, Any] = {
+            "construction_step": {"verify": "npm run verify"},
+            **_test_execution_attempt_context(tmp_path, task_id),
+        }
 
-        clause = (
-            "Artifact quality scan failed: npm package manifest script 'verify' references missing local "
-            "entrypoint './scripts/verify-package.js' in package.json"
-        )
-        monkeypatch.setattr(director_quality_gate.subprocess, "run", lambda *_args, **_kwargs: _Proc())
-        monkeypatch.setattr(director_quality_gate, "_first_failing_verify_clause", lambda *_args, **_kwargs: clause)
-        context: dict[str, Any] = {"construction_step": {"verify": "npm run verify"}}
-
-        errors = _collect_step_verify_errors(
+        errors, tool_results = _collect_step_verify_errors(
             SimpleNamespace(workspace=str(tmp_path)),
             context,
+            task_id=task_id,
             task={"target_files": ["src/index.js"]},
             workspace_name=tmp_path.name,
         )
 
         assert errors == []
-        assert context["director_task_boundary_deferred_quality_errors"] == [
-            {
-                "schema_version": "director.task_boundary.deferred_quality_errors.v1",
-                "reason": "npm_script_entrypoint_outside_current_task_target_files",
-                "artifact_quality_errors": [
-                    "step verify failed (exit 1) | "
-                    "Artifact quality scan failed: npm package manifest script 'verify' references missing local "
-                    "entrypoint './scripts/verify-package.js' in package.json | "
-                    "failure excerpt: script 'verify' references missing local entrypoint: "
-                    "./scripts/verify-package.js | full: npm run verify"
-                ],
-                "target_files": ["scripts/verify-package.js"],
-            }
-        ]
+        assert len(tool_results) == 1
+        assert tool_results[0]["result"]["deferred_request"].command == "npm run verify"
 
     @pytest.mark.asyncio
     async def test_package_script_entrypoint_retry_blocks_out_of_scope_target(self, tmp_path) -> None:
@@ -13001,7 +13441,12 @@ class TestQualityRepairMissingTargetContract:
         assert summary["source_tools"] == ["deterministic_rust_line_suggestion_repair"]
 
     @pytest.mark.asyncio
-    async def test_go_scaffold_marker_quality_repair_runs_deterministic_before_llm(self, tmp_path) -> None:
+    async def test_go_scaffold_marker_quality_repair_runs_deterministic_before_llm(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_all_test_deferred_projections(monkeypatch, tmp_path)
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -13068,7 +13513,7 @@ class TestQualityRepairMissingTargetContract:
         assert "sample-check" in repaired
 
     @pytest.mark.asyncio
-    async def test_single_missing_target_repair_coerces_raw_content_to_write_file(self, tmp_path) -> None:
+    async def test_single_missing_target_raw_content_is_non_authoritative_and_does_not_write(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -13121,11 +13566,12 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert summary["tool_results"] == 1
-        assert summary["write_tool_evidence"] is True
-        assert tool_results[0]["result"]["source_tool"] == "director_quality_repair_raw_single_target_write_file"
-        assert (tmp_path / "services" / "product_service" / "app.py").read_text(encoding="utf-8") == (
-            "print('service ready')"
-        )
+        assert summary["write_tool_evidence"] is False
+        assert tool_results[0]["success"] is False
+        assert tool_results[0]["result"]["source_tool"] == "director_quality_repair_raw_single_target_body"
+        assert tool_results[0]["result"]["error_code"] == "raw_single_target_body_not_authoritative"
+        assert tool_results[0]["result"]["writes_allowed"] is False
+        assert not (tmp_path / "services" / "product_service" / "app.py").exists()
 
     @pytest.mark.asyncio
     async def test_single_target_repair_refuses_raw_tool_receipt_content(self, tmp_path) -> None:
@@ -15800,8 +16246,7 @@ class TestCrossFileCoherenceRepair:
 
 
 class TestCollectStepVerifyErrors:
-    """写后即查（Fix-9, live I3-r11）: step verify 必须在执行轮内跑进修复梯,
-    而不是等 exec→QA→bounce→exec 的市场往返(~30min/圈盲猜)。"""
+    """Step verify is planned here and physically executed by the kernel follow-up."""
 
     @staticmethod
     def _collect(context: Any, workspace: str) -> list[str]:
@@ -15809,7 +16254,22 @@ class TestCollectStepVerifyErrors:
             _collect_step_verify_errors,
         )
 
-        return _collect_step_verify_errors(SimpleNamespace(workspace=workspace), context)
+        if isinstance(context, dict):
+            task_id = "task-step-verify"
+            context.setdefault(
+                "task_runtime_execution_attempt_authority",
+                create_task_runtime_execution_attempt_authority(_test_execution_attempt(Path(workspace), task_id)),
+            )
+        else:
+            task_id = "task-step-verify"
+        errors, tool_results = _collect_step_verify_errors(
+            SimpleNamespace(workspace=workspace),
+            context,
+            task_id=task_id,
+        )
+        if isinstance(context, dict):
+            context["_test_deferred_step_verify_tool_results"] = tool_results
+        return errors
 
     def test_non_step_context_is_noop(self, tmp_path: Any) -> None:
         assert self._collect({}, str(tmp_path)) == []
@@ -15825,78 +16285,27 @@ class TestCollectStepVerifyErrors:
         (tmp_path / "index.html").write_text('<canvas id="gameCanvas"></canvas>', encoding="utf-8")
         context = {"construction_step": {"verify": "grep -q 'id=\"game-canvas\"' ./index.html"}}
         errors = self._collect(context, str(tmp_path))
-        assert len(errors) == 1
-        assert "step verify failed" in errors[0]
-        assert "game-canvas" in errors[0]
+        assert errors == []
+        requests = context["_test_deferred_step_verify_tool_results"]
+        assert len(requests) == 1
+        assert "game-canvas" in requests[0]["result"]["deferred_request"].command
 
-    def test_step_verify_preserves_tap_failure_block_before_summary(self, tmp_path: Any, monkeypatch: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director import quality_gate
-
-        tap_output = """TAP version 13
-# Subtest: Fairy rejects bad skill levels and empty identifiers
-ok 1 - Fairy rejects bad skill levels and empty identifiers
-# Subtest: Fairy mood starts cheerful and degrades with poor performance
-not ok 2 - Fairy mood starts cheerful and degrades with poor performance
-  ---
-  failureType: 'testCodeFailure'
-  error: |-
-    Expected values to be strictly equal:
-
-    'tired' !== 'neutral'
-  code: 'ERR_ASSERTION'
-  name: 'AssertionError'
-  stack: |-
-    TestContext.<anonymous> (/workspace/src/models/Fairy.test.ts:57:10)
-  ...
-# Subtest: Fairy successRate handles zero shifts without dividing by zero
-ok 3 - Fairy successRate handles zero shifts without dividing by zero
-1..19
-# tests 19
-# pass 18
-# fail 1
-"""
-
-        def _run(command: str, **kwargs: Any) -> Any:
-            assert kwargs.get("encoding") == "utf-8"
-            assert kwargs.get("errors") == "replace"
-            return SimpleNamespace(returncode=1, stdout=tap_output, stderr="")
-
-        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
-        monkeypatch.setattr(quality_gate, "_first_failing_verify_clause", lambda _verify, *, cwd: "")
-
+    def test_step_verify_never_runs_locally_before_authoritative_receipt(self, tmp_path: Any) -> None:
         context = {"construction_step": {"verify": "grep -q ready ./index.html"}}
         errors = self._collect(context, str(tmp_path))
 
-        assert len(errors) == 1
-        assert "step verify failed" in errors[0]
-        assert "Fairy mood starts cheerful and degrades with poor performance" in errors[0]
-        assert "Expected values to be strictly equal" in errors[0]
-        assert "'tired' !== 'neutral'" in errors[0]
-        assert "# pass 18" not in errors[0].split("failure excerpt:", 1)[1]
+        assert errors == []
+        request = context["_test_deferred_step_verify_tool_results"][0]["result"]["deferred_request"]
+        assert request.command == "grep -Fq ready ./index.html"
+        assert request.execution_attempt.external_task_id == "task-step-verify"
 
-    def test_unsafe_verify_rejected_before_shell_or_clause_diagnosis(self, tmp_path: Any, monkeypatch: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director import quality_gate
-
-        calls: list[str] = []
-
-        def _run(*_args: Any, **_kwargs: Any) -> Any:
-            calls.append("subprocess")
-            raise AssertionError("unsafe step verify must not reach subprocess.run")
-
-        def _clause(_verify: str, *, cwd: str) -> str:
-            calls.append(f"clause:{cwd}")
-            raise AssertionError("unsafe step verify must not reach clause diagnosis")
-
-        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
-        monkeypatch.setattr(quality_gate, "_first_failing_verify_clause", _clause)
-
+    def test_unsafe_verify_rejected_before_directed_effect_admission(self, tmp_path: Any) -> None:
         errors = self._collect({"construction_step": {"verify": "rm -rf ."}}, str(tmp_path))
 
         assert len(errors) == 1
         assert "step verify command rejected by safety policy" in errors[0]
         assert "blocked_command:rm" in errors[0]
         assert "'rm -rf .'" in errors[0]
-        assert calls == []
 
     def test_unsafe_verify_rejected_before_target_mismatch(self, tmp_path: Any) -> None:
         context = {
@@ -15912,45 +16321,25 @@ ok 3 - Fairy successRate handles zero shifts without dividing by zero
         assert "step verify command rejected by safety policy" in errors[0]
         assert "step verify target mismatch" not in errors[0]
 
-    def test_legacy_safe_wc_verify_reaches_failure_diagnosis(self, tmp_path: Any, monkeypatch: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director import quality_gate
-
+    def test_legacy_safe_wc_verify_is_split_into_directed_effects(self, tmp_path: Any) -> None:
         (tmp_path / "style.css").write_text("#game {}\n" * 200, encoding="utf-8")
         verify = 'test -f ./style.css && [ "$(wc -l < ./style.css)" -le 120 ]'
-        seen: dict[str, str] = {}
+        context = {"construction_step": {"verify": verify}}
+        errors = self._collect(context, str(tmp_path))
 
-        def _clause(command: str, *, cwd: str) -> str:
-            seen["command"] = command
-            seen["cwd"] = cwd
-            return 'failing clause [2/2]: [ "$(wc -l < ./style.css)" -le 120 ]'
-
-        monkeypatch.setattr(quality_gate, "_first_failing_verify_clause", _clause)
-
-        errors = self._collect({"construction_step": {"verify": verify}}, str(tmp_path))
-
-        assert len(errors) == 1
-        assert "step verify failed" in errors[0]
-        assert "step verify command rejected by safety policy" not in errors[0]
-        assert "failing clause [2/2]" in errors[0]
-        assert seen == {"command": verify, "cwd": str(tmp_path)}
+        assert errors == []
+        requests = context["_test_deferred_step_verify_tool_results"]
+        assert [item["result"]["deferred_request"].command for item in requests] == [
+            "test -f ./style.css",
+            '[ "$(wc -l < ./style.css)" -le 120 ]',
+        ]
 
     def test_list_verify_joined(self, tmp_path: Any) -> None:
         (tmp_path / "a.md").write_text("x", encoding="utf-8")
         context = {"construction_step": {"verify": ["test -f ./a.md", "grep -q x ./a.md"]}}
         assert self._collect(context, str(tmp_path)) == []
 
-    def test_acceptance_go_verify_is_executed_from_task_payload(self, tmp_path: Any, monkeypatch: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director import quality_gate
-
-        seen: dict[str, Any] = {}
-
-        def _run(command: str, **kwargs: Any) -> Any:
-            seen["command"] = command
-            seen["cwd"] = kwargs.get("cwd")
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
-
+    def test_acceptance_go_verify_is_deferred_from_task_payload(self, tmp_path: Any) -> None:
         context = {
             "metadata": {
                 "task_payload": {
@@ -15964,41 +16353,20 @@ ok 3 - Fairy successRate handles zero shifts without dividing by zero
         }
 
         assert self._collect(context, str(tmp_path)) == []
-        assert seen == {"command": "go test ./...", "cwd": str(tmp_path)}
+        request = context["_test_deferred_step_verify_tool_results"][0]["result"]["deferred_request"]
+        assert request.command == "go test ./..."
 
-    def test_verification_commands_go_verify_is_executed(self, tmp_path: Any, monkeypatch: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director import quality_gate
-
-        seen: dict[str, Any] = {}
-
-        def _run(command: str, **kwargs: Any) -> Any:
-            seen["command"] = command
-            seen["cwd"] = kwargs.get("cwd")
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
-
+    def test_verification_commands_go_verify_is_deferred(self, tmp_path: Any) -> None:
         context = {
             "target_files": ["go.mod", "main.go"],
             "verification_commands": ["go test ./...", "go run ."],
         }
 
         assert self._collect(context, str(tmp_path)) == []
-        assert seen == {"command": "go test ./...", "cwd": str(tmp_path)}
+        request = context["_test_deferred_step_verify_tool_results"][0]["result"]["deferred_request"]
+        assert request.command == "go test ./..."
 
-    def test_acceptance_go_verify_failure_enters_repair_errors(self, tmp_path: Any, monkeypatch: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director import quality_gate
-
-        def _run(command: str, **kwargs: Any) -> Any:
-            return SimpleNamespace(
-                returncode=1,
-                stdout="FAIL\tmodule [build failed]\n",
-                stderr="./main_test.go:3:6: multiple-value call in single-value context\n",
-            )
-
-        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
-        monkeypatch.setattr(quality_gate, "_first_failing_verify_clause", lambda _verify, *, cwd: "")
-
+    def test_acceptance_go_verify_failure_waits_for_authoritative_receipt(self, tmp_path: Any) -> None:
         context = {
             "metadata": {
                 "task_payload": {
@@ -16011,10 +16379,9 @@ ok 3 - Fairy successRate handles zero shifts without dividing by zero
 
         errors = self._collect(context, str(tmp_path))
 
-        assert len(errors) == 1
-        assert "step verify failed" in errors[0]
-        assert "go test ./..." in errors[0]
-        assert "multiple-value call" in errors[0]
+        assert errors == []
+        request = context["_test_deferred_step_verify_tool_results"][0]["result"]["deferred_request"]
+        assert request.command == "go test ./..."
 
     def test_near_miss_verify_target_path_is_repairable_error(self, tmp_path: Any) -> None:
         target = tmp_path / "src" / "rules" / "dancerule.ts"
@@ -16048,8 +16415,7 @@ ok 3 - Fairy successRate handles zero shifts without dividing by zero
         assert self._collect(context, str(tmp_path)) == []
 
     def test_failure_names_first_failing_clause(self, tmp_path: Any) -> None:
-        """Fix-10 (live I3-r12): S2 passed 7/8 clauses but teaching carried only
-        the whole command + exit 1 — the model could not tell WHICH check failed."""
+        """Each safe clause becomes an independently receipted command effect."""
         (tmp_path / "style.css").write_text("#game {}\n" * 200, encoding="utf-8")
         context = {
             "construction_step": {
@@ -16059,30 +16425,35 @@ ok 3 - Fairy successRate handles zero shifts without dividing by zero
             }
         }
         errors = self._collect(context, str(tmp_path))
-        assert len(errors) == 1
-        assert "failing clause [3/3]:" in errors[0]
-        assert "wc -l" in errors[0].split("failing clause", 1)[1]
+        assert errors == []
+        requests = context["_test_deferred_step_verify_tool_results"]
+        assert len(requests) == 3
+        assert "wc -l" in requests[-1]["result"]["deferred_request"].command
 
     def test_single_clause_failure_has_no_clause_suffix(self, tmp_path: Any) -> None:
         context = {"construction_step": {"verify": "test -f ./missing.md"}}
         errors = self._collect(context, str(tmp_path))
-        assert len(errors) == 1
-        assert "failing clause" not in errors[0]
+        assert errors == []
+        assert len(context["_test_deferred_step_verify_tool_results"]) == 1
 
-    def test_quoted_and_inside_pattern_aborts_clause_diagnosis(self, tmp_path: Any) -> None:
-        """Splitting on ' && ' cuts through the quoted pattern; the sh -n guard
-        must abandon diagnosis instead of naming a bogus clause."""
+    def test_quoted_and_inside_pattern_is_not_split(self, tmp_path: Any) -> None:
+        """A quoted AND belongs to the grep pattern, not the shell command graph."""
         (tmp_path / "a.txt").write_text("plain\n", encoding="utf-8")
         context = {"construction_step": {"verify": "grep -q 'a && b' ./a.txt && test -f ./a.txt"}}
         errors = self._collect(context, str(tmp_path))
-        assert len(errors) == 1
-        assert "step verify failed" in errors[0]
-        assert "failing clause" not in errors[0]
+        assert errors == []
+        requests = context["_test_deferred_step_verify_tool_results"]
+        assert [item["result"]["deferred_request"].command for item in requests] == [
+            "grep -q 'a && b' ./a.txt",
+            "test -f ./a.txt",
+        ]
 
     def test_state_carrying_chain_aborts_clause_diagnosis(self, tmp_path: Any) -> None:
         """Adversarial review (live repro): a cd/VAR= clause passes sh -n but its
         successors re-run in a fresh shell against the wrong cwd/env — naming
         a wrong clause actively misleads the next attempt."""
+        from polaris.kernelone.quality.step_verify import normalize_step_verify
+
         sub = tmp_path / "src"
         sub.mkdir()
         (sub / "app.js").write_text("bar\n", encoding="utf-8")
@@ -16091,24 +16462,32 @@ ok 3 - Fairy successRate handles zero shifts without dividing by zero
             'X=1 && [ "$X" = 1 ] && test -f missing.txt',
             "export V=2 && test -f missing.txt",
         ):
-            errors = self._collect({"construction_step": {"verify": verify}}, str(tmp_path))
-            assert len(errors) == 1, verify
-            assert "failing clause" not in errors[0], verify
+            context = {"construction_step": {"verify": verify}}
+            errors = self._collect(context, str(tmp_path))
+            assert errors == [], verify
+            requests = context["_test_deferred_step_verify_tool_results"]
+            assert len(requests) == 1, verify
+            assert requests[0]["result"]["deferred_request"].command == normalize_step_verify(verify)
 
     def test_top_level_or_chain_aborts_clause_diagnosis(self, tmp_path: Any) -> None:
         context = {"construction_step": {"verify": "test -f ./a.txt && grep -q x ./a.txt || test -f ./b.txt"}}
         errors = self._collect(context, str(tmp_path))
-        assert len(errors) == 1
-        assert "failing clause" not in errors[0]
+        assert errors == []
+        requests = context["_test_deferred_step_verify_tool_results"]
+        assert len(requests) == 1
+        assert requests[0]["result"]["deferred_request"].command.endswith("|| test -f ./b.txt")
 
     def test_clause_detail_precedes_full_command_in_message(self, tmp_path: Any) -> None:
-        """Teaching channels truncate (step card 240 chars) — the actionable
-        clause must come before the potentially long full command."""
+        """Command order is preserved for receipt-backed failure attribution."""
         (tmp_path / "style.css").write_text("#game {}\n" * 200, encoding="utf-8")
         verify = 'test -f ./style.css && [ "$(wc -l < ./style.css)" -le 120 ]'
-        errors = self._collect({"construction_step": {"verify": verify}}, str(tmp_path))
-        assert len(errors) == 1
-        assert errors[0].index("failing clause") < errors[0].index("full:")
+        context = {"construction_step": {"verify": verify}}
+        errors = self._collect(context, str(tmp_path))
+        assert errors == []
+        commands = [
+            item["result"]["deferred_request"].command for item in context["_test_deferred_step_verify_tool_results"]
+        ]
+        assert commands == ["test -f ./style.css", '[ "$(wc -l < ./style.css)" -le 120 ]']
 
 
 class TestSingleFileStepTarget:

@@ -1,0 +1,64 @@
+card_id: vc-20260720-deo-2b-task10-no-transport
+bug_summary: >-
+  The process-local directed-effect execution context was pickleable, allowing
+  copied authority to cross process and IPC boundaries. Task 10 makes that
+  capability non-serializable and locks the sole canonical call path.
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_path:
+  files:
+    - polaris/cells/roles/kernel/public/directed_effect_contracts.py
+    - polaris/cells/roles/kernel/internal/directed_effect_dispatch.py
+    - polaris/cells/roles/kernel/internal/tool_batch_runtime.py
+    - polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py
+    - polaris/kernelone/llm/toolkit/executor/command_capability.py
+  symptom: >-
+    pickle.dumps accepted DirectedEffectExecutionContextV1 before Task 10,
+    permitting ForkingPickler and multiprocessing transports to copy it.
+assumptions:
+  - id: A1
+    statement: Execution context authority is valid only as exact in-process object identity.
+    status: verified_true
+    evidence: Fence registration and consume require exact object identity and creator PID.
+  - id: A2
+    statement: Public provider, command, event, result, receipt, and projection payloads carry no context or grant.
+    status: verified_true
+    evidence: Recursive payload and forbidden-key regression passes.
+  - id: A3
+    statement: Physical mutation has one path after validation, revalidation, and consume.
+    status: verified_true
+    evidence: AST/call-shape fence and mutation-port behavior suite pass.
+pre_mortem:
+  failure_point: >-
+    A future serializer, metadata field, adapter export, raw executor edge, or
+    fork-child consume could duplicate or bypass the process-local capability.
+  risk_zone:
+    - pickle and multiprocessing reduction
+    - public request/event/receipt projections
+    - adapter imports and executor exposure
+    - canonical mutation call ordering
+verification_plan:
+  unit_tests:
+    - pickle, ForkingPickler, JSON, SimpleQueue, and Pipe denial
+    - recursive public-payload context/grant absence
+    - reconstructed public-port context denial
+    - fork child PID denial with zero sentinel effect
+  static_gates:
+    - canonical path AST and import fences
+    - ruff check and format
+    - mypy
+    - compileall
+    - git diff --check
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  closed_at: "2026-07-20"
+  evidence:
+    provider_requests: 0
+    physical_effects: 0
+    bench_runs: 0
+    final_provider_request_qualification: N/A
+    architecture_and_wiring_tests: 27 passed
+    command_capability_tests: 13 passed
+    static_gates: ruff, format, mypy, compileall, and git diff --check passed

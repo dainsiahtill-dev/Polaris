@@ -67,6 +67,14 @@ HARD_OUTPUT_TOKEN_CLAMP: Final[int] = 128_000
 #: ordinary 4k role default is not a viable ceiling for this turn class.
 DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS: Final[int] = HARD_OUTPUT_TOKEN_CLAMP
 
+# Factory's project-level CE turn needs materially more room than an ordinary
+# 4k role response, but granting the 128k hard ceiling to every tiny portfolio
+# makes the physical generation deadline unrelated to project size.  Keep a
+# 16k reasoning/output floor and scale by declared PM task count; sufficiently
+# large portfolios still reach the shared hard ceiling.
+CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKEN_FLOOR: Final[int] = 16_384
+CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKENS_PER_TASK: Final[int] = 4_096
+
 #: Existing deployment override retained as the single compatibility key for
 #: both portfolio planning and task fission. Central ownership prevents those
 #: two Chief Engineer paths from drifting back to different output budgets.
@@ -272,6 +280,26 @@ def chief_engineer_structured_output_tokens(
     if parsed is None:
         return DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS
     return clamp_output_tokens(parsed)
+
+
+def chief_engineer_portfolio_output_tokens(
+    task_count: int,
+    environ: Mapping[str, str] | None = None,
+) -> int:
+    """Resolve a task-scaled output budget for one Factory CE portfolio.
+
+    The shared structured-output policy remains the authoritative deployment
+    cap.  This projection only chooses the amount actually requested for a
+    portfolio of ``task_count`` PM contracts, preventing small projects from
+    inheriting the full 128k physical generation budget.
+    """
+
+    normalized_task_count = max(1, int(task_count))
+    scaled_budget = max(
+        CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKEN_FLOOR,
+        normalized_task_count * CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKENS_PER_TASK,
+    )
+    return min(chief_engineer_structured_output_tokens(environ), clamp_output_tokens(scaled_budget))
 
 
 def forced_write_output_token_ceiling() -> int:
@@ -487,6 +515,8 @@ __all__ = [
     "BUDGET_CONTEXT_KEYS_CANONICAL",
     "BUDGET_STRATEGY_PAYLOAD_KEYS",
     "CANONICAL_NESTED_CONTAINER_KEYS",
+    "CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKENS_PER_TASK",
+    "CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKEN_FLOOR",
     "CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV",
     "DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS",
     "DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS",
@@ -518,6 +548,7 @@ __all__ = [
     "TURN_KIND_REPAIR_SUBCALL",
     "TURN_KIND_REQUIRED_TOOL_RETRY",
     "ResolvedBudgetV1",
+    "chief_engineer_portfolio_output_tokens",
     "chief_engineer_structured_output_tokens",
     "clamp_output_tokens",
     "classify_turn_kind",

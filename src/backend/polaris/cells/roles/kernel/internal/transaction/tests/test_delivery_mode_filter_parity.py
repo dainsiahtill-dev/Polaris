@@ -71,7 +71,7 @@ def _mixed_decision(turn_id: str) -> TurnDecision:
         tool_name="read_file",
         arguments={"file": "app.py"},
         effect_type=ToolEffectType.READ,
-        execution_mode=ToolExecutionMode.READONLY_SERIAL,
+        execution_mode=ToolExecutionMode.READONLY_PARALLEL,
     )
     write_inv = ToolInvocation(
         call_id=ToolCallId("call_write_1"),
@@ -83,7 +83,7 @@ def _mixed_decision(turn_id: str) -> TurnDecision:
     batch = ToolBatch(
         batch_id=BatchId(f"{turn_id}_batch"),
         invocations=[read_inv, write_inv],
-        readonly_serial=[read_inv],
+        parallel_readonly=[read_inv],
         serial_writes=[write_inv],
     )
     return TurnDecision(

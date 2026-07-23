@@ -23,7 +23,9 @@ from polaris.cells.roles.kernel.public.physical_attempt_control import (
 from polaris.kernelone.events.final_request_evidence import (
     RoleFinalRequestPolicyFactsV1,
     canonical_role_final_request_hash,
+    render_role_final_request_policy_facts,
     role_final_request_policy,
+    validate_role_final_request_policy_prompt_projection,
 )
 
 FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA = "polaris.factory_role_evidence_cutoff_request.v1"
@@ -136,8 +138,17 @@ def _ack_record(ack: FactoryRoleEvidenceCutoffAckV1) -> dict[str, object]:
     return {field.name: getattr(ack, field.name) for field in fields(ack)}
 
 
-def _recover_candidate_payload_from_frozen(payload: dict[str, Any]) -> dict[str, Any]:
-    """Verify and strip the one authority-owned evidence suffix."""
+def _recover_candidate_payload_from_frozen(
+    payload: dict[str, Any],
+    *,
+    expected_policy_facts: RoleFinalRequestPolicyFactsV1 | None = None,
+) -> dict[str, Any]:
+    """Verify and strip one prompt-safe evidence suffix.
+
+    The provider-visible JSON is data-plane context, never reconstructed
+    control-plane authority.  Exact authority equality is checked only when
+    the live typed binding supplies ``expected_policy_facts``.
+    """
 
     messages = payload["messages"]
     if not messages or messages[0].get("role") != "system":
@@ -176,26 +187,19 @@ def _recover_candidate_payload_from_frozen(payload: dict[str, Any]) -> dict[str,
     ):
         raise ValueError("frozen_semantic_evidence_policy_not_canonical")
     try:
-        policy_facts = RoleFinalRequestPolicyFactsV1.from_record(facts_record)
+        validate_role_final_request_policy_prompt_projection(
+            facts_record,
+            expected_role=payload["role"],
+        )
     except (TypeError, ValueError) as exc:
+        message = str(exc)
+        if message == "role_final_request_prompt_role_mismatch":
+            raise ValueError("frozen_semantic_evidence_policy_role_mismatch") from exc
         raise ValueError("frozen_semantic_evidence_policy_invalid") from exc
-    if policy_facts.role != payload["role"]:
-        raise ValueError("frozen_semantic_evidence_policy_role_mismatch")
-    first_slot = policy_facts.slots[0]
-    identity = payload["identity"]
-    if (
-        first_slot.run_id != identity["run_id"]
-        or first_slot.request_freeze_id != identity["request_freeze_id"]
-        or first_slot.role != payload["role"]
-    ):
-        raise ValueError("frozen_semantic_evidence_identity_binding_mismatch")
-    expected_binding_ref = (
-        f"{_AUTHORITY_STREAM_PREFIX}"
-        f"{hashlib.sha256(first_slot.factory_run_id.encode('utf-8')).hexdigest()}"
-        f"@{first_slot.cutoff_fact_sequence}#{first_slot.cutoff_fact_id}"
-    )
-    if payload["signed_factory_binding_ref"] != expected_binding_ref:
-        raise ValueError("frozen_semantic_evidence_binding_ref_mismatch")
+    if expected_policy_facts is not None:
+        expected_rendered = render_role_final_request_policy_facts(expected_policy_facts)
+        if rendered_facts != expected_rendered:
+            raise ValueError("frozen_semantic_evidence_policy_binding_mismatch")
 
     expected_marker = f"{_ROLE_IDENTITY_MARKER_PREFIX}{payload['role']}"
     marker_lines = [
@@ -226,6 +230,7 @@ def _recover_candidate_payload_from_frozen(payload: dict[str, Any]) -> dict[str,
         "temperature": payload["temperature"],
         "max_tokens": payload["max_tokens"],
         "stream": payload["stream"],
+        "required_tools": payload["required_tools"],
     }
 
 
@@ -587,6 +592,7 @@ class FactoryRoleSemanticCandidateV1:
         temperature: object,
         max_tokens: object,
         stream: object,
+        required_tools: object = (),
     ) -> FactoryRoleSemanticCandidateV1:
         if type(identity) is not FactoryRoleSemanticRequestIdentityV1:
             raise TypeError("factory_role_semantic_identity_exact_type_required")
@@ -609,6 +615,10 @@ class FactoryRoleSemanticCandidateV1:
             "temperature": _strict_json_value(temperature, field_name="temperature"),
             "max_tokens": _strict_json_value(max_tokens, field_name="max_tokens"),
             "stream": _strict_json_value(stream, field_name="stream"),
+            "required_tools": _strict_json_value(
+                list(required_tools) if type(required_tools) is tuple else required_tools,
+                field_name="required_tools",
+            ),
         }
         if type(payload["messages"]) is not list or type(payload["tools"]) is not list:
             raise TypeError("semantic_candidate_ordered_sequences_required")
@@ -616,6 +626,13 @@ class FactoryRoleSemanticCandidateV1:
             raise ValueError("semantic_candidate_max_tokens_invalid")
         if type(payload["stream"]) is not bool:
             raise TypeError("semantic_candidate_stream_bool_required")
+        required_tool_names = payload["required_tools"]
+        if (
+            type(required_tool_names) is not list
+            or any(type(item) is not str or not item.strip() for item in required_tool_names)
+            or len(required_tool_names) != len(set(required_tool_names))
+        ):
+            raise TypeError("semantic_candidate_required_tools_invalid")
         canonical = _canonical_json(payload, field_name="semantic_candidate")
         return cls(
             schema_version=FACTORY_ROLE_SEMANTIC_CANDIDATE_SCHEMA,
@@ -654,6 +671,7 @@ class FactoryRoleSemanticCandidateV1:
             "temperature",
             "max_tokens",
             "stream",
+            "required_tools",
         }
         if type(payload) is not dict or set(payload) != expected_keys:
             raise ValueError("semantic_candidate_payload_closed_set_required")
@@ -686,6 +704,13 @@ class FactoryRoleSemanticCandidateV1:
             raise ValueError("semantic_candidate_max_tokens_invalid")
         if type(payload["stream"]) is not bool:
             raise TypeError("semantic_candidate_stream_bool_required")
+        required_tool_names = payload["required_tools"]
+        if (
+            type(required_tool_names) is not list
+            or any(type(item) is not str or not item.strip() for item in required_tool_names)
+            or len(required_tool_names) != len(set(required_tool_names))
+        ):
+            raise TypeError("semantic_candidate_required_tools_invalid")
         _hash64("semantic_candidate_hash", self.semantic_candidate_hash)
         if hashlib.sha256(self.canonical_payload_json.encode("utf-8")).hexdigest() != self.semantic_candidate_hash:
             raise ValueError("semantic_candidate_hash_mismatch")
@@ -731,6 +756,7 @@ class FactoryRoleFrozenSemanticRequestV1:
             "temperature": _strict_json_value(temperature, field_name="temperature"),
             "max_tokens": _strict_json_value(max_tokens, field_name="max_tokens"),
             "stream": _strict_json_value(stream, field_name="stream"),
+            "required_tools": candidate_payload["required_tools"],
         }
         for field_name, value in final_semantic_values.items():
             if value != candidate_payload[field_name]:
@@ -792,6 +818,7 @@ class FactoryRoleFrozenSemanticRequestV1:
             "temperature",
             "max_tokens",
             "stream",
+            "required_tools",
             "semantic_candidate_hash",
             "signed_factory_binding_ref",
             "signed_factory_binding_hash",
@@ -827,6 +854,13 @@ class FactoryRoleFrozenSemanticRequestV1:
             raise ValueError("frozen_semantic_max_tokens_invalid")
         if type(payload["stream"]) is not bool:
             raise TypeError("frozen_semantic_stream_bool_required")
+        required_tool_names = payload["required_tools"]
+        if (
+            type(required_tool_names) is not list
+            or any(type(item) is not str or not item.strip() for item in required_tool_names)
+            or len(required_tool_names) != len(set(required_tool_names))
+        ):
+            raise TypeError("frozen_semantic_required_tools_invalid")
         recovered_candidate_payload = _recover_candidate_payload_from_frozen(payload)
         recovered_candidate_hash = canonical_role_final_request_hash(recovered_candidate_payload)
         if recovered_candidate_hash != self.semantic_candidate_hash:
@@ -840,6 +874,23 @@ class FactoryRoleFrozenSemanticRequestV1:
         expected_hash = hashlib.sha256(self.canonical_final_payload_json.encode("utf-8")).hexdigest()
         if self.final_semantic_request_hash != expected_hash:
             raise ValueError("final_semantic_request_hash_mismatch")
+
+
+def validate_factory_role_frozen_semantic_evidence_policy(
+    frozen: FactoryRoleFrozenSemanticRequestV1,
+    *,
+    policy_facts: RoleFinalRequestPolicyFactsV1,
+) -> None:
+    """Bind prompt evidence to the separate typed control-plane authority."""
+
+    if type(frozen) is not FactoryRoleFrozenSemanticRequestV1:
+        raise TypeError("factory_role_frozen_semantic_request_exact_type_required")
+    FactoryRoleFrozenSemanticRequestV1.__post_init__(frozen)
+    try:
+        payload = json.loads(frozen.canonical_final_payload_json)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("canonical_final_payload_json_invalid") from exc
+    _recover_candidate_payload_from_frozen(payload, expected_policy_facts=policy_facts)
 
 
 @runtime_checkable

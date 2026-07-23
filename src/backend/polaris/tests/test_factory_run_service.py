@@ -656,7 +656,9 @@ class TestFactoryRunService:
             cache_root=cache_root,
             executor=FakeStageExecutor(),
         )
-        role_evidence, lifecycle = restarted._capture_physical_attempt_replay_views(run.id)
+        role_evidence, lifecycle = restarted._capture_physical_attempt_replay_views(
+            run.id,
+        )
         assert role_evidence.captured_head.global_seq == 0
         assert lifecycle.captured_head.global_seq == 0
         with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_required"):
@@ -709,6 +711,45 @@ class TestFactoryRunService:
         assert created.id not in restarted._physical_attempt_coordinators
 
     @pytest.mark.asyncio
+    async def test_replay_claim_fences_live_admission_before_durable_storage(
+        self,
+        temp_workspace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        creator = FactoryRunService(
+            temp_workspace,
+            cache_root=temp_workspace / "runtime",
+            executor=FakeStageExecutor(),
+        )
+        created = await creator.create_run(FactoryConfig(name="local-before-durable-replay-fence"))
+        service = FactoryRunService(
+            temp_workspace,
+            cache_root=temp_workspace / "runtime",
+            executor=FakeStageExecutor(),
+        )
+        persisted = await service.get_run(created.id)
+        assert persisted is not None
+        original_claim = service._admission.claim_lifecycle_operation
+        observed_local_fence: list[bool] = []
+
+        def claim_after_observing_local_fence(*args: object, **kwargs: object) -> Any:
+            observed_local_fence.append(kwargs.get("replay_fence") is True)
+            return original_claim(*args, **kwargs)
+
+        monkeypatch.setattr(service._admission, "claim_lifecycle_operation", claim_after_observing_local_fence)
+        monkeypatch.setattr(service, "_recover_physical_attempt_coordinator", lambda **_kwargs: None)
+
+        service._claim_lifecycle_operation(
+            persisted,
+            operation="recover_run",
+            nonce="local-fence-first",
+            acquire_if_available=True,
+        )
+
+        assert observed_local_fence == [True]
+        assert service._admission.current().state.value == "draining"
+
+    @pytest.mark.asyncio
     async def test_restart_replay_discards_three_drifting_factory_heads(
         self,
         temp_workspace,
@@ -731,10 +772,19 @@ class TestFactoryRunService:
         original_capture = restarted._capture_physical_attempt_replay_fence
         capture_count = 0
 
-        def drifting_capture(*, factory_run_id: str, lease: Any):
+        def drifting_capture(
+            *,
+            factory_run_id: str,
+            lease: Any,
+            deadline: float | None = None,
+        ) -> Any:
             nonlocal capture_count
             capture_count += 1
-            captured = original_capture(factory_run_id=factory_run_id, lease=lease)
+            captured = original_capture(
+                factory_run_id=factory_run_id,
+                lease=lease,
+                deadline=deadline,
+            )
             return replace(captured, current_stage=f"drift-{capture_count}")
 
         monkeypatch.setattr(restarted, "_capture_physical_attempt_replay_fence", drifting_capture)
@@ -1398,6 +1448,38 @@ def _authorize_workspace_quality_checks(executor: OrchestrationStageExecutor) ->
     executor._canonical_factory_projection = lambda _run, _context: projection  # type: ignore[method-assign]
 
 
+def _authorize_director_fact_projection(
+    executor: OrchestrationStageExecutor,
+    *,
+    factory_run_id: str,
+) -> None:
+    """Give non-projection Director tests one authoritative pending TaskRuntime row."""
+
+    rows = [
+        {
+            "task_id": "TASK-1",
+            "external_task_id": "TASK-1",
+            "status": "pending",
+            "execution_state": "pending",
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+            "metadata": {
+                "factory_run_id": factory_run_id,
+                "factory_stage": "director_dispatch",
+                "external_task_id": "TASK-1",
+                "source_task_id": "TASK-1",
+                "materialized_by": "runtime.task_runtime",
+            },
+        }
+    ]
+
+    def query_rows(*, factory_run_id: str = "") -> tuple[list[dict[str, Any]], None]:
+        assert not factory_run_id or factory_run_id == rows[0]["metadata"]["factory_run_id"]
+        return rows, None
+
+    executor._query_observable_task_rows = query_rows  # type: ignore[method-assign]
+
+
 class TestOrchestrationStageExecutor:
     def test_declared_delivery_targets_filter_directory_scope_paths(self, temp_workspace):
         executor = _TestStageExecutor(temp_workspace, _ImmediateFailureCommandService())
@@ -1874,14 +1956,14 @@ class TestOrchestrationStageExecutor:
         assert ce_command.context["cognitive_runtime_mode"] == "off"
         assert ce_command.context["cognitive_runtime_enabled"] is False
         assert ce_command.context["cognitive_runtime_required"] is False
-        assert ce_command.timeout_seconds == 240
-        assert ce_command.context["chief_engineer_llm_timeout_seconds"] == 240
-        assert ce_command.context["llm_call_timeout_seconds"] == 240
-        assert ce_command.context["request_timeout_seconds"] == 240
+        assert ce_command.timeout_seconds == 600
+        assert ce_command.context["chief_engineer_llm_timeout_seconds"] == 600
+        assert ce_command.context["llm_call_timeout_seconds"] == 600
+        assert ce_command.context["request_timeout_seconds"] == 600
         assert ce_command.metadata["cognitive_runtime_mode"] == "off"
         assert ce_command.metadata["cognitive_runtime_enabled"] is False
         assert ce_command.metadata["cognitive_runtime_required"] is False
-        assert ce_command.metadata["llm_call_timeout_seconds"] == 240
+        assert ce_command.metadata["llm_call_timeout_seconds"] == 600
         blueprint_path = Path(resolve_runtime_path(str(temp_workspace), payload["blueprints"][0]["blueprint_path"]))
         assert blueprint_path.is_file()
         mirrored_review = Path(
@@ -1954,6 +2036,7 @@ class TestOrchestrationStageExecutor:
             status=FactoryRunStatus.RUNNING,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
+        _authorize_director_fact_projection(executor, factory_run_id=run.id)
 
         plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
         plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2091,7 +2174,7 @@ class TestOrchestrationStageExecutor:
         )
 
         assert result.status == "failed"
-        assert "error_code=director.run_status_non_success" in str(result.output)
+        assert "error_code=director.task_runtime_fact_projection_not_ready" in str(result.output)
         assert "TaskRuntime fact-only observable projection is not ready" in str(result.output)
         assert "dispatch/log.json" in result.artifacts
 
@@ -2173,7 +2256,7 @@ class TestOrchestrationStageExecutor:
         assert "dispatch/log.json" in result.artifacts
         dispatch_log = Path(resolve_logical_path(str(temp_workspace), "workspace/dispatch/latest.log.json"))
         payload = json.loads(dispatch_log.read_text(encoding="utf-8"))
-        assert "director.run_status_non_success" in {
+        assert "director.task_runtime_fact_projection_not_ready" in {
             signal.get("code") for signal in payload.get("signals", []) if isinstance(signal, dict)
         }
 
@@ -2190,6 +2273,7 @@ class TestOrchestrationStageExecutor:
             status=FactoryRunStatus.RUNNING,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
+        _authorize_director_fact_projection(executor, factory_run_id=run.id)
 
         plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
         plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2270,6 +2354,7 @@ class TestOrchestrationStageExecutor:
             status=FactoryRunStatus.RUNNING,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
+        _authorize_director_fact_projection(executor, factory_run_id=run.id)
 
         delivered = temp_workspace / "src" / "account.py"
         delivered.parent.mkdir(parents=True, exist_ok=True)
@@ -2357,6 +2442,7 @@ class TestOrchestrationStageExecutor:
             status=FactoryRunStatus.RUNNING,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
+        _authorize_director_fact_projection(executor, factory_run_id=run.id)
 
         plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
         plan_path.parent.mkdir(parents=True, exist_ok=True)

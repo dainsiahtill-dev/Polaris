@@ -27,6 +27,7 @@ from polaris.cells.runtime.task_runtime.public import (
     AdmitDirectedEffectOperationCommandV1,
     AdmitDirectedEffectParentCommandV1,
     ClaimDirectedEffectCommandV1,
+    CommitDirectedEffectReceiptCommandV1,
     DirectedEffectInventoryIntentV1,
     DirectedEffectParentBindingV1,
     DirectedEffectParentRegistryIdentityV1,
@@ -44,6 +45,7 @@ from polaris.cells.runtime.task_runtime.public import (
     admit_directed_effect_operation,
     admit_directed_effect_parent,
     claim_directed_effect,
+    commit_directed_effect_receipt,
     enroll_directed_effect_operation_stream,
     enroll_directed_effect_parent_registry_stream,
     finalize_directed_effect_inventory_admission,
@@ -783,6 +785,127 @@ def test_task6_ready_claim_racing_abort_has_one_terminal_winner(
     assert len(operation_events) == 2
     assert operation_events[-1]["payload"]["state"] in {"EFFECT_STARTED", "ABORTED"}
     assert len(_stream_events(identity, binding.registry_stream_token)) == 3
+
+
+def test_receipt_commit_racing_settlement_never_closes_unreceipted_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity, binding, admission = _setup(str(tmp_path.resolve()))
+    assert admit_directed_effect_operation(admission).code == "admitted"
+    inventory = get_directed_effect_inventory(
+        GetDirectedEffectInventoryQueryV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+        )
+    )
+    assert inventory.projection is not None
+    assert (
+        finalize_directed_effect_inventory_admission(
+            FinalizeDirectedEffectInventoryAdmissionCommandV1(
+                workspace=identity.workspace,
+                task_id=identity.task_id,
+                execution_attempt=identity,
+                parent_binding=binding,
+                inventory_hash=inventory.projection.inventory_hash,
+                expected_registry_version=2,
+                expected_registry_seq=3,
+                expected_operation_head_seq=1,
+            )
+        ).code
+        == "inventory_ready"
+    )
+    claim = claim_directed_effect(
+        ClaimDirectedEffectCommandV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+            tool_call_id=admission.tool_call_id,
+            effect_id=admission.effect_id,
+            expected_version=1,
+            expected_seq=2,
+            actor="test",
+            intended_effect_fingerprint=admission.intended_effect_fingerprint,
+            policy_verdict_hash=admission.policy_verdict_hash,
+            expected_receipt_binding_hash=admission.expected_receipt_binding_hash,
+        )
+    )
+    assert claim.code == "effect_claimed"
+    receipt = CommitDirectedEffectReceiptCommandV1(
+        workspace=identity.workspace,
+        task_id=identity.task_id,
+        execution_attempt=identity,
+        parent_binding=binding,
+        tool_call_id=admission.tool_call_id,
+        effect_id=admission.effect_id,
+        expected_version=2,
+        expected_seq=3,
+        actor="test",
+        intended_effect_fingerprint=admission.intended_effect_fingerprint,
+        policy_verdict_hash=admission.policy_verdict_hash,
+        expected_receipt_binding_hash=admission.expected_receipt_binding_hash,
+        receipt_ref="receipt://race/effect",
+        receipt_hash="4" * 64,
+        receipt_binding_hash=admission.expected_receipt_binding_hash,
+        receipt_outcome="succeeded",
+    )
+    prepared = Event()
+    release = Event()
+
+    def pause_receipt(snapshot: object) -> None:
+        del snapshot
+        prepared.set()
+        assert release.wait(timeout=15)
+
+    monkeypatch.setattr(
+        deo_internal.DirectedEffectOperationRepository,
+        "_after_guarded_prepare",
+        staticmethod(pause_receipt),
+    )
+    observed: dict[str, Any] = {}
+    receipt_thread = Thread(target=lambda: observed.setdefault("receipt", commit_directed_effect_receipt(receipt)))
+    receipt_thread.start()
+    assert prepared.wait(timeout=15)
+
+    blocked = settle_task_runtime_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="completed",
+            summary="receipt race must remain open",
+            lock_timeout_seconds=10.0,
+        )
+    )
+
+    assert blocked["success"] is False
+    assert blocked["code"] == "settlement_directed_effect_unresolved"
+    release.set()
+    receipt_thread.join(timeout=20)
+    assert not receipt_thread.is_alive()
+    assert observed["receipt"].code == "receipt_committed"
+
+    settled = settle_task_runtime_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="completed",
+            summary="receipt race must remain open",
+            lock_timeout_seconds=10.0,
+        )
+    )
+
+    assert settled["success"] is True
+    assert settled["code"] == "settled"
+    assert [event["payload"]["state"] for event in _stream_events(identity, binding.operation_stream_token)] == [
+        "INTENT_COMMITTED",
+        "EFFECT_STARTED",
+        "RECEIPT_COMMITTED",
+        "CLOSED_BY_PARENT",
+    ]
+    assert len(_terminal_execution_events(identity)) == 1
 
 
 def test_close_between_prepare_and_commit_causes_guard_drift_without_child_append(

@@ -5,13 +5,18 @@ from __future__ import annotations
 import ast
 import inspect
 from dataclasses import replace
-from typing import Literal
+from types import SimpleNamespace
+from typing import Any, Literal
 
 import polaris.cells.roles.kernel.internal.directed_effect_policy_guard as guard_module
+import polaris.cells.roles.kernel.internal.transaction.tool_batch_executor as tool_batch_executor_module
 import pytest
 from polaris.cells.director.runtime.public import (
     DirectedEffectErrorCodeV1,
     DirectorEffectAuthorizationEvidenceV1,
+    DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    DirectorEffectCurrentPolicyEvidenceCaptureResultV1,
+    DirectorEffectPolicyBaselineCaptureRequestV1,
     DirectorEffectPolicyMemberBindingRequestV1,
     DirectorEffectPolicyMemberBindingResultV1,
     DirectorEffectPolicyOperationSubjectV1,
@@ -24,18 +29,34 @@ from polaris.cells.director.runtime.public import (
     hash_director_effect_authorization_evidence,
 )
 from polaris.cells.director.runtime.public.directed_effect_policy_contracts import (
+    hash_directed_effect_policy_snapshot_evidence,
     hash_directed_effect_target_state_components,
 )
 from polaris.cells.roles.kernel.internal.directed_effect_policy_guard import (
+    DirectedEffectAuthoritativePolicyGuardRequestV1,
     DirectedEffectPolicyGuard,
     DirectedEffectPolicyGuardRequestV1,
+    DirectedEffectPolicyGuardResultV1,
 )
+from polaris.cells.roles.kernel.internal.tool_gateway import (
+    DirectedEffectGatewayPolicyInputsV1,
+)
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
+    ToolBatchExecutor,
+    _is_mutation_for_speculative_routing,
+)
+from polaris.cells.roles.kernel.public import DirectedEffectRuntimeDependenciesV1
 from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
     ToolInvocation,
     classify_tool_invocation,
+)
+from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
 )
 from polaris.kernelone.tool_execution.contracts import (
     CapturedToolSpecSnapshotV1,
@@ -101,15 +122,66 @@ class _Gateway(guard_module.RoleToolGateway):
         self._calls.gateway += 1
         return self._allowed, self._refusal
 
+    def capture_directed_effect_policy_inputs(self) -> DirectedEffectGatewayPolicyInputsV1:
+        restrictions = (
+            ("allowed_commands", ()),
+            ("allowed_commands_hash", _HASH),
+            ("allowed_paths", ("src/",)),
+            ("allowed_paths_hash", _HASH),
+            ("job_token_hash", _HASH),
+            ("job_token_id", "job-1"),
+        )
+        return DirectedEffectGatewayPolicyInputsV1(
+            role_policy_id="director",
+            role_policy_hash=_HASH,
+            canonical_allow_list_hash=_HASH,
+            capability_scope=("src/",),
+            capability_scope_hash=_HASH,
+            job_token_id="job-1",
+            job_token_evidence_hash=hash_directed_effect_arguments(restrictions),
+            job_token_restriction_evidence=restrictions,
+            execution_envelope_hash=_HASH,
+            allowed_command_hash=_HASH,
+            policy_version="v1",
+        )
+
 
 class _PolicyPort:
     def __init__(self, calls: _Calls, result: DirectorEffectPolicySnapshotResultV1) -> None:
         self._calls = calls
         self._result = result
 
+    async def capture_baseline_snapshot(
+        self,
+        request: DirectorEffectPolicyBaselineCaptureRequestV1,
+    ) -> DirectorEffectPolicySnapshotResultV1:
+        self._calls.policy += 1
+        result = self._result
+        return replace(
+            result,
+            subject=request.subject,
+            normalized_operation_hash=request.subject.prospective_operation_hash,
+            evidence_hash=hash_directed_effect_policy_snapshot_evidence(
+                status=result.status,
+                allowed=result.allowed,
+                error_code=result.error_code,
+                policy_version=result.policy_version,
+                policy_hash=result.policy_hash,
+                subject=request.subject,
+                baseline_target_state_evidence=result.baseline_target_state_evidence,
+                normalized_operation_hash=request.subject.prospective_operation_hash,
+            ),
+        )
+
     async def snapshot(self, _: DirectorEffectPolicySnapshotRequestV1) -> DirectorEffectPolicySnapshotResultV1:
         self._calls.policy += 1
         return self._result
+
+    async def capture_current_policy_evidence(
+        self,
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    ) -> DirectorEffectCurrentPolicyEvidenceCaptureResultV1:
+        raise AssertionError(request)
 
     def bind_member(
         self,
@@ -309,8 +381,20 @@ class _NoCallGateway(guard_module.RoleToolGateway):
 
 
 class _NoCallPolicyPort:
+    async def capture_baseline_snapshot(
+        self,
+        request: DirectorEffectPolicyBaselineCaptureRequestV1,
+    ) -> DirectorEffectPolicySnapshotResultV1:
+        raise AssertionError(request)
+
     async def snapshot(self, _: DirectorEffectPolicySnapshotRequestV1) -> DirectorEffectPolicySnapshotResultV1:
         raise AssertionError("READ must not capture a policy snapshot")
+
+    async def capture_current_policy_evidence(
+        self,
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    ) -> DirectorEffectCurrentPolicyEvidenceCaptureResultV1:
+        raise AssertionError(request)
 
     def bind_member(
         self,
@@ -593,6 +677,218 @@ async def test_forged_classification_identity_rejects_before_gateway(field: str)
     assert calls.gateway == calls.policy == 0
 
 
+@pytest.mark.asyncio
+async def test_authoritative_guard_sources_gateway_policy_and_adapter_baseline() -> None:
+    """Production guard accepts no caller-built auth or target-state evidence."""
+
+    invocation = _invocation()
+    _, result = _snapshot_request_and_result(invocation)
+    calls = _Calls()
+    gateway = _Gateway(calls)
+    policy = _PolicyPort(calls, result)
+    attempt = TaskRuntimeExecutionAttemptIdentityV1(
+        workspace="/workspace",
+        task_id=9,
+        external_task_id="TASK-9",
+        session_id="session-9",
+        attempt=1,
+        role_id="director",
+        worker_id="worker-9",
+        run_id="run-9",
+        lease_expires_at="2026-07-20T12:00:00+00:00",
+    )
+
+    verdict = await DirectedEffectPolicyGuard(gateway, policy).evaluate_authoritative(
+        DirectedEffectAuthoritativePolicyGuardRequestV1(
+            invocation=invocation,
+            workspace="/workspace",
+            inventory_ordinal=0,
+            execution_attempt=attempt,
+            turn_id="turn-1",
+            batch_id="batch-1",
+        )
+    )
+
+    assert (verdict.status, verdict.error_code) == ("authorized", None)
+    assert verdict.current_job_token_restriction_evidence is not None
+    assert verdict.authorization_binding is not None
+    assert verdict.authorization_binding.authorization_evidence.execution_attempt_id
+    assert calls.gateway == 1 and calls.policy == 1
+    assert "target_state_evidence" not in DirectedEffectAuthoritativePolicyGuardRequestV1.__dataclass_fields__
+    assert "authorization_evidence" not in DirectedEffectAuthoritativePolicyGuardRequestV1.__dataclass_fields__
+
+
+@pytest.mark.asyncio
+async def test_whole_mutation_batch_is_authorized_before_lifecycle_prepare(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All final calls classify once; every mutation authorizes before batch sealing."""
+
+    events: list[tuple[str, object]] = []
+    _, baseline = _snapshot_request_and_result(_invocation())
+    calls = _Calls()
+    gateway = _Gateway(calls)
+    policy = _PolicyPort(calls, baseline)
+
+    class _RecordingGuard:
+        def __init__(self) -> None:
+            self._guard = DirectedEffectPolicyGuard(gateway, policy)
+
+        async def evaluate_authoritative(
+            self,
+            request: DirectedEffectAuthoritativePolicyGuardRequestV1,
+        ) -> DirectedEffectPolicyGuardResultV1:
+            events.append(("authorize", str(request.invocation.call_id)))
+            return await self._guard.evaluate_authoritative(request)
+
+    class _ToolRuntime:
+        def directed_effect_policy_guard(self, injected_policy: object) -> _RecordingGuard:
+            assert injected_policy is policy
+            return _RecordingGuard()
+
+        async def __call__(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            raise AssertionError((tool_name, arguments))
+
+    class _FenceAdmin:
+        def register(self, context: object) -> object:
+            raise AssertionError(context)
+
+        def release_batch(self, batch_id: str, execution_attempt: object) -> object:
+            raise AssertionError((batch_id, execution_attempt))
+
+    class _MutationPort:
+        async def execute_mutation(
+            self,
+            context: object,
+            normalized_tool_name: str,
+            normalized_arguments: object,
+            repair_effect_binding: object | None = None,
+        ) -> object:
+            raise AssertionError((context, normalized_tool_name, normalized_arguments, repair_effect_binding))
+
+    prepared_sentinel = object()
+
+    class _Lifecycle:
+        def __init__(self, *, policy_snapshot_port: object) -> None:
+            assert policy_snapshot_port is policy
+
+        def prepare_batch(self, **kwargs: object) -> object:
+            candidates = kwargs["candidates"]
+            assert isinstance(candidates, tuple)
+            events.append(
+                (
+                    "prepare",
+                    tuple(candidate.preflight.intent.tool_call_id for candidate in candidates),
+                )
+            )
+            return SimpleNamespace(
+                status="ready",
+                prepared_batch=prepared_sentinel,
+                error_code=None,
+            )
+
+    monkeypatch.setattr(
+        tool_batch_executor_module,
+        "DirectedEffectLifecycleService",
+        _Lifecycle,
+    )
+    attempt = TaskRuntimeExecutionAttemptIdentityV1(
+        workspace="/workspace",
+        task_id=9,
+        external_task_id="TASK-9",
+        session_id="session-9",
+        attempt=1,
+        role_id="director",
+        worker_id="worker-9",
+        run_id="run-9",
+        lease_expires_at="2026-07-20T12:00:00+00:00",
+    )
+    runtime = DirectedEffectRuntimeDependenciesV1(
+        policy_snapshot_port=policy,
+        fence_admin_port=_FenceAdmin(),
+        mutation_port=_MutationPort(),
+    )
+    executor = ToolBatchExecutor(
+        tool_runtime=_ToolRuntime(),
+        config=TransactionConfig(
+            workspace="/workspace",
+            role_id="director",
+            mutation_guard_mode="strict",
+        ),
+        emit_event=lambda _event: None,
+        guard_assert_single_tool_batch=lambda **_kwargs: None,
+        finalization_handler=object(),
+        handoff_handler=object(),
+        directed_effect_runtime=runtime,
+        directed_effect_required=True,
+        directed_effect_execution_attempt=attempt,
+        directed_effect_execution_attempt_authority=TaskRuntimeExecutionAttemptAuthorityV1(attempt),
+    )
+    invocations = [
+        {"call_id": "read-1", "tool_name": "read_file", "arguments": {"path": "src/a.py"}},
+        {
+            "call_id": "write-1",
+            "tool_name": "write_file",
+            "arguments": {"path": "src/a.py"},
+        },
+        {
+            "call_id": "write-2",
+            "tool_name": "write_file",
+            "arguments": {"path": "src/a.py"},
+        },
+    ]
+
+    canonical, prepared = await executor._prepare_directed_effect_dispatch(
+        invocations=invocations,
+        workspace="/workspace",
+        turn_id="turn-1",
+        batch_id="batch-1",
+    )
+
+    assert [item.effect_type for item in canonical] == [
+        ToolEffectType.READ,
+        ToolEffectType.WRITE,
+        ToolEffectType.WRITE,
+    ]
+    assert events == [
+        ("authorize", "write-1"),
+        ("authorize", "write-2"),
+        ("prepare", ("write-1", "write-2")),
+    ]
+    assert prepared is not None and prepared.batch is prepared_sentinel
+    assert tuple(call_id for call_id, _ in prepared.restrictions_by_call_id) == (
+        "write-1",
+        "write-2",
+    )
+    assert calls.gateway == calls.policy == 2
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "expected"),
+    (("read_file", False), ("write_file", True), ("deploy", True), ("unknown_custom_tool", True)),
+)
+def test_required_deo_speculation_uses_authoritative_effect_classification(
+    tool_name: str,
+    expected: bool,
+) -> None:
+    """No required mutation can be adopted through the legacy speculative READ path."""
+
+    invocation = ToolInvocation(
+        call_id=ToolCallId(f"call-{tool_name}"),
+        raw_tool_name=tool_name,
+        tool_name=tool_name,
+        arguments={},
+    )
+
+    assert (
+        _is_mutation_for_speculative_routing(
+            invocation,
+            directed_effect_required=True,
+        )
+        is expected
+    )
+
+
 def test_guard_static_fence_excludes_effect_runtime_and_adapter_dependencies() -> None:
     """The real guard module remains an evidence-only policy boundary."""
     tree = ast.parse(inspect.getsource(guard_module))
@@ -602,7 +898,7 @@ def test_guard_static_fence_excludes_effect_runtime_and_adapter_dependencies() -
     source = inspect.getsource(guard_module)
 
     assert not any("roles.adapters.internal" in name for name in imports)
-    assert not any("cells.runtime.task_runtime" in name for name in imports)
+    assert "TaskRuntimeExecutionAttemptAuthorityV1" not in source
     assert "DirectorToolExecutor" not in source
     assert not any(name.startswith(("os", "subprocess", "asyncio", "pathlib")) for name in imports)
     assert "claim_" not in source and "admit_" not in source

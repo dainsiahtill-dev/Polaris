@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public.directed_effect_receipt_validation import (
+    directed_effect_receipt_payload_hash,
+    directed_effect_receipt_v2_errors,
+)
 from polaris.cells.control_plane.run_ledger.public.task_boundary import (
     normalize_task_boundary_verdict,
 )
@@ -191,13 +196,21 @@ def _receipt_entries(value: Any) -> list[dict[str, Any]]:
 
     direct = value.get("effect_receipt")
     if isinstance(direct, dict):
-        return [direct]
+        receipt = dict(direct)
+        commit = value.get("effect_receipt_commit")
+        if isinstance(commit, dict):
+            receipt["_task_runtime_receipt_commit"] = dict(commit)
+        return [receipt]
 
     nested_result = value.get("result")
     if isinstance(nested_result, dict):
         nested = nested_result.get("effect_receipt")
         if isinstance(nested, dict):
-            return [nested]
+            receipt = dict(nested)
+            commit = nested_result.get("effect_receipt_commit")
+            if isinstance(commit, dict):
+                receipt["_task_runtime_receipt_commit"] = dict(commit)
+            return [receipt]
 
     for key in ("results", "raw_results"):
         nested_results = value.get(key)
@@ -212,6 +225,31 @@ def _receipt_entries(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _recovery_entries(value: Any) -> list[dict[str, Any]]:
+    """Extract TaskRuntime recovery/dead-letter facts from nested tool evidence."""
+
+    if isinstance(value, list):
+        entries: list[dict[str, Any]] = []
+        for item in value:
+            entries.extend(_recovery_entries(item))
+        return entries
+    if not isinstance(value, dict):
+        return []
+    direct = value.get("effect_recovery")
+    if isinstance(direct, dict):
+        return [dict(direct)]
+    nested_result = value.get("result")
+    if isinstance(nested_result, dict):
+        nested = nested_result.get("effect_recovery")
+        if isinstance(nested, dict):
+            return [dict(nested)]
+    for key in ("results", "raw_results"):
+        nested_results = value.get(key)
+        if isinstance(nested_results, list):
+            return _recovery_entries(nested_results)
+    return []
+
+
 def _mapping_entries(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, dict):
         return [value]
@@ -222,6 +260,7 @@ def _mapping_entries(value: Any) -> list[dict[str, Any]]:
 
 def _tool_receipts_from_physical_evidence(physical_evidence: dict[str, Any]) -> list[dict[str, Any]]:
     receipts: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for key in (
         "effect_receipt",
         "effect_receipts",
@@ -232,8 +271,38 @@ def _tool_receipts_from_physical_evidence(physical_evidence: dict[str, Any]) -> 
         "batch_receipts",
         "commands",
     ):
-        receipts.extend(_receipt_entries(physical_evidence.get(key)))
+        for receipt in _receipt_entries(physical_evidence.get(key)):
+            try:
+                identity = json.dumps(
+                    receipt,
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            except (TypeError, ValueError):
+                receipts.append(receipt)
+                continue
+            if identity in seen:
+                continue
+            seen.add(identity)
+            receipts.append(receipt)
     return receipts
+
+
+def _directed_effect_recoveries_from_physical_evidence(
+    physical_evidence: dict[str, Any],
+) -> list[dict[str, Any]]:
+    recoveries: list[dict[str, Any]] = []
+    for key in (
+        "effect_recovery",
+        "effect_recoveries",
+        "batch_receipt",
+        "batch_receipts",
+        "commands",
+    ):
+        recoveries.extend(_recovery_entries(physical_evidence.get(key)))
+    return recoveries
 
 
 def _repair_receipts_from_physical_evidence(physical_evidence: dict[str, Any]) -> list[dict[str, Any]]:
@@ -462,50 +531,185 @@ def _receipt_capability_token(receipt: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _is_lower_sha256(value: Any) -> bool:
+    text = _clean_string(value)
+    return len(text) == 64 and text == text.lower() and all(character in "0123456789abcdef" for character in text)
+
+
+def _directed_effect_receipt_payload_hash(receipt: dict[str, Any]) -> str | None:
+    """Compatibility alias for existing tests and local callers."""
+
+    return directed_effect_receipt_payload_hash(receipt)
+
+
+def _directed_effect_receipt_errors(receipt: dict[str, Any], *, index: int) -> list[str] | None:
+    """Validate the TaskRuntime authority binding for a DEO-3 receipt projection."""
+
+    commit = receipt.get("_task_runtime_receipt_commit")
+    typed_commit = commit if isinstance(commit, dict) else None
+    errors = directed_effect_receipt_v2_errors(receipt, typed_commit, prefix=f"receipt[{index}]")
+    return list(errors) if errors is not None else None
+
+
+def _directed_effect_recovery_errors(recovery: dict[str, Any], *, index: int) -> list[str]:
+    """Validate one durable TaskRuntime recovery/dead-letter projection."""
+
+    prefix = f"recovery[{index}]"
+    errors: list[str] = []
+    state = _clean_string(recovery.get("state"))
+    expected_code = {"RECOVERY_PENDING": "recovery_pending", "DEAD_LETTER": "dead_lettered"}.get(state)
+    if _clean_string(recovery.get("schema_version")) != "roles.adapters.directed_effect_recovery_fact.v1":
+        errors.append(f"{prefix}:invalid_schema")
+    if expected_code is None:
+        errors.append(f"{prefix}:invalid_state")
+    elif _clean_string(recovery.get("code")) != expected_code:
+        errors.append(f"{prefix}:state_code_mismatch")
+    for flag in ("authoritative", "durable"):
+        if recovery.get(flag) is not True:
+            errors.append(f"{prefix}:{flag}_not_true")
+    for field in ("event_id", "operation_id"):
+        if not _clean_string(recovery.get(field)):
+            errors.append(f"{prefix}:missing_{field}")
+    if _int_value(recovery.get("version")) <= 0:
+        errors.append(f"{prefix}:invalid_version")
+    evidence_prefix = "recovery" if state == "RECOVERY_PENDING" else "resolution"
+    if not _clean_string(recovery.get(f"{evidence_prefix}_evidence_ref")):
+        errors.append(f"{prefix}:missing_{evidence_prefix}_evidence_ref")
+    if not _is_lower_sha256(recovery.get(f"{evidence_prefix}_evidence_hash")):
+        errors.append(f"{prefix}:invalid_{evidence_prefix}_evidence_hash")
+    return errors
+
+
 def _tool_receipt_modality(
     physical_evidence: dict[str, Any],
     job_token: dict[str, Any],
 ) -> dict[str, Any] | None:
     receipts = _tool_receipts_from_physical_evidence(physical_evidence)
-    if not receipts:
+    recoveries = _directed_effect_recoveries_from_physical_evidence(physical_evidence)
+    if not receipts and not recoveries:
         return None
+    authoritative_receipts, legacy_receipts, invalid, operations = _classify_tool_receipts(
+        receipts,
+        job_token=job_token,
+    )
+    valid_recoveries, recovery_errors = _classify_directed_effect_recoveries(recoveries)
+    invalid.extend(recovery_errors)
+    failed_directed_effect_receipts = [
+        receipt for receipt in authoritative_receipts if _clean_string(receipt.get("receipt_outcome")) == "failed"
+    ]
+    present = bool(authoritative_receipts or valid_recoveries)
+    ok = present and not invalid and not failed_directed_effect_receipts and not valid_recoveries
+    task_runtime_event_ids = _string_list(
+        [_dict_value(receipt.get("_task_runtime_receipt_commit")).get("event_id") for receipt in authoritative_receipts]
+    )
+    detail = _tool_receipt_modality_detail(
+        present=present,
+        invalid=invalid,
+        failed_receipt_count=len(failed_directed_effect_receipts),
+        recovery_count=len(valid_recoveries),
+        receipt_count=len(authoritative_receipts),
+    )
+    return {
+        "present": present,
+        "ok": ok,
+        "detail": detail,
+        "metadata": {
+            "receipt_count": len(authoritative_receipts),
+            "observed_receipt_count": len(receipts),
+            "task_runtime_receipt_count": len(authoritative_receipts),
+            "legacy_receipt_count": len(legacy_receipts),
+            "failed_receipt_count": len(failed_directed_effect_receipts),
+            "recovery_count": len(valid_recoveries),
+            "recovery_states": _string_list([item.get("state") for item in valid_recoveries]),
+            "recovery_event_ids": _string_list([item.get("event_id") for item in valid_recoveries]),
+            "operations": _string_list(operations),
+            "invalid": _string_list(invalid),
+            "expected_token_id": _clean_string(job_token.get("token_id")),
+            "task_runtime_event_ids": task_runtime_event_ids,
+        },
+    }
 
-    expected_token_id = _clean_string(job_token.get("token_id"))
-    expected_contract_hash = _clean_string(job_token.get("contract_hash"))
-    expected_blueprint_hash = _clean_string(job_token.get("blueprint_hash"))
+
+def _classify_tool_receipts(
+    receipts: list[dict[str, Any]],
+    *,
+    job_token: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], list[str]]:
+    authoritative: list[dict[str, Any]] = []
+    legacy: list[dict[str, Any]] = []
     invalid: list[str] = []
     operations: list[str] = []
     for index, receipt in enumerate(receipts):
-        operations.append(_clean_string(receipt.get("operation")) or "unknown")
-        token = _receipt_capability_token(receipt)
-        receipt_token_id = _clean_string(token.get("token_id"))
-        if not receipt_token_id:
-            invalid.append(f"receipt[{index}]:missing_token")
-            continue
-        if expected_token_id and receipt_token_id != expected_token_id:
-            invalid.append(f"receipt[{index}]:token_mismatch")
-        receipt_contract_hash = _clean_string(token.get("contract_hash"))
-        if expected_contract_hash and receipt_contract_hash and receipt_contract_hash != expected_contract_hash:
-            invalid.append(f"receipt[{index}]:contract_hash_mismatch")
-        receipt_blueprint_hash = _clean_string(token.get("blueprint_hash"))
-        if expected_blueprint_hash and receipt_blueprint_hash and receipt_blueprint_hash != expected_blueprint_hash:
-            invalid.append(f"receipt[{index}]:blueprint_hash_mismatch")
-
-    if not expected_token_id:
+        errors = _directed_effect_receipt_errors(receipt, index=index)
+        if errors is None:
+            operations.append(_clean_string(receipt.get("operation")) or "unknown")
+            legacy.append(receipt)
+            invalid.extend(_legacy_tool_receipt_errors(receipt, index=index, job_token=job_token))
+        else:
+            operations.append(_clean_string(receipt.get("normalized_tool_name")) or "unknown")
+            if errors:
+                invalid.extend(errors)
+            else:
+                authoritative.append(receipt)
+    if legacy and not _clean_string(job_token.get("token_id")):
         invalid.append("job_token:missing_token_id")
+    return authoritative, legacy, invalid, operations
 
-    ok = not invalid
-    return {
-        "present": True,
-        "ok": ok,
-        "detail": f"{len(receipts)} token-scoped tool receipt(s)" if ok else ", ".join(invalid),
-        "metadata": {
-            "receipt_count": len(receipts),
-            "operations": _string_list(operations),
-            "invalid": _string_list(invalid),
-            "expected_token_id": expected_token_id,
-        },
-    }
+
+def _legacy_tool_receipt_errors(
+    receipt: dict[str, Any],
+    *,
+    index: int,
+    job_token: dict[str, Any],
+) -> list[str]:
+    errors = [f"receipt[{index}]:legacy_receipt_non_authoritative"]
+    token = _receipt_capability_token(receipt)
+    receipt_token_id = _clean_string(token.get("token_id"))
+    if not receipt_token_id:
+        errors.append(f"receipt[{index}]:missing_token")
+        return errors
+    expected_token_id = _clean_string(job_token.get("token_id"))
+    if expected_token_id and receipt_token_id != expected_token_id:
+        errors.append(f"receipt[{index}]:token_mismatch")
+    for field in ("contract_hash", "blueprint_hash"):
+        expected = _clean_string(job_token.get(field))
+        observed = _clean_string(token.get(field))
+        if expected and observed and observed != expected:
+            errors.append(f"receipt[{index}]:{field}_mismatch")
+    return errors
+
+
+def _classify_directed_effect_recoveries(
+    recoveries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    valid: list[dict[str, Any]] = []
+    invalid: list[str] = []
+    for index, recovery in enumerate(recoveries):
+        errors = _directed_effect_recovery_errors(recovery, index=index)
+        if errors:
+            invalid.extend(errors)
+        else:
+            valid.append(recovery)
+    return valid, invalid
+
+
+def _tool_receipt_modality_detail(
+    *,
+    present: bool,
+    invalid: list[str],
+    failed_receipt_count: int,
+    recovery_count: int,
+    receipt_count: int,
+) -> str:
+    if not present:
+        return ", ".join(invalid) or "no authoritative tool receipt"
+    if invalid:
+        return ", ".join(invalid)
+    if failed_receipt_count:
+        return f"{failed_receipt_count} committed physical effect receipt(s) failed"
+    if recovery_count:
+        return f"{recovery_count} unresolved physical effect recovery fact(s)"
+    return f"{receipt_count} authoritative tool receipt(s)"
 
 
 def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:

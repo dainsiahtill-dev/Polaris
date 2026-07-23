@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-HttpTimeout = int | float | tuple[float, float]
+HttpTimeout = int | float | tuple[float, float] | None
 
 _aiohttp_module: Any | None = None
 _REAL_CLIENT_SESSION_TYPE: type[Any] | None = None
@@ -258,13 +258,13 @@ def _do_requests_post(
     )
 
 
-def _blocking_http_post(
+def _raw_blocking_http_post(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any],
     timeout: HttpTimeout,
 ):
-    """Call requests.post, safely.
+    """Call requests.post without Factory governance; callers must fence it.
 
     When called from an async context (running event loop), the HTTP request
     is offloaded to a ThreadPoolExecutor so it does not block the asyncio event
@@ -295,6 +295,36 @@ def _blocking_http_post(
 
     # Loop exists but is not running -- call directly.
     return _do_requests_post(url, headers, payload, timeout)
+
+
+def _blocking_http_post(
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout: HttpTimeout,
+):
+    """Dispatch one direct sync HTTP attempt through a bound Factory gate."""
+
+    bound_port = get_physical_provider_dispatch_port()
+    if bound_port is None:
+        return _raw_blocking_http_post(url, headers, payload, timeout)
+    if not hasattr(bound_port, "dispatch_sync"):
+        raise RuntimeError("bound physical provider dispatch port does not support dispatch_sync")
+    physical_dispatch_port = cast("PhysicalProviderDispatchPort", bound_port)
+    return physical_dispatch_port.dispatch_sync(
+        wire_request={
+            "endpoint": url,
+            "headers": headers,
+            "body": payload,
+            "transport": {"kind": "requests.post", "timeout": timeout},
+        },
+        send=lambda frozen: _raw_blocking_http_post(
+            str(frozen["endpoint"]),
+            _thaw_physical_dispatch_value(frozen["headers"]),
+            _thaw_physical_dispatch_value(frozen["body"]),
+            frozen["transport"]["timeout"],
+        ),
+    )
 
 
 def _thaw_physical_dispatch_value(value: Any) -> Any:
@@ -830,7 +860,7 @@ def _send_governed_http_attempt(
 ) -> _GovernedHttpAttemptResult:
     """Send and parse once inside the physical-attempt lifecycle boundary."""
 
-    response = _blocking_http_post(
+    response = _raw_blocking_http_post(
         str(frozen["endpoint"]),
         _thaw_physical_dispatch_value(frozen["headers"]),
         _thaw_physical_dispatch_value(frozen["body"]),
@@ -1381,6 +1411,29 @@ def _validate_async_stream_governance(
         raise RuntimeError("governed async stream requires a physical dispatch port")
 
 
+def _resolve_async_stream_governance(
+    *,
+    governance_mode: _AsyncStreamGovernanceMode,
+    physical_dispatch_port: AsyncPhysicalProviderDispatchPort | None,
+) -> tuple[_AsyncStreamGovernanceMode, AsyncPhysicalProviderDispatchPort | None]:
+    """Promote a request-scoped Factory binding to governed stream dispatch."""
+
+    resolved_port = physical_dispatch_port
+    resolved_mode = governance_mode
+    if resolved_port is None:
+        bound_port = get_physical_provider_dispatch_port()
+        if bound_port is not None:
+            if not hasattr(bound_port, "dispatch_stream_async"):
+                raise RuntimeError("bound physical provider dispatch port does not support dispatch_stream_async")
+            resolved_port = cast("AsyncPhysicalProviderDispatchPort", bound_port)
+            resolved_mode = "governed_required"
+    _validate_async_stream_governance(
+        governance_mode=resolved_mode,
+        physical_dispatch_port=resolved_port,
+    )
+    return resolved_mode, resolved_port
+
+
 def _build_async_stream_wire_request(
     *,
     url: str,
@@ -1508,6 +1561,50 @@ async def _consume_data_line_response(
         raise RuntimeError(f"provider_stream_empty: no structured events decoded from streaming response {url}")
 
 
+def _stream_timeout_budget_seconds(timeout_seconds: int | float) -> float:
+    return max(0.001, float(timeout_seconds if timeout_seconds > 0 else 60))
+
+
+def _stream_deadline_remaining_seconds(*, deadline: float, total_timeout_seconds: float) -> float:
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining <= 0:
+        raise asyncio.TimeoutError(f"provider_stream_timeout:{total_timeout_seconds:g}s")
+    return remaining
+
+
+async def _iterate_physical_stream_under_deadline(
+    stream: AsyncIterator[Any],
+    *,
+    deadline: float,
+    total_timeout_seconds: float,
+) -> AsyncIterator[Any]:
+    """Apply the provider deadline only while awaiting physical stream data.
+
+    The Factory physical-attempt gate durably terminalizes the provider
+    response before replaying its buffered items to the role runtime.  A
+    timeout context spanning this helper's outward ``yield`` would therefore
+    remain armed during post-terminal replay/backpressure and could cancel the
+    consumer task after the physical attempt had already completed.  Keep the
+    deadline around each physical ``anext`` only; downstream processing is not
+    provider response time.
+    """
+
+    iterator = stream.__aiter__()
+    while True:
+        remaining_seconds = _stream_deadline_remaining_seconds(
+            deadline=deadline,
+            total_timeout_seconds=total_timeout_seconds,
+        )
+        try:
+            async with asyncio.timeout(remaining_seconds):
+                item = await anext(iterator)
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError as exc:
+            raise asyncio.TimeoutError(f"provider_stream_timeout:{total_timeout_seconds:g}s") from exc
+        yield item
+
+
 async def invoke_stream_with_retry(
     url: str,
     headers: dict[str, str],
@@ -1521,23 +1618,34 @@ async def invoke_stream_with_retry(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """POST provider data-line streams with one physical gate per retry."""
 
-    _validate_async_stream_governance(
+    _, physical_dispatch_port = _resolve_async_stream_governance(
         governance_mode=governance_mode,
         physical_dispatch_port=physical_dispatch_port,
     )
     last_exc: BaseException | None = None
+    total_timeout_seconds = _stream_timeout_budget_seconds(timeout_seconds)
+    deadline = asyncio.get_running_loop().time() + total_timeout_seconds
     for attempt in range(1, max_attempts + 1):
         attempt_stream: AsyncIterator[Any] | None = None
         try:
+            remaining_seconds = _stream_deadline_remaining_seconds(
+                deadline=deadline,
+                total_timeout_seconds=total_timeout_seconds,
+            )
             wire_request = _build_async_stream_wire_request(
                 url=url,
                 headers=headers,
                 payload=payload,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=max(1, int(remaining_seconds + 0.999)),
             )
 
             async def _consume(response: aiohttp.ClientResponse) -> AsyncIterator[dict[str, Any]]:
-                async for item in _consume_data_line_response(response, url=url):
+                physical_stream = _consume_data_line_response(response, url=url)
+                async for item in _iterate_physical_stream_under_deadline(
+                    physical_stream,
+                    deadline=deadline,
+                    total_timeout_seconds=total_timeout_seconds,
+                ):
                     yield item
 
             attempt_stream = _dispatch_async_stream_attempt(
@@ -1562,7 +1670,11 @@ async def invoke_stream_with_retry(
                     type(exc).__name__,
                     retry_delay_seconds,
                 )
-                await asyncio.sleep(retry_delay_seconds)
+                remaining_seconds = _stream_deadline_remaining_seconds(
+                    deadline=deadline,
+                    total_timeout_seconds=total_timeout_seconds,
+                )
+                await asyncio.sleep(min(retry_delay_seconds, remaining_seconds))
             else:
                 logger.error(
                     "[provider-helpers] Network jitter retry exhausted (all %d attempts failed): %s",
@@ -1593,25 +1705,36 @@ async def invoke_stream_with_retry_and_handler(
 ) -> AsyncGenerator[Any, None]:
     """POST custom provider streams with one physical gate per retry."""
 
-    _validate_async_stream_governance(
+    _, physical_dispatch_port = _resolve_async_stream_governance(
         governance_mode=governance_mode,
         physical_dispatch_port=physical_dispatch_port,
     )
     last_exc: BaseException | None = None
+    total_timeout_seconds = _stream_timeout_budget_seconds(timeout_seconds)
+    deadline = asyncio.get_running_loop().time() + total_timeout_seconds
     for attempt in range(1, max_attempts + 1):
         attempt_stream: AsyncIterator[Any] | None = None
         try:
+            remaining_seconds = _stream_deadline_remaining_seconds(
+                deadline=deadline,
+                total_timeout_seconds=total_timeout_seconds,
+            )
             wire_request = _build_async_stream_wire_request(
                 url=url,
                 headers=headers,
                 payload=payload,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=max(1, int(remaining_seconds + 0.999)),
             )
 
             async def _consume(response: aiohttp.ClientResponse) -> AsyncIterator[Any]:
                 response.raise_for_status()
                 consumed = 0
-                async for item in stream_handler(response):
+                physical_stream = stream_handler(response)
+                async for item in _iterate_physical_stream_under_deadline(
+                    physical_stream,
+                    deadline=deadline,
+                    total_timeout_seconds=total_timeout_seconds,
+                ):
                     consumed += 1
                     yield item
                 if consumed == 0:
@@ -1639,7 +1762,11 @@ async def invoke_stream_with_retry_and_handler(
                     type(exc).__name__,
                     retry_delay_seconds,
                 )
-                await asyncio.sleep(retry_delay_seconds)
+                remaining_seconds = _stream_deadline_remaining_seconds(
+                    deadline=deadline,
+                    total_timeout_seconds=total_timeout_seconds,
+                )
+                await asyncio.sleep(min(retry_delay_seconds, remaining_seconds))
             else:
                 logger.error(
                     "[provider-helpers] Network jitter retry exhausted (all %d attempts failed): %s",

@@ -271,6 +271,64 @@ def _detect_unit_command(workspace: str) -> str:
     return "python -m pytest --collect-only -q"
 
 
+@register_activity("record_qa_blocked")
+@activity.defn(name="record_qa_blocked")
+async def record_qa_blocked(payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist explicit evidence that QA did not run because upstream blocked."""
+
+    run_id = str((payload or {}).get("run_id") or "").strip()
+    workspace = str((payload or {}).get("workspace") or "").strip()
+    reason = str((payload or {}).get("reason") or "qa_blocked").strip() or "qa_blocked"
+    blocked_stage = str((payload or {}).get("blocked_stage") or "upstream").strip() or "upstream"
+    failure_reason = str((payload or {}).get("failure_reason") or reason).strip() or reason
+    metadata = _normalize_metadata(payload)
+    if not workspace:
+        return ActivityExecutionResult(
+            success=True,
+            summary="QA blocked evidence skipped: no workspace",
+            payload={"run_id": run_id, "reason": reason, "skipped": True},
+        ).to_dict()
+
+    artifact_payload = {
+        "schema_version": 1,
+        "artifact_type": "qa_skipped_or_blocked",
+        "enabled": True,
+        "ran": False,
+        "passed": None,
+        "reason": reason,
+        "blocked_stage": blocked_stage,
+        "failure_reason": failure_reason,
+        "run_id": run_id,
+        "project_id": str(metadata.get("project_id") or "").strip(),
+        "workspace": workspace,
+        "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    }
+    artifact_path = _write_runtime_result(
+        workspace,
+        metadata,
+        "runtime/results/integration_qa.result.json",
+        artifact_payload,
+    )
+    if not artifact_path:
+        return ActivityExecutionResult(
+            success=False,
+            summary="QA blocked artifact write failed",
+            payload={"run_id": run_id, "reason": reason},
+            errors=["qa_blocked_artifact_write_failed"],
+            error_code="qa_blocked_artifact_write_failed",
+        ).to_dict()
+    return ActivityExecutionResult(
+        success=True,
+        summary="QA blocked artifact written",
+        payload={
+            "run_id": run_id,
+            "reason": reason,
+            "result_path": artifact_path,
+            "artifact": artifact_payload,
+        },
+    ).to_dict()
+
+
 @register_activity("record_qa_cognitive_receipt")
 @activity.defn(name="record_qa_cognitive_receipt")
 async def record_qa_cognitive_receipt(payload: dict[str, Any]) -> dict[str, Any]:

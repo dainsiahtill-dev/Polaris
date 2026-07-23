@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from polaris.infrastructure.llm.sdk import CodexSDK, SDKConfig, SDKMessage, SDKUnavailableError
 from polaris.kernelone.constants import DEFAULT_MAX_RETRIES
+from polaris.kernelone.llm.engine.contracts import get_physical_provider_dispatch_port
 from polaris.kernelone.llm.providers import (
     BaseProvider,
     ProviderConfigValidationResult,
@@ -16,6 +19,23 @@ from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, M
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 logger = logging.getLogger(__name__)
+
+_FACTORY_CODEX_OPENAI_SDK_VERSION = "2.41.0"
+
+
+def _installed_openai_sdk_version() -> str:
+    try:
+        return importlib.metadata.version("openai")
+    except importlib.metadata.PackageNotFoundError:
+        return "missing"
+
+
+def _thaw_sdk_dispatch_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_sdk_dispatch_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_sdk_dispatch_value(item) for item in value]
+    return value
 
 
 def _normalize_timeout(value: Any, default: int = 60) -> int:
@@ -255,7 +275,23 @@ class CodexSDKProvider(BaseProvider):
     def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
         start = time.time()
         try:
-            client = self._get_sdk_client(config)
+            bound_port = get_physical_provider_dispatch_port()
+            effective_config = config
+            if bound_port is not None:
+                if not hasattr(bound_port, "dispatch_sync"):
+                    raise RuntimeError("bound physical provider dispatch port does not support dispatch_sync")
+                installed_version = _installed_openai_sdk_version()
+                if installed_version != _FACTORY_CODEX_OPENAI_SDK_VERSION:
+                    raise RuntimeError(
+                        "factory_codex_sdk_version_mismatch:"
+                        f"expected={_FACTORY_CODEX_OPENAI_SDK_VERSION}:actual={installed_version}"
+                    )
+                sdk_params = config.get("sdk_params")
+                if sdk_params is not None and (not isinstance(sdk_params, dict) or sdk_params):
+                    raise RuntimeError("factory_codex_sdk_params_unsupported")
+                effective_config = {**config, "max_retries": 0, "sdk_params": {}}
+
+            client = self._get_sdk_client(effective_config)
             messages = [SDKMessage(role="user", content=prompt)]
 
             sdk_kwargs: dict[str, Any] = {}
@@ -270,7 +306,37 @@ class CodexSDKProvider(BaseProvider):
             if isinstance(overrides, dict):
                 sdk_kwargs.update(overrides)
 
-            response = client.invoke(messages=messages, model=model, **sdk_kwargs)
+            if bound_port is None:
+                response = client.invoke(messages=messages, model=model, **sdk_kwargs)
+            else:
+                headers = _normalize_headers(effective_config.get("headers")) or {}
+                api_key = effective_config.get("api_key")
+                if api_key:
+                    headers.setdefault("Authorization", f"Bearer {api_key}")
+                response = bound_port.dispatch_sync(
+                    wire_request={
+                        "endpoint": str(effective_config.get("base_url") or "https://api.openai.com/v1"),
+                        "headers": headers,
+                        "body": {
+                            "model": model,
+                            "messages": [{"role": message.role, "content": message.content} for message in messages],
+                            "options": sdk_kwargs,
+                        },
+                        "transport": {
+                            "kind": "openai-python-sdk",
+                            "sdk_version": _FACTORY_CODEX_OPENAI_SDK_VERSION,
+                            "max_retries": 0,
+                        },
+                    },
+                    send=lambda frozen: client.invoke(
+                        messages=[
+                            SDKMessage(role=str(item["role"]), content=str(item["content"]))
+                            for item in _thaw_sdk_dispatch_value(frozen["body"])["messages"]
+                        ],
+                        model=str(_thaw_sdk_dispatch_value(frozen["body"])["model"]),
+                        **_thaw_sdk_dispatch_value(frozen["body"])["options"],
+                    ),
+                )
             output = response.content or ""
             thinking = response.thinking
             if thinking and config.get("thinking_mode", True):

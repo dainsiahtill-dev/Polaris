@@ -117,23 +117,18 @@ class TestStreamExecutorInvokeStreamErrors:
     """Tests for invoke_stream error handling."""
 
     @pytest.mark.asyncio
-    async def test_invoke_stream_binds_exact_port_for_iteration_and_resets(
+    async def test_empty_provider_timeout_keeps_typed_error_evidence(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """B3.3 sidecar lives through lazy iteration, then resets in finally."""
-
-        seen: list[object | None] = []
-        port = object()
-
         class _Provider:
             async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
                 del prompt, model, config
-                seen.append(get_physical_provider_dispatch_port())
-                yield "ok"
+                raise asyncio.TimeoutError
+                yield "unreachable"
 
         class _ProviderManager:
-            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+            def get_provider_instance(self, provider_type: str) -> _Provider:
                 assert provider_type == "fake"
                 return _Provider()
 
@@ -143,6 +138,80 @@ class TestStreamExecutorInvokeStreamErrors:
         )
         executor = StreamExecutor(model_catalog=_ModelCatalog(), token_budget=_BudgetManager())
         monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake"})
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="chief_engineer",
+            provider_id="provider-a",
+            model="model-a",
+            input="build portfolio",
+            options={"timeout": 125},
+        )
+
+        events = [event async for event in executor.invoke_stream(request)]
+
+        errors = [event.error for event in events if event.type.value == "error"]
+        assert errors == ["provider_stream_timeout:125s"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "provider_type",
+        ["anthropic_compat", "openai_compat"],
+    )
+    async def test_invoke_stream_binds_exact_port_for_iteration_and_resets(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        provider_type: str,
+    ) -> None:
+        """B3.3 sidecar lives through lazy iteration, then resets in finally."""
+
+        seen: list[object | None] = []
+
+        class _FactoryGovernedPort:
+            def bind_provider_route_authority(self, **_: object) -> None:
+                return None
+
+            def dispatch_stream_async(self, **_: object) -> None:
+                return None
+
+        port = _FactoryGovernedPort()
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                seen.append(get_physical_provider_dispatch_port())
+                yield "ok"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+                assert provider_type in {
+                    "anthropic_compat",
+                    "openai_compat",
+                }
+                return _Provider()
+
+            def get_factory_default_provider_instance(self, provider_type: str) -> _Provider | None:
+                return self.get_provider_instance(provider_type)
+
+            def is_factory_default_provider_implementation(
+                self,
+                provider_type: str,
+                provider_instance: object,
+            ) -> bool:
+                return (
+                    provider_type
+                    in {
+                        "anthropic_compat",
+                        "openai_compat",
+                    }
+                    and type(provider_instance) is _Provider
+                )
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(model_catalog=_ModelCatalog(), token_budget=_BudgetManager())
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": provider_type})
         request = AIRequest(
             task_type=TaskType.DIALOGUE,
             role="director",
@@ -162,6 +231,470 @@ class TestStreamExecutorInvokeStreamErrors:
         assert any(event.type.value == "complete" for event in events)
         assert seen == [port]
         assert get_physical_provider_dispatch_port() is None
+
+    @pytest.mark.asyncio
+    async def test_arbitrary_non_null_sidecar_retains_legacy_overall_timeout(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Only the exact Factory dispatch capabilities transfer deadline ownership."""
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                await asyncio.sleep(0.03)
+                yield "late"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider:
+                assert provider_type == "openai_compat"
+                return _Provider()
+
+            def get_factory_default_provider_instance(self, provider_type: str) -> _Provider:
+                return self.get_provider_instance(provider_type)
+
+            def is_factory_default_provider_implementation(
+                self,
+                provider_type: str,
+                provider_instance: object,
+            ) -> bool:
+                return provider_type == "openai_compat" and type(provider_instance) is _Provider
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(
+            model_catalog=_ModelCatalog(),
+            token_budget=_BudgetManager(),
+            config=DirectStreamConfig(timeout_sec=0.01),
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "openai_compat"})
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="chief_engineer",
+            provider_id="provider-a",
+            model="model-a",
+            input="unqualified sidecar",
+        )
+
+        events = [event async for event in executor.invoke_stream(request, physical_dispatch_port=object())]
+
+        assert [event.error for event in events if event.error] == ["Stream overall timeout after 0.01s"]
+
+    @pytest.mark.asyncio
+    async def test_factory_governed_terminal_replay_ignores_legacy_overall_timeout(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A qualified physical deadline owns Factory stream timing.
+
+        Factory dispatch consumes and durably terminalizes the physical stream
+        before replaying buffered events.  The legacy executor wall clock must
+        not reject that post-terminal replay or cause the role layer to issue a
+        second physical request.
+        """
+
+        seen: list[object | None] = []
+
+        class _FactoryGovernedPort:
+            def bind_provider_route_authority(self, **_: object) -> None:
+                return None
+
+            def dispatch_stream_async(self, **_: object) -> None:
+                return None
+
+        port = _FactoryGovernedPort()
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                seen.append(get_physical_provider_dispatch_port())
+                await asyncio.sleep(0.03)
+                yield "terminal replay"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider:
+                assert provider_type == "openai_compat"
+                return _Provider()
+
+            def get_factory_default_provider_instance(self, provider_type: str) -> _Provider:
+                return self.get_provider_instance(provider_type)
+
+            def is_factory_default_provider_implementation(
+                self,
+                provider_type: str,
+                provider_instance: object,
+            ) -> bool:
+                return provider_type == "openai_compat" and type(provider_instance) is _Provider
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(
+            model_catalog=_ModelCatalog(),
+            token_budget=_BudgetManager(),
+            config=DirectStreamConfig(timeout_sec=0.01),
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "openai_compat"})
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="chief_engineer",
+            provider_id="provider-a",
+            model="model-a",
+            input="build portfolio",
+        )
+
+        events = [event async for event in executor.invoke_stream(request, physical_dispatch_port=port)]
+
+        assert not [event.error for event in events if event.error]
+        assert any(event.type.value == "complete" for event in events)
+        assert seen == [port]
+        assert get_physical_provider_dispatch_port() is None
+
+    @pytest.mark.asyncio
+    async def test_factory_governed_tiny_reasoning_replay_is_compacted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Post-terminal replay must not project one role event per tiny SSE delta."""
+
+        class _FactoryGovernedPort:
+            def bind_provider_route_authority(self, **_: object) -> None:
+                return None
+
+            def dispatch_stream_async(self, **_: object) -> None:
+                return None
+
+        class _Provider:
+            async def invoke_stream_events(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                for _ in range(4_096):
+                    yield {
+                        "type": "content_block_delta",
+                        "delta": {"type": "thinking_delta", "thinking": "r"},
+                    }
+
+        class _ProviderManager:
+            def get_factory_default_provider_instance(self, provider_type: str) -> _Provider:
+                assert provider_type == "anthropic_compat"
+                return _Provider()
+
+            def is_factory_default_provider_implementation(
+                self,
+                provider_type: str,
+                provider_instance: object,
+            ) -> bool:
+                return provider_type == "anthropic_compat" and type(provider_instance) is _Provider
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(model_catalog=_ModelCatalog(), token_budget=_BudgetManager())
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "anthropic_compat"})
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="chief_engineer",
+            provider_id="provider-a",
+            model="model-a",
+            input="build portfolio",
+        )
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                request,
+                physical_dispatch_port=_FactoryGovernedPort(),
+            )
+        ]
+
+        reasoning = [str(event.reasoning or "") for event in events if event.type.value == "reasoning_chunk"]
+        assert "".join(reasoning) == "r" * 4_096
+        assert len(reasoning) <= 8
+        assert [event.type.value for event in events].count("complete") == 1
+
+    @pytest.mark.asyncio
+    async def test_factory_replay_compaction_preserves_text_and_tool_order(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class _FactoryGovernedPort:
+            def bind_provider_route_authority(self, **_: object) -> None:
+                return None
+
+            def dispatch_stream_async(self, **_: object) -> None:
+                return None
+
+        class _Provider:
+            async def invoke_stream_events(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                yield {
+                    "type": "content_block_delta",
+                    "delta": {"type": "thinking_delta", "thinking": "plan-"},
+                }
+                yield {
+                    "type": "content_block_delta",
+                    "delta": {"type": "thinking_delta", "thinking": "before-tool"},
+                }
+                yield {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": "call-readme",
+                        "name": "read_file",
+                        "input": {},
+                    },
+                }
+                yield {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "input_json_delta", "partial_json": '{"path":"README.md"}'},
+                }
+                yield {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "answer-after-tool"},
+                }
+
+        class _ProviderManager:
+            def get_factory_default_provider_instance(self, provider_type: str) -> _Provider:
+                assert provider_type == "anthropic_compat"
+                return _Provider()
+
+            def is_factory_default_provider_implementation(
+                self,
+                provider_type: str,
+                provider_instance: object,
+            ) -> bool:
+                return provider_type == "anthropic_compat" and type(provider_instance) is _Provider
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(model_catalog=_ModelCatalog(), token_budget=_BudgetManager())
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "anthropic_compat"})
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                AIRequest(
+                    task_type=TaskType.DIALOGUE,
+                    role="chief_engineer",
+                    provider_id="provider-a",
+                    model="model-a",
+                    input="build portfolio",
+                ),
+                physical_dispatch_port=_FactoryGovernedPort(),
+            )
+        ]
+
+        semantic = [event for event in events if event.type.value in {"reasoning_chunk", "tool_call", "chunk"}]
+        assert [event.type.value for event in semantic] == ["reasoning_chunk", "tool_call", "chunk"]
+        assert semantic[0].reasoning == "plan-before-tool"
+        assert semantic[1].tool_call == {
+            "tool": "read_file",
+            "arguments": {"path": "README.md"},
+            "call_id": "call-readme",
+            "provider_meta": {
+                "provider": "anthropic_compat",
+                "index": None,
+                "content_block_index": 0,
+            },
+        }
+        assert semantic[2].chunk == "answer-after-tool"
+
+    @pytest.mark.asyncio
+    async def test_ungoverned_stream_retains_tiny_reasoning_granularity(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class _Provider:
+            async def invoke_stream_events(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                for _ in range(32):
+                    yield {
+                        "type": "content_block_delta",
+                        "delta": {"type": "thinking_delta", "thinking": "r"},
+                    }
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider:
+                assert provider_type == "anthropic_compat"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(model_catalog=_ModelCatalog(), token_budget=_BudgetManager())
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "anthropic_compat"})
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                AIRequest(
+                    task_type=TaskType.DIALOGUE,
+                    role="chief_engineer",
+                    provider_id="provider-a",
+                    model="model-a",
+                    input="live stream",
+                )
+            )
+        ]
+
+        reasoning = [event for event in events if event.type.value == "reasoning_chunk"]
+        assert len(reasoning) == 32
+
+    @pytest.mark.asyncio
+    async def test_ungoverned_stream_retains_legacy_overall_timeout(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                await asyncio.sleep(0.03)
+                yield "late"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider:
+                assert provider_type == "fake"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(
+            model_catalog=_ModelCatalog(),
+            token_budget=_BudgetManager(),
+            config=DirectStreamConfig(timeout_sec=0.01),
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake"})
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-a",
+            model="model-a",
+            input="legacy stream",
+        )
+
+        events = [event async for event in executor.invoke_stream(request)]
+
+        assert [event.error for event in events if event.error] == ["Stream overall timeout after 0.01s"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "provider_type",
+        [
+            "codex_cli",
+            "codex_sdk",
+            "gemini_api",
+            "gemini_cli",
+            "kimi",
+            "minimax",
+            "ollama",
+        ],
+    )
+    async def test_factory_bound_opaque_stream_route_fails_before_instance_or_outbound(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        provider_type: str,
+    ) -> None:
+        manager_calls: list[str] = []
+        outbound: list[str] = []
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del model, config
+                outbound.append(prompt)
+                yield "must-not-escape"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider:
+                manager_calls.append(provider_type)
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(model_catalog=_ModelCatalog(), token_budget=_BudgetManager())
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": provider_type})
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-a",
+            model="model-a",
+            input="must-not-launch-gemini",
+        )
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                request,
+                physical_dispatch_port=object(),
+            )
+        ]
+
+        errors = [event.error for event in events if event.error]
+        assert errors == [f"factory_provider_route_disabled_opaque:{provider_type}:stream"]
+        assert manager_calls == []
+        assert outbound == []
+        assert get_physical_provider_dispatch_port() is None
+
+    @pytest.mark.asyncio
+    async def test_factory_bound_governed_stream_rejects_replaced_provider_implementation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        outbound: list[str] = []
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del model, config
+                outbound.append(prompt)
+                yield "must-not-escape"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider:
+                del provider_type
+                raise AssertionError("untrusted replacement must not be instantiated")
+
+            def get_factory_default_provider_instance(self, provider_type: str) -> None:
+                assert provider_type == "openai_compat"
+                return None
+
+            def is_factory_default_provider_implementation(
+                self,
+                provider_type: str,
+                provider_instance: object,
+            ) -> bool:
+                del provider_type, provider_instance
+                return False
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+        executor = StreamExecutor(model_catalog=_ModelCatalog(), token_budget=_BudgetManager())
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "openai_compat"})
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            provider_id="provider-a",
+            model="model-a",
+            input="must-not-reach-replaced-stream-provider",
+        )
+
+        events = [event async for event in executor.invoke_stream(request, physical_dispatch_port=object())]
+
+        errors = [event.error for event in events if event.error]
+        assert errors == ["factory_provider_route_implementation_untrusted:openai_compat:stream"]
+        assert outbound == []
 
     @pytest.mark.asyncio
     async def test_stream_binding_nested_aclose_restores_prior_token(

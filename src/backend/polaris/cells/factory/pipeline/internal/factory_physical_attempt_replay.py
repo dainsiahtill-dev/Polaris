@@ -241,7 +241,7 @@ def _validate_start_against_cutoff(
         or start.request_freeze_id != request.request_freeze_id
         or start.execution_authority_hash != request.execution_authority_hash
         or start.attempt_budget != request.attempt_budget
-        or start.semantic_request_hash != request.semantic_candidate_hash
+        or start.semantic_candidate_hash != request.semantic_candidate_hash
     ):
         raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_lifecycle_identity_mismatch")
     grant = FactoryPhysicalAttemptGrantViewV1(

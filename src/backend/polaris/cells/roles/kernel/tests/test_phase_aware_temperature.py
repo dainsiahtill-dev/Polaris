@@ -31,6 +31,12 @@ from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy imp
 )
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.public.turn_contracts import RawLLMResponse
+from polaris.cells.runtime.task_runtime.public import (
+    HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    create_task_runtime_execution_attempt_authority,
+)
 
 _ENV = "KERNELONE_RETRY_ESCALATION_TEMPERATURE"
 _CHANNEL_KEY = "_transaction_kernel_temperature_override"
@@ -510,6 +516,30 @@ class TestTransactionKernelTaskRuntimeGuard:
         workspace = str(tmp_path)
         kernel = RoleExecutionKernel.create_default(workspace=workspace)
         profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
+        attempt = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=workspace,
+            task_id=1,
+            external_task_id="TASK-1",
+            session_id="session-1",
+            attempt=1,
+            role_id="director",
+            worker_id="worker-1",
+            run_id="run_123",
+            lease_expires_at="2030-01-01T00:00:00+00:00",
+        )
+
+        def _heartbeat(
+            command: HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+        ) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
+            assert command.identity == attempt
+            return TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
+                success=True,
+                code="heartbeat_renewed",
+                workspace=workspace,
+                identity=attempt,
+                renewed_identity=attempt,
+            )
+
         request = SimpleNamespace(
             message="hello",
             run_id="run_123",
@@ -518,15 +548,13 @@ class TestTransactionKernelTaskRuntimeGuard:
             metadata={},
             context_override={
                 "task_runtime_guard": True,
-                "task_runtime_session_id": "session-1",
+                "task_runtime_execution_attempt_authority": create_task_runtime_execution_attempt_authority(
+                    attempt,
+                    heartbeat=_heartbeat,
+                ),
             },
         )
         executed: list[tuple[str, dict[str, Any]]] = []
-
-        def _heartbeat(self: Any, task_id: Any, *, session_id: str, **_kwargs: Any) -> dict[str, Any]:
-            assert task_id == "1"
-            assert session_id == "session-1"
-            return {"success": True, "reason": "heartbeat_renewed"}
 
         async def _fake_tool_runtime_executor(
             _kernel: RoleExecutionKernel,
@@ -539,10 +567,6 @@ class TestTransactionKernelTaskRuntimeGuard:
             executed.append((tool_name, args))
             return {"success": True, "result": {"ok": True}}
 
-        monkeypatch.setattr(
-            "polaris.cells.runtime.task_runtime.internal.service.TaskRuntimeService.heartbeat_execution",
-            _heartbeat,
-        )
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
             _fake_tool_runtime_executor,
@@ -561,6 +585,29 @@ class TestTransactionKernelTaskRuntimeGuard:
         workspace = str(tmp_path)
         kernel = RoleExecutionKernel.create_default(workspace=workspace)
         profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
+        attempt = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=workspace,
+            task_id=1,
+            external_task_id="TASK-1",
+            session_id="session-1",
+            attempt=1,
+            role_id="director",
+            worker_id="worker-1",
+            run_id="run_123",
+            lease_expires_at="2030-01-01T00:00:00+00:00",
+        )
+
+        def _heartbeat(
+            command: HeartbeatTaskRuntimeExecutionAttemptCommandV1,
+        ) -> TaskRuntimeExecutionAttemptHeartbeatVerdictV1:
+            assert command.identity == attempt
+            return TaskRuntimeExecutionAttemptHeartbeatVerdictV1(
+                success=False,
+                code="session_not_active",
+                workspace=workspace,
+                identity=attempt,
+            )
+
         request = SimpleNamespace(
             message="hello",
             run_id="run_123",
@@ -569,15 +616,13 @@ class TestTransactionKernelTaskRuntimeGuard:
             metadata={},
             context_override={
                 "task_runtime_guard": True,
-                "task_runtime_session_id": "session-1",
+                "task_runtime_execution_attempt_authority": create_task_runtime_execution_attempt_authority(
+                    attempt,
+                    heartbeat=_heartbeat,
+                ),
             },
         )
         executed: list[str] = []
-
-        def _heartbeat(self: Any, task_id: Any, *, session_id: str, **_kwargs: Any) -> dict[str, Any]:
-            assert task_id == "1"
-            assert session_id == "session-1"
-            return {"success": False, "reason": "session_not_active"}
 
         async def _fake_tool_runtime_executor(
             _kernel: RoleExecutionKernel,
@@ -591,16 +636,15 @@ class TestTransactionKernelTaskRuntimeGuard:
             return {"success": True}
 
         monkeypatch.setattr(
-            "polaris.cells.runtime.task_runtime.internal.service.TaskRuntimeService.heartbeat_execution",
-            _heartbeat,
-        )
-        monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.kernel.transaction_factory.execute_single_tool",
             _fake_tool_runtime_executor,
         )
 
         tk = create_transaction_kernel(kernel, "director", profile, request)
-        with pytest.raises(RuntimeError, match="director_tool_execution_cancelled"):
+        with pytest.raises(
+            RuntimeError,
+            match="director_tool_execution_guard_heartbeat_rejected:heartbeat_rejected",
+        ):
             await tk.tool_runtime("write_file", {"file": "src/index.ts", "content": "ok"})
 
         assert executed == []

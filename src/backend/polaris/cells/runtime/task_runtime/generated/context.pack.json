@@ -85,6 +85,7 @@
     "polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_concurrency.py",
     "polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py",
     "polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py",
-    "polaris/tests/test_runtime_projection_snapshot_tasks.py"
+    "polaris/tests/test_runtime_projection_snapshot_tasks.py",
+    "polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py"
   ]
 }

@@ -5251,6 +5251,54 @@ def test_task_runtime_service_preserves_terminal_session_during_run_cancellation
     )
 
 
+def test_run_cancellation_cannot_restore_terminal_projection_over_conflicting_intent(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace-conflicting-intent"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    created_id = service.create_task_row(subject="terminal task with conflicting stale intent")["id"]
+    claimed = service.claim_execution(
+        created_id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-terminal-conflict",
+        selection_source="task_id_lookup",
+    )
+    assert claimed["success"] is True
+    completed = _settle_claimed_execution_attempt(service, claimed, outcome="completed", summary="done")
+    assert completed["success"] is True
+
+    session_path = _session_file_path(workspace, created_id)
+    stale_session = json.loads(session_path.read_text(encoding="utf-8"))
+    stale_session["status"] = "active"
+    pending = dict(stale_session["metadata"]["pending_terminal_intent"])
+    pending["outcome"] = "failed"
+    intent_body = {key: value for key, value in pending.items() if key != "terminal_intent_hash"}
+    pending["terminal_intent_hash"] = service_module._canonical_sha256(intent_body)
+    stale_session["metadata"]["pending_terminal_intent"] = pending
+    stale_session["metadata"]["terminal_settlement_proof"] = {
+        **dict(stale_session["metadata"]["terminal_settlement_proof"]),
+        "settlement_outcome": "failed",
+        "terminal_intent_hash": pending["terminal_intent_hash"],
+    }
+    session_path.write_text(
+        json.dumps(stale_session, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    reloaded = _create_bootstrapped_task_runtime_service(workspace)
+    result = reloaded.suspend_active_executions_for_run(
+        "run-terminal-conflict",
+        reason="factory_stage_timeout",
+    )
+
+    assert result["success"] is False
+    assert result["suspended_count"] == 0
+    assert result["failed"][0]["code"] == "settlement_terminal_intent_conflict"
+    persisted = json.loads(session_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "active"
+    assert persisted["metadata"]["pending_terminal_intent"]["outcome"] == "failed"
+
+
 def test_task_runtime_stale_metadata_update_does_not_downgrade_completed_row(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -5630,11 +5678,7 @@ def test_task_runtime_reset_rejects_foreign_active_session_without_file_changes(
     assert result["cleared_count"] == 0
     conflicts = result["conflicts"]
     assert isinstance(conflicts, list)
-    assert any(
-        conflict.get("kind") == "active_foreign_session"
-        for conflict in conflicts
-        if isinstance(conflict, dict)
-    )
+    assert any(conflict.get("kind") == "active_foreign_session" for conflict in conflicts if isinstance(conflict, dict))
     assert task_path.read_bytes() == task_before
     assert session_path.read_bytes() == session_before
 
@@ -6278,7 +6322,10 @@ def test_factory_run_binding_concurrent_conflict_has_single_owner(
         external_task_id="TASK-FACTORY-BIND-RACE",
         subject="serialize competing Factory runs",
     )
-    services = (_create_bootstrapped_task_runtime_service(workspace), _create_bootstrapped_task_runtime_service(workspace))
+    services = (
+        _create_bootstrapped_task_runtime_service(workspace),
+        _create_bootstrapped_task_runtime_service(workspace),
+    )
     barrier = threading.Barrier(2)
     original_bind = TaskBoard.bind_factory_run_id
 
@@ -6338,7 +6385,10 @@ def test_factory_run_binding_concurrent_same_value_is_idempotent(
         external_task_id="TASK-FACTORY-BIND-SAME-RACE",
         subject="serialize same-value Factory run binding",
     )
-    services = (_create_bootstrapped_task_runtime_service(workspace), _create_bootstrapped_task_runtime_service(workspace))
+    services = (
+        _create_bootstrapped_task_runtime_service(workspace),
+        _create_bootstrapped_task_runtime_service(workspace),
+    )
     barrier = threading.Barrier(2)
     original_bind = TaskBoard.bind_factory_run_id
 
@@ -10315,7 +10365,10 @@ def test_claim_execution_threaded_contenders_have_one_session_winner(tmp_path: P
     seed_service = _create_bootstrapped_task_runtime_service(workspace)
     created = seed_service.create_task_row(subject="threaded claim authority")
     task_id = int(created["id"])
-    services = (_create_bootstrapped_task_runtime_service(workspace), _create_bootstrapped_task_runtime_service(workspace))
+    services = (
+        _create_bootstrapped_task_runtime_service(workspace),
+        _create_bootstrapped_task_runtime_service(workspace),
+    )
     start_barrier = threading.Barrier(2)
 
     def claim(service: TaskRuntimeService, worker_id: str) -> dict[str, Any]:

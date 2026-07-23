@@ -29,6 +29,8 @@ from polaris.cells.runtime.task_runtime.public import (
 
 _HASH = "d" * 64
 _OTHER_HASH = "e" * 64
+_ARGUMENTS = (("path", "src/a.py"),)
+_ARGUMENTS_HASH = policy_contracts.hash_directed_effect_arguments(_ARGUMENTS)
 
 
 def _attempt(*, run_id: str = "run-1") -> TaskRuntimeExecutionAttemptIdentityV1:
@@ -69,6 +71,7 @@ def _member(
     tool_call_id: str | None = None,
     effect_id: str | None = None,
     operation_id: str | None = None,
+    normalized_tool_name: str = "write_file",
 ) -> DirectedEffectInventoryMemberV1:
     suffix = str(ordinal)
     return DirectedEffectInventoryMemberV1(
@@ -76,7 +79,7 @@ def _member(
         tool_call_id=tool_call_id or f"call-{suffix}",
         effect_id=effect_id or f"effect-{suffix}",
         operation_id=operation_id or f"operation-{suffix}",
-        normalized_tool_name="write_file",
+        normalized_tool_name=normalized_tool_name,
         effect_type="write",
         execution_mode="write_serial",
         intended_effect_fingerprint=_HASH,
@@ -89,6 +92,7 @@ def _inventory(
     attempt: TaskRuntimeExecutionAttemptIdentityV1,
     members: tuple[DirectedEffectInventoryMemberV1, ...],
 ) -> DirectedEffectInventoryProjectionV1:
+    operation_source_head_seq = max(3, len(members) + 1)
     return DirectedEffectInventoryProjectionV1(
         schema_version=DIRECTED_EFFECT_INVENTORY_PROJECTION_SCHEMA_V1,
         workspace=attempt.workspace,
@@ -100,7 +104,7 @@ def _inventory(
         sealed_event_id="inventory-sealed-1",
         sealed_event_seq=2,
         parent_registry_source_head_seq=3,
-        operation_source_head_seq=3,
+        operation_source_head_seq=operation_source_head_seq,
         inventory_ready=True,
         ready_event_id="inventory-ready-1",
         ready_event_seq=3,
@@ -114,7 +118,9 @@ def _evidence(
     attempt: TaskRuntimeExecutionAttemptIdentityV1,
     member: DirectedEffectInventoryMemberV1,
     snapshot: policy_contracts.DirectorEffectPolicySnapshotResultV1 | None = None,
+    normalized_arguments: tuple[tuple[str, object], ...] = _ARGUMENTS,
 ) -> director_contracts.DirectorEffectAuthorizationEvidenceV1:
+    arguments_hash = policy_contracts.hash_directed_effect_arguments(normalized_arguments)
     values = {
         "workspace": attempt.workspace,
         "execution_attempt_id": DirectedEffectParentRegistryIdentityV1.from_execution_attempt(
@@ -124,7 +130,7 @@ def _evidence(
         "batch_id": "batch-1",
         "tool_call_id": member.tool_call_id,
         "normalized_tool_name": member.normalized_tool_name,
-        "arguments_hash": _HASH,
+        "arguments_hash": arguments_hash,
         "tool_spec_hash": _HASH,
         "role_policy_id": "director",
         "role_policy_hash": _HASH,
@@ -143,8 +149,10 @@ def _evidence(
         "policy_hash": snapshot.policy_hash if snapshot is not None else _HASH,
     }
     return director_contracts.DirectorEffectAuthorizationEvidenceV1(
-        **values,
-        authorization_hash=director_contracts.hash_director_effect_authorization_evidence(**values),
+        **values,  # type: ignore[arg-type]
+        authorization_hash=director_contracts.hash_director_effect_authorization_evidence(
+            **values  # type: ignore[arg-type]
+        ),
     )
 
 
@@ -158,16 +166,65 @@ def _forged_authorization_evidence(
     return forged
 
 
+def _forged_prepared_member(
+    prepared: contracts.DirectedEffectPreparedMemberV1,
+    **changes: object,
+) -> contracts.DirectedEffectPreparedMemberV1:
+    forged = object.__new__(contracts.DirectedEffectPreparedMemberV1)
+    for field in fields(prepared):
+        object.__setattr__(forged, field.name, changes.get(field.name, getattr(prepared, field.name)))
+    return forged
+
+
 def _prepared_member(
     member: DirectedEffectInventoryMemberV1,
     *,
     stream_head: int,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+    normalized_arguments: tuple[tuple[str, object], ...] = _ARGUMENTS,
 ) -> contracts.DirectedEffectPreparedMemberV1:
+    attempt = execution_attempt or _attempt()
+    subject = policy_contracts.DirectorEffectPolicyOperationSubjectV1(
+        workspace=attempt.workspace,
+        turn_id="turn-1",
+        batch_id="batch-1",
+        tool_call_id=member.tool_call_id,
+        inventory_ordinal=member.ordinal,
+        normalized_tool_name=member.normalized_tool_name,
+        normalized_arguments=normalized_arguments,
+        effect_type=member.effect_type,
+        execution_mode=member.execution_mode,
+        prospective_operation_hash=_HASH,
+    )
+    snapshot = _policy_result(subject)
+    authorization = _evidence(attempt, member, snapshot, normalized_arguments)
+    authorization_binding = _authorization_binding(
+        authorization,
+        member,
+        normalized_arguments,
+    )
+    policy_binding = _PolicyPort().bind_member(
+        policy_contracts.DirectorEffectPolicyMemberBindingRequestV1(
+            snapshot=snapshot,
+            authorization_evidence=authorization,
+            authorization_binding=authorization_binding,
+            member=member,
+        )
+    )
     return contracts.DirectedEffectPreparedMemberV1(
         member=member,
+        policy_binding=policy_binding,
         admitted_operation_version=1,
         latest_operation_stream_head=stream_head,
     )
+
+
+def _prepared_authorization(
+    prepared_member: contracts.DirectedEffectPreparedMemberV1,
+) -> director_contracts.DirectorEffectAuthorizationEvidenceV1:
+    bound_snapshot = prepared_member.policy_binding.bound_snapshot
+    assert bound_snapshot is not None
+    return bound_snapshot.authorization_binding.authorization_evidence
 
 
 def _prepared_batch(
@@ -177,12 +234,19 @@ def _prepared_batch(
     prepared_members: tuple[contracts.DirectedEffectPreparedMemberV1, ...] | None = None,
     call_id_index: tuple[tuple[str, int], ...] | None = None,
     evidence_by_call_id: tuple[tuple[str, director_contracts.DirectorEffectAuthorizationEvidenceV1], ...] | None = None,
+    normalized_arguments: tuple[tuple[str, object], ...] = _ARGUMENTS,
 ) -> contracts.PreparedDirectedEffectBatchV1:
     attempt = execution_attempt or _attempt()
     members = (_member(0), _member(1))
     ready_inventory = inventory or _inventory(attempt, members)
     prepared = prepared_members or tuple(
-        _prepared_member(member, stream_head=index + 2) for index, member in enumerate(ready_inventory.members)
+        _prepared_member(
+            member,
+            stream_head=index + 2,
+            execution_attempt=attempt,
+            normalized_arguments=normalized_arguments,
+        )
+        for index, member in enumerate(ready_inventory.members)
     )
     index = call_id_index or tuple(
         (prepared_member.member.tool_call_id, position) for position, prepared_member in enumerate(prepared)
@@ -190,7 +254,7 @@ def _prepared_batch(
     evidence = evidence_by_call_id or tuple(
         (
             prepared_member.member.tool_call_id,
-            _evidence(attempt, prepared_member.member),
+            _prepared_authorization(prepared_member),
         )
         for prepared_member in prepared
     )
@@ -256,6 +320,48 @@ def _claim_grant(
         operation_source_head_seq=3,
         parent_registry_source_head_seq=3,
         grant_hash=grant_hash,
+    )
+
+
+def _current_policy_evidence(
+    batch: contracts.PreparedDirectedEffectBatchV1,
+    member: DirectedEffectInventoryMemberV1,
+    grant: DirectedEffectClaimGrantV1,
+) -> policy_contracts.DirectorEffectCurrentPolicyEvidenceV1:
+    prepared = batch.prepared_members[dict(batch.call_id_index)[member.tool_call_id]]
+    bound_snapshot = prepared.policy_binding.bound_snapshot
+    assert bound_snapshot is not None
+    binding = bound_snapshot.authorization_binding
+    authorization = binding.authorization_evidence
+    public_policy = director_contracts.project_director_effect_public_policy_evidence(binding)
+    operation_hash = hashlib.sha256(
+        json.dumps(
+            grant.operation.to_record(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return policy_contracts.DirectorEffectCurrentPolicyEvidenceV1(
+        baseline_authorization_binding_hash=binding.authorization_binding_hash,
+        baseline_public_policy_evidence_hash=public_policy.public_policy_evidence_hash,
+        bound_member_hash=bound_snapshot.member_binding_hash,
+        claim_grant_hash=grant.grant_hash,
+        policy_target_version=bound_snapshot.snapshot.policy_version,
+        policy_target_hash=bound_snapshot.snapshot.policy_hash,
+        operation_version=str(grant.operation_version),
+        operation_hash=operation_hash,
+        capability_scope_version="director-capability-scope.v1",
+        capability_scope_hash=authorization.capability_scope_hash,
+        job_token_id=authorization.job_token_id,
+        job_token_version="job-token-restriction.v1",
+        job_token_evidence_hash=authorization.job_token_evidence_hash,
+        tool_spec_snapshot_hash=binding.tool_spec_snapshot_hash,
+        alias_binding_hash=binding.alias_binding_hash,
+        execution_envelope_version="director-execution-envelope.v1",
+        execution_envelope_hash=authorization.execution_envelope_hash,
+        allowed_commands_version="director-allowed-commands.v1",
+        allowed_commands_hash=authorization.allowed_command_hash,
     )
 
 
@@ -333,12 +439,49 @@ def _policy_result(
     )
 
 
+def _authorization_binding(
+    authorization: director_contracts.DirectorEffectAuthorizationEvidenceV1,
+    member: DirectedEffectInventoryMemberV1,
+    normalized_arguments: tuple[tuple[str, object], ...] = _ARGUMENTS,
+) -> director_contracts.DirectorEffectAuthorizationBindingV1:
+    classification = director_contracts.DirectorEffectClassificationEvidenceV1(
+        raw_tool_name=member.normalized_tool_name,
+        canonical_tool_name=member.normalized_tool_name,
+        effect_type=member.effect_type,
+        execution_mode=member.execution_mode,
+        normalized_arguments=normalized_arguments,
+        arguments_hash=authorization.arguments_hash,
+        tool_spec_hash=authorization.tool_spec_hash,
+        tool_spec_snapshot_hash=_HASH,
+        alias_binding_hash=_HASH,
+    )
+    return director_contracts.DirectorEffectAuthorizationBindingV1(
+        authorization_evidence=authorization,
+        classification_evidence=classification,
+        tool_spec_hash=authorization.tool_spec_hash,
+        tool_spec_snapshot_hash=classification.tool_spec_snapshot_hash,
+        alias_binding_hash=classification.alias_binding_hash,
+    )
+
+
 class _PolicyPort:
+    async def capture_baseline_snapshot(
+        self,
+        request: policy_contracts.DirectorEffectPolicyBaselineCaptureRequestV1,
+    ) -> policy_contracts.DirectorEffectPolicySnapshotResultV1:
+        return _policy_result(request.subject)
+
     async def snapshot(
         self,
         request: policy_contracts.DirectorEffectPolicySnapshotRequestV1,
     ) -> policy_contracts.DirectorEffectPolicySnapshotResultV1:
         return _policy_result(request.subject)
+
+    async def capture_current_policy_evidence(
+        self,
+        request: policy_contracts.DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    ) -> policy_contracts.DirectorEffectCurrentPolicyEvidenceCaptureResultV1:
+        raise AssertionError(request)
 
     def bind_member(
         self,
@@ -347,11 +490,14 @@ class _PolicyPort:
         member_binding_hash = policy_contracts.hash_directed_effect_policy_member_binding(
             request.snapshot.evidence_hash,
             request.authorization_evidence.authorization_hash,
+            request.authorization_binding.authorization_binding_hash,
             request.member,
         )
         bound = policy_contracts.DirectorEffectPolicyBoundSnapshotV1(
             snapshot=request.snapshot,
             authorization_evidence_hash=request.authorization_evidence.authorization_hash,
+            authorization_binding=request.authorization_binding,
+            authorization_binding_hash=request.authorization_binding.authorization_binding_hash,
             member=request.member,
             member_binding_hash=member_binding_hash,
         )
@@ -361,6 +507,7 @@ class _PolicyPort:
             member=request.member,
             member_binding_hash=member_binding_hash,
             bound_snapshot=bound,
+            authorization_binding_hash=request.authorization_binding.authorization_binding_hash,
         )
 
     async def revalidate(
@@ -397,10 +544,12 @@ def test_policy_fixture_retains_a1_baseline_and_canonical_member_hash() -> None:
     snapshot = _policy_result()
     member = _member(0)
     authorization = _evidence(_attempt(), member, snapshot)
+    authorization_binding = _authorization_binding(authorization, member)
     result = _PolicyPort().bind_member(
         policy_contracts.DirectorEffectPolicyMemberBindingRequestV1(
             snapshot=snapshot,
             authorization_evidence=authorization,
+            authorization_binding=authorization_binding,
             member=member,
         )
     )
@@ -410,6 +559,7 @@ def test_policy_fixture_retains_a1_baseline_and_canonical_member_hash() -> None:
     assert result.member_binding_hash == policy_contracts.hash_directed_effect_policy_member_binding(
         snapshot.evidence_hash,
         authorization.authorization_hash,
+        authorization_binding.authorization_binding_hash,
         member,
     )
     assert result.bound_snapshot is not None
@@ -460,6 +610,7 @@ class _MutationPort:
         context: contracts.DirectedEffectExecutionContextV1,
         normalized_tool_name: str,
         normalized_arguments: director_contracts.DirectedEffectImmutableItemsV1,
+        repair_effect_binding: object | None = None,
     ) -> contracts.DirectedEffectMutationPortResultV1:
         return contracts.DirectedEffectMutationPortResultV1(
             ok=True,
@@ -532,7 +683,7 @@ def test_kernel_protocols_return_typed_results_not_mappings() -> None:
 
 
 def test_mutation_and_cleanup_results_have_non_conflicting_states() -> None:
-    """Only executed mutation results carry a tool result; absent cleanup succeeds."""
+    """Denials carry no payload; failed mutation may expose immutable recovery proof."""
     absent = contracts.DirectedEffectFenceReleaseResultV1(
         ok=True,
         status="absent",
@@ -548,6 +699,20 @@ def test_mutation_and_cleanup_results_have_non_conflicting_states() -> None:
             tool_result=contracts.DirectedEffectToolResultV1(payload=(("x", "y"),)),
             error_code="deo_claim_failed",
         )
+    failed = contracts.DirectedEffectMutationPortResultV1(
+        ok=False,
+        status="failed",
+        tool_result=contracts.DirectedEffectToolResultV1(
+            payload=(
+                (
+                    "effect_recovery",
+                    director_contracts.DirectedEffectImmutableMapV1(items=(("state", "RECOVERY_PENDING"),)),
+                ),
+            )
+        ),
+        error_code="deo_physical_execution_failed",
+    )
+    assert failed.tool_result is not None
 
 
 def test_all_kernel_contracts_have_concrete_valid_constructions() -> None:
@@ -556,15 +721,21 @@ def test_all_kernel_contracts_have_concrete_valid_constructions() -> None:
     attempt = batch.execution_attempt
     member = batch.prepared_members[0].member
     evidence = batch.authorization_evidence_by_call_id[0][1]
+    grant = _claim_grant(attempt, batch.parent_binding, member)
+    bound_snapshot = batch.prepared_members[0].policy_binding.bound_snapshot
+    assert bound_snapshot is not None
     context = contracts.DirectedEffectExecutionContextV1(
         context_id="context-1",
         batch_id="batch-1",
         creator_pid=1,
         tool_call_id=member.tool_call_id,
         normalized_tool_name=member.normalized_tool_name,
-        arguments_hash=_HASH,
+        arguments_hash=_ARGUMENTS_HASH,
         authorization_evidence=evidence,
-        claim_grant=_claim_grant(attempt, batch.parent_binding, member),
+        claim_grant=grant,
+        bound_snapshot=bound_snapshot,
+        current_policy_evidence=_current_policy_evidence(batch, member, grant),
+        current_job_token_restriction_evidence=(),
     )
     lifecycle = contracts.DirectedEffectLifecycleResultV1(
         status="ready",
@@ -634,7 +805,10 @@ def test_prepared_batch_rejects_inventory_member_and_order_drift(case: str) -> N
     attempt = _attempt()
     inventory_members = (_member(0), _member(1))
     inventory = _inventory(attempt, inventory_members)
-    prepared = tuple(_prepared_member(member, stream_head=index + 2) for index, member in enumerate(inventory_members))
+    prepared = tuple(
+        _prepared_member(member, stream_head=index + 2, execution_attempt=attempt)
+        for index, member in enumerate(inventory_members)
+    )
     if case == "missing":
         drifted = prepared[:1]
     elif case == "extra":
@@ -643,7 +817,10 @@ def test_prepared_batch_rejects_inventory_member_and_order_drift(case: str) -> N
         drifted = tuple(reversed(prepared))
     else:
         drifted = (
-            replace(prepared[0], member=replace(prepared[0].member, effect_id="effect-drift")),
+            _forged_prepared_member(
+                prepared[0],
+                member=replace(prepared[0].member, effect_id="effect-drift"),
+            ),
             prepared[1],
         )
 
@@ -706,7 +883,7 @@ def test_nested_mutable_tool_result_payload_is_rejected() -> None:
     """Tool results reject mutable values at any nested depth."""
     with pytest.raises(TypeError, match="mutable mappings"):
         contracts.DirectedEffectToolResultV1(
-            payload=(("result", ({"path": "src/a.py"},)),),
+            payload=(("result", ({"path": "src/a.py"},)),),  # type: ignore[arg-type]
         )
 
 
@@ -736,9 +913,12 @@ def test_execution_context_rejects_outer_and_nested_identity_drift(case: str) ->
         "creator_pid": 1,
         "tool_call_id": member.tool_call_id,
         "normalized_tool_name": member.normalized_tool_name,
-        "arguments_hash": _HASH,
+        "arguments_hash": _ARGUMENTS_HASH,
         "authorization_evidence": evidence,
         "claim_grant": grant,
+        "bound_snapshot": batch.prepared_members[0].policy_binding.bound_snapshot,
+        "current_policy_evidence": _current_policy_evidence(batch, member, grant),
+        "current_job_token_restriction_evidence": (),
     }
     if case == "batch":
         values["batch_id"] = "batch-drift"
@@ -772,7 +952,7 @@ def test_execution_context_rejects_outer_and_nested_identity_drift(case: str) ->
         )
 
     with pytest.raises(ValueError, match="mismatch"):
-        contracts.DirectedEffectExecutionContextV1(**values)
+        contracts.DirectedEffectExecutionContextV1(**values)  # type: ignore[arg-type]
 
 
 def test_kernel_tokens_integers_and_status_alias_exports_are_strict() -> None:
@@ -781,16 +961,21 @@ def test_kernel_tokens_integers_and_status_alias_exports_are_strict() -> None:
     member = batch.prepared_members[0].member
     evidence = batch.authorization_evidence_by_call_id[0][1]
     grant = _claim_grant(batch.execution_attempt, batch.parent_binding, member)
+    bound_snapshot = batch.prepared_members[0].policy_binding.bound_snapshot
+    assert bound_snapshot is not None
     with pytest.raises(TypeError, match="context_id"):
         contracts.DirectedEffectExecutionContextV1(
-            context_id=7,
+            context_id=7,  # type: ignore[arg-type]
             batch_id="batch-1",
             creator_pid=1,
             tool_call_id=member.tool_call_id,
             normalized_tool_name=member.normalized_tool_name,
-            arguments_hash=_HASH,
+            arguments_hash=_ARGUMENTS_HASH,
             authorization_evidence=evidence,
             claim_grant=grant,
+            bound_snapshot=bound_snapshot,
+            current_policy_evidence=_current_policy_evidence(batch, member, grant),
+            current_job_token_restriction_evidence=(),
         )
     with pytest.raises(ValueError, match="creator_pid"):
         contracts.DirectedEffectExecutionContextV1(
@@ -799,13 +984,17 @@ def test_kernel_tokens_integers_and_status_alias_exports_are_strict() -> None:
             creator_pid=True,
             tool_call_id=member.tool_call_id,
             normalized_tool_name=member.normalized_tool_name,
-            arguments_hash=_HASH,
+            arguments_hash=_ARGUMENTS_HASH,
             authorization_evidence=evidence,
             claim_grant=grant,
+            bound_snapshot=bound_snapshot,
+            current_policy_evidence=_current_policy_evidence(batch, member, grant),
+            current_job_token_restriction_evidence=(),
         )
     with pytest.raises(ValueError, match="admitted_operation_version"):
         contracts.DirectedEffectPreparedMemberV1(
             member=member,
+            policy_binding=batch.prepared_members[0].policy_binding,
             admitted_operation_version=True,
             latest_operation_stream_head=1,
         )
@@ -836,21 +1025,21 @@ def test_kernel_result_ok_fields_require_exact_bool(invalid_ok: object) -> None:
     """Fence and mutation verdicts reject numeric and textual bool substitutes."""
     with pytest.raises(TypeError, match="ok"):
         contracts.DirectedEffectFenceRegistrationResultV1(
-            ok=invalid_ok,
+            ok=invalid_ok,  # type: ignore[arg-type]
             status="registered",
             context_id="context-1",
             error_code=None,
         )
     with pytest.raises(TypeError, match="ok"):
         contracts.DirectedEffectFenceConsumeResultV1(
-            ok=invalid_ok,
+            ok=invalid_ok,  # type: ignore[arg-type]
             status="consumed",
             context_id="context-1",
             error_code=None,
         )
     with pytest.raises(TypeError, match="ok"):
         contracts.DirectedEffectFenceReleaseResultV1(
-            ok=invalid_ok,
+            ok=invalid_ok,  # type: ignore[arg-type]
             status="released",
             batch_id="batch-1",
             released_count=1,
@@ -858,7 +1047,7 @@ def test_kernel_result_ok_fields_require_exact_bool(invalid_ok: object) -> None:
         )
     with pytest.raises(TypeError, match="ok"):
         contracts.DirectedEffectMutationPortResultV1(
-            ok=invalid_ok,
+            ok=invalid_ok,  # type: ignore[arg-type]
             status="executed",
             tool_result=contracts.DirectedEffectToolResultV1(payload=(("path", "src/a.py"),)),
             error_code=None,

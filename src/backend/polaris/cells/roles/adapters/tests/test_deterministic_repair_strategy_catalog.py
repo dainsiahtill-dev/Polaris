@@ -476,7 +476,7 @@ def test_rust_dependency_resolution_bridge_routes_runtime_repair(
     assert calls[0]["workspace_path"] == tmp_path
     assert calls[0]["task_id"] == "task-rust-deps"
     assert calls[0]["source_tool"] == "deterministic_rust_dependency_repair"
-    assert calls[0]["executor_factory"] is post_execution_repair_bridge.DirectorToolExecutor
+    assert "executor_factory" not in calls[0]
     assert calls[0]["base_files"] == {
         "Cargo.toml": '[package]\nname = "demo"\nversion = "0.1.0"\n',
         "src/lib.rs": "use serde::Serialize;\n",
@@ -486,7 +486,7 @@ def test_rust_dependency_resolution_bridge_routes_runtime_repair(
     assert calls[0]["use_editor"] is False
 
 
-def test_post_execution_repair_schedule_public_wrapper_uses_catalog_source_tool(
+def test_post_execution_repair_schedule_public_wrapper_fails_closed_without_execution_attempt(
     tmp_path: Path,
 ) -> None:
     header = tmp_path / "src" / "models" / "postcard.hpp"
@@ -501,18 +501,16 @@ def test_post_execution_repair_schedule_public_wrapper_uses_catalog_source_tool(
         task_id="test-post-execution-repair",
     )
 
-    assert len(results) == 1
-    assert results[0]["tool"] == "write_file"
-    assert results[0]["tool_name"] == "write_file"
-    assert results[0]["success"] is True
-    assert results[0]["result"]["ok"] is True
-    assert results[0]["result"]["source_tool"] == "deterministic_cpp_include_path_repair"
-    assert results[0]["result"]["file"] == "src/engine/generator.cpp"
-    assert results[0]["result"]["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert results
+    assert all(item["tool"] == "director_repair_kernel" for item in results)
+    assert all(item["success"] is False for item in results)
+    assert any(
+        item["result"].get("error_code") == "deo_deferred_repair_attempt_required"
+        for item in results
+    )
     assert summary is not None
     assert summary["schema_version"] == "director.post_execution_repair_kernel.v1"
-    assert '#include "../models/postcard.hpp"' in target.read_text(encoding="utf-8")
-    assert results[0]["result"]["source_tool"] in {str(item.get("source_tool") or "") for item in _catalog_items()}
+    assert '#include "src/models/postcard.hpp"' in target.read_text(encoding="utf-8")
 
 
 def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
@@ -536,6 +534,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
         advisor_notes: tuple[Any, ...] = (),
         convergence_verifier: Any = None,
+        execution_attempt: Any = None,
     ) -> list[dict[str, Any]]:
         observed_step_ids.append(step_id)
         assert adapter == {"workspace": "/tmp/demo"}
@@ -545,6 +544,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         assert tuple(dict(item) for item in artifact_quality_issues) == expected_quality_issues
         assert tuple(advisor_notes or ()) == expected_advisor_notes
         assert convergence_verifier is None
+        assert execution_attempt is None
         return []
 
     monkeypatch.setattr(
@@ -686,6 +686,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
         artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
         advisor_notes: tuple[Any, ...] = (),
         convergence_verifier: Any = None,
+        execution_attempt: Any = None,
     ) -> list[dict[str, Any]]:
         assert adapter == {"workspace": "/tmp/demo"}
         assert task == {"target_files": ["package.json"]}
@@ -694,6 +695,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
         assert tuple(dict(item) for item in artifact_quality_issues) == expected_quality_issues
         assert tuple(advisor_notes or ()) == expected_advisor_notes
         assert convergence_verifier is sentinel_verifier
+        assert execution_attempt is None
         if step_id != "materialization.node_manifest":
             return []
         return [

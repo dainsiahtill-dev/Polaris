@@ -47,6 +47,7 @@ _INVOKE_OPTION_KEYS = (
     "tool_choice",
     "parallel_tool_calls",
     "response_format",
+    "reasoning_budget_tokens",
 )
 
 # Keys merged from request.options for streaming invocations.
@@ -62,6 +63,7 @@ _STREAM_OPTION_KEYS = (
     "tools",
     "tool_choice",
     "parallel_tool_calls",
+    "reasoning_budget_tokens",
 )
 
 

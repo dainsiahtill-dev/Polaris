@@ -67,6 +67,8 @@ interface V2EventMessage {
   event: Record<string, unknown>;
 }
 
+const POLICY_VIOLATION_CLOSE_CODE = 1008;
+
 const RUNTIME_OBSERVABLE_ROLES = [
   "pm",
   "architect",
@@ -507,6 +509,22 @@ class RuntimeSocketManager {
 
       if (this.closed) return;
       if (event.code === 1000 || event.code === 1001) return; // Normal close
+
+      // 1008 means the server rejected this page's authentication or
+      // workspace/instance binding. Retrying the same immutable URL binding
+      // cannot recover. It only turns a stale Launcher tab plus reused ports
+      // into an unbounded handshake and audit-write storm against a different
+      // isolated instance. Stop here; an explicit start (normally page reload
+      // after correcting the binding) may try again.
+      if (event.code === POLICY_VIOLATION_CLOSE_CODE) {
+        this.closed = true;
+        this.clearReconnectTimer();
+        this.updateState({
+          reconnecting: false,
+          error: "Runtime connection rejected by instance policy (1008)",
+        });
+        return;
+      }
 
       this.scheduleReconnect();
     };

@@ -11,15 +11,14 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from polaris.cells.director.runtime.public.service import DirectorRepairMaterializationQualityStepV1
+from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
 
 from . import (
     materialization_quality_callback_ports as callback_ports,
     materialization_quality_evidence_ports as evidence_ports,
 )
 
-has_materialization_quality_runtime_repair_coverage = (
-    callback_ports.has_materialization_quality_runtime_repair_coverage
-)
+has_materialization_quality_runtime_repair_coverage = callback_ports.has_materialization_quality_runtime_repair_coverage
 project_materialization_quality_facade_summary = evidence_ports.project_materialization_quality_facade_summary
 
 
@@ -32,6 +31,7 @@ def build_materialization_quality_step_runner(
     artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
     advisor_notes: Sequence[Any] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> Callable[[DirectorRepairMaterializationQualityStepV1], list[dict[str, Any]]]:
     """Return the adapter-owned materialization step runner port."""
 
@@ -50,6 +50,7 @@ def build_materialization_quality_step_runner(
             artifact_quality_issues=quality_issues,
             advisor_notes=advisory_notes,
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
 
     return _run_step

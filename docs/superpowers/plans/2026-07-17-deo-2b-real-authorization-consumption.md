@@ -1967,6 +1967,29 @@ rtk proxy rg -n 'roles\.kernel|roles\.adapters|claim_directed_effect|admit_direc
 Expected GREEN: tests/static checks pass and the final scan has no output.
 Self-review that policy/Job Token are immutable restrictions, not grant issuers.
 
+## Task 4 Closure Record (2026-07-20)
+
+Task 4/A5/A6 is `closed`. The frozen current-tree evidence is:
+
+- prescribed focused behavior/parity matrix: `503 passed`;
+- A6 dependency/cycle matrix: `28 passed`;
+- Ruff check, Ruff format, mypy, compileall, and `git diff --check`: green;
+- catalog hard-fail: exit `0`, `issue_count=0`, `mismatch_count=0`;
+- KernelOne aggregate release gate (`--mode all`): exit `0`;
+- independent specification review: `PASS`, P0/P1/P2 zero;
+- independent quality/security review: `PASS`, P0/P1/P2 zero.
+
+No Provider or role LLM call belongs to Task 4, so final-provider-request
+context qualification is explicitly `N/A (no physical LLM invocation)` rather
+than omitted. This closure proves only atomic ToolSpec capture, classifier-first
+baseline evidence, the structural comparator, non-executable speculation, and
+the A6 dependency boundary. It proves no freshness, member binding, claim,
+context consumption, or physical effect.
+
+Task 5 is now the sole active/schedulable DEO-2B implementation bucket. Task 9,
+DEO-2C, DEO-2D, DEO-3, DEO-4, pre-Bench, and Bench remain
+`not_schedulable`.
+
 ## Task 5: Implement prepared lifecycle types and PID-bound fence before wiring
 
 **A5 prerequisite:** Task 5, not Task 4, extends the bound snapshot and
@@ -1985,7 +2008,7 @@ binding step.
 - Create `src/backend/polaris/cells/roles/kernel/tests/test_directed_effect_dispatch_fence.py`.
 - Create `src/backend/polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py`.
 
-- [ ] **RED:** Test exact lifecycle command order/fields/CAS with recording
+- [x] **RED:** Test exact lifecycle command order/fields/CAS with recording
   TaskRuntime public callables plus a recording public policy port. Assert each
   pre-seal snapshot binds to the actual sealed member before its admission.
   Parameterize every preparation stage failure and
@@ -2001,9 +2024,9 @@ rtk proxy python -m pytest -q polaris/cells/roles/kernel/tests/test_directed_eff
 Expected RED: collection fails because the lifecycle and fence modules do not
 exist.
 
-- [ ] **GREEN:** Implement `PreparedDirectedEffectBatchV1` production and all
+- [x] **GREEN:** Implement `PreparedDirectedEffectBatchV1` production and all
   lifecycle result types before any transaction signature references them.
-  Bind default callables to the seven TaskRuntime public services. Implement
+  Bind default callables to the six pre-claim TaskRuntime public services. Implement
   the exact lifecycle/CAS map, consume only the injected public policy port for
   member binding, and store each `DirectorEffectPolicyMemberBindingResultV1` in
   the prepared member. Implement the bounded PID-aware fence. Keep registration
@@ -2021,6 +2044,32 @@ one winner; fork child returns `deo_fence_pid_mismatch`; no durable state or
 receipt authority exists. If `pytest-repeat` is unavailable, run the node once
 and record that environment limitation without changing dependencies.
 
+## Task 5 Closure Record (2026-07-20)
+
+Task 5 is `closed`. The frozen current-tree evidence is:
+
+- policy/contracts/adapter/lifecycle/fence focused matrix: `271 passed`;
+- complete TaskRuntime suite: `841 passed in 148.53s`;
+- adjacent directed-effect policy guard: `25 passed`;
+- Ruff check/format, mypy (7 production files), compileall, public import smoke,
+  catalog hard-fail, and `git diff --check`: green;
+- catalog hard-fail: exit `0`, `issue_count=0`, `mismatch_count=0`;
+- independent specification review: `CLEAR`, P0/P1/P2 zero;
+- independent quality/security review: `CLEAR`, P0/P1/P2 zero.
+
+The closure binds each sealed member to the exact Task 4 authorization binding,
+requires exact recursively canonical TaskRuntime results, and provides a
+fixed-capacity process-local fence with disjoint admin/consume views. PID denial
+precedes lock acquisition; the fork-while-another-thread-holds-the-lock attack
+returns within a two-second bound. Task 5 issues no claim, captures no current
+policy, performs no revalidation/consume/mutation, and makes no Provider call,
+so final-provider-request qualification is explicitly
+`N/A (no physical LLM invocation)`.
+
+Task 6 is now the sole active/schedulable DEO-2B implementation bucket. Task 9,
+DEO-2C, DEO-2D, DEO-3, DEO-4, pre-Bench, and Bench remain
+`not_schedulable`.
+
 ## Task 6: Implement claim-context construction and the consume-only adapter port
 
 **Files:**
@@ -2031,7 +2080,7 @@ and record that environment limitation without changing dependencies.
 - Create `src/backend/polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py`.
 - Create `src/backend/polaris/cells/roles/adapters/tests/test_director_directed_effect_mutation_port.py`.
 
-- [ ] **RED:** Through adapter public imports only, create a port with a
+- [x] **RED:** Through adapter public imports only, create a port with a
   consume-only fence spy and the public policy port from Task 3. Assert the typed return is always
   `DirectedEffectMutationPortResultV1`. Test exact order:
   `validate grant/bound evidence -> policy revalidate -> consume -> physical`. Missing, forged, stale,
@@ -2047,7 +2096,7 @@ rtk proxy python -m pytest -q polaris/cells/roles/adapters/tests/test_director_d
 Expected RED: collection fails with `ModuleNotFoundError` for the adapter
 public directed-effect factory.
 
-- [ ] **GREEN:** Add lifecycle `claim_execution_context` using the exact claim
+- [x] **GREEN:** Add lifecycle `claim_execution_context` using the exact claim
   command and fresh-grant acceptance rules. It constructs the context with
   current PID and asks only the admin fence to register it. The adapter public
   factory accepts workspace, the same `DirectorEffectPolicySnapshotPortV1`,
@@ -2077,6 +2126,39 @@ Expected GREEN: tests/static checks pass and the public scan has no output.
 Self-review that the adapter cannot register/release contexts and public APIs do
 not expose the internal executor.
 
+## Task 6 Closure Record (2026-07-20)
+
+Task 6 is `closed`. The frozen current-tree evidence is:
+
+- directed-effect authorization/policy/adapter/lifecycle/fence matrix:
+  `264 passed` with two expected multi-threaded `fork()` deprecation warnings;
+- complete TaskRuntime suite: `841 passed in 148.31s`;
+- adapter denial matrix explicitly covers missing, forged outer identity,
+  forged bound snapshot, tool mismatch, stale policy, target drift,
+  reconstruction, replay, and PID mismatch with zero physical execution;
+- Ruff check/format, mypy (six production files plus the adapter test),
+  compileall, public import smoke, public private-executor scan,
+  catalog hard-fail, and scoped `git diff --check`: green;
+- catalog hard-fail: exit `0`, `issue_count=0`, `mismatch_count=0`.
+
+Task 6 reconciles the locked plan with the already-closed Task 4 structural
+comparator by restoring a pure `validate_directed_effect_execution` facade and
+carrying the exact bound snapshot plus current Job Token restriction evidence
+inside the non-transferable execution context. Current-policy freshness remains
+owned by the injected Task 3 `revalidate` port; Task 9 still owns authoritative
+versioned current-policy capture and production wiring. The adapter order is
+structural validation, current-policy revalidation, one-shot fence consume,
+then private physical execution. It exposes no executor, claim, retry, raw
+fallback, receipt, transport, or terminal-admission authority.
+
+No Provider or role LLM call belongs to Task 6, and tests use a physical spy,
+so final-provider-request qualification is explicitly
+`N/A (no physical LLM invocation)` and real physical effects remain zero.
+
+Task 7 is closed; Task 8 is now the sole active/schedulable DEO-2B
+implementation bucket. Task 9, DEO-2C, DEO-2D, DEO-3, DEO-4, pre-Bench, and
+Bench remain `not_schedulable`.
+
 ## Task 7: Validate session identity and preserve fresh heartbeat ownership
 
 **Files:**
@@ -2087,7 +2169,7 @@ not expose the internal executor.
 - Create `src/backend/polaris/cells/roles/runtime/public/tests/test_directed_effect_attempt_validation.py`.
 - Modify `src/backend/polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py`.
 
-- [ ] **RED:** Add stream, non-stream, and controller-construction tests showing
+- [x] **RED:** Add stream, non-stream, and controller-construction tests showing
   a guarded Director session currently reaches `_prepare_session_request` or
   `_get_kernel` without validating its attempt. Cover absent authority, closed
   snapshot, command/identity mismatch for workspace/external task/run/role/
@@ -2102,7 +2184,7 @@ rtk proxy python -m pytest -q polaris/cells/roles/runtime/public/tests/test_dire
 Expected RED: the request/kernel spy is called because session execution lacks
 the task-execution validation used by `execute_role_task`.
 
-- [ ] **GREEN:** Add a typed session validator modeled on
+- [x] **GREEN:** Add a typed session validator modeled on
   `_validate_task_execution_attempt`. It reads only the existing process-local
   authority from command context, calls `snapshot(lock_timeout_seconds=5.0)`,
   compares exact stable identity/session fields, then calls
@@ -2132,6 +2214,20 @@ rtk proxy mypy polaris/cells/roles/runtime/public/service.py polaris/cells/roles
 Expected GREEN: all commands exit 0. Self-review ordering and prove canonical
 freshness does not depend on `_ToolRuntime.__call__`.
 
+**Task 7 closure (2026-07-20):** Guarded stream, non-stream, direct-stream,
+and controller construction now validate the exact public TaskRuntime attempt
+snapshot and read-only verdict before request or kernel creation. Canonical
+batch preparation and per-call claim share one public heartbeat helper with
+bounded TTL/lock values and stable-binding checks; the transaction tool guard
+reuses the same helper without changing its raw denial behavior. Focused final
+coverage is `76 passed`; all `roles.runtime/public` tests are `259 passed`,
+related kernel DEO/transaction tests are `116 passed`, and complete TaskRuntime
+is `841 passed in 145.41s`. Ruff check/format, mypy, compileall, public import,
+acyclicity, private-authority-field scan, catalog hard-fail, and scoped diff
+checks are green. No Provider request or physical effect occurred; FPR is
+`N/A`. Task 8 is now the sole active DEO-2B bucket. All later buckets and Bench
+remain `not_schedulable`.
+
 ## Task 8: Wire the exact production composition chain after all types exist
 
 **Files:**
@@ -2150,7 +2246,7 @@ freshness does not depend on `_ToolRuntime.__call__`.
 - Create `src/backend/polaris/cells/roles/runtime/public/tests/test_directed_effect_port_wiring.py`.
 - Create `src/backend/polaris/cells/roles/adapters/tests/test_director_deo_production_wiring.py`.
 
-- [ ] **RED:** Patch public factories at
+- [x] **RED:** Patch public factories at
   `DirectorAdapter._invoke_role_runtime_session`. Assert it creates exactly one
   adapter-owned public policy snapshot port and one PID-bound fence pair,
   passes that same policy port plus only the consume fence view to the mutation
@@ -2166,7 +2262,7 @@ rtk proxy python -m pytest -q polaris/cells/roles/runtime/public/tests/test_dire
 
 Expected RED: `RoleRuntimeService.__init__` rejects the new typed keyword.
 
-- [ ] **GREEN:** Thread the dependency explicitly through this real chain:
+- [x] **GREEN:** Thread the dependency explicitly through this real chain:
 
 ```text
 DirectorAdapter._invoke_role_runtime_session
@@ -2218,12 +2314,28 @@ Expected GREEN: exact identity reaches ToolBatchRuntime on both construction
 paths; acyclicity remains green; roles.kernel and roles.runtime import no
 roles.adapters module.
 
+**Task 8 closure (2026-07-20):** The Director production composition root now
+creates one policy port, one PID-bound fence pair, and one consume-only mutation
+port in that order, then injects their exact immutable dependency bundle into a
+required RoleRuntimeService. The same bundle and the fresh public TaskRuntime
+attempt identity reach TransactionKernel, authoritative ToolBatchExecutor
+runtime construction, and speculative runtime construction without metadata,
+event, tool-argument, singleton, or private-authority transport. Missing
+authority fails before provider dependency construction; uninjected legacy
+callers retain the explicit `None` path. Focused Task 8/transaction coverage is
+`104 passed`; roles-runtime plus directed-effect adapter coverage is `328
+passed`. Ruff check/format, scoped mypy, compileall, public import, acyclicity,
+YAML parse, catalog hard-fail (`issue_count=0`, `mismatch_count=0`), and diff
+checks are green. No Provider request or physical effect is part of Task 8;
+FPR=`N/A`. Task 9 is now the sole active/schedulable DEO-2B bucket; all later
+DEO buckets and Bench remain `not_schedulable`.
+
 ## Task 9: Integrate classify-first ToolBatch execution and just-in-time claims
 
-**A5 status and sole future producer:** Task 9 is `not_schedulable`. A5 freezes
-one producer owner and contract, but does not authorize its implementation or
-wiring; scheduling still requires Tasks 4 and 5 closure plus an explicit Task 9
-review of this post-claim producer blueprint.
+**A5 status and sole producer:** Task 9 is the sole active/schedulable DEO-2B
+bucket. Tasks 4, 5, and 8 are closed, and this section is the explicit Task 9
+post-claim producer review and implementation authority. No later task or Bench
+is scheduled by this transition.
 
 The sole producer contract will be added to
 `director.runtime.public.directed_effect_policy_contracts`:
@@ -2238,6 +2350,7 @@ class DirectorEffectCurrentPolicyEvidenceCaptureRequestV1:
     claim_grant: DirectedEffectClaimGrantV1
     normalized_tool: str
     normalized_arguments_hash: str
+    current_job_token_restriction_evidence: DirectedEffectImmutableItemsV1
 
 @dataclass(frozen=True, slots=True)
 class DirectorEffectCurrentPolicyEvidenceV1:
@@ -2304,7 +2417,10 @@ The capture error type is closed to the single literal
 `denied => evidence is None and error_code is the closed literal`; no malformed
 or third state is representable as a valid result.
 
-The only implementation is the existing adapter-owned
+The request carries the raw immutable current JobToken restriction projection,
+not caller-constructed current-policy evidence. The sole producer must parse,
+version, hash, and cross-check that projection; malformed or baseline-replayed
+scope/token/command values deny capture. The only implementation is the existing adapter-owned
 `roles/adapters/internal/director/directed_effect_policy_snapshot.py`, exposed
 through its existing public policy service and injected as the same policy-port
 object. It captures, after the exact member claim, versioned evidence from the
@@ -2355,7 +2471,7 @@ constructed current evidence is permitted.
 - Modify `src/backend/polaris/cells/roles/kernel/tests/test_toolbatch_idempotency.py`.
 - Modify `src/backend/polaris/cells/roles/kernel/tests/test_directed_effect_policy_guard.py`.
 
-- [ ] **RED:** Add mixed/read-only/mutation tests. Assert classification occurs
+- [x] **RED:** Add mixed/read-only/mutation tests. Assert classification occurs
   before preflight; read-only never calls mutation preflight and retains raw
   call shape. Assert WRITE, ASYNC, and unknown/default-write never reach raw
   executor on the canonical branch. Verify full preparation completes before
@@ -2381,7 +2497,7 @@ rtk proxy python -m pytest -q polaris/cells/roles/kernel/tests/test_tool_batch_r
 Expected RED: current ToolBatchRuntime uses raw
 `executor(tool_name, arguments)` for every call.
 
-- [ ] **GREEN:** `ToolBatchExecutor` classifies all calls, invokes mutation
+- [x] **GREEN:** `ToolBatchExecutor` classifies all calls, invokes mutation
   policy/preflight only for mutation-capable calls, heartbeats, and prepares the
   complete batch before constructing a dispatching runtime. Read-only-only
   batches remain unchanged. For mutation calls, ToolBatchRuntime heartbeats,
@@ -2408,6 +2524,23 @@ If `pytest-repeat` is unavailable, run once and record the limitation without
 changing dependencies. Self-review confirms whole-batch zero effect is claimed
 only for failures before dispatch.
 
+**Closed 2026-07-20:** Task 9 now classifies the final batch once, authorizes
+and seals the complete mutation inventory before the first READ, keeps READ on
+the raw executor, and routes WRITE/ASYNC/conservative unknown calls only through
+exact TaskRuntime claim, adapter-owned current-policy capture, fence register,
+mutation-port revalidation/consume, and physical execution. First denial stops
+later calls; a prior successful effect is retained rather than reported as
+rolled back; all process-local fence entries are released once after the batch
+finishes so successful runs do not leak the 64-entry JIT capacity. Evidence:
+`232 passed` across the locked Task 9 suites, `57 passed` across production
+composition/authority wiring, and Ruff, format, mypy, compileall, plus
+`git diff --check` green on the 14-file locked static scope. The requested
+`--count=20` race command could not run because `pytest-repeat` is not
+installed; the exact regression passed once as the locked plan permits, while
+the existing 32-way consume race remains covered by the lifecycle/fence suite.
+Provider requests and Bench runs remained zero; Task 10 becomes the sole active
+DEO-2B bucket and Bench remains `not_schedulable`.
+
 ## Task 10: Prove in-process-only transport, PID, import, and call-shape fences
 
 **Files:**
@@ -2420,7 +2553,7 @@ only for failures before dispatch.
 - Modify `src/backend/polaris/cells/roles/runtime/public/tests/test_directed_effect_port_wiring.py`.
 - Modify `src/backend/polaris/kernelone/llm/toolkit/executor/tests/test_command_capability.py`.
 
-- [ ] **RED:** Assert `pickle.dumps(context)`,
+- [x] **RED:** Assert `pickle.dumps(context)`,
   `multiprocessing.reduction.ForkingPickler.dumps(context)`, JSON encoding, a
   `SimpleQueue.put(context)`, and a one-way `Pipe.send(context)` all raise
   `TypeError`. Close queue/pipe resources in `finally`. Recursively inspect
@@ -2436,7 +2569,7 @@ rtk proxy python -m pytest -q polaris/tests/architecture/test_deo_2b_no_transpor
 Expected RED: direct pickle succeeds until the explicit non-serialization
 method is added.
 
-- [ ] **GREEN:** Add
+- [x] **GREEN:** Add
   `DirectedEffectExecutionContextV1.__reduce_ex__` that raises
   `TypeError("DirectedEffectExecutionContextV1 is not serializable")`. Add no
   record/JSON/IPC constructor. TaskRuntime's existing grant `to_record()` stays
@@ -2485,6 +2618,17 @@ rtk proxy mypy polaris/tests/architecture/test_deo_2b_canonical_path.py polaris/
 Expected GREEN: all commands exit 0. Self-review that only callable in-process
 flow is approved and copied memory after fork still cannot consume.
 
+**Task 10 closure (2026-07-20):** RED proved direct pickle transport was
+possible. The exact non-serialization method now blocks pickle,
+`ForkingPickler`, `SimpleQueue`, and `Pipe`; JSON remains rejected. Recursive
+public-payload checks, PID fork denial, import/call-shape fences, reconstructed
+context denial, one dependency bundle, pure command capability, raw READ
+compatibility, and validation/revalidation/consume domination are locked.
+Locked architecture/wiring suites passed `27`; command-capability passed `13`;
+Ruff, format, mypy, compileall, and diff checks are green. Provider requests,
+Bench runs, and real physical effects stayed zero. Task 11 becomes sole active
+DEO-2B bucket; Bench remains `not_schedulable`.
+
 ## Task 11: Lock TaskRuntime nested-grant and single-consumer regressions
 
 **Files:**
@@ -2493,7 +2637,7 @@ flow is approved and copied memory after fork still cannot consume.
 - Modify `src/backend/polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py`.
 - Modify `src/backend/polaris/tests/architecture/test_deo_2b_canonical_path.py`.
 
-- [ ] **RED:** After Tasks 1-10, run the existing zero-production-consumer
+- [x] **RED:** After Tasks 1-10, run the existing zero-production-consumer
   fence. It must fail and identify only the newly introduced canonical
   claimant/context/validator/port modules. Any unrelated consumer is a blocker.
 
@@ -2504,7 +2648,7 @@ rtk proxy python -m pytest -q polaris/cells/runtime/task_runtime/tests/test_dire
 Expected RED: the former zero-consumer assertion reports the exact new
 DEO-2B files.
 
-- [ ] **GREEN:** Update the fence to the smallest exact boundary: TaskRuntime
+- [x] **GREEN:** Update the fence to the smallest exact boundary: TaskRuntime
   public remains sole issuer; roles.kernel lifecycle is the sole claimant and
   context constructor; director.runtime is pure validation; the selected
   adapter port is the sole physical consumer. Reject extra claim calls,
@@ -2525,6 +2669,20 @@ rtk proxy mypy polaris/cells/runtime/task_runtime/public/tests/test_directed_eff
 Expected GREEN: all commands exit 0 and `git diff` shows no TaskRuntime
 production change.
 
+**Task 11 closure (2026-07-20):** The pre-existing guarded suite was green,
+proving it lacked the planned production-consumer inventory fence. The new
+exact claimant/constructor/consumer assertion then failed RED with only the
+canonical TaskRuntime, lifecycle, kernel validation, adapter mutation-port,
+tool-batch, and public re-export sites. GREEN freezes that exact allowlist and
+singleton constructors/consumers. The integrated lifecycle regression binds
+the actual command identity, CAS, semantic hashes, nested grant fields,
+canonical grant hash, one operation append, unchanged registry, and replay
+with `claim_grant is None`. The locked Task 11 suite passed `373`; Ruff,
+format, mypy, compileall, and `git diff --check` are green on all three files.
+TaskRuntime production code did not change. Provider requests, Bench runs, and
+physical effects remained zero. Task 12 becomes the sole active DEO-2B bucket;
+Bench remains `not_schedulable`.
+
 ## Task 12: Run complete gates and reviews, then correct stale closure text
 
 **Files:**
@@ -2533,13 +2691,13 @@ production change.
 - Modify TaskRuntime `cell.yaml`, `README.agent.md`, and its catalog status text
   only after both independent pre-closure reviews pass.
 
-- [ ] **Step 1: Run the complete targeted behavior gate.**
+- [x] **Step 1: Run the complete targeted behavior gate.**
 
 ```bash
 rtk proxy python -m pytest -q polaris/cells/director/runtime/public/tests/test_directed_effect_authorization.py polaris/cells/roles/kernel/tests/test_directed_effect_contracts.py polaris/cells/roles/kernel/tests/test_directed_effect_policy_guard.py polaris/cells/roles/kernel/tests/test_directed_effect_dispatch_fence.py polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py polaris/cells/roles/kernel/tests/test_tool_batch_runtime.py polaris/cells/roles/kernel/tests/test_toolbatch_idempotency.py polaris/cells/roles/adapters/tests/test_director_directed_effect_mutation_port.py polaris/cells/roles/adapters/tests/test_director_deo_production_wiring.py polaris/cells/roles/runtime/public/tests/test_directed_effect_attempt_validation.py polaris/cells/roles/runtime/public/tests/test_directed_effect_port_wiring.py polaris/cells/roles/runtime/public/tests/test_roles_runtime_adapter_acyclicity.py polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_inventory.py polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py polaris/tests/architecture/test_deo_2b_canonical_path.py polaris/tests/architecture/test_deo_2b_no_transport.py
 rtk proxy python -m pytest -q polaris/cells/director/runtime/public/tests/test_directed_effect_policy_contracts.py polaris/cells/roles/adapters/tests/test_director_directed_effect_policy_snapshot.py
 rtk proxy python -m pytest -q polaris/kernelone/llm/toolkit/executor/tests/test_command_capability.py polaris/kernelone/llm/toolkit/tests/test_tools_execution.py -k 'command_capability or unlisted_command or listed_command'
-rtk proxy python -m pytest -q tests/architecture/test_kernelone_release_gates.py
+rtk proxy python -m pytest -q polaris/tests/architecture/test_kernelone_release_gates.py
 rtk proxy python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
 ```
 
@@ -2549,7 +2707,7 @@ same-process concurrency, fork PID denial, and no transport.
 Both KernelOne release-gate commands must exit 0; either failure blocks DEO-2B
 closure.
 
-- [ ] **Step 2: Run Ruff and format over every changed production/wiring file.**
+- [x] **Step 2: Run Ruff and format over every changed production/wiring file.**
 
 ```bash
 rtk proxy ruff check polaris/cells/director/runtime/public/directed_effect_contracts.py polaris/cells/director/runtime/public/directed_effect_service.py polaris/cells/director/runtime/public/__init__.py polaris/cells/roles/kernel/public/directed_effect_contracts.py polaris/cells/roles/kernel/public/directed_effect_service.py polaris/cells/roles/kernel/public/transaction_contracts.py polaris/cells/roles/kernel/public/__init__.py polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py polaris/cells/roles/kernel/internal/directed_effect_dispatch.py polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py polaris/cells/roles/kernel/internal/kernel/core.py polaris/cells/roles/kernel/internal/kernel/transaction_turn_executor.py polaris/cells/roles/kernel/internal/kernel/transaction_factory.py polaris/cells/roles/kernel/internal/transaction_kernel.py polaris/cells/roles/kernel/internal/turn_transaction_controller.py polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/kernel/internal/tool_batch_runtime.py polaris/cells/roles/adapters/public/directed_effect_service.py polaris/cells/roles/adapters/public/__init__.py polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py polaris/cells/roles/adapters/internal/director/adapter.py polaris/cells/roles/runtime/public/service.py
@@ -2564,7 +2722,7 @@ Expected: both commands exit 0. This explicitly covers `adapter.py`, roles
 runtime service, transaction factory/kernel/controller, ToolBatchExecutor,
 ToolBatchRuntime, and every new contract/port module.
 
-- [ ] **Step 3: Run mypy, compileall, parse, and diff gates over the same surface.**
+- [x] **Step 3: Run mypy, compileall, parse, and diff gates over the same surface.**
 
 ```bash
 rtk proxy mypy polaris/cells/director/runtime/public/directed_effect_contracts.py polaris/cells/director/runtime/public/directed_effect_service.py polaris/cells/roles/kernel/public/directed_effect_contracts.py polaris/cells/roles/kernel/public/directed_effect_service.py polaris/cells/roles/kernel/public/transaction_contracts.py polaris/cells/roles/kernel/internal/directed_effect_policy_guard.py polaris/cells/roles/kernel/internal/directed_effect_dispatch.py polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py polaris/cells/roles/kernel/internal/kernel/core.py polaris/cells/roles/kernel/internal/kernel/transaction_turn_executor.py polaris/cells/roles/kernel/internal/kernel/transaction_factory.py polaris/cells/roles/kernel/internal/transaction_kernel.py polaris/cells/roles/kernel/internal/turn_transaction_controller.py polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py polaris/cells/roles/kernel/internal/tool_batch_runtime.py polaris/cells/roles/adapters/public/directed_effect_service.py polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py polaris/cells/roles/adapters/internal/director/adapter.py polaris/cells/roles/runtime/public/service.py
@@ -2578,7 +2736,7 @@ rtk proxy git diff --check
 
 Expected: mypy/compileall/YAML parse/diff check exit 0.
 
-- [ ] **Step 4: Obtain independent pre-closure specification and quality PASS verdicts.**
+- [x] **Step 4: Obtain independent pre-closure specification and quality PASS verdicts.**
 
 Use two separate read-only reviewers against the locked blueprint, gap-ledger
 slice, this plan, implementation diff, and command evidence. The specification
@@ -2597,7 +2755,7 @@ resulting tree; both must exit 0 before either independent reviewer may issue a
 final PASS and before DEO-2B may close:
 
 ```bash
-rtk proxy python -m pytest -q tests/architecture/test_kernelone_release_gates.py
+rtk proxy python -m pytest -q polaris/tests/architecture/test_kernelone_release_gates.py
 rtk proxy python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
 ```
 
@@ -2606,7 +2764,7 @@ rtk proxy claude -p "mode=audit. Review DEO-2B specification conformance against
 rtk proxy claude -p "mode=audit. Review DEO-2B implementation quality: architecture, typed contracts/errors, attempt heartbeat, existing policy and Job Token restrictions, TaskRuntime nested CAS/grant, zero-effect semantics, PID/replay/concurrency, no transport, tests, and scope. Return strict JSON with verdict PASS or NO, file-line findings, risks, and required_actions. Do not modify files or run Bench." --dangerously-skip-permissions --output-format json --json-schema '{"type":"object","properties":{"verdict":{"enum":["PASS","NO"]},"findings":{"type":"array"},"risks":{"type":"array"},"required_actions":{"type":"array"}},"required":["verdict","findings","risks","required_actions"]}'
 ```
 
-- [ ] **Step 5: Correct stale closure text only after PASS/PASS, then rerun final gates.**
+- [x] **Step 5: Correct stale closure text only after PASS/PASS, then rerun final gates.**
 
 Update TaskRuntime `cell.yaml`, `README.agent.md`, and catalog status text to say
 DEO-2A is closed and DEO-2B proves only the selected canonical grant-consuming
@@ -2627,6 +2785,20 @@ Expected: catalog hard-fail reports zero issues/mismatches, closure tests pass,
 diff check exits 0, and status contains only owned changes plus preserved
 pre-existing work. Rerun both independent reviewers against the final diff and
 require PASS/PASS. Do not commit.
+
+**Task 12 and DEO-2B closure (2026-07-20):** complete targeted behavior passed
+`675`; policy snapshot passed `117`; command-capability selection passed `17`;
+KernelOne architecture passed `18`; the aggregate KernelOne release gate exited
+`0`. Ruff/format/mypy/compileall/YAML/diff gates are green. Independent
+pre-closure specification and quality reviews returned `PASS/PASS`; the
+specification review decided B1-B7 explicitly. After the three authorized
+metadata corrections, catalog hard-fail returned `issue_count=0` and
+`mismatch_count=0`, the closure suite passed `385`, and final-diff reviews again
+returned `PASS/PASS`. Provider requests, Bench runs, target-project changes,
+and Task 12 physical effects remained zero. DEO-2B is closed only for the
+selected canonical in-process grant-consuming Director path. DEO-2 overall
+remains `p0_open`; follow-on buckets remain `not_schedulable` until separately
+authorized by a locked blueprint.
 
 ## Acceptance and handoff
 

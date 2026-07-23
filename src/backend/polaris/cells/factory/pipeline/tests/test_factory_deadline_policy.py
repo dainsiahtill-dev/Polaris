@@ -17,6 +17,7 @@ def _policy() -> FactoryDeadlineBudgetPolicyV1:
         director_first_task_min_seconds=150.0,
         director_followup_task_min_seconds=40.0,
         quality_gate_reserved_seconds=120.0,
+        quality_gate_min_start_reserved_seconds=55.0,
         safety_seconds=5.0,
         director_settlement_barrier_seconds=5.0,
     )
@@ -119,33 +120,37 @@ def test_ce_portfolio_admission_projects_when_full_chain_cannot_fit() -> None:
     assert decision.settlement_timeout_seconds == 0
 
 
-def test_director_admission_reserves_future_tasks_and_quality_gate() -> None:
+def test_director_admission_reserves_future_tasks_and_minimum_quality_start() -> None:
     decision = resolve_director_dispatch_admission(
         remaining_seconds=470.0,
         requested_timeout_seconds=600,
         dependency_schedule=build_task_dependency_schedule(_serial_tasks()),
         first_materialization_pending=True,
+        materialization_pending=True,
         policy=_policy(),
     )
 
     assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
-    assert decision.reserved_downstream_seconds == 305.0
-    assert decision.available_for_stage_seconds == 165.0
+    assert decision.reserved_downstream_seconds == 240.0
+    assert decision.available_for_stage_seconds == 230.0
     assert decision.minimum_start_budget_seconds == 150.0
-    assert decision.timeout_seconds == 165
-    assert decision.execution_timeout_seconds == 160
+    assert decision.timeout_seconds == 230
+    assert decision.execution_timeout_seconds == 225
     assert decision.settlement_timeout_seconds == 5
     assert decision.execution_timeout_seconds + decision.settlement_timeout_seconds == decision.timeout_seconds
-    assert decision.reservation_breakdown["current_wave_execution"] == 160
+    assert decision.reservation_breakdown["current_wave_execution"] == 225
     assert decision.reservation_breakdown["current_wave_settlement"] == 5
+    assert decision.reservation_breakdown["qa_finalization"] == 55
+    assert decision.reservation_breakdown["qa_finalization_minimum_reserve_active"] == 1
 
 
 def test_director_admission_blocks_instead_of_starving_future_chain() -> None:
     decision = resolve_director_dispatch_admission(
-        remaining_seconds=420.0,
+        remaining_seconds=390.0,
         requested_timeout_seconds=600,
         dependency_schedule=build_task_dependency_schedule(_serial_tasks()),
         first_materialization_pending=True,
+        materialization_pending=True,
         policy=_policy(),
     )
 
@@ -154,6 +159,45 @@ def test_director_admission_blocks_instead_of_starving_future_chain() -> None:
     assert decision.timeout_seconds == 0
     assert decision.execution_timeout_seconds == 0
     assert decision.settlement_timeout_seconds == 0
+
+
+def test_later_materialization_wave_uses_minimum_qa_reserve_until_final_owner() -> None:
+    decision = resolve_director_dispatch_admission(
+        remaining_seconds=239.0,
+        requested_timeout_seconds=600,
+        dependency_schedule=build_task_dependency_schedule(_serial_tasks(2)),
+        first_materialization_pending=False,
+        materialization_pending=True,
+        policy=_policy(),
+    )
+
+    assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+    assert decision.minimum_start_budget_seconds == 40
+    assert decision.reserved_downstream_seconds == 105
+    assert decision.available_for_stage_seconds == 134
+    assert decision.execution_timeout_seconds == 129
+    assert decision.settlement_timeout_seconds == 5
+    assert decision.reservation_breakdown["qa_finalization"] == 55
+    assert decision.reservation_breakdown["qa_finalization_minimum_reserve_active"] == 1
+
+
+def test_final_materialization_wave_retains_full_qa_reserve() -> None:
+    decision = resolve_director_dispatch_admission(
+        remaining_seconds=170.0,
+        requested_timeout_seconds=600,
+        dependency_schedule=build_task_dependency_schedule(_serial_tasks(1)),
+        first_materialization_pending=False,
+        materialization_pending=True,
+        policy=_policy(),
+    )
+
+    assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+    assert decision.reserved_downstream_seconds == 125
+    assert decision.available_for_stage_seconds == 45
+    assert decision.execution_timeout_seconds == 40
+    assert decision.settlement_timeout_seconds == 5
+    assert decision.reservation_breakdown["qa_finalization"] == 120
+    assert decision.reservation_breakdown["qa_finalization_minimum_reserve_active"] == 0
 
 
 def test_admission_without_factory_deadline_preserves_requested_timeout() -> None:
@@ -177,6 +221,7 @@ def test_director_admission_without_deadline_keeps_settlement_inside_requested_l
         requested_timeout_seconds=240,
         dependency_schedule=build_task_dependency_schedule(_serial_tasks()),
         first_materialization_pending=True,
+        materialization_pending=True,
         policy=_policy(),
     )
 
@@ -194,6 +239,7 @@ def test_director_minimum_applies_to_execution_not_total_stage_lease() -> None:
         requested_timeout_seconds=150,
         dependency_schedule=build_task_dependency_schedule(_serial_tasks(1)),
         first_materialization_pending=True,
+        materialization_pending=True,
         policy=_policy(),
     )
     admitted = resolve_director_dispatch_admission(
@@ -201,6 +247,7 @@ def test_director_minimum_applies_to_execution_not_total_stage_lease() -> None:
         requested_timeout_seconds=155,
         dependency_schedule=build_task_dependency_schedule(_serial_tasks(1)),
         first_materialization_pending=True,
+        materialization_pending=True,
         policy=_policy(),
     )
 

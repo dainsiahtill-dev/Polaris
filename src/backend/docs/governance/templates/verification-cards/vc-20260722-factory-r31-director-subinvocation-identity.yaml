@@ -1,0 +1,82 @@
+card_id: vc-20260722-factory-r31-director-subinvocation-identity
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_summary: >-
+  The single authorized R31 isolated L1-04 run completed PM and Chief Engineer,
+  reached Director, wrote five files, and compiled four Go sources. A subsequent
+  semantic materialization-quality repair then reused the main Director call's
+  TaskRuntime execution scope and fresh local transaction attempt zero. Both
+  calls therefore derived the same TransactionKernel invocation/attempt outcome
+  key despite carrying different terminal payloads. FactStream correctly
+  rejected the repair commit as an idempotency conflict, Task 1 failed, Tasks 2
+  and 3 were dependency-blocked, and QA was never reached.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  bench_run_id: ffafdb3d5203
+  factory_run_id: factory_f904a2104887
+  director_run_id: director-b4abd976972b
+  wall_clock_seconds: 386.1
+  stage: director_dispatch
+  error_code: director.canonical_task_boundary_missing
+  nested_error: idempotency conflict existing event does not match requested event fields=payload
+  shared_role_runtime_session_id: tx-925d07af35ed461db4a67556afffb353
+  shared_transaction_invocation_id: txi_f8fbcaca64c2324f86f08230
+  shared_transaction_attempt: 0
+  files_materialized: 5
+  go_source_files: 4
+  production_lines: 317
+  go_compile: pass
+  tests_materialized: 0
+  qa_reached: false
+  completed_verified: false
+final_request_audit:
+  readable_context_refs: 6
+  pm_role_identity: pass
+  chief_engineer_role_identity: pass
+  director_role_identity: pass
+  qa_request_absent_because_upstream_failed: true
+  pm_refs:
+    - 1b6240531b29eab74fa8dcc1
+    - 42ba50cb12dfec54145cca9f
+  chief_engineer_refs:
+    - a24c5a6b86d04251461df093
+  director_refs:
+    - acaccaa9d6d10da5ce4e0ad8
+    - f9f790594e3217cd2687f3dc
+    - 16a802424416324e03e924cb
+  final_provider_request_coverage: pass
+primary_root_cause:
+  code: director_child_role_calls_share_parent_transaction_invocation
+  owner: roles.adapters.director_role_dialogue_boundary
+  parent_authority: task_runtime_execution_attempt
+  child_identity_required: stable_turn_request_id_per_semantic_stage
+  forbidden_fixes:
+    - weaken_outcome_idempotency
+    - random_child_identity
+    - mint_new_taskruntime_authority_per_repair
+required_gates:
+  red_subinvocation_identity_regression: pass
+  stable_same_stage_replay_identity: pass
+  distinct_cross_stage_identity: pass
+  repeated_preparation_uses_original_parent: pass
+  conflicting_parent_identity_fail_closed: pass
+  conflicting_prior_evidence_fail_closed: pass
+  roles_adapters_focused: "14 passed"
+  roles_adapters_full: "1302 passed, 2 warnings"
+  roles_kernel_identity_regression: "4162 passed, 2 warnings"
+  roles_runtime_full: "697 passed, 2 warnings"
+  factory_pipeline_full: "1230 passed, 2 warnings"
+  static_gates: pass
+  post_edit_codegraph_review: pass
+scheduling:
+  bench_schedulable: false
+  authorized_acceptance_bench_runs: 0
+  authorization_scope: r32_consumed_and_failed
+  source_snapshot_authority: vc-20260720-pre-bench-execution-fact-chain-gate
+  next_action: close_r32_dual_semantic_replay_and_ce_terminalization_roots

@@ -119,7 +119,8 @@ def test_write_text_atomic_retries_transient_windows_replace_permission_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    target = str(tmp_path / "locked-once.txt")
+    target_path = tmp_path / "locked-once.txt"
+    target = str(target_path)
     original_replace = os.replace
     calls = 0
 
@@ -137,7 +138,7 @@ def test_write_text_atomic_retries_transient_windows_replace_permission_error(
     write_text_atomic(target, "content", lock_timeout_sec=None)
 
     assert calls == 2
-    assert Path(target).read_text(encoding="utf-8") == "content"
+    assert target_path.read_text(encoding="utf-8") == "content"
 
 
 # ---------------------------------------------------------------------------

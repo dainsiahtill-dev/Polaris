@@ -14,6 +14,7 @@ from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinato
     FactoryPhysicalAttemptCoordinator,
     FactoryPhysicalAttemptLiveControlPort,
 )
+from polaris.cells.factory.pipeline.internal.factory_run_admission import FactoryWorkspaceRunAdmission
 from polaris.cells.roles.kernel.public.physical_attempt_control import (
     ABORT_FACTORY_PHYSICAL_ATTEMPT_RESERVATION_SCHEMA,
     BEGIN_FACTORY_PHYSICAL_ATTEMPT_START_SCHEMA,
@@ -172,7 +173,10 @@ def _register_command_cutoff(
 
 
 def test_live_control_port_registers_wire_cutoff_through_exact_seven_method_capability() -> None:
-    port = FactoryPhysicalAttemptLiveControlPort(factory_run_id="factory-run-1")
+    port = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
     grant = _grant_view()
     port.register_grant(grant)
 
@@ -187,8 +191,232 @@ def test_live_control_port_registers_wire_cutoff_through_exact_seven_method_capa
     assert second.authority_attempt_ordinal == 2
 
 
+def test_live_control_port_revalidates_durable_stage_fence_before_reserve_and_begin_start(tmp_path: Any) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    admission = FactoryWorkspaceRunAdmission(workspace, state_root=tmp_path / "runtime" / "factory")
+    lease = admission.acquire("factory-run-1")
+    stage_lease = admission.claim_stage(
+        lease.run_id,
+        fencing_token=lease.fencing_token,
+        stage="director_dispatch",
+        nonce="stage-nonce-1",
+    )
+    claim = stage_lease.stage_execution_claim
+    assert claim is not None
+
+    def revalidate_active_stage_claim(grant: FactoryPhysicalAttemptGrantViewV1) -> None:
+        with admission.hold_active_stage_claim(
+            grant.factory_run_id,
+            fencing_token=grant.workspace_fencing_token,
+            stage=grant.stage,
+            attempt=grant.stage_claim_attempt,
+            nonce=grant.stage_claim_nonce,
+        ) as revalidate:
+            revalidate()
+
+    port = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id=lease.run_id,
+        revalidate_active_stage_claim=revalidate_active_stage_claim,
+    )
+    grant = _grant_view(
+        factory_run_id=lease.run_id,
+        workspace_fencing_token=lease.fencing_token,
+        stage_claim_attempt=claim.attempt,
+        stage_claim_nonce=claim.nonce,
+    )
+    port.register_grant(grant)
+    reservation = port.reserve(_command(factory_run_id=lease.run_id))
+    permit = port.begin_start(_begin(reservation))
+
+    admission.claim_lifecycle_operation(
+        lease.run_id,
+        operation="recover_run",
+        nonce="restart-replay-fence",
+        acquire_if_available=False,
+        expected_fencing_token=lease.fencing_token,
+        replay_fence=True,
+    )
+
+    with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_authority_closed"):
+        port.register_grant(grant)
+    with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_authority_closed"):
+        port.reserve(_command(factory_run_id=lease.run_id, call_id="stale-call"))
+    with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_authority_closed"):
+        port.begin_start(_begin(reservation))
+    with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_authority_closed"):
+        port.commit_started(_commit(permit))
+
+
+def test_live_control_port_never_revalidates_storage_while_local_control_lock_is_held() -> None:
+    authority_lock_active = False
+    coordinator_call_active = False
+    revalidation_count = 0
+
+    class _TrackingAuthorityLock:
+        def __enter__(self) -> None:
+            nonlocal authority_lock_active
+            assert not authority_lock_active
+            authority_lock_active = True
+
+        def __exit__(self, *_exc: object) -> None:
+            nonlocal authority_lock_active
+            authority_lock_active = False
+
+    port: FactoryPhysicalAttemptLiveControlPort
+
+    def revalidate_active_stage_claim(_grant: FactoryPhysicalAttemptGrantViewV1) -> None:
+        nonlocal revalidation_count
+        assert not authority_lock_active
+        assert not coordinator_call_active
+        revalidation_count += 1
+
+    port = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=revalidate_active_stage_claim,
+    )
+    port._authority_lock = _TrackingAuthorityLock()  # type: ignore[assignment]
+
+    def track_coordinator_call(name: str) -> None:
+        original = getattr(port._coordinator, name)
+
+        def wrapped(*args: object, **kwargs: object) -> object:
+            nonlocal coordinator_call_active
+            assert authority_lock_active
+            assert not coordinator_call_active
+            coordinator_call_active = True
+            try:
+                return original(*args, **kwargs)
+            finally:
+                coordinator_call_active = False
+
+        setattr(port._coordinator, name, wrapped)
+
+    for method_name in ("register_grant", "reserve", "begin_start", "commit_started"):
+        track_coordinator_call(method_name)
+
+    port.register_grant(_grant_view())
+    reservation = port.reserve(_command())
+    permit = port.begin_start(_begin(reservation))
+    port.commit_started(_commit(permit))
+
+    assert revalidation_count == 8
+    assert not authority_lock_active
+    assert not coordinator_call_active
+
+
+def test_concurrent_replay_fence_rolls_back_unexposed_reservation(tmp_path: Any) -> None:
+    admission = FactoryWorkspaceRunAdmission(tmp_path, state_root=tmp_path / "runtime")
+    lease = admission.acquire("factory-run-1")
+    stage_lease = admission.claim_stage(
+        lease.run_id,
+        fencing_token=lease.fencing_token,
+        stage="director_dispatch",
+        nonce="stage-nonce-1",
+    )
+    claim = stage_lease.stage_execution_claim
+    assert claim is not None
+
+    def revalidate_active_stage_claim(grant: FactoryPhysicalAttemptGrantViewV1) -> None:
+        with admission.hold_active_stage_claim(
+            grant.factory_run_id,
+            fencing_token=grant.workspace_fencing_token,
+            stage=grant.stage,
+            attempt=grant.stage_claim_attempt,
+            nonce=grant.stage_claim_nonce,
+        ) as revalidate:
+            revalidate()
+
+    port = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id=lease.run_id,
+        revalidate_active_stage_claim=revalidate_active_stage_claim,
+    )
+    port.register_grant(
+        _grant_view(
+            factory_run_id=lease.run_id,
+            workspace_fencing_token=lease.fencing_token,
+            stage_claim_attempt=claim.attempt,
+            stage_claim_nonce=claim.nonce,
+        )
+    )
+
+    mutation_entered = Event()
+    release_mutation = Event()
+    original_reserve = port._coordinator.reserve
+
+    def paused_reserve(command: ReserveFactoryPhysicalAttemptV1) -> FactoryPhysicalAttemptReservationV1:
+        mutation_entered.set()
+        assert release_mutation.wait(timeout=5.0)
+        return original_reserve(command)
+
+    port._coordinator.reserve = paused_reserve  # type: ignore[method-assign]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(port.reserve, _command(factory_run_id=lease.run_id))
+        assert mutation_entered.wait(timeout=5.0)
+        admission.claim_lifecycle_operation(
+            lease.run_id,
+            operation="recover_run",
+            nonce="restart-replay-fence",
+            acquire_if_available=False,
+            expected_fencing_token=lease.fencing_token,
+            replay_fence=True,
+        )
+        release_mutation.set()
+        with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_authority_closed"):
+            future.result(timeout=5.0)
+
+    assert port.drain_snapshot().blocking_reservation_ids == ()
+    assert port.snapshot().inflight_request_ids == ()
+
+
+def test_failed_post_revalidation_exposes_no_start_permit_or_outbound_lease() -> None:
+    revalidation_calls = 0
+    fail_at: int | None = None
+
+    def revalidate(_grant: FactoryPhysicalAttemptGrantViewV1) -> None:
+        nonlocal revalidation_calls
+        revalidation_calls += 1
+        if fail_at == revalidation_calls:
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
+
+    port = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=revalidate,
+    )
+    port.register_grant(_grant_view())
+    reservation = port.reserve(_command())
+
+    fail_at = revalidation_calls + 2
+    with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_authority_closed"):
+        port.begin_start(_begin(reservation))
+    assert port.drain_snapshot().blocking_reservation_ids == ()
+
+    second_port = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=revalidate,
+    )
+    fail_at = None
+    second_port.register_grant(_grant_view())
+    second_reservation = second_port.reserve(_command())
+    permit = second_port.begin_start(_begin(second_reservation))
+    fail_at = revalidation_calls + 2
+    with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_authority_closed"):
+        second_port.commit_started(_commit(permit))
+    assert second_port.drain_snapshot().blocking_reservation_ids == (second_reservation.reservation_id,)
+    second_port.mark_start_ambiguous(
+        MarkFactoryPhysicalAttemptStartAmbiguousV1(
+            schema_version=MARK_FACTORY_PHYSICAL_ATTEMPT_START_AMBIGUOUS_SCHEMA,
+            start_permit=permit,
+            reason_code="post_revalidation_failed",
+        )
+    )
+
+
 def test_live_control_port_rejects_cross_grant_command_before_cutoff_registration() -> None:
-    port = FactoryPhysicalAttemptLiveControlPort(factory_run_id="factory-run-1")
+    port = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
     port.register_grant(_grant_view())
 
     with pytest.raises(FactoryPhysicalAttemptControlError) as raised:
@@ -199,7 +427,10 @@ def test_live_control_port_rejects_cross_grant_command_before_cutoff_registratio
 
 @pytest.mark.asyncio
 async def test_live_control_port_is_the_factory_provider_drain_authority() -> None:
-    port = FactoryPhysicalAttemptLiveControlPort(factory_run_id="factory-run-1")
+    port = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
     port.register_grant(_grant_view())
     reservation = port.reserve(_command())
 

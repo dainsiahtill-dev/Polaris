@@ -54,6 +54,13 @@ _TS_TYPESCRIPT_DEV_DEPENDENCY_ERROR_RE = re.compile(
     r"TypeScript project requires ['\"]typescript['\"] devDependency",
     re.IGNORECASE,
 )
+_PYTHON_REQUIREMENTS_DECLARATION_RE = re.compile(
+    r"^\s*requirements\.txt\s+must\s+declare\s+(?P<package>[A-Za-z0-9][A-Za-z0-9_.-]*)\s*[.;]?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_PYTHON_REQUIREMENTS_NON_PACKAGES = frozenset(
+    {"a", "an", "at", "dependency", "dependencies", "least", "one", "package", "packages"}
+)
 _SCAFFOLD_MARKER_REPLACEMENTS = (
     ("audit-seed", "verified-sample"),
     ("planning scenario", "planning sample"),
@@ -183,53 +190,83 @@ def build_runtime_dependency_plan(
     diagnostics: Sequence[RepairDiagnostic] = (),
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Build structured package.json dependency repairs for known safe packages."""
+    """Build structured dependency-manifest repairs from explicit diagnostics."""
 
     normalized_base = _normalize_base_files(base_files)
     content = normalized_base.get("package.json")
-    if content is None:
-        return None
-    try:
-        payload = json.loads(content)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-
-    runtime_packages = [
-        package
-        for package in _parse_undeclared_runtime_import_packages(diagnostics)
-        if package in _KNOWN_RUNTIME_DEPENDENCY_VERSIONS and not _package_declared_in_manifest(payload, package)
-    ]
-    dev_packages = [
-        package
-        for package in _parse_required_dev_dependency_packages(diagnostics)
-        if package in _KNOWN_DEV_DEPENDENCY_VERSIONS and not _package_declared_in_manifest(payload, package)
-    ]
     operations: list[RepairOperation] = []
-    before_hash = sha256_text(content)
-    for package in runtime_packages:
-        operations.append(
-            RepairOperation(
-                kind="json_set",
-                path="package.json",
-                json_path=("dependencies", package),
-                value=_KNOWN_RUNTIME_DEPENDENCY_VERSIONS[package],
-                before_hash=before_hash,
-                metadata={"dependency_package": package, "dependency_section": "dependencies"},
-            )
+    manifests: list[str] = []
+    if content is not None:
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            runtime_packages = [
+                package
+                for package in _parse_undeclared_runtime_import_packages(diagnostics)
+                if package in _KNOWN_RUNTIME_DEPENDENCY_VERSIONS and not _package_declared_in_manifest(payload, package)
+            ]
+            dev_packages = [
+                package
+                for package in _parse_required_dev_dependency_packages(diagnostics)
+                if package in _KNOWN_DEV_DEPENDENCY_VERSIONS and not _package_declared_in_manifest(payload, package)
+            ]
+            before_hash = sha256_text(content)
+            for package in runtime_packages:
+                operations.append(
+                    RepairOperation(
+                        kind="json_set",
+                        path="package.json",
+                        json_path=("dependencies", package),
+                        value=_KNOWN_RUNTIME_DEPENDENCY_VERSIONS[package],
+                        before_hash=before_hash,
+                        metadata={"dependency_package": package, "dependency_section": "dependencies"},
+                    )
+                )
+            for package in dev_packages:
+                operations.append(
+                    RepairOperation(
+                        kind="json_set",
+                        path="package.json",
+                        json_path=("devDependencies", package),
+                        value=_KNOWN_DEV_DEPENDENCY_VERSIONS[package],
+                        before_hash=before_hash,
+                        metadata={"dependency_package": package, "dependency_section": "devDependencies"},
+                    )
+                )
+            if runtime_packages or dev_packages:
+                manifests.append("package.json")
+
+    requirements_packages = _parse_python_requirements_packages(diagnostics)
+    if requirements_packages:
+        requirements_before = normalized_base.get("requirements.txt", "")
+        existing_lines = tuple(
+            line.strip()
+            for line in requirements_before.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
         )
-    for package in dev_packages:
-        operations.append(
-            RepairOperation(
-                kind="json_set",
-                path="package.json",
-                json_path=("devDependencies", package),
-                value=_KNOWN_DEV_DEPENDENCY_VERSIONS[package],
-                before_hash=before_hash,
-                metadata={"dependency_package": package, "dependency_section": "devDependencies"},
-            )
+        existing_normalized = {line.lower() for line in existing_lines}
+        missing_packages = tuple(
+            package for package in requirements_packages if package.lower() not in existing_normalized
         )
+        if missing_packages:
+            combined = tuple(dict.fromkeys((*existing_lines, *missing_packages)))
+            requirements_after = "".join(f"{package}\n" for package in sorted(combined, key=str.lower))
+            operations.append(
+                RepairOperation(
+                    kind="write_file",
+                    path="requirements.txt",
+                    content=requirements_after,
+                    before_hash=sha256_text(requirements_before),
+                    metadata={
+                        "dependency_packages": missing_packages,
+                        "dependency_section": "requirements",
+                        "explicit_diagnostic_evidence": True,
+                    },
+                )
+            )
+            manifests.append("requirements.txt")
     if not operations:
         return None
     return RepairPlan(
@@ -240,7 +277,7 @@ def build_runtime_dependency_plan(
         mode=mode,
         risk_level="medium",
         priority=1,
-        metadata={"structured_operation": "json", "manifest": "package.json"},
+        metadata={"structured_operation": "dependency_manifest", "manifests": tuple(manifests)},
     )
 
 
@@ -484,6 +521,17 @@ def _parse_required_dev_dependency_packages(diagnostics: Sequence[RepairDiagnost
             packages.append("@types/node")
         if _TS_TYPESCRIPT_DEV_DEPENDENCY_ERROR_RE.search(text):
             packages.append("typescript")
+    return tuple(dict.fromkeys(packages))
+
+
+def _parse_python_requirements_packages(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
+    packages: list[str] = []
+    for diagnostic in diagnostics:
+        text = "\n".join(item for item in (str(diagnostic.raw or ""), str(diagnostic.message or "")) if item)
+        for match in _PYTHON_REQUIREMENTS_DECLARATION_RE.finditer(text):
+            package = str(match.group("package") or "").strip().lower()
+            if package and package not in _PYTHON_REQUIREMENTS_NON_PACKAGES:
+                packages.append(package)
     return tuple(dict.fromkeys(packages))
 
 

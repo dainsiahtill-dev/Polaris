@@ -1,0 +1,70 @@
+card_id: vc-20260722-factory-r6-sequential-claim-stream-head
+classification: execution_fact_chain
+severity: P0
+status: complete
+bench_status: closed_pending_pre_bench_refreeze
+symptom:
+  project_id: L1-04
+  factory_run_id: factory_892b88dad469
+  director_run_id: director-bce8350615be
+  stage: director_dispatch
+  first_call_id: call_019f877c8fac7e53a3631f6d
+  second_call_id: call_019f877c8fac7e53a3631f73
+  second_error: deo_claim_failed
+  second_claim_status: unknown
+  first_mutation_committed: true
+  materialized_files:
+    - go.mod
+evidence:
+  runtime_root: >-
+    /home/dains/.cache/kernelone/.polaris/projects/03402ee6d9f45cfcd37fb69c-e7c310cee6e6/runtime
+  operation_stream_token: deo_operation_v1_9e1e9eb7db7e3b4cede774fdee3c6ca1cfc0cd57c8d7e2fc
+  admitted_intent_sequences:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+  first_claim_sequence: 6
+  first_receipt_sequence: 7
+  stale_second_claim_sequence: 7
+  required_second_claim_sequence: 8
+root_cause:
+  code: sequential_claim_uses_stale_admission_head
+  evidence: >-
+    claim_execution_context computed every claim CAS from the immutable
+    inventory-admission head plus member index. That formula accounts for one
+    claim event per preceding member but not for receipt, abort, or recovery
+    transitions appended by those members to the same operation stream. After
+    the first operation committed its receipt at sequence 7, the second claim
+    retried sequence 7 instead of claiming sequence 8 and failed closed.
+  repair: >-
+    Before each claim or unused-member abort, strictly rebuild the target operation through the
+    public TaskRuntime read port, require the exact admitted identity, state,
+    and version, derive expected_seq from the returned current stream head,
+    then retain the claim command CAS as the authoritative race guard.
+repair_contract:
+  arithmetic_sequence_guessing: forbidden
+  task_runtime_public_port_required: true
+  stale_or_malformed_projection: fail_closed
+  claim_cas_required: true
+  execution_authorization_relaxation: forbidden
+  target_project_edits: forbidden
+verification:
+  tdd_red: >-
+    A two-member production sequence failed the second claim after the first
+    member appended both claim and committed-receipt transitions.
+  lifecycle_focused: "50 passed"
+  production_receipt_integration: "4 passed"
+  roles_kernel: "4140 passed, 2 warnings"
+  task_runtime: "895 passed, 10 warnings"
+  factory_pipeline: "1284 passed, 2 warnings"
+  roles_adapters_run_ledger_architecture: "3010 passed, 8 skipped"
+  ruff: pass
+  format: pass
+  mypy_strict: pass
+  compileall: pass
+  yaml: pass
+owner: Codex /root
+opened_at: "2026-07-22"
+closed_at: "2026-07-22"

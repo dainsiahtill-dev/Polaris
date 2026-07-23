@@ -1,16 +1,12 @@
 # Directed Effect Operation v1 Blueprint
 
-**Task:** `DEO-1C-CLOSURE-SYNC`
-**Status:** DEO-1A, DEO-1B, and DEO-1C are closed by the 2026-07-15 closure
-records in Sections 10.1, 10.2, and 10.4. The DEO-1 durable fact foundation is
-therefore closed. Directed Effect Operation v1 remains `p0_open`: DEO-2 design
-is locked by
-`DIRECTED_EFFECT_OPERATION_DEO2_BLUEPRINT_20260716.md`, and its status is
-recorded: DEO-2A is `closed` and `complete`; DEO-2B is the only next
-`pending` and `schedulable` bucket and has not started. DEO-2 overall is not
-complete; DEO-2C/2D and DEO-3/4 remain `not_schedulable`, and DEO-3 remains the
-highest-risk P0 child/terminal close, receipt, and recovery path.
-Bench remains `not_schedulable`; no Bench was run. DEO-1B made only the limited
+**Task:** `DEO-4-LEGACY-REMOVAL-ARCHITECTURE-FENCE`
+**Status:** DEO-1A/1B/1C, DEO-2A/2B/2C/2D, DEO-3, and DEO-4 are closed and complete.
+The DEO-1 durable fact foundation, DEO-2 zero-unbound-mutation boundary, and
+DEO-3 durable receipt/finite-recovery/terminal-admission protocol, and DEO-4
+legacy-removal architecture fence are therefore closed. The Directed Effect
+Operation v1 P0 execution-control chain is closed. Pre-bench is the only active
+gate. Provider and Bench remain `not_schedulable`; no Bench was run. DEO-1B made only the limited
 settlement semantic change defined below: every active-to-inactive writer
 passes a fail-closed parent-registry pre-barrier, but 1B does not write
 `parent_closed` or implement DEO-3 receipt eligibility or recovery.
@@ -631,6 +627,28 @@ production injection path. The fence must cover non-test imports and production
 bootstrap/CLI wiring, and tests must assert that bypass constructors raise a
 typed failure.
 
+**Closure:** `closed` and `complete`. Exact `DirectorToolExecutor` instances
+created by the private canonical factory are registered in a process-local
+`WeakSet`; possession of copied instance fields or a stolen marker cannot grant
+physical authority. Direct construction, manual `object.__new__`/`__dict__`
+clones, copy/deepcopy, pickle, public re-export, importlib, alias, taint,
+constant/dynamic `getattr`, wildcard-import, `vars`, and `__dict__` bypasses are
+denied or fenced. The mutation port exposes no injectable executor slot. Once
+the one-shot fence is consumed, both executor construction failure and physical
+execution failure enter durable recovery and replay remains denied.
+
+The production fence proves exactly one constructor in the private factory,
+one factory call and one physical execute in the mutation port, no executor
+self-factory alias, and no other production construction/import/call surface.
+Focused closure evidence is `100 passed`; the full roles.adapters suite is
+`1250 passed`. Prior broad evidence remains TaskRuntime plus Run Ledger `720
+passed`, roles.kernel `2716 passed`, and guarded FS/FactStream `283 passed`.
+Ruff check/format, strict mypy from both repository and backend import roots,
+compileall, import, YAML/JSON, catalog, and scoped diff gates are green.
+Independent specification and quality/security reviews are `CLEAR/CLEAR`, with
+zero Critical, Important, and Minor findings. Provider requests, Bench runs,
+and target-project effects are `0/0/0`.
+
 ## 9. Guarded FactStream Append Amendment (2026-07-14, Historical and Superseded)
 
 **Historical status (superseded by Section 10.1):** DEO-1A was reopened as a
@@ -722,11 +740,11 @@ If durability completed but final authority validation drifts, there is no
 success receipt and no rollback. The typed result is
 `post_fsync_authority_reconciliation_required`; strict replay is mandatory.
 
-DEO-3 is the only bucket permitted to consume the parent-close commit form for
-terminal admission and receipt closure. DEO-4 must remove or fence every legacy
-direct append/CAS path that could bypass the guarded port and allowlist only
-TaskRuntime as the DEO guarded-commit consumer. That allowlist is architecture
-control, not a security boundary or replacement for FactStream proof checks.
+DEO-3 consumed the parent-close commit form for terminal admission and receipt
+closure and is closed. DEO-4 must now remove or fence every legacy direct
+append/CAS path that could bypass the guarded port and allowlist only TaskRuntime
+as the DEO guarded-commit consumer. That allowlist is architecture control, not
+a security boundary or replacement for FactStream proof checks.
 Cell manifest and context-pack reconciliation remains a separate DEO-1B
 governance item; it neither implements nor proves guarded append. Bench status
 remains `not schedulable`; no calendar or success claim is authorized.
@@ -773,20 +791,21 @@ evidence.
 
 ## 7. Bench Policy and ETA
 
-**Do not run a bench** while any of these conditions holds: DEO-1A through
-DEO-4 lacks its exit evidence; any mutation-capable executor surface is unbound;
+**Do not run a bench** while the pre-bench gate is open, or if any previously
+closed DEO-1A through DEO-4 exit regresses; any mutation-capable executor surface is unbound;
 an `EFFECT_STARTED` or `RECOVERY_PENDING` operation lacks recovery evidence;
 the old `create` seam remains outside its explicit DEO-4 deletion plan; or the
 architecture fence cannot prove the owner boundaries. A bench before then would
 measure an intentionally open P0 path and cannot be used as acceptance evidence.
 
 There is no calendar-date bench ETA. The only credible ETA is gate-based:
-after DEO-4 reports its repository inventory, crash/cancel matrix, targeted
-quality gates, and independent review evidence, schedule one fresh isolated
-bench under the prescribed isolated-instance command. The schedule record must
+after the pre-bench gate independently revalidates the DEO inventory,
+crash/cancel matrix, targeted quality gates, B3 physical-dispatch closure, and
+final provider-request auditability, schedule one fresh isolated bench under
+the prescribed isolated-instance command. The schedule record must
 name the exact commit/worktree fingerprint, command, owner, timeout, and work
 directory. Until those preconditions are evidenced, the truthful bench ETA is
-`not schedulable`.
+`not_schedulable`.
 
 ## 8. Superseded WS2 Findings
 
@@ -1159,14 +1178,77 @@ read-only fence evidence and is not a reason to reopen DEO-1C.
 
 #### Limits and Next Bucket
 
-DEO-2A is `closed` and `complete`. DEO-2B is the only next `pending` and
-`schedulable` bucket, but it has not started; DEO-2 overall remains `p0_open`
-and incomplete. DEO-2C/2D remain `not_schedulable`. DEO-3 remains the
-highest-risk P0 child/terminal close, receipt, and recovery bucket; DEO-4 also
-remains pending and `not_schedulable`. Bench remains `not_schedulable`, and no
-Bench evidence is claimed because no Bench was run.
+DEO-2A/2B/2C/2D, DEO-3, and DEO-4 are `closed` and `complete`. Pre-bench is the
+only active gate. Provider and Bench remain `not_schedulable`, and no Bench
+evidence is claimed because no Bench was run.
 
 The targeted Cell manifest, README, context pack, and global catalog are
 synchronized by the closure task. `generated/descriptor.pack.json` is not
 regenerated because its generator exposes only global generation; descriptor
 freshness is therefore not claimed by this closure record.
+
+### 11. DEO-3 Durable Receipt Settlement Closure (2026-07-20)
+
+**Status:** `closed` and `complete`. TaskRuntime now owns strict schema-v3
+receipt, recovery, dead-letter, and child-close facts plus schema-v2
+outcome-bound parent close. The Director mutation port cannot return physical
+success before the exact durable receipt commit is validated. Canonical
+settlement persists one terminal intent, closes/replays eligible children and
+the parent under guarded CAS, then writes the terminal session. Heartbeat,
+stale reclaim, startup recovery, lease expiry, and deadline expiry fail closed.
+
+Run Ledger remains read-only. Its projection and tool lifecycle share one
+strict receipt validator, distinguish missing evidence from present-but-failed
+evidence, and reject malformed hashes/types, padded canonical fields, non-finite
+values, wrong versions, and semantic drift. The six legal settlement-policy
+combinations are frozen; illegal receipt/outcome combinations remain blocked.
+
+#### Final DEO-3 Evidence
+
+- TaskRuntime internal/public: `409 + 486 passed`.
+- Run Ledger: `311 passed`.
+- Repository architecture: `1402 passed, 8 skipped` in `1360.79s`; this includes
+  the refactor-aware cooperative session-file-lock dominance fence.
+- Roles kernel/adapters retained broad evidence of `4101` and `1240` passed.
+- Ruff check/format, strict mypy over nine production files, compileall, YAML,
+  public import smoke, scoped diff check, and catalog hard-fail pass; catalog
+  reports `issue_count=0` and `mismatch_count=0`.
+- Independent specification and quality/security reviews: `CLEAR/CLEAR`, zero
+  Critical and zero Important findings.
+- Provider requests, Bench runs, and target-project effects: `0/0/0`.
+
+#### Limits and Next Bucket
+
+DEO-4 is closed by Section 12. Pre-bench is the only active gate. Provider and
+Bench remain `not_schedulable`; no end-to-end success claim is made by DEO-3 or
+DEO-4 closure.
+
+### 12. DEO-4 Legacy Removal and Architecture Fence Closure (2026-07-20)
+
+**Status:** `closed` and `complete`. The last unscoped physical executor
+construction seam is removed. Runtime authority is exact-instance identity,
+not a cloneable field capability; the canonical mutation port is the sole
+production factory and physical-execute consumer. Post-consume construction and
+execution failures durably enter recovery, and replay cannot duplicate an
+effect.
+
+The repository fence consumes the shared refactor-aware AST analyzer and covers
+direct/module-qualified imports, aliases, assignments and taint, wildcard
+imports, constant and dynamic attribute access, `vars`/`__dict__`, importlib
+exact-module strings, public re-exports, and executor self-factory attempts. It
+also freezes the exact internal constructor, registry, factory, and execution
+topology.
+
+Final focused evidence is `100 passed`; roles.adapters is `1250 passed`; prior
+broad evidence includes TaskRuntime plus Run Ledger `720 passed`, roles.kernel
+`2716 passed`, guarded FS/FactStream `283 passed`, and final repository
+architecture `1411 passed, 8 skipped in 1351.24s`. Independent reviews are
+`CLEAR/CLEAR`, with zero Critical, Important, and Minor findings. Static,
+typing, import, compilation, catalog, and diff gates are green. Provider
+requests, Bench runs, and target-project effects are `0/0/0`.
+
+Pre-bench is now the sole active gate. It must independently confirm B3.4-B3.6
+physical-dispatch wiring, complete final provider-request context evidence for
+PM/Chief Engineer/Director/QA, clean isolated-instance startup, and the closed
+DEO inventory before any Provider or Bench execution. Until then, Provider and
+Bench remain `not_schedulable`.

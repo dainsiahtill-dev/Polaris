@@ -6,6 +6,11 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.prompt_builder_provider import get_prompt_builder
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser
@@ -15,6 +20,20 @@ from polaris.cells.roles.profile.public.service import RoleExecutionMode, RoleTu
 # Note: Tests that need specific stall behavior should set env vars themselves.
 # The module-level fixture was removed because it interfered with tests that
 # explicitly test stall detection behavior (e.g., max_stall_cycles=0).
+
+
+@pytest.fixture(autouse=True)
+def _isolated_fact_stream_workspace(monkeypatch, tmp_path) -> None:
+    """Keep strict Run Ledger facts out of the shared repository runtime."""
+
+    monkeypatch.chdir(tmp_path)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="roles_kernel_stream_tool_loop_test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -168,6 +187,7 @@ def test_stream_continues_after_tool_results_with_transcript_context(monkeypatch
     )
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="帮我阅读并总结代码",
@@ -275,6 +295,7 @@ def test_stream_executes_native_tool_calls_without_text_wrapper(monkeypatch) -> 
     )
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="直接读取并总结 README",
@@ -378,6 +399,7 @@ def test_stream_executes_normalized_tool_calls_even_with_anthropic_provider_meta
     )
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="直接读取并总结 README",
@@ -471,6 +493,7 @@ def test_stream_failed_tool_batch_fails_closed(monkeypatch) -> None:
     )
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="继续",
@@ -575,6 +598,7 @@ def test_stream_compacts_large_tool_receipts_in_transcript(monkeypatch) -> None:
     )
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="读取并总结 README",
@@ -671,6 +695,7 @@ def test_stream_keeps_read_file_receipt_when_context_budget_allows(monkeypatch) 
     )
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="总结这个项目代码",
@@ -730,6 +755,7 @@ def test_stream_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="你能调用哪些工具",
@@ -781,6 +807,7 @@ def test_stream_thinking_only_response_emits_explicit_error(monkeypatch) -> None
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="给我结论",
@@ -830,6 +857,7 @@ def test_stream_blank_response_emits_explicit_error(monkeypatch) -> None:
     monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="给我结论",
@@ -928,13 +956,13 @@ def test_run_continues_after_tool_results_with_transcript_context(monkeypatch) -
     )
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="帮我阅读并总结代码",
         history=[],
         context_override={},
         metadata={"turn_request_id": "run-transcript"},
-        validate_output=False,
     )
 
     result = asyncio.run(kernel.run("pm", request))
@@ -1023,13 +1051,13 @@ def test_run_failed_tool_batch_fails_closed_before_finalization(monkeypatch) -> 
     )
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="继续",
         history=[],
         context_override={},
         metadata={"turn_request_id": "run-failed-tool"},
-        validate_output=False,
     )
 
     result = asyncio.run(kernel.run("pm", request))
@@ -1107,13 +1135,13 @@ def test_run_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
     )
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="你能调用哪些工具",
         history=[],
         context_override={},
         metadata={"turn_request_id": "run-code-block"},
-        validate_output=False,
     )
 
     result = asyncio.run(kernel.run("pm", request))
@@ -1164,13 +1192,13 @@ def test_run_thinking_only_response_returns_explicit_error(monkeypatch) -> None:
     monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="给我结论",
         history=[],
         context_override={},
         metadata={"turn_request_id": "run-thinking-only"},
-        validate_output=False,
     )
 
     result = asyncio.run(kernel.run("pm", request))
@@ -1218,13 +1246,13 @@ def test_run_blank_response_returns_explicit_error(monkeypatch) -> None:
     monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     request = RoleTurnRequest(
+        validate_output=False,
         mode=RoleExecutionMode.CHAT,
         workspace=".",
         message="给我结论",
         history=[],
         context_override={},
         metadata={"turn_request_id": "run-blank"},
-        validate_output=False,
     )
 
     result = asyncio.run(kernel.run("pm", request))

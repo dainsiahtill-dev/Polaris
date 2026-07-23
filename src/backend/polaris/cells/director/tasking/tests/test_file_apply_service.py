@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -70,8 +69,7 @@ class TestFileApplyService:
         result = service.write_files([{"path": "src/generated/schema.ts", "content": "export const schema = {};\n"}])
 
         assert result == []
-        assert service._last_write_errors
-        assert "AGENTS.md forbids writing src/generated/schema.ts" in service._last_write_errors[0]
+        assert service._last_write_errors == ["direct_file_apply_requires_directed_effect_authority"]
         assert not (tmp_path / "src" / "generated" / "schema.ts").exists()
 
     def test_apply_response_operations_reports_fenced_policy_denial(self, tmp_path: Path) -> None:
@@ -87,7 +85,7 @@ class TestFileApplyService:
         )
 
         assert files == []
-        assert any("AGENTS.md forbids writing src/generated/schema.ts" in error for error in errors)
+        assert errors == ["raw_text_file_apply_not_authoritative"]
         assert not (tmp_path / "src" / "generated" / "schema.ts").exists()
 
     def test_apply_response_operations_blocks_fenced_file_outside_allowed_scope(self, tmp_path: Path) -> None:
@@ -103,7 +101,7 @@ class TestFileApplyService:
         )
 
         assert files == []
-        assert any("Changed files exceed act.files scope" in error for error in errors)
+        assert errors == ["raw_text_file_apply_not_authoritative"]
         assert not (tmp_path / "src" / "out_of_scope.py").exists()
 
     def test_collect_workspace_files_empty_list(self) -> None:
@@ -226,16 +224,9 @@ class TestFileApplyService:
             "```file: src/health.ts\nexport function health(): string {\n  return 'ok';\n}\n```"
         )
 
-        assert errors == []
-        assert applied == [
-            {
-                "path": "src/health.ts",
-                "content": "export function health(): string {\n  return 'ok';\n}",
-            }
-        ]
-        assert (tmp_path / "src" / "health.ts").read_text(encoding="utf-8").strip() == (
-            "export function health(): string {\n  return 'ok';\n}"
-        )
+        assert applied == []
+        assert errors == ["raw_text_file_apply_not_authoritative"]
+        assert not (tmp_path / "src" / "health.ts").exists()
 
     def test_apply_response_operations_rejects_invalid_fenced_json(self, tmp_path: Path) -> None:
         """Invalid structured files must not be written as successful Director output."""
@@ -254,7 +245,7 @@ class TestFileApplyService:
         )
 
         assert applied == []
-        assert any("invalid JSON" in error for error in errors)
+        assert errors == ["raw_text_file_apply_not_authoritative"]
         assert not (tmp_path / "package.json").exists()
 
     def test_apply_response_operations_rejects_markdown_advisory_as_source_file(self, tmp_path: Path) -> None:
@@ -273,7 +264,7 @@ class TestFileApplyService:
         )
 
         assert applied == []
-        assert any("markdown/advisory text" in error for error in errors)
+        assert errors == ["raw_text_file_apply_not_authoritative"]
         assert not (tmp_path / "src" / "web.ts").exists()
 
     def test_apply_response_operations_ignores_markdown_file_inventory_fence(self, tmp_path: Path) -> None:
@@ -294,7 +285,7 @@ class TestFileApplyService:
         )
 
         assert applied == []
-        assert errors == ["no_changes"]
+        assert errors == ["raw_text_file_apply_not_authoritative"]
         assert not (tmp_path / "src" / "web.ts").exists()
 
     def test_write_files_normalizes_trailing_fence_json_config(self, tmp_path: Path) -> None:
@@ -312,14 +303,9 @@ class TestFileApplyService:
             allowed_scope_paths=["package.json"],
         )
 
-        assert result == [
-            {
-                "path": "package.json",
-                "content": '{\n  "name": "demo",\n  "scripts": {\n    "build": "tsc"\n  }\n}\n',
-            }
-        ]
-        payload = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
-        assert payload["scripts"]["build"] == "tsc"
+        assert result == []
+        assert service._last_write_errors == ["direct_file_apply_requires_directed_effect_authority"]
+        assert not (tmp_path / "package.json").exists()
 
     def test_write_files_rejects_incomplete_empty_package_json_fragment(self, tmp_path: Path) -> None:
         """Weak-model garbage must not be silently normalized into an empty manifest."""
@@ -332,7 +318,7 @@ class TestFileApplyService:
         )
 
         assert result == []
-        assert any("invalid JSON" in error for error in service._last_write_errors)
+        assert service._last_write_errors == ["direct_file_apply_requires_directed_effect_authority"]
         assert not (tmp_path / "package.json").exists()
 
     def test_apply_response_operations_rolls_back_invalid_json_patch(self, tmp_path: Path) -> None:
@@ -355,9 +341,7 @@ class TestFileApplyService:
         )
 
         assert applied == []
-        assert any(
-            "package.json: invalid JSON" in error or "package.json structured diff failed" in error for error in errors
-        )
+        assert errors == ["raw_text_file_apply_not_authoritative"]
         assert package_path.read_text(encoding="utf-8") == original
 
     def test_apply_response_operations_rolls_back_patch_outside_allowed_scope(self, tmp_path: Path) -> None:
@@ -372,7 +356,7 @@ class TestFileApplyService:
         )
 
         assert applied == []
-        assert any("Changed files exceed act.files scope" in error for error in errors)
+        assert errors == ["raw_text_file_apply_not_authoritative"]
         assert not path.exists()
 
     def test_apply_response_operations_accepts_nested_markdown_fences(self, tmp_path: Path) -> None:
@@ -395,10 +379,10 @@ class TestFileApplyService:
             "```"
         )
 
-        assert errors == []
-        assert [item["path"] for item in applied] == ["README.md", "pyproject.toml"]
-        assert "python -c" in (tmp_path / "README.md").read_text(encoding="utf-8")
-        assert (tmp_path / "pyproject.toml").read_text(encoding="utf-8").startswith("[project]\n")
+        assert applied == []
+        assert errors == ["raw_text_file_apply_not_authoritative"]
+        assert not (tmp_path / "README.md").exists()
+        assert not (tmp_path / "pyproject.toml").exists()
 
     def test_apply_response_operations_strips_codex_usage_footer_between_fenced_files(self, tmp_path: Path) -> None:
         """Regression: Codex CLI usage comments after fences are not file content."""
@@ -416,12 +400,10 @@ class TestFileApplyService:
             "<!-- Usage: 35897 input, 3965 output, 9600 cached -->"
         )
 
-        assert errors == []
-        assert [item["path"] for item in applied] == ["src/index.ts", "test/index.test.ts"]
-        assert (tmp_path / "src" / "index.ts").read_text(encoding="utf-8") == "export const ok = true;"
-        assert (tmp_path / "test" / "index.test.ts").read_text(encoding="utf-8") == (
-            "import { ok } from '../src/index';"
-        )
+        assert applied == []
+        assert errors == ["raw_text_file_apply_not_authoritative"]
+        assert not (tmp_path / "src" / "index.ts").exists()
+        assert not (tmp_path / "test" / "index.test.ts").exists()
 
     def test_apply_response_operations_recovers_fenced_files_after_failed_patch(self, tmp_path: Path) -> None:
         """Regression: one bad leading PATCH_FILE must not discard valid file blocks."""
@@ -446,14 +428,11 @@ class TestFileApplyService:
             "```\n"
         )
 
-        assert [item["path"] for item in applied] == ["db/migrate.mjs", "src/server.mjs"]
-        assert any("package.json" in error for error in errors)
-        assert (tmp_path / "db" / "migrate.mjs").read_text(encoding="utf-8") == (
-            'export const migrationName = "initial";'
-        )
-        assert (tmp_path / "src" / "server.mjs").read_text(encoding="utf-8") == (
-            'export function startServer() { return "ok"; }'
-        )
+        assert applied == []
+        assert errors == ["raw_text_file_apply_not_authoritative"]
+        assert not (tmp_path / "db" / "migrate.mjs").exists()
+        assert not (tmp_path / "src" / "server.mjs").exists()
+        assert (tmp_path / "package.json").read_text(encoding="utf-8") == '{"name":"demo"}\n'
 
     def test_apply_response_operations_recovers_fenced_files_before_integrity_block(
         self,
@@ -482,14 +461,11 @@ class TestFileApplyService:
             llm_metadata={"provider": "unit", "model": "unit"},
         )
 
-        assert [item["path"] for item in applied] == [
-            "scripts/e2e/run-smoke.ps1",
-            ".polaris/pipeline/e2e-baseline.json",
-        ]
-        assert any("package.json" in error for error in errors)
-        assert (tmp_path / "scripts" / "e2e" / "run-smoke.ps1").read_text(encoding="utf-8") == (
-            "Write-Output 'PASS_SUMMARY'"
-        )
+        assert applied == []
+        assert errors == ["raw_text_file_apply_not_authoritative"]
+        assert not (tmp_path / "scripts" / "e2e" / "run-smoke.ps1").exists()
+        assert not (tmp_path / ".polaris" / "pipeline" / "e2e-baseline.json").exists()
+        assert (tmp_path / "package.json").read_text(encoding="utf-8") == '{"name":"demo"}\n'
 
 
 if __name__ == "__main__":

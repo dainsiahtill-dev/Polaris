@@ -11,9 +11,15 @@ import asyncio
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from enum import Enum
+from typing import cast
 
+from polaris.cells.factory.pipeline.public.contracts import (
+    FactoryWorkspaceRunLeaseConflictError,
+    FactoryWorkspaceRunLeaseStorageError,
+)
 from polaris.cells.roles.kernel.public.physical_attempt_control import (
     FACTORY_PHYSICAL_ATTEMPT_BUDGET_STATE_SCHEMA,
     FACTORY_PHYSICAL_ATTEMPT_CUTOFF_VIEW_SCHEMA,
@@ -263,6 +269,7 @@ class FactoryPhysicalAttemptCoordinator:
 
         if type(candidate) is not FactoryPhysicalAttemptReplayCandidateV1:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_replay_candidate_exact_type_required")
+        candidate = cast(FactoryPhysicalAttemptReplayCandidateV1, candidate)
         FactoryPhysicalAttemptReplayCandidateV1.__post_init__(candidate)
         coordinator = cls(factory_run_id=candidate.fence.factory_run_id)
         recovery_work: list[FactoryPhysicalAttemptRecoveryTerminalWorkV1] = []
@@ -311,6 +318,7 @@ class FactoryPhysicalAttemptCoordinator:
 
         if type(replay_record) is not FactoryPhysicalAttemptReplayRecordV1:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_replay_record_exact_type_required")
+        replay_record = cast(FactoryPhysicalAttemptReplayRecordV1, replay_record)
         start = replay_record.start
         request = replay_record.cutoff.body.request
         grant_state = self._grants.get(start.execution_authority_hash)
@@ -448,6 +456,7 @@ class FactoryPhysicalAttemptCoordinator:
             execution_authority_hash=start.execution_authority_hash,
             attempt_budget=start.attempt_budget,
             authority_attempt_ordinal=start.authority_attempt_ordinal,
+            semantic_candidate_hash=start.semantic_candidate_hash,
             semantic_request_hash=start.semantic_request_hash,
             physical_wire_hash=start.physical_wire_hash,
             composite_request_hash=start.composite_request_hash,
@@ -516,15 +525,101 @@ class FactoryPhysicalAttemptCoordinator:
 
     def close(self) -> FactoryPhysicalAttemptRunDrainSnapshot:
         with self._condition:
-            self._closed = True
-            grants = tuple(self._grants.values())
-            for grant in grants:
-                grant.closed = True
-                grant.revoked = True
-                self._abort_plain_reservations_locked(grant)
-            self._condition.notify_all()
+            grants = self._fence_admission_locked()
             self._wait_for_started_locked(grants)
             return self._drain_snapshot_locked()
+
+    def fence_admission(self) -> FactoryPhysicalAttemptRunDrainSnapshot:
+        """Publish a non-blocking local replay fence before durable replay I/O."""
+
+        with self._condition:
+            self._fence_admission_locked()
+            return self._drain_snapshot_locked()
+
+    def rollback_unexposed_grant(self, grant_view: FactoryPhysicalAttemptGrantViewV1) -> None:
+        """Remove a grant whose durable post-validation failed before exposure."""
+
+        with self._condition:
+            state = self._grants.get(grant_view.execution_authority_hash)
+            if state is None:
+                return
+            if state.grant != grant_view or state.cutoffs or state.reservations:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_rollback_state_conflict")
+            del self._grants[grant_view.execution_authority_hash]
+
+    def rollback_unexposed_reservation(
+        self,
+        reservation: FactoryPhysicalAttemptReservationV1,
+    ) -> tuple[bool, bool]:
+        """Remove an unreturned reservation and any now-unreferenced cutoff."""
+
+        with self._condition:
+            grant, record = self._reservation_locked(
+                reservation.execution_authority_hash,
+                reservation.reservation_id,
+            )
+            self._require_reservation_identity(record, reservation)
+            if record.state not in {_ReservationState.RESERVED, _ReservationState.ABORTED}:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_rollback_state_conflict")
+            del grant.reservations[reservation.reservation_id]
+            self._reservation_ids.discard(reservation.reservation_id)
+            self._provider_request_ids.discard(reservation.provider_request_id)
+            cutoff_key = _cutoff_key(reservation)
+            cutoff_still_used = any(_cutoff_key(item.reservation) == cutoff_key for item in grant.reservations.values())
+            cutoff_removed = False
+            if not cutoff_still_used and cutoff_key in grant.cutoffs:
+                del grant.cutoffs[cutoff_key]
+                cutoff_removed = True
+            has_reservations = bool(grant.reservations)
+            self._condition.notify_all()
+            return cutoff_removed, has_reservations
+
+    def rollback_unexposed_start_permit(
+        self,
+        permit: FactoryPhysicalAttemptStartPermitV1,
+    ) -> None:
+        """Abort a start permit that never escaped the live control port."""
+
+        with self._condition:
+            _grant, record = self._reservation_locked(
+                permit.execution_authority_hash,
+                permit.reservation_id,
+            )
+            if (
+                record.state is not _ReservationState.START_PERSISTING
+                or record.start_permit is None
+                or not _identity_equal(record.start_permit, permit, _START_PERMIT_IDENTITY_FIELDS)
+            ):
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_rollback_state_conflict")
+            self._start_permit_ids.discard(permit.start_permit_id)
+            record.start_permit = None
+            record.state = _ReservationState.ABORTED
+            self._condition.notify_all()
+
+    def rollback_unexposed_started_lease(
+        self,
+        lease: FactoryPhysicalAttemptLeaseV1,
+    ) -> None:
+        """Quarantine a committed start whose outbound lease never escaped."""
+
+        with self._condition:
+            _grant, record = self._reservation_locked(
+                lease.execution_authority_hash,
+                lease.reservation_id,
+            )
+            if (
+                record.state is not _ReservationState.START_COMMITTED
+                or record.lease is None
+                or record.start_receipt is None
+                or not _identity_equal(record.lease, lease, _LEASE_IDENTITY_FIELDS)
+            ):
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_rollback_state_conflict")
+            self._lease_ids.discard(lease.lease_id)
+            self._release_lifecycle_identity_locked(record.start_receipt)
+            record.lease = None
+            record.start_receipt = None
+            record.state = _ReservationState.START_AMBIGUOUS
+            self._condition.notify_all()
 
     def reserve(self, command: ReserveFactoryPhysicalAttemptV1) -> FactoryPhysicalAttemptReservationV1:
         self._require_command_type(command, ReserveFactoryPhysicalAttemptV1)
@@ -678,6 +773,10 @@ class FactoryPhysicalAttemptCoordinator:
                 if record.start_permit is None:
                     raise FactoryPhysicalAttemptControlError("factory_physical_attempt_reservation_state_conflict")
                 self._require_definite_start_absent_proof_locked(record, command)
+            elif record.state is _ReservationState.ABORTED:
+                if command.start_permit is not None or command.definite_start_not_persisted_proof is not None:
+                    raise FactoryPhysicalAttemptControlError("factory_physical_attempt_reservation_state_conflict")
+                return self._budget_state_locked(grant)
             else:
                 raise FactoryPhysicalAttemptControlError("factory_physical_attempt_reservation_state_conflict")
             record.state = _ReservationState.ABORTED
@@ -693,6 +792,12 @@ class FactoryPhysicalAttemptCoordinator:
         permit = command.start_permit
         with self._condition:
             grant, record = self._reservation_locked(permit.execution_authority_hash, permit.reservation_id)
+            if (
+                record.state is _ReservationState.START_AMBIGUOUS
+                and record.start_permit is not None
+                and _identity_equal(record.start_permit, permit, _START_PERMIT_IDENTITY_FIELDS)
+            ):
+                return self._budget_state_locked(grant)
             if (
                 record.state is not _ReservationState.START_PERSISTING
                 or record.start_permit is None
@@ -887,6 +992,16 @@ class FactoryPhysicalAttemptCoordinator:
             if record.state is _ReservationState.RESERVED:
                 record.state = _ReservationState.ABORTED
 
+    def _fence_admission_locked(self) -> tuple[_GrantState, ...]:
+        self._closed = True
+        grants = tuple(self._grants.values())
+        for grant in grants:
+            grant.closed = True
+            grant.revoked = True
+            self._abort_plain_reservations_locked(grant)
+        self._condition.notify_all()
+        return grants
+
     @staticmethod
     def _grant_has_active_started_locked(grant: _GrantState) -> bool:
         return any(record.state.value not in _TERMINAL_STATES for record in grant.reservations.values())
@@ -912,6 +1027,14 @@ class FactoryPhysicalAttemptCoordinator:
         self._lifecycle_event_ids.add(receipt.lifecycle_event_id)
         self._lifecycle_sequences.add(receipt.logical_sequence)
         self._lifecycle_event_hashes.add(receipt.event_hash)
+
+    def _release_lifecycle_identity_locked(
+        self,
+        receipt: ProviderAttemptStartReceiptV1 | ProviderAttemptTerminalReceiptV1,
+    ) -> None:
+        self._lifecycle_event_ids.discard(receipt.lifecycle_event_id)
+        self._lifecycle_sequences.discard(receipt.logical_sequence)
+        self._lifecycle_event_hashes.discard(receipt.event_hash)
 
     @staticmethod
     def _composite_request_hash(cutoff: FactoryPhysicalAttemptCutoffViewV1, ordinal: int) -> str:
@@ -1032,8 +1155,16 @@ class FactoryPhysicalAttemptLiveControlPort:
     runtime object is the live capability; it never enters serializable state.
     """
 
-    def __init__(self, *, factory_run_id: str) -> None:
+    def __init__(
+        self,
+        *,
+        factory_run_id: str,
+        revalidate_active_stage_claim: Callable[[FactoryPhysicalAttemptGrantViewV1], None],
+    ) -> None:
         self.factory_run_id = _identifier("factory_run_id", factory_run_id)
+        if not callable(revalidate_active_stage_claim):
+            raise TypeError("revalidate_active_stage_claim must be callable")
+        self._revalidate_active_stage_claim = revalidate_active_stage_claim
         self._authority_lock = threading.RLock()
         self._coordinator = FactoryPhysicalAttemptCoordinator(factory_run_id=self.factory_run_id)
         self._grant_views: dict[str, FactoryPhysicalAttemptGrantViewV1] = {}
@@ -1054,7 +1185,16 @@ class FactoryPhysicalAttemptLiveControlPort:
         """
 
         coordinator, recovery_work = FactoryPhysicalAttemptCoordinator.from_replay_candidate(candidate)
-        instance = cls(factory_run_id=coordinator.factory_run_id)
+
+        def reject_recovered_admission(
+            _grant: FactoryPhysicalAttemptGrantViewV1,
+        ) -> None:
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
+
+        instance = cls(
+            factory_run_id=coordinator.factory_run_id,
+            revalidate_active_stage_claim=reject_recovered_admission,
+        )
         with instance._authority_lock:
             instance._coordinator = coordinator
             for authority_hash, grant_state in coordinator._grants.items():
@@ -1085,14 +1225,35 @@ class FactoryPhysicalAttemptLiveControlPort:
         with self._authority_lock, self._coordinator._condition:
             return self._coordinator._closed
 
+    def _revalidate_durable_grant(
+        self,
+        grant: FactoryPhysicalAttemptGrantViewV1,
+    ) -> None:
+        try:
+            self._revalidate_active_stage_claim(grant)
+        except (FactoryWorkspaceRunLeaseConflictError, FactoryWorkspaceRunLeaseStorageError) as exc:
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed") from exc
+
     def register_grant(self, grant_view: FactoryPhysicalAttemptGrantViewV1) -> FactoryPhysicalAttemptBudgetStateV1:
         if type(grant_view) is not FactoryPhysicalAttemptGrantViewV1:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_grant_view_exact_type_required")
         FactoryPhysicalAttemptGrantViewV1.__post_init__(grant_view)
+        self._revalidate_durable_grant(grant_view)
         with self._authority_lock:
             state = self._coordinator.register_grant(grant_view)
+        try:
+            self._revalidate_durable_grant(grant_view)
+        except FactoryPhysicalAttemptControlError:
+            with self._authority_lock:
+                self._coordinator.fence_admission()
+                self._coordinator.rollback_unexposed_grant(grant_view)
+            raise
+        with self._authority_lock:
+            if self._coordinator._closed:
+                self._coordinator.rollback_unexposed_grant(grant_view)
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
             self._grant_views[grant_view.execution_authority_hash] = grant_view
-            return state
+        return state
 
     def revoke_grant(self, execution_authority_hash: str) -> FactoryPhysicalAttemptBudgetStateV1:
         with self._authority_lock:
@@ -1106,6 +1267,12 @@ class FactoryPhysicalAttemptLiveControlPort:
         with self._authority_lock:
             return self._coordinator.close()
 
+    def fence_admission_for_replay(self) -> FactoryPhysicalAttemptRunDrainSnapshot:
+        """Close local admission before Factory publishes a durable replay fence."""
+
+        with self._authority_lock:
+            return self._coordinator.fence_admission()
+
     def reserve(self, command: ReserveFactoryPhysicalAttemptV1) -> FactoryPhysicalAttemptReservationV1:
         if type(command) is not ReserveFactoryPhysicalAttemptV1:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_control_command_exact_type_required")
@@ -1114,6 +1281,10 @@ class FactoryPhysicalAttemptLiveControlPort:
             grant = self._grant_views.get(command.execution_authority_hash)
             if grant is None:
                 raise FactoryPhysicalAttemptControlError("factory_physical_attempt_execution_authority_hash_mismatch")
+        self._revalidate_durable_grant(grant)
+        with self._authority_lock:
+            if self._grant_views.get(command.execution_authority_hash) != grant:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
             if command.factory_run_id != self.factory_run_id or command.factory_run_id != grant.factory_run_id:
                 raise FactoryPhysicalAttemptControlError("factory_physical_attempt_factory_run_mismatch")
             if command.role != grant.role:
@@ -1144,14 +1315,78 @@ class FactoryPhysicalAttemptLiveControlPort:
                 raise FactoryPhysicalAttemptControlError("factory_physical_attempt_cutoff_view_mismatch")
             reservation = self._coordinator.reserve(command)
             self._controlled_child_run_ids.setdefault(command.execution_authority_hash, command.run_id)
-            return reservation
+        try:
+            self._revalidate_durable_grant(grant)
+        except FactoryPhysicalAttemptControlError:
+            with self._authority_lock:
+                self._coordinator.fence_admission()
+                cutoff_removed, has_reservations = self._coordinator.rollback_unexposed_reservation(reservation)
+                if cutoff_removed:
+                    self._registered_cutoffs.pop(cutoff_key, None)
+                if not has_reservations:
+                    self._controlled_child_run_ids.pop(command.execution_authority_hash, None)
+            raise
+        with self._authority_lock:
+            if self._coordinator._closed:
+                cutoff_removed, has_reservations = self._coordinator.rollback_unexposed_reservation(reservation)
+                if cutoff_removed:
+                    self._registered_cutoffs.pop(cutoff_key, None)
+                if not has_reservations:
+                    self._controlled_child_run_ids.pop(command.execution_authority_hash, None)
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
+        return reservation
 
     def begin_start(self, command: BeginFactoryPhysicalAttemptStartV1) -> FactoryPhysicalAttemptStartPermitV1:
+        if type(command) is not BeginFactoryPhysicalAttemptStartV1:
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_control_command_exact_type_required")
+        BeginFactoryPhysicalAttemptStartV1.__post_init__(command)
         with self._authority_lock:
-            return self._coordinator.begin_start(command)
+            grant = self._grant_views.get(command.execution_authority_hash)
+            if grant is None:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_execution_authority_hash_mismatch")
+        self._revalidate_durable_grant(grant)
+        with self._authority_lock:
+            if self._grant_views.get(command.execution_authority_hash) != grant:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
+            permit = self._coordinator.begin_start(command)
+        try:
+            self._revalidate_durable_grant(grant)
+        except FactoryPhysicalAttemptControlError:
+            with self._authority_lock:
+                self._coordinator.fence_admission()
+                self._coordinator.rollback_unexposed_start_permit(permit)
+            raise
+        with self._authority_lock:
+            if self._coordinator._closed:
+                self._coordinator.rollback_unexposed_start_permit(permit)
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
+        return permit
 
     def commit_started(self, command: CommitFactoryPhysicalAttemptStartV1) -> FactoryPhysicalAttemptLeaseV1:
-        return self._coordinator.commit_started(command)
+        if type(command) is not CommitFactoryPhysicalAttemptStartV1:
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_control_command_exact_type_required")
+        CommitFactoryPhysicalAttemptStartV1.__post_init__(command)
+        with self._authority_lock:
+            grant = self._grant_views.get(command.execution_authority_hash)
+            if grant is None:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_execution_authority_hash_mismatch")
+        self._revalidate_durable_grant(grant)
+        with self._authority_lock:
+            if self._grant_views.get(command.execution_authority_hash) != grant:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
+            lease = self._coordinator.commit_started(command)
+        try:
+            self._revalidate_durable_grant(grant)
+        except FactoryPhysicalAttemptControlError:
+            with self._authority_lock:
+                self._coordinator.fence_admission()
+                self._coordinator.rollback_unexposed_started_lease(lease)
+            raise
+        with self._authority_lock:
+            if self._coordinator._closed:
+                self._coordinator.rollback_unexposed_started_lease(lease)
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
+        return lease
 
     def abort_reservation(
         self,

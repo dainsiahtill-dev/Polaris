@@ -142,8 +142,12 @@ class TestAsyncHandoff:
     """测试异步操作移交"""
 
     @pytest.mark.asyncio
-    async def test_async_operation_single_batch(self, workflow, mock_executor) -> None:
-        """异步操作使用单批次策略"""
+    async def test_unregistered_external_operation_uses_conservative_single_batch(
+        self,
+        workflow,
+        mock_executor,
+    ) -> None:
+        """未注册外部工具必须按保守写操作执行，不得伪造 async 分类。"""
         decision = TurnDecision(
             turn_id=TurnId("turn_async"),
             kind=TurnDecisionKind.HANDOFF_WORKFLOW,
@@ -156,8 +160,8 @@ class TestAsyncHandoff:
                         call_id=ToolCallId("async_1"),
                         tool_name="create_pull_request",
                         arguments={"title": "PR"},
-                        effect_type=ToolEffectType.ASYNC,
-                        execution_mode=ToolExecutionMode.ASYNC_RECEIPT,
+                        effect_type=ToolEffectType.WRITE,
+                        execution_mode=ToolExecutionMode.WRITE_SERIAL,
                     )
                 ],
                 parallel_readonly=[],
@@ -317,7 +321,8 @@ class TestSynthesis:
 
         assert result.synthesis is not None
         assert "完成" in result.synthesis
-        assert "read_file" in result.synthesis or "列出目录" in result.synthesis
+        assert "读取" in result.synthesis
+        assert "repo_tree" in result.synthesis
 
 
 # ============ Test Discovery Cache ============

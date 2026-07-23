@@ -566,8 +566,20 @@ def _authority(
 
     resolved = resolver if resolver is not None else _Resolver()
     fact_stream = facts or _MemoryFactStream()
+
+    def revalidate_active_stage_claim(grant: FactoryPhysicalAttemptGrantViewV1) -> None:
+        with admission.hold_active_stage_claim(
+            grant.factory_run_id,
+            fencing_token=grant.workspace_fencing_token,
+            stage=grant.stage,
+            attempt=grant.stage_claim_attempt,
+            nonce=grant.stage_claim_nonce,
+        ) as revalidate:
+            revalidate()
+
     attempt_coordinator = physical_attempt_coordinator or FactoryPhysicalAttemptLiveControlPort(
-        factory_run_id=factory_run_id
+        factory_run_id=factory_run_id,
+        revalidate_active_stage_claim=revalidate_active_stage_claim,
     )
     port = FactoryRoleEvidenceAuthorityPort(
         workspace=workspace,
@@ -1936,7 +1948,7 @@ async def test_physical_attempt_replay_candidate_matches_cutoff_and_never_expose
         request_freeze_id=request.request_freeze_id,
         provider="test-provider",
         model="test-model",
-        semantic_request_hash=request.semantic_candidate_hash,
+        semantic_request_hash="b" * 64,
         physical_wire_hash="c" * 64,
     )
     composite_hash = canonical_factory_physical_attempt_composite_hash(cutoff_view, 1)
@@ -1957,7 +1969,8 @@ async def test_physical_attempt_replay_candidate_matches_cutoff_and_never_expose
         attempt_budget=request.attempt_budget,
         provider="test-provider",
         model="test-model",
-        semantic_request_hash=request.semantic_candidate_hash,
+        semantic_candidate_hash=request.semantic_candidate_hash,
+        semantic_request_hash="b" * 64,
         physical_wire_hash="c" * 64,
         composite_request_hash=composite_hash,
         reservation_id="reservation-1",
@@ -2002,6 +2015,22 @@ async def test_physical_attempt_replay_candidate_matches_cutoff_and_never_expose
         replay_fenced=True,
         live_mutation_forbidden=True,
     )
+
+    assert start.semantic_candidate_hash == request.semantic_candidate_hash
+    assert start.semantic_request_hash != request.semantic_candidate_hash
+    mismatched_lifecycle = replace(
+        lifecycle_replay,
+        facts=(replace(start, semantic_candidate_hash="0" * 64),),
+    )
+    with pytest.raises(
+        FactoryPhysicalAttemptReplayError,
+        match="factory_physical_attempt_replay_lifecycle_identity_mismatch",
+    ):
+        build_factory_physical_attempt_replay_candidate(
+            fence=fence,
+            role_evidence=role_replay,
+            lifecycle=mismatched_lifecycle,
+        )
 
     candidate = build_factory_physical_attempt_replay_candidate(
         fence=fence,
@@ -2150,7 +2179,21 @@ async def test_real_segmented_fact_stream_fragments_cutoff_under_4k_and_replays_
         return run
 
     resolver = _Resolver(_resolved_cut(role))
-    attempt_coordinator = FactoryPhysicalAttemptLiveControlPort(factory_run_id=factory_run_id)
+
+    def revalidate_active_stage_claim(grant: FactoryPhysicalAttemptGrantViewV1) -> None:
+        with admission.hold_active_stage_claim(
+            grant.factory_run_id,
+            fencing_token=grant.workspace_fencing_token,
+            stage=grant.stage,
+            attempt=grant.stage_claim_attempt,
+            nonce=grant.stage_claim_nonce,
+        ) as revalidate:
+            revalidate()
+
+    attempt_coordinator = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id=factory_run_id,
+        revalidate_active_stage_claim=revalidate_active_stage_claim,
+    )
     port = FactoryRoleEvidenceAuthorityPort(
         workspace=workspace,
         authority=authority,
@@ -2260,6 +2303,56 @@ async def test_resolve_cutoff_proof_strictly_rereads_exact_ack_and_returns_publi
     assert all(type(head) is FactoryRoleEvidenceCutoffSourceHeadV1 for head in proof.source_head_vector)
     assert proof.policy_facts.role == role
     assert len(facts.events) == event_count
+
+
+@pytest.mark.asyncio
+async def test_cutoff_operations_from_foreign_event_loop_run_on_factory_lock_owner(
+    tmp_path: Path,
+) -> None:
+    """Director worker loops must not acquire the Factory-owned asyncio lock."""
+
+    owner_loop = asyncio.get_running_loop()
+    loaded_on: list[asyncio.AbstractEventLoop] = []
+
+    async def load_run() -> FactoryRun:
+        loaded_on.append(asyncio.get_running_loop())
+        return _run()
+
+    port, _, _, _ = _authority(tmp_path=tmp_path, run_loader=load_run)
+    request = _authorized_request(port)
+
+    # Bind the lock to the Factory loop, then hold it while a foreign role loop
+    # starts the cutoff.  The old implementation raised "bound to a different
+    # event loop" here; the port must instead marshal the whole critical section
+    # back to the owner loop and wait for the Factory lifecycle lock.
+    async def wait_once() -> None:
+        async with port._run_lock:
+            return
+
+    async with port._run_lock:
+        bind_waiter = asyncio.create_task(wait_once())
+        await asyncio.sleep(0)
+    await bind_waiter
+    await port._run_lock.acquire()
+    foreign_started = threading.Event()
+
+    def run_from_foreign_loop() -> tuple[FactoryRoleEvidenceCutoffAckV1, Any]:
+        async def workflow() -> tuple[FactoryRoleEvidenceCutoffAckV1, Any]:
+            foreign_started.set()
+            ack = await port.acquire_cutoff(request)
+            return ack, await port.resolve_cutoff_proof(ack)
+
+        return asyncio.run(workflow())
+
+    foreign_task = asyncio.create_task(asyncio.to_thread(run_from_foreign_loop))
+    while not foreign_started.is_set():
+        await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    port._run_lock.release()
+    ack, proof = await foreign_task
+
+    assert proof.ack == ack
+    assert loaded_on == [owner_loop, owner_loop]
 
 
 @pytest.mark.asyncio

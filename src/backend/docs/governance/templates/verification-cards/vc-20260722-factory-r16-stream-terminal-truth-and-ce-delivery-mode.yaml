@@ -1,0 +1,84 @@
+card_id: vc-20260722-factory-r16-stream-terminal-truth-and-ce-delivery-mode
+classification: execution_fact_chain
+status: complete
+bench_status: closed
+bug_summary: >-
+  The twelfth authorized fresh isolated L1-04 run completed a real Chief
+  Engineer physical Provider request and returned a coherent three-task Go
+  blueprint under the task-scaled 16384-token budget. The streamed terminal
+  event retained the exact Provider audit, but roles.kernel discarded its
+  metadata while materializing RawLLMResponse, projected a second terminal
+  completion, and classified the CE portfolio prompt as a materialization
+  request. Factory therefore rejected the successful response as
+  chief_engineer.final_request_audit_missing and accepted zero blueprints.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: a9ae89d99a0d
+  factory_run_id: factory_255535981b71
+  stage: chief_engineer_review
+  error_code: chief_engineer.final_request_audit_missing
+  wall_clock_seconds: 408.6
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_artifact_materialized: true
+  chief_engineer_physical_provider_request_completed: true
+  chief_engineer_blueprints_accepted: 0
+  chief_engineer_blueprints_required: 3
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  requested_output_tokens: 16384
+  physical_attempt_timeout_seconds: 183
+  final_request_context_audit: pass
+  context_snapshot_refs:
+    semantic: bc0ca59eb9168c6532222faf
+    physical: f8bf8c8f9576c49e6d0895d1
+    lifecycle_pin: 1d91ca795d0045e7bfdc81ba
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r16/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r16/audits/a9ae89d99a0d/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r16/L1-04.chain.log
+root_cause:
+  code: streamed_terminal_metadata_and_delivery_contract_drift
+  summary: >-
+    StreamEventHandler received the exact terminal Provider metadata but did
+    not copy it into the internal materialization event. RawLLMResponse had no
+    metadata field, StreamOrchestrator projected only ContextOS audit data, and
+    Run Ledger omitted the snapshot reference from completion evidence. The
+    stream path also let final-answer handling emit a completion before the
+    orchestrator emitted its authoritative terminal completion. Finally, the
+    Factory CE portfolio omitted its explicit analyze-only delivery contract,
+    so the response was exposed to write/materialization finalization policy.
+  fix: >-
+    Preserve terminal metadata from the Provider stream through
+    StreamEventHandler, RawLLMResponse, StreamOrchestrator, RoleRuntime, and Run
+    Ledger completion evidence. Restore an explicit analyze_only marker after
+    ContextOS projection for Factory CE while retaining the canonical existing
+    materialize marker and no-marker propose behavior. Suppress the inner
+    completion callback only on the stream path so exactly one authoritative
+    terminal event is emitted; failed finalization remains failed and keeps its
+    causal error.
+required_gates:
+  regression_tests_red_green: pass
+  focused_execution_fact_chain: "265 passed"
+  roles_runtime_full: "697 passed, 2 warnings"
+  roles_kernel_full: "4156 passed, 2 warnings"
+  factory_pipeline_full: "1219 passed, 2 warnings"
+  ruff: pass
+  ruff_format: pass
+  mypy_source: pass
+  compileall: pass
+  codegraph_structural_review: pass
+scheduling:
+  bench_schedulable: true
+  authorization_scope: delegated_to_pre_bench_one_shot_gate
+  next_action: recapture_source_snapshot_then_authorize_one_fresh_isolated_l1_04
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

@@ -1,0 +1,100 @@
+card_id: vc-20260722-factory-r23-ce-schema-repair-input-hygiene
+classification: execution_fact_chain
+status: closed
+bench_status: unblocked
+bug_summary: >-
+  The nineteenth authorized fresh isolated L1-04 run proved the R22 authority
+  reuse and reached the bounded Chief Engineer schema-repair Provider request.
+  The primary CE completion was a large malformed portfolio. Factory then
+  replayed the entire corrupt completion inside the repair instruction. The
+  repair model copied the invalid placeholder and appended partial duplicate
+  fragments, so the second completion was also not a valid outer CE portfolio.
+  The public bench projection reported task_boundary_verdict_missing, but no
+  Director attempt occurred; the authoritative failure remained CE output
+  validation. R23 replaces corrupt-byte replay with bounded structured failure
+  evidence, preserves only the prior-output digest and character count, and
+  requires a fresh concise portfolio reconstructed from the already-attached PM
+  contracts, target files, scope paths, and authoritative context.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: 218caf274b83
+  factory_run_id: factory_a09fccb0bbad
+  instance_id: >-
+    factory-bench-l1-04-codex-r23-l1-04-run-218caf274b83-73aa10fe95bb5217
+  stage: chief_engineer_review
+  public_rejection_code: task_boundary_verdict_missing
+  authoritative_rejection_code: chief_engineer.output_schema_invalid
+  wall_clock_seconds: 1821.2
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_artifact_materialized: true
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  pm_physical_context_snapshot_ref: 200095b2bff80c6691a86dff
+  primary_ce_physical_context_snapshot_ref: 4c58929b0263eaf8bc500df5
+  repair_ce_physical_context_snapshot_ref: 9c72869f9b6fa82cd04b60e7
+  primary_completion_tokens: 11648
+  repair_completion_tokens: 6490
+  primary_parse_failure: "line 327 column 34 near <incantation>"
+  repair_valid_outer_portfolio: false
+  final_request_audit:
+    pm_role_identity: pass
+    primary_ce_role_identity: pass
+    repair_ce_role_identity: pass
+    pm_contract_coverage: pass
+    target_file_coverage: pass
+    context_quality: pass
+    authority_coverage_ratio: 1.0
+    primary_and_repair_share_one_ce_stage_authority: pass
+    primary_and_repair_request_identities_are_distinct: pass
+root_cause:
+  code: ce_schema_repair_corrupt_output_replay
+  summary: >-
+    The repair objective embedded the complete malformed CE completion. That
+    turned failure evidence into competing generation content and encouraged
+    continuation/copying of invalid placeholders and truncated JSON fragments.
+    The repair request had correct role and authority evidence, but its input
+    hygiene made schema recovery unreliable.
+  fix: >-
+    Never replay malformed output bytes into the schema-repair instruction.
+    Project a typed failure_feedback object containing the bounded validation
+    detail, prior-output SHA-256, character count, and empty evidence refs;
+    reconstruct a fresh portfolio from authoritative PM/target/scope evidence.
+    Cap the repair output at 8192 tokens and explicitly prohibit placeholders,
+    metavariables, comments, and trailing fragments.
+required_gates:
+  corrupt_prior_output_excluded: pass
+  prior_output_digest_and_size_preserved: pass
+  structured_failure_feedback: pass
+  final_request_failure_feedback_coverage: pass
+  fresh_portfolio_contract: pass
+  bounded_repair_output_budget: pass
+  single_repair_and_authority_invariants_preserved: pass
+  factory_schema_repair_focused: "2 passed"
+  factory_characterization: "252 passed"
+  final_request_context_audit: "3 passed"
+  factory_pipeline_full: "1222 passed, 2 warnings"
+  ruff: pass
+  ruff_format_check: pass
+  mypy_source: pass
+  compileall: pass
+  git_diff_check: pass
+  codegraph_pre_edit_review: pass
+  codegraph_post_edit_review: pass
+scheduling:
+  bench_schedulable: true
+  authorization_scope: one_fresh_isolated_l1_04_acceptance_run
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: fresh_isolated_l1_04_r24
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"
+  r23_instance_stopped_via_launcher: true

@@ -505,6 +505,8 @@ def _selection_reasons(
         reasons.append(f"task_type:message:{task_type}")
     if _first_string(context.get("artifact"), context.get("artifact_type"), context.get("project_kind")):
         reasons.append(f"artifact:explicit:{artifact}")
+    elif _project_type_artifact(context):
+        reasons.append(f"artifact:project_type:{artifact}")
     else:
         reasons.append(f"artifact:inferred:{artifact}")
     reasons.append(f"stage:inferred:{stage}")
@@ -703,6 +705,9 @@ def _infer_artifact(*, context: dict[str, Any], message: str) -> str:
     explicit = _first_string(context.get("artifact"), context.get("artifact_type"), context.get("project_kind"))
     if explicit:
         return _normalize_artifact(explicit)
+    project_type_artifact = _project_type_artifact(context)
+    if project_type_artifact:
+        return project_type_artifact
     candidates = [path.strip().lower() for path in _path_candidates(context, message) if path.strip()]
     lowered = message.lower()
     has_test = any(
@@ -763,12 +768,28 @@ def _infer_artifact(*, context: dict[str, Any], message: str) -> str:
             "页面",
         )
     )
+    has_cli_intent = any(
+        token in lowered
+        for token in (
+            "cli",
+            "command line",
+            "command-line",
+            "terminal app",
+            "terminal game",
+            "terminal pet",
+            "命令行",
+            "终端",
+        )
+    )
+    # Specific product intent outranks incidental cross-modality acceptance
+    # boilerplate. A real Canvas request without CLI/terminal intent still
+    # follows the specialized Canvas path below.
+    if has_cli_intent:
+        return "cli"
     if has_web and (has_canvas or has_canvas_entry_path):
         return "html5_canvas"
     if has_html5_canvas_text:
         return "html5_canvas"
-    if any(token in lowered for token in ("cli", "command line", "命令行")):
-        return "cli"
     if any(token in lowered for token in ("api", "rest", "http route", "接口")):
         return "api"
     if has_web or any(token in lowered for token in ("web", "browser", "frontend", "页面", "浏览器")):
@@ -948,8 +969,38 @@ def _normalize_artifact(value: Any) -> str:
         "configuration": "config",
         "documentation": "docs",
         "doc": "docs",
+        "cli_game": "cli",
+        "terminal": "cli",
+        "terminal_app": "cli",
+        "terminal_game": "cli",
+        "command_line": "cli",
+        "command_line_app": "cli",
+        "api_service": "api",
+        "web_app": "web",
+        "browser_app": "web",
+        "canvas_game": "html5_canvas",
     }
     return aliases.get(token, token)
+
+
+def _project_type_artifact(context: dict[str, Any]) -> str:
+    """Map only recognized typed project classes to canonical artifacts."""
+
+    project_type = _first_string(context.get("project_type"))
+    if not project_type:
+        return ""
+    normalized = _normalize_artifact(project_type)
+    canonical = {
+        "api",
+        "cli",
+        "config",
+        "docs",
+        "html5_canvas",
+        "library",
+        "test_suite",
+        "web",
+    }
+    return normalized if normalized in canonical else ""
 
 
 def _explicit_language_from_context(context: dict[str, Any]) -> str:

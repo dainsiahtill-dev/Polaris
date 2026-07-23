@@ -129,6 +129,9 @@ from polaris.cells.roles.kernel.internal.transaction.truthlog_recorder import Tu
 from polaris.cells.roles.kernel.internal.transaction.turn_session_scope import turn_session_scope
 from polaris.cells.roles.kernel.internal.turn_decision_decoder import DecodeConfig, TurnDecisionDecoder
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
+from polaris.cells.roles.kernel.public.directed_effect_contracts import (
+    DirectedEffectRuntimeDependenciesV1,
+)
 from polaris.cells.roles.kernel.public.turn_contracts import (
     RawLLMResponse,
     TurnDecision,
@@ -138,6 +141,10 @@ from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ErrorEvent,
     TurnEvent,
+)
+from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,6 +230,10 @@ class TurnTransactionController:
         workflow_runtime: ExplorationWorkflowRuntime | None = None,
         llm_provider_stream: Callable | None = None,  # 流式LLM调用接口
         development_runtime: Any | None = None,
+        directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
+        directed_effect_required: bool = False,
+        directed_effect_execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+        directed_effect_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     ) -> None:
         self._llm_provider = llm_provider
         self.tool_runtime = tool_runtime
@@ -230,6 +241,36 @@ class TurnTransactionController:
         self.workflow_runtime = workflow_runtime
         self.llm_provider_stream = llm_provider_stream
         self.development_runtime = development_runtime or self.config.development_runtime
+        if (
+            directed_effect_runtime is not None
+            and type(directed_effect_runtime) is not DirectedEffectRuntimeDependenciesV1
+        ):
+            raise TypeError("directed_effect_runtime must be exactly DirectedEffectRuntimeDependenciesV1")
+        if directed_effect_execution_attempt is not None:
+            if type(directed_effect_execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1:
+                raise TypeError(
+                    "directed_effect_execution_attempt must be exactly TaskRuntimeExecutionAttemptIdentityV1"
+                )
+            canonical_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(
+                directed_effect_execution_attempt.to_record()
+            )
+            if canonical_attempt != directed_effect_execution_attempt:
+                raise ValueError("directed_effect_execution_attempt must be canonical")
+        if directed_effect_execution_attempt_authority is not None and not isinstance(
+            directed_effect_execution_attempt_authority,
+            TaskRuntimeExecutionAttemptAuthorityV1,
+        ):
+            raise TypeError("directed_effect_execution_attempt_authority must be exact")
+        if directed_effect_required and (
+            directed_effect_runtime is None
+            or directed_effect_execution_attempt is None
+            or directed_effect_execution_attempt_authority is None
+        ):
+            raise ValueError("required directed-effect execution needs runtime dependencies and attempt identity")
+        self.directed_effect_runtime = directed_effect_runtime
+        self.directed_effect_required = bool(directed_effect_required)
+        self.directed_effect_execution_attempt = directed_effect_execution_attempt
+        self.directed_effect_execution_attempt_authority = directed_effect_execution_attempt_authority
 
         self.decoder = TurnDecisionDecoder(
             DecodeConfig(
@@ -262,6 +303,10 @@ class TurnTransactionController:
             finalization_handler=self._finalization_handler,
             handoff_handler=self._handoff_handler,
             requires_mutation_intent=self._requires_mutation_intent,
+            directed_effect_runtime=self.directed_effect_runtime,
+            directed_effect_required=self.directed_effect_required,
+            directed_effect_execution_attempt=self.directed_effect_execution_attempt,
+            directed_effect_execution_attempt_authority=self.directed_effect_execution_attempt_authority,
         )
 
         # RetryOrchestrator 使用动态代理，确保 monkeypatch 能穿透到子模块
@@ -352,6 +397,10 @@ class TurnTransactionController:
                 workspace=workspace or ".",
                 timeout_ms=self.config.max_tool_execution_time_ms,
             ),
+            directed_effect_runtime=self.directed_effect_runtime,
+            directed_effect_required=self.directed_effect_required,
+            directed_effect_execution_attempt=self.directed_effect_execution_attempt,
+            directed_effect_execution_attempt_authority=self.directed_effect_execution_attempt_authority,
         )
 
     def _build_stream_shadow_engine(
@@ -1452,7 +1501,12 @@ class TurnTransactionController:
     # ---------------------------------------------------------------------------
 
     async def _handle_final_answer(
-        self, decision: TurnDecision, state_machine: TurnStateMachine, ledger: TurnLedger
+        self,
+        decision: TurnDecision,
+        state_machine: TurnStateMachine,
+        ledger: TurnLedger,
+        *,
+        emit_completion: bool = True,
     ) -> dict:
         """处理直接回答"""
         turn_id = decision.get("turn_id")
@@ -1481,15 +1535,16 @@ class TurnTransactionController:
             state_machine.transition_to(TurnState.COMPLETED)
             ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
             ledger.finalize()
-            self._emit_phase_event(
-                CompletionEvent(
-                    turn_id=turn_id,
-                    status="failed",
-                    duration_ms=ledger.get_duration_ms(),
-                    llm_calls=len(ledger.llm_calls),
-                    tool_calls=0,
+            if emit_completion:
+                self._emit_phase_event(
+                    CompletionEvent(
+                        turn_id=turn_id,
+                        status="failed",
+                        duration_ms=ledger.get_duration_ms(),
+                        llm_calls=len(ledger.llm_calls),
+                        tool_calls=0,
+                    )
                 )
-            )
             return self._build_turn_result(
                 turn_id=turn_id,
                 kind=block.kind,
@@ -1505,15 +1560,16 @@ class TurnTransactionController:
         ledger.finalize()
         logger.debug("[DEBUG] turn_phase: turn_id=%s phase=COMPLETED kind=final_answer", turn_id)
 
-        self._emit_phase_event(
-            CompletionEvent(
-                turn_id=turn_id,
-                status="success",
-                duration_ms=ledger.get_duration_ms(),
-                llm_calls=len(ledger.llm_calls),
-                tool_calls=0,
+        if emit_completion:
+            self._emit_phase_event(
+                CompletionEvent(
+                    turn_id=turn_id,
+                    status="success",
+                    duration_ms=ledger.get_duration_ms(),
+                    llm_calls=len(ledger.llm_calls),
+                    tool_calls=0,
+                )
             )
-        )
         return self._build_turn_result(
             turn_id=turn_id,
             kind="final_answer",

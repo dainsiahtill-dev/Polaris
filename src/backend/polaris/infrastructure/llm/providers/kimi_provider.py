@@ -14,8 +14,8 @@ from polaris.infrastructure.llm.providers.http_utils import (
     validate_base_url_for_ssrf,
 )
 from polaris.infrastructure.llm.providers.provider_helpers import (
-    get_stream_session,
     health_check_post,
+    invoke_stream_with_retry_and_handler,
     invoke_with_retry,
 )
 from polaris.kernelone.constants import DEFAULT_MAX_RETRIES
@@ -31,7 +31,7 @@ from polaris.kernelone.llm.providers import (
 )
 from polaris.kernelone.llm.providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
-from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -122,6 +122,90 @@ def _extract_delta_content_parts(content: Any) -> list[tuple[str, str]]:
     if text:
         parts.append(("content", text))
     return parts
+
+
+async def _consume_kimi_stream_response(response: aiohttp.ClientResponse) -> AsyncGenerator[str, None]:
+    """Decode one already-governed Kimi response without opening transport."""
+
+    think_parser = StreamThinkingParser()
+    done = False
+    buffer = ""
+    has_seen_native_reasoning = False
+
+    def _handle_data_line(data: str) -> list[str]:
+        nonlocal has_seen_native_reasoning
+        out: list[str] = []
+        event = str(data or "").strip()
+        if not event or event == "[DONE]":
+            return out
+        try:
+            parsed = json.loads(event)
+        except (RuntimeError, ValueError):
+            return out
+        choices = parsed.get("choices", [])
+        if not choices or not isinstance(choices, list):
+            return out
+        delta = choices[0].get("delta", {}) if isinstance(choices[0], dict) else {}
+        if not isinstance(delta, dict):
+            return out
+        for key in ("reasoning_content", "reasoning", "thinking"):
+            for text in _flatten_text(delta.get(key)):
+                if text and text.strip():
+                    out.append(f"{THINKING_PREFIX}{text}")
+                    has_seen_native_reasoning = True
+        for part_kind, text in _extract_delta_content_parts(delta.get("content")):
+            if not text:
+                continue
+            if part_kind == "reasoning":
+                if not has_seen_native_reasoning:
+                    out.append(f"{THINKING_PREFIX}{text}")
+                continue
+            for parsed_kind, parsed_text in think_parser.feed_sync(text):
+                if not parsed_text:
+                    continue
+                if has_seen_native_reasoning:
+                    if parsed_kind in ("content", "answer"):
+                        out.append(parsed_text)
+                elif parsed_kind == "thinking":
+                    out.append(f"{THINKING_PREFIX}{parsed_text}")
+                else:
+                    out.append(parsed_text)
+        return out
+
+    async for chunk in response.content:
+        text = chunk.decode("utf-8", errors="ignore")
+        if not text:
+            continue
+        buffer += text
+        lines = buffer.split("\n")
+        buffer = lines.pop() if lines else ""
+        for raw_line in lines:
+            line = raw_line.rstrip("\r")
+            if not line.startswith("data:"):
+                continue
+            data_str = line[5:].lstrip()
+            if data_str == "[DONE]":
+                done = True
+                break
+            for token in _handle_data_line(data_str):
+                yield token
+        if done:
+            break
+
+    if not done and buffer.strip().startswith("data:"):
+        data_str = buffer.strip()[5:].lstrip()
+        if data_str != "[DONE]":
+            for token in _handle_data_line(data_str):
+                yield token
+
+    for kind, text in think_parser.flush():
+        if kind == ChunkKind.DONE or not text:
+            continue
+        if kind == ChunkKind.THINKING:
+            if not has_seen_native_reasoning:
+                yield f"{THINKING_PREFIX}{text}"
+        elif kind == ChunkKind.TEXT:
+            yield text
 
 
 class KimiProvider(BaseProvider):
@@ -485,121 +569,14 @@ class KimiProvider(BaseProvider):
         headers["Accept"] = "application/json"
 
         try:
-            session = await get_stream_session(
-                "kimi",
-                timeout_seconds=timeout,
-            )
-            async with session.post(
+            async for token in invoke_stream_with_retry_and_handler(
                 url,
-                headers=headers,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=timeout_seconds_or_none(timeout, default=60)),
-            ) as response:
-                response.raise_for_status()
-
-                # Instantiate parser for <think> tag fallback
-                think_parser = StreamThinkingParser()
-                done = False
-                buffer = ""
-                # Track if we've seen native reasoning across all deltas
-                has_seen_native_reasoning = False
-
-                def _handle_data_line(data: str) -> list[str]:
-                    nonlocal has_seen_native_reasoning
-                    out: list[str] = []
-                    payload = str(data or "").strip()
-                    if not payload or payload == "[DONE]":
-                        return out
-                    try:
-                        parsed = json.loads(payload)
-                    except (RuntimeError, ValueError):
-                        return out
-                    choices = parsed.get("choices", [])
-                    if not choices or not isinstance(choices, list):
-                        return out
-                    delta = choices[0].get("delta", {}) if isinstance(choices[0], dict) else {}
-                    if not isinstance(delta, dict):
-                        return out
-
-                    # 首先检查原生的 reasoning 字段（优先使用）
-                    for key in ("reasoning_content", "reasoning", "thinking"):
-                        for text in _flatten_text(delta.get(key)):
-                            if text and text.strip():  # 确保不是空白字符
-                                out.append(f"{THINKING_PREFIX}{text}")
-                                has_seen_native_reasoning = True
-
-                    # 处理 content 字段
-                    for part_kind, text in _extract_delta_content_parts(delta.get("content")):
-                        if not text:
-                            continue
-                        if part_kind == "reasoning":
-                            # 只有当没有原生 reasoning 时才使用 content 中的 reasoning
-                            if not has_seen_native_reasoning:
-                                out.append(f"{THINKING_PREFIX}{text}")
-                            continue
-
-                        # 如果已检测到过原生 reasoning，跳过 content 中的所有结构化标签
-                        if has_seen_native_reasoning:
-                            # 原生 reasoning 存在时，使用 think parser 处理标签
-                            # 丢弃 thinking 部分（已有原生 reasoning）
-                            # 保留 content 和 answer 部分
-                            for parsed_kind, parsed_text in think_parser.feed_sync(text):
-                                if not parsed_text:
-                                    continue
-                                if parsed_kind in ("content", "answer"):
-                                    out.append(parsed_text)
-                                # parsed_kind == "thinking" 被丢弃
-                            continue
-
-                        # 没有原生 reasoning 时，使用 think parser 解析
-                        for think_kind, parsed_text in think_parser.feed_sync(text):
-                            if not parsed_text:
-                                continue
-                            if think_kind == "thinking":
-                                out.append(f"{THINKING_PREFIX}{parsed_text}")
-                            else:
-                                out.append(parsed_text)
-                    return out
-
-                # Process provider data-line chunks with newline buffering, so reasoning isn't lost on TCP boundaries.
-                async for chunk in response.content:
-                    text = chunk.decode("utf-8", errors="ignore")
-                    if not text:
-                        continue
-                    buffer += text
-                    lines = buffer.split("\n")
-                    buffer = lines.pop() if lines else ""
-
-                    for raw_line in lines:
-                        line = raw_line.rstrip("\r")
-                        if not line.startswith("data:"):
-                            continue
-                        data_str = line[5:].lstrip()
-                        if data_str == "[DONE]":
-                            done = True
-                            break
-                        for token in _handle_data_line(data_str):
-                            yield token
-                    if done:
-                        break
-
-                if not done and buffer.strip().startswith("data:"):
-                    data_str = buffer.strip()[5:].lstrip()
-                    if data_str != "[DONE]":
-                        for token in _handle_data_line(data_str):
-                            yield token
-
-                # Flush any remaining buffered content
-                for kind, text in think_parser.flush():
-                    if kind == ChunkKind.DONE or not text:
-                        continue
-                    if kind == ChunkKind.THINKING:
-                        # 如果已检测到过原生 reasoning，跳过 flush 中的 thinking
-                        if not has_seen_native_reasoning:
-                            yield f"{THINKING_PREFIX}{text}"
-                    elif kind == ChunkKind.TEXT:
-                        yield text
-
+                headers,
+                payload,
+                timeout,
+                _consume_kimi_stream_response,
+            ):
+                yield token
         except aiohttp.ClientError as e:
             yield f"Error: Network error - {e!s}"
         except asyncio.TimeoutError:

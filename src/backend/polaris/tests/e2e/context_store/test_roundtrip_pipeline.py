@@ -89,12 +89,14 @@ def test_round_trip_payload_is_valid_json(tmp_path: Path) -> None:
     )
     # Round-trip the on-disk payload through json.loads — catches any
     # encoding bug (the spec mandates UTF-8) or trailing-truncation bug.
-    from polaris.kernelone.storage import StorageLayout
-    from polaris.kernelone.storage.io_paths import build_cache_root
+    from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
-    cache_root = build_cache_root("", str(workspace))
-    layout = StorageLayout(workspace=str(workspace), runtime_base=cache_root)
-    file_path = layout.resolve_artifact_path(f"runtime/contexts/{hash_key[:2]}/{hash_key}")
+    # Producer and HTTP consumer share this resolved project runtime root.
+    # Re-wrapping it in ``StorageLayout`` would append a second
+    # ``projects/<workspace>/runtime`` segment and inspect a path that no
+    # producer owns.
+    runtime_root = Path(resolve_storage_roots(str(workspace)).runtime_root)
+    file_path = runtime_root / "contexts" / hash_key[:2] / hash_key
     raw_bytes = file_path.read_bytes()
     assert raw_bytes, "context file is empty"
     payload = json.loads(raw_bytes.decode("utf-8"))

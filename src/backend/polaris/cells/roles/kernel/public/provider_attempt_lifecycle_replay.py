@@ -60,6 +60,7 @@ _START_PAYLOAD_FIELDS = frozenset(
         "attempt_number",
         "verification_scope",
         "context_snapshot_ref",
+        "semantic_candidate_hash",
         "semantic_request_hash",
         "physical_wire_hash",
         "composite_request_hash",
@@ -72,6 +73,8 @@ _START_PAYLOAD_FIELDS = frozenset(
     }
 )
 _TERMINAL_PAYLOAD_FIELDS = frozenset((*_START_PAYLOAD_FIELDS, "lease_id", "status", "error"))
+_LEGACY_START_PAYLOAD_FIELDS = _START_PAYLOAD_FIELDS - {"semantic_candidate_hash"}
+_LEGACY_TERMINAL_PAYLOAD_FIELDS = _TERMINAL_PAYLOAD_FIELDS - {"semantic_candidate_hash"}
 
 
 def _text(field_name: str, value: object) -> str:
@@ -142,6 +145,7 @@ class FactoryProviderAttemptLifecycleReplayFactV1:
     attempt_budget: int
     provider: str
     model: str
+    semantic_candidate_hash: str
     semantic_request_hash: str
     physical_wire_hash: str
     composite_request_hash: str
@@ -186,6 +190,7 @@ class FactoryProviderAttemptLifecycleReplayFactV1:
         for field_name in (
             "event_hash",
             "execution_authority_hash",
+            "semantic_candidate_hash",
             "semantic_request_hash",
             "physical_wire_hash",
             "composite_request_hash",
@@ -472,6 +477,7 @@ def append_factory_provider_attempt_recovery_terminal(
             "attempt_number": command.attempt.attempt_number,
             "verification_scope": "factory",
             "context_snapshot_ref": command.context_snapshot_ref,
+            "semantic_candidate_hash": command.attempt.semantic_candidate_hash,
             "semantic_request_hash": command.attempt.semantic_request_hash,
             "physical_wire_hash": command.attempt.physical_wire_hash,
             "composite_request_hash": command.attempt.composite_request_hash,
@@ -546,6 +552,7 @@ def _require_recovery_start_identity(
         "attempt_budget": attempt.attempt_budget,
         "provider": attempt.provider,
         "model": attempt.model,
+        "semantic_candidate_hash": attempt.semantic_candidate_hash,
         "semantic_request_hash": attempt.semantic_request_hash,
         "physical_wire_hash": attempt.physical_wire_hash,
         "composite_request_hash": attempt.composite_request_hash,
@@ -623,7 +630,10 @@ def _parse_lifecycle_event(
     if type(payload) is not dict:
         raise RuntimeError("provider_attempt_lifecycle_replay_payload_invalid")
     expected_fields = _START_PAYLOAD_FIELDS if event_type == _START_EVENT_TYPE else _TERMINAL_PAYLOAD_FIELDS
-    if frozenset(payload) != expected_fields:
+    legacy_fields = (
+        _LEGACY_START_PAYLOAD_FIELDS if event_type == _START_EVENT_TYPE else _LEGACY_TERMINAL_PAYLOAD_FIELDS
+    )
+    if frozenset(payload) not in {expected_fields, legacy_fields}:
         raise RuntimeError("provider_attempt_lifecycle_replay_payload_fields_mismatch")
     if payload.get("factory_run_id") != factory_run_id or payload.get("verification_scope") != "factory":
         raise RuntimeError("provider_attempt_lifecycle_replay_factory_authority_mismatch")
@@ -648,6 +658,13 @@ def _parse_lifecycle_event(
         attempt_budget=payload.get("attempt_budget"),  # type: ignore[arg-type]
         provider=payload.get("provider"),  # type: ignore[arg-type]
         model=payload.get("model"),  # type: ignore[arg-type]
+        # Legacy lifecycle facts carried only one semantic hash and were valid
+        # only when it was also the cutoff candidate hash. Preserve that exact
+        # legacy rule; a modern dual-hash fact must carry both domains.
+        semantic_candidate_hash=payload.get(
+            "semantic_candidate_hash",
+            payload.get("semantic_request_hash"),
+        ),  # type: ignore[arg-type]
         semantic_request_hash=payload.get("semantic_request_hash"),  # type: ignore[arg-type]
         physical_wire_hash=payload.get("physical_wire_hash"),  # type: ignore[arg-type]
         composite_request_hash=payload.get("composite_request_hash"),  # type: ignore[arg-type]
@@ -693,6 +710,7 @@ def _validate_lifecycle_pairs(facts: tuple[FactoryProviderAttemptLifecycleReplay
             "attempt_budget",
             "provider",
             "model",
+            "semantic_candidate_hash",
             "semantic_request_hash",
             "physical_wire_hash",
             "composite_request_hash",

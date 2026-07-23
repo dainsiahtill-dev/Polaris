@@ -8,7 +8,6 @@ execution services.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,12 +17,8 @@ from polaris.kernelone.llm.toolkit import (
     ErrorCode,
     FileOperation,
     OperationResult,
-    StrictOperationApplier,
-    apply_protocol_output,
     parse_protocol_output,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -81,35 +76,6 @@ def parse_all_operations(text: str) -> list[FileOperation]:
     return parse_protocol_output(text)
 
 
-def apply_operation(operation: FileOperation, workspace: str) -> tuple[bool, str | None, bool]:
-    """Apply one operation through KernelOne's strict operation applier.
-
-    Returns:
-        ``(ok, error, changed)`` where ``error`` is ``None`` on success.
-    """
-    result = StrictOperationApplier.apply(operation, workspace)
-    error_msg = None if result.success else result.error_message
-    return result.success, error_msg, result.changed
-
-
-def apply_all_operations(text: str, workspace: str, *, verbose: bool = False) -> ApplyResult:
-    """Parse and strictly apply all operations from response text."""
-    report = apply_protocol_output(
-        text,
-        workspace,
-        strict=True,
-        allow_fuzzy_match=False,
-    )
-
-    if verbose and report.ops_failed > 0:
-        logger.info("[director_tasking_patch_protocol] Failed operations: %s", report.ops_failed)
-        for result in report.results:
-            if not result.success:
-                logger.info("  - %s: %s", result.operation.path, result.error_message)
-
-    return ApplyResult.from_report(report)
-
-
 def validate_before_apply(
     text: str,
     provider_metadata: dict[str, Any],
@@ -151,21 +117,6 @@ def validate_before_apply(
     )
 
 
-def apply_operations_strict(
-    text: str,
-    workspace: str,
-    *,
-    allow_fuzzy_match: bool = False,
-) -> ApplyReport:
-    """Strictly apply protocol output and return the full KernelOne report."""
-    return apply_protocol_output(
-        text,
-        workspace,
-        strict=True,
-        allow_fuzzy_match=allow_fuzzy_match,
-    )
-
-
 __all__ = [
     "ApplyIntegrity",
     "ApplyReport",
@@ -174,9 +125,6 @@ __all__ = [
     "ErrorCode",
     "FileOperation",
     "OperationResult",
-    "apply_all_operations",
-    "apply_operation",
-    "apply_operations_strict",
     "parse_all_operations",
     "parse_delete_operations",
     "parse_full_file_blocks",

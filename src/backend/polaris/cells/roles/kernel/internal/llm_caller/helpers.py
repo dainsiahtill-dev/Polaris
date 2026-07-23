@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -102,6 +104,37 @@ def _resolve_context_timeout_ceiling(context_override: Any) -> int | None:
     return None
 
 
+def _clamp_factory_director_timeout_to_deadline(
+    timeout_seconds: int,
+    context_override: Any,
+) -> int:
+    """Clamp the final Director request timeout to Factory's live deadline."""
+
+    if not isinstance(context_override, dict):
+        return timeout_seconds
+    deadline_raw: Any = context_override.get("factory_director_execution_deadline_epoch_seconds")
+    metadata = context_override.get("metadata")
+    if deadline_raw is None and isinstance(metadata, dict):
+        deadline_raw = metadata.get("factory_director_execution_deadline_epoch_seconds")
+    if deadline_raw is None:
+        return timeout_seconds
+    if isinstance(deadline_raw, bool):
+        raise RuntimeError("factory_director_execution_deadline_invalid")
+    try:
+        deadline_epoch = float(deadline_raw)
+    except (TypeError, ValueError):
+        deadline_epoch = 0.0
+    if not math.isfinite(deadline_epoch) or deadline_epoch <= 0:
+        raise RuntimeError("factory_director_execution_deadline_invalid")
+    remaining_seconds = deadline_epoch - time.time()
+    # Provider timeout is integer seconds. A sub-second remainder cannot be
+    # represented without expanding the authority lease, so reject before any
+    # physical request instead of rounding beyond the Factory deadline.
+    if remaining_seconds < 1.0:
+        raise RuntimeError("factory_director_execution_deadline_exhausted")
+    return min(timeout_seconds, max(1, math.floor(remaining_seconds)))
+
+
 def _coerce_context_max_tokens_override(raw: Any) -> int | None:
     """Parse a per-request max-token override from trusted runtime context."""
     if raw is None:
@@ -173,8 +206,8 @@ def resolve_timeout_seconds(profile: Any, context_override: Any | None = None) -
     timeout = max(director_timeout, context_timeout) if context_timeout is not None else director_timeout
     context_ceiling = _resolve_context_timeout_ceiling(context_override)
     if context_ceiling is not None:
-        return max(1, min(timeout, context_ceiling))
-    return timeout
+        timeout = max(1, min(timeout, context_ceiling))
+    return _clamp_factory_director_timeout_to_deadline(timeout, context_override)
 
 
 def resolve_max_tokens(requested: Any, context_override: Any | None = None) -> int:

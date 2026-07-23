@@ -111,7 +111,7 @@ def test_dependency_graph_uses_runtime_task_row_projection() -> None:
     gateway = RoleContextGateway(_profile("director"), workspace=".")
 
     class _TaskRowService:
-        def list_task_rows(self) -> list[dict[str, object]]:
+        def list_observable_task_rows(self) -> list[dict[str, object]]:
             return [
                 {
                     "id": 2,

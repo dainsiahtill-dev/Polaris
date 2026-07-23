@@ -188,10 +188,12 @@ def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatc
         all_affected_files: list[str],
         workspace_name: str,
         context: dict[str, Any] | None = None,
+        task_boundary: bool = False,
     ) -> tuple[list[str], tuple[dict[str, Any], ...]]:
         captured["scan_paths"] = list(all_affected_files)
         captured["workspace_name"] = workspace_name
         captured["context"] = dict(context or {})
+        captured["task_boundary"] = task_boundary
         return [diagnostic], (typed_issue,)
 
     def _has_coverage(errors: list[str], *, artifact_quality_issues: tuple[dict[str, Any], ...] = ()) -> bool:

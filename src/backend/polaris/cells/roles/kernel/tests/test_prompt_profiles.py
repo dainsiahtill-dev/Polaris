@@ -108,6 +108,62 @@ def test_go_cli_contract_does_not_infer_web_artifact_from_foreign_web_paths(tmp_
     assert audit["inferred_artifact"] == "cli"
 
 
+def test_typed_cli_game_beats_incidental_canvas_acceptance_boilerplate(tmp_path) -> None:
+    appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="pm",
+        message=(
+            "用 Go 实现 ASCII 魔法宠物终端，提供命令行交互入口。\n"
+            "共享验收模板: if index.html or canvas exists, render a non-empty canvas first frame."
+        ),
+        context_override={
+            "primary_language": "go",
+            "project_type": "cli_game",
+            "target_files": ["go.mod", "main.go", "engine/pet.go"],
+        },
+    )
+
+    selected_ids = audit["selected_prompt_profile_ids"]
+    assert "builtin.language.go" in selected_ids
+    assert "builtin.artifact.cli" in selected_ids
+    assert "builtin.artifact.html5_canvas" not in selected_ids
+    assert audit["inferred_artifact"] == "cli"
+    assert "artifact:project_type:cli" in audit["inference_reasons"]
+    assert "CLI artifacts must expose a real command" in appendix
+
+
+def test_terminal_intent_beats_canvas_boilerplate_without_typed_project_type(tmp_path) -> None:
+    _appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="pm",
+        message=(
+            "Build an ASCII terminal pet with a command-line interface. "
+            "Generic acceptance boilerplate mentions index.html and a non-empty canvas first frame."
+        ),
+        context_override={"primary_language": "go", "target_files": ["main.go"]},
+    )
+
+    assert audit["inferred_artifact"] == "cli"
+    assert "builtin.artifact.cli" in audit["selected_prompt_profile_ids"]
+    assert "builtin.artifact.html5_canvas" not in audit["selected_prompt_profile_ids"]
+
+
+def test_unknown_project_type_does_not_invent_artifact_class(tmp_path) -> None:
+    _appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="pm",
+        message="Implement the Go domain engine in engine/pet.go.",
+        context_override={
+            "primary_language": "go",
+            "project_type": "game",
+            "target_files": ["engine/pet.go"],
+        },
+    )
+
+    assert audit["inferred_artifact"] == "library"
+    assert "builtin.artifact.library" in audit["selected_prompt_profile_ids"]
+
+
 def test_html5_canvas_prompt_profile_specializes_browser_entrypoint(tmp_path) -> None:
     appendix, audit = build_prompt_profile_appendix(
         workspace=str(tmp_path),

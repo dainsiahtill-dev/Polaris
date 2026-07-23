@@ -18,7 +18,12 @@ from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, M
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
 
 from .http_utils import join_url, normalize_base_url
-from .provider_helpers import build_chat_messages_payload, get_stream_session, iter_data_line_payloads
+from .provider_helpers import (
+    _blocking_http_post,
+    build_chat_messages_payload,
+    get_stream_session,
+    iter_data_line_payloads,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -306,7 +311,7 @@ class OllamaProvider(BaseProvider):
             if isinstance(overrides, dict):
                 payload.update(overrides)
 
-            response = requests.post(url, json=payload, headers=headers, timeout=timeout if timeout > 0 else None)
+            response = _blocking_http_post(url, headers, payload, timeout if timeout > 0 else None)
             response.raise_for_status()
             data = response.json()
             latency_ms = int((time.time() - start) * 1000)
@@ -472,8 +477,11 @@ class OllamaProvider(BaseProvider):
         Offloads the synchronous self.invoke() call (which uses blocking requests.post)
         to a thread pool so the asyncio event loop is never stalled.
         """
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, lambda: self.invoke(prompt, model, config))
+        # ``asyncio.to_thread`` copies the current Context so Factory's
+        # runtime-private physical-dispatch capability reaches the blocking
+        # requests transport. ``run_in_executor`` drops that ContextVar and
+        # would let this stream fallback bypass the per-attempt gate.
+        result = await asyncio.to_thread(self.invoke, prompt, model, config)
         if result.ok and result.output:
             # Honest fallback for non-native streaming path.
             yield result.output

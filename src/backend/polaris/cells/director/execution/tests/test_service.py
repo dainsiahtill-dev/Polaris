@@ -13,8 +13,11 @@ from polaris.cells.director.execution.service import (
     DirectorService,
     DirectorState,
 )
-from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
-from polaris.cells.events.fact_stream.public.service import append_fact_event
+from polaris.cells.events.fact_stream.public.contracts import (
+    AppendFactEventCommandV1,
+    ProvisionFactStreamLockAuthorityCommandV1,
+)
+from polaris.cells.events.fact_stream.public.service import append_fact_event, provision_fact_stream_lock_authority
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.domain.entities import Task, TaskPriority
 from polaris.kernelone.constants import DEFAULT_MAX_WORKERS
@@ -58,6 +61,13 @@ class TestDirectorService:
 
     @pytest.mark.asyncio
     async def test_get_status_counts_observable_task_runtime_rows(self, tmp_path: Path) -> None:
+        provision_fact_stream_lock_authority(
+            ProvisionFactStreamLockAuthorityCommandV1(
+                workspace=str(tmp_path),
+                streams=("task_runtime.execution",),
+                maintenance_reason="director execution test fixture bootstrap",
+            )
+        )
         task_runtime = TaskRuntimeService(str(tmp_path))
         created = task_runtime.create_task_row(subject="Observable row")
         task_id = str(created["id"])
@@ -96,7 +106,7 @@ class TestDirectorService:
         assert status["tasks"]["task_rows"][0]["last_error"] == "observable failure"
 
     @pytest.mark.asyncio
-    async def test_execute_task_work_without_command_uses_worker_executor(
+    async def test_execute_task_work_without_stable_identity_fails_closed(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -117,11 +127,10 @@ class TestDirectorService:
 
         result = await service._execute_task_work(task)
 
-        assert result.success is True
-        evidence_paths = {str(item.path or "") for item in result.evidence}
-        assert "pyproject.toml" in evidence_paths
-        assert (tmp_path / "pyproject.toml").is_file()
-        assert (tmp_path / "README.md").is_file()
+        assert result.success is False
+        assert "transaction_identity_unbound" in str(result.error or result.output)
+        assert not (tmp_path / "pyproject.toml").exists()
+        assert not (tmp_path / "README.md").exists()
 
 
 # =============================================================================

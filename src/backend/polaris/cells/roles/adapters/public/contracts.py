@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -101,6 +103,7 @@ class RunDirectorMaterializationQualityRepairScheduleCommandV1:
     artifact_quality_issues: tuple[dict[str, Any], ...] = ()
     advisor_notes: tuple[Any, ...] = ()
     convergence_verifier: Any = None
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task", _to_dict_copy(self.task))
@@ -112,6 +115,11 @@ class RunDirectorMaterializationQualityRepairScheduleCommandV1:
         )
         object.__setattr__(self, "artifact_quality_issues", _to_tuple_dict(self.artifact_quality_issues))
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
+        if (
+            self.execution_attempt is not None
+            and type(self.execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1
+        ):
+            raise TypeError("execution_attempt must be exactly TaskRuntimeExecutionAttemptIdentityV1")
 
 
 @dataclass(frozen=True)

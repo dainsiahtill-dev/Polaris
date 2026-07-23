@@ -21,6 +21,7 @@ from polaris.kernelone.quality.step_verify import (
     normalize_step_verify,
     run_step_verify,
     split_verify_clauses,
+    split_verify_directed_effect_commands,
     verify_has_structural_clause,
     verify_is_all_hollow,
 )
@@ -419,10 +420,11 @@ class TestFirstFailingClause:
         verify = "test -f ./a && grep -q x ./a || test -f ./b"
         assert first_failing_verify_clause(verify, cwd=str(tmp_path)) == ""
 
-    def test_quoted_and_abandons(self, tmp_path: Path) -> None:
+    def test_quoted_and_is_preserved_during_diagnosis(self, tmp_path: Path) -> None:
         (tmp_path / "a.txt").write_text("plain\n", encoding="utf-8")
         verify = "grep -q 'a && b' ./a.txt && test -f ./a.txt"
-        assert first_failing_verify_clause(verify, cwd=str(tmp_path)) == ""
+        detail = first_failing_verify_clause(verify, cwd=str(tmp_path))
+        assert detail.startswith("failing clause [1/2]: grep -q 'a && b' ./a.txt")
 
 
 class TestCollectFailingClauses:
@@ -460,6 +462,31 @@ class TestCollectFailingClauses:
 
 def test_split_clauses() -> None:
     assert split_verify_clauses("a && b &&  c ") == ["a", "b", "c"]
+
+
+def test_split_clauses_preserves_quoted_and_nested_operators() -> None:
+    verify = "grep -q 'a && b' ./a.txt && test -f \"$(printf 'x && y')\""
+
+    assert split_verify_clauses(verify) == [
+        "grep -q 'a && b' ./a.txt",
+        "test -f \"$(printf 'x && y')\"",
+    ]
+
+
+def test_directed_effect_commands_preserve_shared_shell_state_and_or() -> None:
+    for verify in (
+        "cd src && test -f app.py",
+        "X=1 && [ \"$X\" = 1 ]",
+        "test -f a || test -f b",
+    ):
+        assert split_verify_directed_effect_commands(verify) == [verify]
+
+
+def test_directed_effect_commands_split_independent_and_clauses() -> None:
+    assert split_verify_directed_effect_commands("test -f a && grep -q x a") == [
+        "test -f a",
+        "grep -q x a",
+    ]
 
 
 class TestNormalizeStepVerify:

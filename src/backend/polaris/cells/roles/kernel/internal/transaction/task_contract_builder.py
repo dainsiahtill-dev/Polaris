@@ -465,6 +465,9 @@ def build_single_batch_task_contract_hint(
     verify_candidates = tuple(VERIFICATION_TOOLS)
     selected_write = [tool for tool in available_tools if tool in write_candidates]
     selected_verify = [tool for tool in available_tools if tool in verify_candidates]
+    verification_deferred_to_governed_phase = bool(
+        _requires_verify and not selected_verify and not single_quality_repair_target
+    )
     available_tools_map = {tool.lower(): tool for tool in available_tools}
 
     # --- 解析必需工具（无论是否 mutation，都要提取 contract 约束）---
@@ -734,7 +737,11 @@ def build_single_batch_task_contract_hint(
                 + "."
             )
         else:
-            lines.append("Verification is required by the user. Include an available verification step.")
+            lines.append(
+                "Overall verification remains mandatory. No verification tool is exposed in this physical "
+                "request, so complete the required mutation now and do not claim verification in this turn. "
+                "Verification must run in a later governed continuation or quality phase."
+            )
 
     # --- 追加正例序列模板和恢复协议 ---
     sequence_template = (
@@ -746,21 +753,27 @@ def build_single_batch_task_contract_hint(
             ordered_tool_groups=required_any_groups_from_contract,
             min_tool_calls=min_calls_required,
             requires_write=_requires_write,
-            requires_verify=_requires_verify,
+            requires_verify=_requires_verify and bool(selected_verify),
         )
     )
     if sequence_template:
         lines.append(sequence_template)
 
-    recovery_protocol = (
-        ""
-        if single_quality_repair_target
-        else build_recovery_protocol(
+    if single_quality_repair_target:
+        recovery_protocol = ""
+    elif verification_deferred_to_governed_phase:
+        recovery_protocol = (
+            "\nTOOL FAILURE RECOVERY PROTOCOL:\n"
+            "1. Retry only with tools exposed in the current physical schema and only when argument correction is safe.\n"
+            "2. If the exposed tools cannot recover, stop with explicit failure evidence; never claim completion.\n"
+            "3. Do not invent read or verification actions. Verification remains mandatory in the later governed phase."
+        )
+    else:
+        recovery_protocol = build_recovery_protocol(
             required_tools=required_tools_from_contract,
             required_any_groups=required_any_groups_from_contract,
             available_write_tools=selected_write,
         )
-    )
     if recovery_protocol:
         lines.append(recovery_protocol)
 
@@ -775,5 +788,8 @@ def build_single_batch_task_contract_hint(
         expected_read_count = 0
 
     contract_text = "\n".join(lines)
-    metadata: dict[str, Any] = {"expected_read_count": expected_read_count}
+    metadata: dict[str, Any] = {
+        "expected_read_count": expected_read_count,
+        "verification_deferred_to_governed_phase": verification_deferred_to_governed_phase,
+    }
     return contract_text, metadata

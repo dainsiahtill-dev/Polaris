@@ -1,0 +1,59 @@
+card_id: vc-20260722-physical-wire-max-tokens-drift
+classification: execution_fact_chain
+severity: P0
+status: complete
+bench_status: not_schedulable
+symptom:
+  project_id: L1-04
+  factory_run_id: factory_86e34548b0df
+  stage: chief_engineer_review
+  error_code: chief_engineer.llm_review_failed
+  rejection_code: physical_wire_max_tokens_drift
+  plan_materialized: true
+  blueprint_materialized: true
+  source_files_materialized: 0
+final_request_evidence:
+  semantic_context_snapshot_ref: 0ee3b411eb3956c45df9d952
+  executor_context_snapshot_ref: 14d1fb24ed7114bc24fc6c12
+  role: chief_engineer
+  provider_type: anthropic_compat
+  model: kimi-for-coding
+  requested_max_tokens: 128000
+  effective_max_tokens: 16384
+root_cause: >-
+  The frozen semantic request correctly retained the role-requested output
+  budget, and the Engine correctly clamped it to the resolved model/window
+  ceiling. The exact provider-native route projector ignored the Engine's final
+  invoke config and copied the pre-clamp value, so its expected_body diverged
+  from the provider's real body and the physical wire gate rejected the call.
+repair_contract:
+  weaken_exact_wire_gate: forbidden
+  effective_budget_authority: engine_final_invoke_config
+  frozen_request_is_upper_bound: true
+  expansion: forbidden
+  invalid_or_non_positive_effective_budget: fail_closed
+  protocols:
+    - anthropic_messages
+    - openai_chat_completions
+    - openai_responses
+  required_tests:
+    - native projections use the final Engine-clamped output budget
+    - actual Anthropic provider body equals the projected exact body
+    - any effective output-budget expansion fails closed
+verification:
+  tdd_red: "3 failed: every native protocol projected 128000 instead of 16384"
+  focused_green: "provider projection 14 passed; Anthropic integration 35 passed"
+  role_qualification: "167 passed"
+  engine_executor: "87 passed, 2 warnings"
+  governed_provider_routes: "11 passed"
+  pre_bench_matrix: "649 passed, 2 warnings"
+  context_instance_fresh_workspace: "200 passed, 2 warnings"
+  taskruntime_full: "895 passed, 10 warnings"
+  architecture: "1411 passed, 8 skipped"
+  ruff: pass
+  format: pass
+  mypy_strict_projection: pass
+  isolated_bench: forbidden_while_other_factory_regressions_remain_open
+owner: Codex /root
+opened_at: "2026-07-22"
+closed_at: "2026-07-22"

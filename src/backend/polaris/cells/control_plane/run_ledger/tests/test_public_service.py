@@ -28,6 +28,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     service as run_ledger_service,
     summarize_run_ledger_projection,
 )
+from polaris.cells.control_plane.run_ledger.public.projection import _directed_effect_receipt_payload_hash
 from polaris.cells.events.fact_stream.public import (
     AppendFactEventCommandV1,
     QueryFactEventsV1,
@@ -240,6 +241,55 @@ def _write_ledger_event(
     )
 
 
+def _authoritative_directed_effect_receipt(*, run_id: str) -> dict[str, object]:
+    payload = {
+        "arguments_hash": "1" * 64,
+        "authoritative": True,
+        "batch_id": f"batch-{run_id}",
+        "claim_grant_hash": "2" * 64,
+        "context_id": f"context-{run_id}",
+        "durable": True,
+        "effect_call_id": None,
+        "effect_operation_id": None,
+        "normalized_tool_name": "write_file",
+        "operation_id": f"operation-{run_id}",
+        "parent_close_eligible": True,
+        "physical_result_hash": "3" * 64,
+        "plan_hash": None,
+        "policy_evidence_hash": "4" * 64,
+        "repair_binding_hash": None,
+        "repair_contingency_kind": None,
+        "repair_request_hash": None,
+        "receipt_binding_hash": "5" * 64,
+        "receipt_outcome": "succeeded",
+        "schema_version": "roles.adapters.director_physical_effect_receipt.v2",
+        "target_state_hash": "6" * 64,
+        "tool_call_id": f"call-{run_id}",
+    }
+    receipt_hash = _directed_effect_receipt_payload_hash(payload)
+    assert receipt_hash is not None
+    return {
+        **payload,
+        "receipt_hash": receipt_hash,
+        "receipt_id": f"director-physical-effect-{receipt_hash[:24]}",
+    }
+
+
+def _authoritative_directed_effect_receipt_commit(*, run_id: str) -> dict[str, object]:
+    receipt = _authoritative_directed_effect_receipt(run_id=run_id)
+    return {
+        "code": "receipt_committed",
+        "state": "RECEIPT_COMMITTED",
+        "operation_id": receipt["operation_id"],
+        "event_id": f"event-{run_id}",
+        "receipt_ref": receipt["receipt_id"],
+        "receipt_hash": receipt["receipt_hash"],
+        "receipt_binding_hash": receipt["receipt_binding_hash"],
+        "receipt_outcome": receipt["receipt_outcome"],
+        "version": 3,
+    }
+
+
 def _successful_tool_lifecycle_event(
     *,
     run_id: str = "run-1",
@@ -262,12 +312,8 @@ def _successful_tool_lifecycle_event(
                         "call_id": f"call-{run_id}",
                         "tool_name": "write_file",
                         "status": "success",
-                        "effect_receipt": {
-                            "operation": "write_file",
-                            "file": "src/app.py",
-                            "before_hash": "before-hash",
-                            "after_hash": "after-hash",
-                        },
+                        "effect_receipt": _authoritative_directed_effect_receipt(run_id=run_id),
+                        "effect_receipt_commit": _authoritative_directed_effect_receipt_commit(run_id=run_id),
                     }
                 ],
                 "success_count": 1,
@@ -441,9 +487,12 @@ def test_append_run_ledger_event_public_service_projects_event(tmp_path: Path) -
     assert result.receipt["event"]["append_id"]
     assert projection["ok"] is True
     assert projection["projects"][0]["project_id"] == "P1"
-    assert projection["evidence_modalities"]["tool_receipt"]["present"] == 1
+    tool_receipt = projection["evidence_modalities"]["tool_receipt"]
+    assert tool_receipt["present"] == 0
     assert projection["run_projection"]["gate_count"] == 1
     assert projection["run_projection"]["gates"][0]["name"] == "director_mutation"
+    gate_tool_receipt = projection["run_projection"]["gates"][0]["evidence_modalities"]["tool_receipt"]
+    assert gate_tool_receipt["metadata"]["legacy_receipt_count"] == 1
     assert projection["query_scope"] == {"run_id": "run-1", "factory_run_id": "", "project_id": ""}
     assert projection["consumed_run_ids"] == ["run-1"]
 
@@ -3276,9 +3325,8 @@ def test_read_run_provenance_bundle_links_contract_blueprint_envelope_and_receip
                     "modalities": {"tool_receipt": {"present": True, "ok": True, "detail": "receipt verified"}},
                     "tool_receipts": [
                         {
-                            "operation": "write_file",
-                            "file": "src/main.py",
-                            "capability_token": {"token_id": "token-1"},
+                            "effect_receipt": _authoritative_directed_effect_receipt(run_id="run-1"),
+                            "effect_receipt_commit": _authoritative_directed_effect_receipt_commit(run_id="run-1"),
                         }
                     ],
                     "commands": [{"command": "python -m unittest", "ok": True, "exit_code": 0}],

@@ -19,11 +19,24 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.adapters.internal.director import execute_method
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
 
 
 def _make_adapter(tmp_path: Any) -> DirectorAdapter:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="execute-standard-llm-flow-test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
     return DirectorAdapter(workspace=str(tmp_path))
 
 

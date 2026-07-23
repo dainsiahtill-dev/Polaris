@@ -15,6 +15,7 @@ from polaris.cells.roles.adapters.internal.director import (
     materialization_quality_runtime_ports,
 )
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
+from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
 
 _STEP_ID = "materialization.hygiene_scaffold"
 _SOURCE_TOOL = "deterministic_materialization_hygiene_repair"
@@ -28,6 +29,44 @@ def _selected_step() -> materialization_quality_runtime_ports.DirectorRepairMate
         priority=0,
         source_tool=_SOURCE_TOOL,
     )
+
+
+def _attempt(tmp_path: Path) -> TaskRuntimeExecutionAttemptIdentityV1:
+    return TaskRuntimeExecutionAttemptIdentityV1(
+        workspace=tmp_path.resolve().as_posix(),
+        task_id=23,
+        external_task_id="TASK-23",
+        session_id="session-materialization-ports",
+        attempt=1,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="run-materialization-ports",
+        lease_expires_at="2099-01-01T00:00:00Z",
+    )
+
+
+def test_materialization_step_runner_forwards_exact_execution_attempt(monkeypatch: Any, tmp_path: Path) -> None:
+    execution_attempt = _attempt(tmp_path)
+    captured: dict[str, Any] = {}
+
+    def _capture(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        captured["args"] = args
+        captured["execution_attempt"] = kwargs["execution_attempt"]
+        return []
+
+    monkeypatch.setattr(
+        materialization_quality_runtime_ports.callback_ports, "_run_materialization_quality_repair_step", _capture
+    )
+    runner = materialization_quality_runtime_ports.build_materialization_quality_step_runner(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task={"id": "TASK-23"},
+        task_id="TASK-23",
+        artifact_quality_errors=(),
+        execution_attempt=execution_attempt,
+    )
+
+    assert runner(_selected_step()) == []
+    assert captured["execution_attempt"] is execution_attempt
 
 
 def _native_receipt(*, exit_code: int, errors_after: int = 0) -> dict[str, Any]:

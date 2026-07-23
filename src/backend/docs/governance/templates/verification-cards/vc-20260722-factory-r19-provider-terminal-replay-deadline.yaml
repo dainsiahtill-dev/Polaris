@@ -1,0 +1,88 @@
+card_id: vc-20260722-factory-r19-provider-terminal-replay-deadline
+classification: execution_fact_chain
+status: closed
+bench_status: unblocked
+bug_summary: >-
+  The fifteenth authorized fresh isolated L1-04 run proved R18 suppressed the
+  duplicate Provider retry: exactly one Chief Engineer physical attempt ran
+  and durably terminalized completed after about 168 seconds. Factory then
+  replayed the completed buffered stream to the role runtime, but the Provider
+  helper's asyncio.timeout context remained armed across its outward yield.
+  Slow post-terminal replay/backpressure therefore cancelled the CE consumer
+  task about 23 seconds after the Provider terminal fact, suspending
+  TaskRuntime even though the physical attempt and Factory workspace lease
+  were both healthy.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: e9ff5cf30fee
+  factory_run_id: factory_4b6587290aa8
+  instance_id: >-
+    factory-bench-l1-04-codex-r19-l1-04-run-e9ff5cf30fee-49e2b24b27e45b97
+  stage: chief_engineer_review
+  runner_error: event_wait_timeout
+  task_terminal_status: suspended
+  task_error: chief_engineer_portfolio_review_cancelled
+  wall_clock_seconds: 540.2
+  provider_wire_attempts: 1
+  provider_started_at: "2026-07-22T11:35:09.229"
+  provider_terminal_at: "2026-07-22T11:37:57.669"
+  provider_terminal_status: completed
+  consumer_cancelled_at: "2026-07-22T11:38:20"
+  factory_workspace_lease_version: 21
+  factory_workspace_lease_active_at_cancellation: true
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_materialized: false
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r19/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r19/audits/e9ff5cf30fee/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r19/L1-04.chain.log
+root_cause:
+  code: provider_deadline_spanned_terminal_replay_backpressure
+  summary: >-
+    FinalProviderAttemptGate consumes and buffers the complete physical stream,
+    closes the response, and appends the durable Provider terminal fact before
+    yielding buffered items outward. invoke_stream_with_retry wrapped that
+    outward async iteration in asyncio.timeout. The timeout context therefore
+    survived across generator yields and cancelled the downstream role task
+    during replay, after the physical Provider attempt had already completed.
+  fix: >-
+    Apply the shared absolute deadline only while awaiting each physical
+    response or custom-handler item inside the gate's consume callback. Never
+    keep a Provider timeout context armed across outward yields. A real physical
+    response timeout now terminalizes the attempt as failed and releases its
+    reservation; caller cancellation remains cancelled. Retry backoff and wire
+    attempts still share the same absolute budget, and R18's no-reconnect rule
+    remains intact.
+required_gates:
+  exact_red_green_replay_backpressure_regression: pass
+  provider_timeout_and_replay_tests: "6 passed"
+  provider_helpers_full: "37 passed"
+  role_stream_timeout_and_reconnect: "2 passed"
+  role_llm_caller_full: "130 passed"
+  role_kernel_full: "2743 passed, 1 warning"
+  factory_full: "1219 passed, 2 warnings"
+  ruff: pass
+  ruff_format: pass
+  mypy_source: pass
+  compileall: pass
+  codegraph_post_edit_review: pass
+  diff_check: pass
+scheduling:
+  bench_schedulable: true
+  authorization_scope: one_fresh_isolated_l1_04_acceptance_run
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: fresh_isolated_l1_04_r20
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

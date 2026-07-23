@@ -1,0 +1,97 @@
+card_id: vc-20260722-factory-r26-ce-reasoning-budget-and-json-truth
+classification: execution_fact_chain
+status: closed
+bench_status: authorization_consumed_r27
+bug_summary: >-
+  R26 proved R25 and preserved readable, role-correct PM and Chief Engineer
+  final-request evidence. Both physical Kimi Chief Engineer requests nevertheless
+  advertised response_format=null and mandatory thinking without a bounded
+  reasoning budget. The primary consumed its exact 16384 completion-token cap
+  before its fenced JSON object completed; the separately claimed schema repair
+  consumed its exact 8192-token cap and exposed only 641 visible characters.
+  Factory correctly rejected both malformed outputs, so Director and QA were not
+  reached. The fix carries a call-scoped reasoning budget from Factory through
+  Role Kernel and KernelOne Engine into the exact Anthropic-compatible provider
+  request, and makes streamed JSON audit truthfully report text_json_fallback.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  bench_run_id: c04e5325a689
+  factory_run_id: factory_1301152739c7
+  instance_id: >-
+    factory-bench-l1-04-codex-r26-l1-04-run-c04e5325a689-51120dcd5dcf7a59
+  wall_clock_seconds: 5377.4
+  stage: chief_engineer_review
+  rejection_code: chief_engineer.llm_review_failed
+  root_cause_hint: "Output validation failed: JSON parse error: no JSON object found"
+  backend_fresh: true
+  pm_completed: true
+  director_reached: false
+  qa_reached: false
+  primary:
+    context_snapshot_ref: 45a26fc89251cf4f362ac25f
+    completion_tokens: 16384
+    max_tokens: 16384
+    visible_chars: 14996
+  repair:
+    context_snapshot_ref: 1a0fd9721e559d57f24208a8
+    completion_tokens: 8192
+    max_tokens: 8192
+    visible_chars: 641
+  physical_response_format: null
+  physical_thinking:
+    type: enabled
+    budget_tokens: null
+root_cause:
+  code: ce_reasoning_budget_not_projected_to_physical_request
+  summary: >-
+    Factory declared a structured Chief Engineer output contract, but no
+    call-scoped reasoning budget survived request preparation, Engine option
+    merging, and native Anthropic request projection. Kimi's required thinking
+    therefore competed without a bounded reservation against the same completion
+    budget needed for visible JSON. The stream audit compounded the diagnosis by
+    labeling a text JSON fallback contract as plain_text.
+  fix: >-
+    Factory assigns 4096 reasoning tokens to the primary portfolio and 2048 to
+    schema repair. Role Kernel validates that the budget is an integer at least
+    1024 and strictly below max_tokens, projects it into request options and the
+    final context audit, and reports streamed explicit JSON as text_json_fallback.
+    KernelOne Engine propagates the option through invoke and stream paths.
+    Anthropic-compatible native and direct-provider projections add budget_tokens
+    only when thinking is already enabled or required; standard Anthropic routes
+    are not forced into thinking.
+required_gates:
+  focused_reasoning_and_json_regressions: "405 passed, 2 warnings"
+  roles_kernel_split_suite: "2745 passed, 1 warning"
+  engine_and_anthropic_provider_split_suite: "270 passed, 2 warnings"
+  factory_characterization: pass
+  ruff: pass
+  ruff_format: pass
+  mypy_source: pass
+  compileall: pass
+  git_diff_check: pass
+  codegraph_pre_edit_review: pass
+  codegraph_post_edit_review: pass
+  combined_suite_process_state_pollution:
+    status: isolated_not_production_regression
+    combined_result: "4232 passed, 10 failed"
+    isolated_failure_files: "21 passed"
+    root_cause: process_global_real_runtime_config_leaked_between_test_modules
+scheduling:
+  bench_schedulable: false
+  authorization_scope: none
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: close_r28_provider_stream_terminal_stall
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"
+  r26_instance_stopped: true
+  r26_authorization_consumed: true
+  r27_authorized_runs: 1
+  r27_consumed_runs: 1

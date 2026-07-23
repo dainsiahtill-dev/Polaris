@@ -1078,30 +1078,214 @@ directed_effect_operation_v1:
         main_thread_closure_gate:
           task_7_step_4: closed
           DEO-2A_overall_closure: complete
-          DEO-2B_schedulability: schedulable
-        only_next_schedulable_bucket: DEO-2B
+          DEO-2B_overall_closure: complete
+        only_next_schedulable_bucket: DEO-3
         downstream:
           DEO-2B:
-            status: pending
-            scheduling_status: schedulable
-            started: false
+            status: closed
+            scheduling_status: complete
+            started: true
+            closed_tasks: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            only_active_task: null
+            task_5_closure:
+              focused_passed: 271
+              complete_task_runtime_passed: 841
+              adjacent_policy_guard_passed: 25
+              canonical_task_runtime_results: true
+              pid_denial_before_lock: true
+              held_lock_fork_bounded_denial: true
+              physical_effects: 0
+              provider_requests: 0
+              independent_reviews: CLEAR/CLEAR
+            task_6_closure:
+              directed_effect_matrix_passed: 264
+              complete_task_runtime_passed: 841
+              exact_fresh_grant_required: true
+              bound_snapshot_in_context: true
+              consume_before_physical: true
+            task_7_closure:
+              focused_passed: 76
+              roles_runtime_public_passed: 259
+              kernel_related_passed: 116
+              complete_task_runtime_passed: 841
+              guarded_entrypoints_prevalidate: true
+              shared_public_heartbeat: true
+              private_authority_field_access: 0
+              physical_effects: 0
+              provider_requests: 0
+              denial_zero_physical_effect: true
+              authoritative_current_policy_capture: false
+            task_8_closure:
+              focused_passed: 104
+              roles_runtime_and_adapter_passed: 328
+              exact_dependency_identity: true
+              exact_attempt_identity: true
+              provider_dependency_preflight_denial: true
+              metadata_or_event_transport: false
+              physical_effects: 0
+              provider_requests: 0
+            task_9_closure:
+              focused_passed: 232
+              production_wiring_passed: 57
+              classify_before_preflight: true
+              complete_inventory_before_first_read: true
+              raw_mutation_fallback: false
+              jit_exact_claim: true
+              adapter_owned_current_policy_capture: true
+              first_denial_stops_later_calls: true
+              successful_fence_cleanup: true
+              provider_requests: 0
+              bench_runs: 0
+              pytest_repeat_available: false
+            task_10_closure:
+              architecture_and_wiring_passed: 27
+              command_capability_passed: 13
+              pickle_and_ipc_transport_denied: true
+              public_projection_contains_context_or_grant: false
+              fork_child_pid_denied: true
+              fork_child_physical_effects: 0
+              canonical_mutation_raw_executor_edge: false
+              validation_revalidation_consume_before_effect: true
+              provider_requests: 0
+              bench_runs: 0
+            task_11_closure:
+              locked_regression_passed: 373
+              exact_production_claimant_allowlist: true
+              singleton_grant_issuer: true
+              singleton_context_constructor: true
+              singleton_physical_consumer: true
+              exact_command_cas_hash_binding: true
+              replay_claim_grant_is_none: true
+              task_runtime_production_changed: false
+              provider_requests: 0
+              physical_effects: 0
+              bench_runs: 0
+            task_12_closure:
+              targeted_behavior_passed: 675
+              policy_snapshot_passed: 117
+              command_capability_selected_passed: 17
+              kernelone_architecture_passed: 18
+              kernelone_release_gate_exit_code: 0
+              static_gates: green
+              pre_closure_reviews: PASS/PASS
+              b1_b7_explicitly_passed: true
+              catalog_issue_count: 0
+              catalog_mismatch_count: 0
+              closure_tests_passed: 385
+              final_diff_reviews: PASS/PASS
+              provider_requests: 0
+              physical_effects: 0
+              bench_runs: 0
+              task_runtime_sole_durable_authority: true
+              closure_scope: selected_canonical_in_process_path_only
           DEO-2C:
-            status: not_started
-            scheduling_status: not_schedulable
+            status: closed
+            scheduling_status: complete
+            locked_plan: docs/superpowers/plans/2026-07-20-deo-2c-deferred-repair-effects.md
+            scope: >-
+              Immutable repair-effect projection, typed deferred request,
+              exact Director re-planning, one visible kernel-owned repair
+              round, and central runtime repair bridge cutover. No DEO-3
+              receipt closure, no DEO-2D repository-wide raw seam closure.
+            closure_evidence:
+              immutable_effect_plan: true
+              exact_replanning_and_binding: true
+              visible_counted_follow_up_batch: true
+              second_round_rejected: true
+              guarded_physical_cas: true
+              ordered_preclaim_abort: true
+              claimed_rollback_execution: true
+              physical_receipt_hash_binds_authoritative_false: true
+              durable_receipt_or_parent_close: false
+              focused_roles_kernel_passed: 141
+              adapters_and_architecture_passed: 134
+              director_runtime_passed: 598
+              task_runtime_owned_suite_passed: 395
+              kernelone_guarded_fs_passed: 53
+              independent_reviews: PASS/PASS
+              provider_requests: 0
+              bench_runs: 0
           DEO-2D:
-            status: not_started
-            scheduling_status: not_schedulable
+            status: closed
+            scheduling_status: complete
+            locked_plan: docs/superpowers/plans/2026-07-20-deo-2d-zero-unbound-mutation-surfaces.md
+            verification_card: docs/governance/templates/verification-cards/vc-20260720-deo-2d-zero-unbound-mutation-surfaces.yaml
+            scope: >-
+              Remove the seven remaining direct repair mutation surfaces and
+              prove one singleton physical consumer under the canonical
+              TaskRuntime claim and roles.kernel mutation-port boundary.
+            closure_evidence:
+              singleton_physical_executor_composition_root: true
+              singleton_physical_execute_call: true
+              raw_patch_and_direct_apply_fail_closed: true
+              adapter_owned_process_execution: false
+              shared_bounded_replay_fence: true
+              recursive_container_scan_budget: true
+              real_repair_receipt_composition: true
+              real_command_receipt_composition: true
+              durable_receipt_or_parent_close: false
+              roles_kernel_passed: 2716
+              roles_adapters_passed: 1238
+              director_runtime_and_task_runtime_passed: 1597
+              kernelone_guarded_fs_and_command_passed: 282
+              tasking_passed: 47
+              qa_passed: 82
+              independent_reviews: PASS/PASS
+              critical_findings: 0
+              important_findings: 0
+              provider_requests: 0
+              bench_runs: 0
+              target_project_effects: 0
           DEO-3:
-            status: pending
-            scheduling_status: not_schedulable
+            status: closed
+            scheduling_status: complete
+            locked_plan: docs/superpowers/plans/2026-07-20-deo-3-durable-receipt-settlement.md
+            verification_card: docs/governance/templates/verification-cards/vc-20260720-deo-3-durable-receipt-settlement.yaml
+            closure_evidence:
+              durable_receipt_commit_before_success: true
+              finite_recovery_and_dead_letter: true
+              pending_terminal_intent: true
+              outcome_bound_child_and_parent_close: true
+              crash_replay_idempotent: true
+              heartbeat_and_reclaim_fenced: true
+              run_ledger_read_only_projection: true
+              strict_receipt_validation_shared: true
+              settlement_policy_matrix_complete: true
+              independent_reviews: CLEAR/CLEAR
+              critical_findings: 0
+              important_findings: 0
+              provider_requests: 0
+              bench_runs: 0
+              target_project_effects: 0
           DEO-4:
-            status: pending
-            scheduling_status: not_schedulable
-          pre_bench: not_schedulable
-          bench: not_schedulable
+            status: closed
+            scheduling_status: complete
+            locked_plan: docs/superpowers/plans/2026-07-20-deo-4-legacy-removal-architecture-fence.md
+            verification_card: docs/governance/templates/verification-cards/vc-20260720-deo-4-legacy-removal-architecture-fence.yaml
+            closure_evidence:
+              exact_process_local_executor_instance_authority: true
+              clone_copy_pickle_transport_denied: true
+              injectable_executor_slot_removed: true
+              post_consume_construction_and_execution_recovery: true
+              replay_after_failure_denied: true
+              repository_alias_taint_importlib_reexport_fence: true
+              executor_self_factory_fence: true
+              focused_tests_passed: 100
+              roles_adapters_passed: 1250
+              architecture_passed: 1411
+              architecture_skipped: 8
+              independent_reviews: CLEAR/CLEAR
+              critical_findings: 0
+              important_findings: 0
+              minor_findings: 0
+              provider_requests: 0
+              bench_runs: 0
+              target_project_effects: 0
+          pre_bench: complete
+          bench: not_schedulable_r39_consumed
     - id: DEO-3
-      status: pending
-      scheduling_status: not_schedulable
+      status: closed
+      scheduling_status: complete
       title: receipt closure, recovery, and terminal admission
       contract: >-
         Keep SettleTaskRuntimeExecutionAttemptCommandV1 and public
@@ -1113,10 +1297,17 @@ directed_effect_operation_v1:
         upgrades DEO-1B's settlement_parent_close_required blocker to successful
         terminal settlement. No specialized settle bypass is permitted.
     - id: DEO-4
-      status: pending
-      scheduling_status: not_schedulable
+      status: closed
+      scheduling_status: complete
       title: legacy removal and architecture fence
-      residual: remove remaining admission, guarded-child, and terminal-settlement bypasses
+      locked_plan: docs/superpowers/plans/2026-07-20-deo-4-legacy-removal-architecture-fence.md
+      verification_card: docs/governance/templates/verification-cards/vc-20260720-deo-4-legacy-removal-architecture-fence.yaml
+      closure_evidence: >-
+        Exact process-local executor identity, clone/copy/pickle denial, a
+        non-injectable canonical mutation port, durable post-consume recovery,
+        and the full production alias/taint/importlib/re-export architecture
+        fence are closed with 100 focused and 1250 roles.adapters tests plus
+        CLEAR/CLEAR independent review.
       guarded_commit_control: >-
         Allowlist only TaskRuntime as the DEO guarded-commit consumer. This is an
         architecture control, not a security boundary or substitute for proof
@@ -1125,10 +1316,16 @@ directed_effect_operation_v1:
         lock authority. Generic io_events.py and kernelone/fs/jsonl/* writers are
         outside this DEO fence.
   bench:
-    status: not_schedulable
+    status: not_schedulable_r39_consumed
     condition: >-
-      Do not run until DEO-1A..4 exits, 38-surface closure, crash/cancel evidence,
-      targeted quality gates, and independent audit are complete.
+      R36 and R37 are closed. The R38 acceptance authorization was consumed and
+      proved that the old Agent launch standard incorrectly used a 540-second
+      short-smoke budget, leaving only 188 seconds for Chief Engineer after
+      downstream conservation. R38 is closed with the full acceptance contract
+      restored to 5400 seconds plus a 6000-second outer guard. Exactly one fresh
+      isolated L1-04 R39 run was authorized and that authorization is now
+      consumed. No further Bench is allowed until R39 is fully audited and any
+      newly exposed root bucket is closed.
     eta_policy: >-
       No calendar ETA. A credible ETA is gate-based and must name the worktree
       fingerprint, isolated command, owner, timeout, and work directory.

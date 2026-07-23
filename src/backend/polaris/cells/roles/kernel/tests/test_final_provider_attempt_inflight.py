@@ -38,6 +38,7 @@ def _attempt(
         execution_authority_hash="d" * 64 if verification_scope == "factory" else "",
         attempt_budget=32 if verification_scope == "factory" else 0,
         authority_attempt_ordinal=attempt_number if verification_scope == "factory" else 0,
+        semantic_candidate_hash="e" * 64 if verification_scope == "factory" else "",
         semantic_request_hash="a" * 64,
         physical_wire_hash="b" * 64,
         composite_request_hash="c" * 64,
@@ -51,6 +52,7 @@ def test_frozen_attempt_requires_factory_authority_identity_only_in_factory_scop
     assert factory.execution_authority_hash == "d" * 64
     assert factory.attempt_budget == 32
     assert factory.authority_attempt_ordinal == factory.attempt_number
+    assert factory.semantic_candidate_hash == "e" * 64
 
     with pytest.raises(ValueError, match="execution_authority_hash"):
         replace(factory, execution_authority_hash="")
@@ -58,11 +60,15 @@ def test_frozen_attempt_requires_factory_authority_identity_only_in_factory_scop
         replace(factory, attempt_budget=0)
     with pytest.raises(ValueError, match="authority_attempt_ordinal"):
         replace(factory, authority_attempt_ordinal=2)
+    with pytest.raises(ValueError, match="semantic_candidate_hash"):
+        replace(factory, semantic_candidate_hash="")
 
     session = _attempt(verification_scope="role_session", scope_id="role-session-1")
     assert session.execution_authority_hash == ""
     with pytest.raises(ValueError, match="cannot claim Factory physical authority"):
         replace(session, execution_authority_hash="e" * 64, attempt_budget=1, authority_attempt_ordinal=1)
+    with pytest.raises(ValueError, match="cannot claim Factory semantic candidate authority"):
+        replace(session, semantic_candidate_hash="e" * 64)
 
 
 @pytest.mark.asyncio

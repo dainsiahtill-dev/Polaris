@@ -1,0 +1,63 @@
+card_id: vc-20260722-final-request-included-refs-drift
+classification: execution_fact_chain
+severity: P0
+status: complete
+bench_status: schedulable_once
+symptom:
+  project_id: L1-04
+  factory_run_id: factory_60c76b4dd40f
+  stage: chief_engineer_review
+  error_code: chief_engineer.llm_review_failed
+  rejection_code: final_request_role_included_refs_drift
+  plan_materialized: true
+  blueprint_materialized: true
+  source_files_materialized: 0
+final_request_evidence:
+  context_snapshot_ref: 9a0f02085ed52abe11a0a91c
+  role: chief_engineer
+  required_refs:
+    - pm_contract
+    - target_files
+  authoritative_present_refs:
+    - pm_contract
+    - target_files
+  observed_included_refs:
+    - final_provider_request
+    - workspace_quality_evidence
+    - pm_contract
+    - target_files
+    - output_contract
+  workspace_quality_slot_state: absent_at_request_time
+root_cause: >-
+  The generic ContextOS audit projected heuristic request signals into the
+  qualifying included_refs list. Factory final-request qualification defines
+  that list as an exact cutoff-bound role evidence projection, so optional
+  heuristic refs created deterministic authority drift.
+repair_contract:
+  preserve_exact_qualification: true
+  weaken_fail_closed_gate: forbidden
+  projection_point: frozen_factory_request_audit_binding
+  retain_observed_refs_separately: true
+  required_tests:
+    - observed generic refs are preserved as non-authoritative audit evidence
+    - qualifying included_refs exactly equal present cutoff-bound role slots
+    - required refs exactly equal role policy required slots
+    - missing refs and pass are recomputed from authoritative refs and tools
+    - all five roles remain qualified under their own final-request policies
+verification:
+  tdd_red: >-
+    test_factory_audit_replaces_observed_refs_with_authoritative_role_slots
+    failed because FactorySemanticDispatchPropagationPort lacked the authority
+    projection operation.
+  focused_green: "340 passed; five-role qualification regression 5 passed"
+  pre_bench_matrix: "611 passed, 2 warnings"
+  context_instance_fresh_workspace: "250 passed, 1 warning"
+  taskruntime_full: "895 passed, 10 warnings"
+  architecture: "1411 passed, 8 skipped"
+  ruff: pass
+  format: pass
+  mypy_strict_changed_core: pass
+  isolated_bench: one_same_project_retry_authorized
+owner: Codex /root
+opened_at: "2026-07-22"
+closed_at: "2026-07-22"

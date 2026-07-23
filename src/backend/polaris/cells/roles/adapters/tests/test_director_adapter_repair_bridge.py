@@ -8,28 +8,19 @@ from typing import Any
 
 import polaris.cells.director.runtime.public as director_runtime_public
 from polaris.cells.director.runtime.public.contracts import (
-    DirectorRepairConvergenceVerifierRequestV1,
     DirectorRepairResultV1,
-    DirectorRepairRevalidationInputV1,
-    DirectorRepairRevalidationRequestV1,
     DirectorRepairVerifierSnapshotInputV1,
     RepairAdvisoryV1,
     RepairReceiptV1,
 )
 from polaris.cells.director.runtime.public.repair_kernel_contracts import (
-    FILE_ABSENT_HASH,
     RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
-    sha256_text,
 )
 from polaris.cells.roles.adapters.internal.director import (
     materialization_quality_callback_ports,
     materialization_quality_runtime_ports,
     post_execution_repair_bridge,
     runtime_repair_tool_adapter as runtime_bridge_module,
-)
-from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
-from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
-    run_runtime_repair_with_director_tools,
 )
 from polaris.cells.roles.adapters.public import (
     DirectorMaterializationQualityRepairScheduleResultV1,
@@ -399,1024 +390,9 @@ class _FakeDirectorToolExecutorWithDelete(_FakeDirectorToolExecutor):
         }
 
 
-def _run_runtime_bridge(
-    workspace: Path,
-    *,
-    revalidator: Any = None,
-    convergence_verifier: Any = None,
-    artifact_quality_errors: tuple[str, ...] = (_QUALITY_ERROR,),
-    max_rounds: int = 3,
-) -> list[dict[str, Any]]:
-    target = workspace / _RELATIVE_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(_BROKEN_CONTENT, encoding="utf-8")
-
-    return run_runtime_repair_with_director_tools(
-        _FakeAdapter(workspace),
-        workspace_path=workspace,
-        task_id="task-adapter-revalidation",
-        source_tool=_SOURCE_TOOL,
-        executor_factory=_FakeDirectorToolExecutor,
-        base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
-        artifact_quality_errors=artifact_quality_errors,
-        allowed_paths=(_RELATIVE_PATH,),
-        revalidator=revalidator,
-        convergence_verifier=convergence_verifier,
-        max_rounds=max_rounds,
-    )
-
-
-def test_runtime_bridge_projects_native_revalidation_receipt_evidence(tmp_path: Path) -> None:
-    requests: list[DirectorRepairRevalidationRequestV1] = []
-
-    def revalidator(request: DirectorRepairRevalidationRequestV1) -> DirectorRepairRevalidationInputV1:
-        requests.append(request)
-        return DirectorRepairRevalidationInputV1(
-            command=("rtk", "tsc", "--noEmit"),
-            exit_code=0,
-            raw_output_ref="runtime/verifier/adapter-success.log",
-            metadata=_trusted_verifier_metadata("typescript"),
-        )
-
-    results = _run_runtime_bridge(tmp_path, revalidator=revalidator)
-
-    assert len(results) == 1
-    assert results[0]["success"] is True
-    assert len(requests) == 1
-    assert requests[0].source_tool == _SOURCE_TOOL
-    repair_kernel = results[0]["result"]["repair_kernel"]
-    evidence = repair_kernel["revalidation_evidence"]
-    assert repair_kernel["authoritative"] is True
-    assert repair_kernel["requires_revalidation"] is False
-    assert repair_kernel["authority_hash"]
-    assert repair_kernel["projection_hash"]
-    assert "round_number" in repair_kernel
-    assert repair_kernel["errors_before"] == 1
-    assert repair_kernel["errors_after"] == 0
-    assert repair_kernel["net_error_reduction"] == 1
-    assert evidence["command"] == ["rtk", "tsc", "--noEmit"]
-    assert evidence["exit_code"] == 0
-    assert evidence["raw_output_ref"] == "runtime/verifier/adapter-success.log"
-
-
-def test_runtime_bridge_failed_revalidation_keeps_receipt_evidence_and_hashes(tmp_path: Path) -> None:
-    def revalidator(_: DirectorRepairRevalidationRequestV1) -> DirectorRepairRevalidationInputV1:
-        return DirectorRepairRevalidationInputV1(
-            residual_artifact_quality_errors=(_RESIDUAL_ERROR,),
-            command=("rtk", "npm", "test"),
-            exit_code=1,
-            raw_output_ref="runtime/verifier/adapter-failure.log",
-            metadata=_trusted_verifier_metadata("typescript"),
-        )
-
-    results = _run_runtime_bridge(tmp_path, revalidator=revalidator)
-
-    assert len(results) == 1
-    assert results[0]["success"] is False
-    result = results[0]["result"]
-    assert result["error_code"] == "repair_revalidation_failed"
-    receipts = result["repair_kernel"]["receipts"]
-    assert len(receipts) == 1
-    receipt = receipts[0]
-    evidence = receipt["revalidation_evidence"]
-    assert receipt["status"] == "failed_revalidation"
-    assert receipt["authoritative"] is False
-    assert receipt["metadata"]["requires_revalidation"] is False
-    assert receipt["authority_hash"]
-    assert receipt["projection_hash"]
-    assert "round_number" in receipt
-    assert receipt["errors_before"] == 1
-    assert receipt["errors_after"] == 1
-    assert receipt["net_error_reduction"] == 0
-    assert evidence["command"] == ["rtk", "npm", "test"]
-    assert evidence["exit_code"] == 1
-    assert evidence["raw_output_ref"] == "runtime/verifier/adapter-failure.log"
-
-
-def test_runtime_bridge_without_revalidator_keeps_requires_revalidation_visible(tmp_path: Path) -> None:
-    results = _run_runtime_bridge(tmp_path)
-
-    assert len(results) == 1
-    assert results[0]["success"] is True
-    repair_kernel = results[0]["result"]["repair_kernel"]
-    assert repair_kernel["authoritative"] is False
-    assert repair_kernel["requires_revalidation"] is True
-    assert repair_kernel["revalidation_evidence"] == {}
-    assert repair_kernel["authority_hash"]
-    assert repair_kernel["projection_hash"]
-
-
-def test_runtime_bridge_missing_progress_callback_is_fail_soft(tmp_path: Path) -> None:
-    target = tmp_path / _RELATIVE_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(_BROKEN_CONTENT, encoding="utf-8")
-    adapter = SimpleNamespace(_execution=SimpleNamespace(_message_bus=None))
-
-    results = run_runtime_repair_with_director_tools(
-        adapter,
-        workspace_path=tmp_path,
-        task_id="task-no-progress-callback",
-        source_tool=_SOURCE_TOOL,
-        executor_factory=_FakeDirectorToolExecutor,
-        base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
-        artifact_quality_errors=(_QUALITY_ERROR,),
-        allowed_paths=(_RELATIVE_PATH,),
-    )
-
-    assert len(results) == 1
-    assert results[0]["success"] is True
-    repair_kernel = results[0]["result"]["repair_kernel"]
-    assert repair_kernel["owner_cell"] == "director.runtime"
-    assert repair_kernel["requires_revalidation"] is True
-
-
-def test_runtime_bridge_skips_covered_unplannable_before_executor(tmp_path: Path) -> None:
-    executor_created = False
-
-    def executor_factory(*_: Any, **__: Any) -> Any:
-        nonlocal executor_created
-        executor_created = True
-        raise AssertionError("covered-unplannable preflight must stop before Director tool executor")
-
-    results = run_runtime_repair_with_director_tools(
-        _FakeAdapter(tmp_path),
-        workspace_path=tmp_path,
-        task_id="task-covered-unplannable",
-        source_tool=_SOURCE_TOOL,
-        executor_factory=executor_factory,
-        base_files={"src/other.ts": "export const other = true;\n"},
-        artifact_quality_errors=(_QUALITY_ERROR,),
-        allowed_paths=("src/other.ts",),
-    )
-
-    assert executor_created is False
-    assert results == []
-
-
-def test_runtime_bridge_forwards_typed_artifact_issues_without_string_errors(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    typed_issue = {
-        "source": "artifact_quality",
-        "code": "typescript_syntax_check_failed",
-        "message": _QUALITY_ERROR,
-        "path": _RELATIVE_PATH,
-        "severity": "error",
-        "metadata": {"source": "typed_artifact_quality_issue"},
-    }
-    plan_probe_commands: list[Any] = []
-    run_commands: list[Any] = []
-
-    def fake_query_director_repair_plan_probe(command: Any) -> SimpleNamespace:
-        plan_probe_commands.append(command)
-        return SimpleNamespace(
-            items=(
-                SimpleNamespace(
-                    source_tool=_SOURCE_TOOL,
-                    status="covered_plannable",
-                    planning_result=SimpleNamespace(
-                        to_dict=lambda: {
-                            "ok": True,
-                            "planned": True,
-                            "source_tool": _SOURCE_TOOL,
-                        }
-                    ),
-                ),
-            ),
-            to_dict=lambda: {
-                "schema_version": "director.repair_plan_probe.v1",
-                "items": [{"source_tool": _SOURCE_TOOL, "status": "covered_plannable"}],
-            },
-        )
-
-    def fake_run_director_repair(
-        command: Any,
-        *,
-        writer: Any,
-        editor: Any = None,
-        deleter: Any = None,
-        revalidator: Any = None,
-    ) -> DirectorRepairResultV1:
-        del writer, editor, deleter, revalidator
-        run_commands.append(command)
-        return DirectorRepairResultV1(ok=True, receipts=(), metadata={"planning": {"ok": True}})
-
-    monkeypatch.setattr(
-        runtime_bridge_module,
-        "query_director_repair_plan_probe",
-        fake_query_director_repair_plan_probe,
-    )
-    monkeypatch.setattr(runtime_bridge_module, "run_director_repair", fake_run_director_repair)
-
-    results = run_runtime_repair_with_director_tools(
-        _FakeAdapter(tmp_path),
-        workspace_path=tmp_path,
-        task_id="task-typed-issues-only",
-        source_tool=_SOURCE_TOOL,
-        executor_factory=_FakeDirectorToolExecutor,
-        base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
-        artifact_quality_errors=(),
-        artifact_quality_issues=(typed_issue,),
-        allowed_paths=(_RELATIVE_PATH,),
-    )
-
-    assert results == []
-    assert len(plan_probe_commands) == 1
-    assert len(run_commands) == 1
-    assert plan_probe_commands[0].artifact_quality_errors == ()
-    assert plan_probe_commands[0].artifact_quality_issues == (typed_issue,)
-    assert run_commands[0].artifact_quality_errors == ()
-    assert run_commands[0].artifact_quality_issues == (typed_issue,)
-
-
-def test_runtime_bridge_fails_closed_when_planned_composition_preflight_is_not_ok(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    executor_created = False
-
-    def fake_plan_director_repair(_: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            ok=False,
-            planned=True,
-            error_code=None,
-            error_message=None,
-            to_dict=lambda: {
-                "ok": False,
-                "planned": True,
-                "source_tool": _DELETE_SOURCE_TOOL,
-                "composition_summary": {"ok": False, "issue_count": 1},
-            },
-        )
-
-    def executor_factory(*_: Any, **__: Any) -> Any:
-        nonlocal executor_created
-        executor_created = True
-        raise AssertionError("failed planning preflight must stop before executor")
-
-    monkeypatch.setattr(runtime_bridge_module, "plan_director_repair", fake_plan_director_repair)
-
-    results = run_runtime_repair_with_director_tools(
-        _FakeAdapter(tmp_path),
-        workspace_path=tmp_path,
-        task_id="task-preflight-composition-failure",
-        source_tool=_DELETE_SOURCE_TOOL,
-        executor_factory=executor_factory,
-        base_files={"src/stale.ts": "export const stale = true;\n"},
-        artifact_quality_errors=(),
-        allowed_paths=("src/stale.ts",),
-    )
-
-    assert executor_created is False
-    assert len(results) == 1
-    assert results[0]["success"] is False
-    repair_kernel = results[0]["result"]["repair_kernel"]
-    assert repair_kernel["execution_skipped"] is True
-    assert repair_kernel["execution_skip_reason"] == "planning_preflight_failed"
-    assert repair_kernel["planning_preflight"]["composition_summary"]["ok"] is False
-
-
-def test_runtime_bridge_projects_delete_file_tool_result_when_deleter_available(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    relative_path = "src/stale.ts"
-    original = "export const stale = true;\n"
-    target = tmp_path / relative_path
-    target.parent.mkdir(parents=True)
-    target.write_text(original, encoding="utf-8")
-
-    def fake_plan_director_repair(_: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            ok=True,
-            planned=True,
-            error_code=None,
-            to_dict=lambda: {"ok": True, "planned": True, "source_tool": _DELETE_SOURCE_TOOL},
-        )
-
-    def fake_run_director_repair(
-        command: Any,
-        *,
-        writer: Any,
-        editor: Any = None,
-        deleter: Any = None,
-        revalidator: Any = None,
-    ) -> DirectorRepairResultV1:
-        del command, writer, editor, revalidator
-        assert deleter is not None
-        delete_result = deleter(relative_path)
-        assert delete_result["ok"] is True
-        return DirectorRepairResultV1(
-            ok=True,
-            receipts=(
-                RepairReceiptV1(
-                    receipt_id="receipt-delete-file",
-                    plan_id="plan-delete-file",
-                    source_tool=_DELETE_SOURCE_TOOL,
-                    status="applied",
-                    authoritative=True,
-                    files_changed=(relative_path,),
-                    before_hashes={relative_path: "before-delete"},
-                    after_hashes={relative_path: "absent-after-delete"},
-                    metadata={"execution_records": [{"operation": "delete_file", "path": relative_path}]},
-                ),
-            ),
-            metadata={"planning": {"ok": True}},
-        )
-
-    monkeypatch.setattr(runtime_bridge_module, "plan_director_repair", fake_plan_director_repair)
-    monkeypatch.setattr(runtime_bridge_module, "run_director_repair", fake_run_director_repair)
-
-    results = run_runtime_repair_with_director_tools(
-        _FakeAdapter(tmp_path),
-        workspace_path=tmp_path,
-        task_id="task-delete-available",
-        source_tool=_DELETE_SOURCE_TOOL,
-        executor_factory=_FakeDirectorToolExecutorWithDelete,
-        base_files={relative_path: original},
-        artifact_quality_errors=(),
-        allowed_paths=(relative_path,),
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool"] == "delete_file"
-    assert results[0]["success"] is True
-    assert not target.exists()
-    payload = results[0]["result"]
-    assert payload["operation"] == "delete_file"
-    assert payload["bytes_written"] == 0
-    assert payload["repair_kernel"]["metadata"]["execution_records"][0]["operation"] == "delete_file"
-
-
-def test_runtime_bridge_uses_director_tool_executor_delete_file(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    relative_path = "src/stale.ts"
-    original = "export const stale = true;\n"
-    target = tmp_path / relative_path
-    target.parent.mkdir(parents=True)
-    target.write_text(original, encoding="utf-8")
-
-    def fake_plan_director_repair(_: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            ok=True,
-            planned=True,
-            error_code=None,
-            to_dict=lambda: {"ok": True, "planned": True, "source_tool": _DELETE_SOURCE_TOOL},
-        )
-
-    def fake_run_director_repair(
-        command: Any,
-        *,
-        writer: Any,
-        editor: Any = None,
-        deleter: Any = None,
-        revalidator: Any = None,
-    ) -> DirectorRepairResultV1:
-        del command, writer, editor, revalidator
-        assert deleter is not None
-        delete_result = deleter(relative_path)
-        assert delete_result["ok"] is True
-        assert delete_result["deleted"] is True
-        assert delete_result["operation"] == "delete_file"
-        return DirectorRepairResultV1(
-            ok=True,
-            receipts=(
-                RepairReceiptV1(
-                    receipt_id="receipt-delete-file-production-executor",
-                    plan_id="plan-delete-file-production-executor",
-                    source_tool=_DELETE_SOURCE_TOOL,
-                    status="applied",
-                    authoritative=True,
-                    files_changed=(relative_path,),
-                    before_hashes={relative_path: "before-delete"},
-                    after_hashes={relative_path: "absent-after-delete"},
-                    metadata={"execution_records": [{"operation": "delete_file", "path": relative_path}]},
-                ),
-            ),
-            metadata={"planning": {"ok": True}},
-        )
-
-    monkeypatch.setattr(runtime_bridge_module, "plan_director_repair", fake_plan_director_repair)
-    monkeypatch.setattr(runtime_bridge_module, "run_director_repair", fake_run_director_repair)
-
-    results = run_runtime_repair_with_director_tools(
-        _FakeAdapter(tmp_path),
-        workspace_path=tmp_path,
-        task_id="task-delete-production-executor",
-        source_tool=_DELETE_SOURCE_TOOL,
-        executor_factory=DirectorToolExecutor,
-        base_files={relative_path: original},
-        artifact_quality_errors=(),
-        allowed_paths=(relative_path,),
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool"] == "delete_file"
-    assert results[0]["success"] is True
-    assert not target.exists()
-    payload = results[0]["result"]
-    assert payload["operation"] == "delete_file"
-    assert payload["bytes_written"] == 0
-    assert payload["director_policy"]["allowed"] is True
-
-
-def test_runtime_bridge_executes_rust_duplicate_module_delete_with_real_director_tool_executor(
-    tmp_path: Path,
-) -> None:
-    duplicate_path = "src/models.rs"
-    sibling_path = "src/models/mod.rs"
-    generated = "// Polaris generated module stub\n"
-    real = "pub struct Model;\n"
-    raw_error = (
-        f'error[E0761]: file for module `models` found at both "{duplicate_path}" and "{sibling_path}"\n'
-        " --> src/lib.rs:1:1\n"
-        "  |\n"
-        "1 | pub mod models;\n"
-        "  | ^^^^^^^^^^^^^^^\n"
-    )
-    duplicate_file = tmp_path / duplicate_path
-    sibling_file = tmp_path / sibling_path
-    duplicate_file.parent.mkdir(parents=True)
-    sibling_file.parent.mkdir(parents=True)
-    duplicate_file.write_text(generated, encoding="utf-8")
-    sibling_file.write_text(real, encoding="utf-8")
-    revalidation_requests: list[DirectorRepairRevalidationRequestV1] = []
-
-    def revalidator(request: DirectorRepairRevalidationRequestV1) -> DirectorRepairRevalidationInputV1:
-        revalidation_requests.append(request)
-        return DirectorRepairRevalidationInputV1(
-            command=("rtk", "cargo", "check"),
-            exit_code=0,
-            raw_output_ref="runtime/verifier/rust-duplicate-module-delete.log",
-            metadata=_trusted_verifier_metadata("rust"),
-        )
-
-    results = run_runtime_repair_with_director_tools(
-        _FakeAdapter(tmp_path),
-        workspace_path=tmp_path,
-        task_id="task-rust-duplicate-module-delete",
-        source_tool=RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
-        executor_factory=DirectorToolExecutor,
-        base_files={
-            duplicate_path: generated,
-            sibling_path: real,
-        },
-        artifact_quality_errors=(raw_error,),
-        allowed_paths=(duplicate_path, sibling_path),
-        revalidator=revalidator,
-    )
-
-    assert len(results) == 1
-    assert len(revalidation_requests) == 1
-    assert revalidation_requests[0].source_tool == RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL
-    assert results[0]["tool"] == "delete_file"
-    assert results[0]["success"] is True
-    assert not duplicate_file.exists()
-    assert sibling_file.read_text(encoding="utf-8") == real
-    payload = results[0]["result"]
-    assert payload["operation"] == "delete_file"
-    assert payload["bytes_written"] == 0
-    assert payload["before_hash"] == sha256_text(generated)
-    assert payload["after_hash"] == FILE_ABSENT_HASH
-    assert payload["director_policy"]["allowed"] is True
-    repair_kernel = payload["repair_kernel"]
-    assert repair_kernel["authoritative"] is True
-    assert repair_kernel["before_hashes"][duplicate_path] == sha256_text(generated)
-    assert repair_kernel["after_hashes"][duplicate_path] == FILE_ABSENT_HASH
-    record = repair_kernel["metadata"]["execution_records"][0]
-    assert record["operation"] == "delete_file"
-    assert record["rollback_strategy"] == "write_file_full_restore"
-
-
-def test_runtime_bridge_missing_delete_tool_fails_closed_with_delete_reason(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    relative_path = "src/stale.ts"
-    original = "export const stale = true;\n"
-    target = tmp_path / relative_path
-    target.parent.mkdir(parents=True)
-    target.write_text(original, encoding="utf-8")
-
-    def fake_plan_director_repair(_: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            ok=True,
-            planned=True,
-            error_code=None,
-            to_dict=lambda: {"ok": True, "planned": True, "source_tool": _DELETE_SOURCE_TOOL},
-        )
-
-    def fake_run_director_repair(
-        command: Any,
-        *,
-        writer: Any,
-        editor: Any = None,
-        deleter: Any = None,
-        revalidator: Any = None,
-    ) -> DirectorRepairResultV1:
-        del command, writer, editor, revalidator
-        assert deleter is None
-        error = f"repair delete_file requires policy-gated deleter for {relative_path}"
-        return DirectorRepairResultV1(
-            ok=False,
-            receipts=(
-                RepairReceiptV1(
-                    receipt_id="receipt-delete-missing-tool",
-                    plan_id="plan-delete-missing-tool",
-                    source_tool=_DELETE_SOURCE_TOOL,
-                    status="failed",
-                    authoritative=False,
-                    files_changed=(relative_path,),
-                    metadata={"error": error},
-                ),
-            ),
-            error_code="repair_execution_failed",
-            error_message=error,
-            metadata={
-                "planning": {"ok": True},
-                "execution_error": error,
-                "execution_error_code": "delete_file_requires_policy_gated_deleter",
-                "rolled_back": False,
-            },
-        )
-
-    monkeypatch.setattr(runtime_bridge_module, "plan_director_repair", fake_plan_director_repair)
-    monkeypatch.setattr(runtime_bridge_module, "run_director_repair", fake_run_director_repair)
-
-    results = run_runtime_repair_with_director_tools(
-        _FakeAdapter(tmp_path),
-        workspace_path=tmp_path,
-        task_id="task-delete-missing-tool",
-        source_tool=_DELETE_SOURCE_TOOL,
-        executor_factory=_FakeDirectorToolExecutor,
-        base_files={relative_path: original},
-        artifact_quality_errors=(),
-        allowed_paths=(relative_path,),
-    )
-
-    assert len(results) == 1
-    assert results[0]["success"] is False
-    assert target.read_text(encoding="utf-8") == original
-    repair_kernel = results[0]["result"]["repair_kernel"]
-    assert repair_kernel["execution_error_code"] == "delete_file_requires_policy_gated_deleter"
-    assert repair_kernel["delete_tool_available"] is False
-    assert repair_kernel["receipts"][0]["metadata"]["error"].endswith(f"policy-gated deleter for {relative_path}")
-
-
-def test_runtime_bridge_convergence_verifier_projects_authoritative_receipt_evidence(tmp_path: Path) -> None:
-    requests: list[DirectorRepairConvergenceVerifierRequestV1] = []
-
-    def convergence_verifier(
-        request: DirectorRepairConvergenceVerifierRequestV1,
-    ) -> DirectorRepairVerifierSnapshotInputV1:
-        requests.append(request)
-        current = (Path(request.workspace) / _RELATIVE_PATH).read_text(encoding="utf-8")
-        residual_errors = () if "flightTime, landed:" in current else (_QUALITY_ERROR,)
-        return DirectorRepairVerifierSnapshotInputV1(
-            residual_artifact_quality_errors=residual_errors,
-            command=("rtk", "tsc", "--noEmit"),
-            exit_code=0 if not residual_errors else 1,
-            raw_output_ref=f"runtime/verifier/adapter-convergence-round-{request.round_number}.log",
-            metadata=_trusted_verifier_metadata("typescript"),
-        )
-
-    results = _run_runtime_bridge(tmp_path, convergence_verifier=convergence_verifier)
-
-    assert len(results) == 1
-    assert results[0]["success"] is True
-    assert [request.round_number for request in requests] == [0, 1]
-    assert requests[0].receipts == ()
-    assert len(requests[1].receipts) == 1
-    repair_kernel = results[0]["result"]["repair_kernel"]
-    evidence = repair_kernel["revalidation_evidence"]
-    assert repair_kernel["authoritative"] is True
-    assert repair_kernel["requires_revalidation"] is False
-    assert repair_kernel["convergence_status"] == "converged"
-    assert repair_kernel["converged"] is True
-    assert repair_kernel["convergence_round_count"] == 1
-    assert repair_kernel["final_diagnostics"] == []
-    assert repair_kernel["coverage_report"]["total_diagnostics"] == 1
-    assert repair_kernel["authority_hash"]
-    assert repair_kernel["projection_hash"]
-    assert repair_kernel["errors_before"] == 1
-    assert repair_kernel["errors_after"] == 0
-    assert repair_kernel["net_error_reduction"] == 1
-    assert evidence["command"] == ["rtk", "tsc", "--noEmit"]
-    assert evidence["exit_code"] == 0
-    assert evidence["raw_output_ref"] == "runtime/verifier/adapter-convergence-round-1.log"
-
-
-def test_runtime_bridge_convergence_failure_retains_public_payload(tmp_path: Path) -> None:
-    def convergence_verifier(
-        request: DirectorRepairConvergenceVerifierRequestV1,
-    ) -> DirectorRepairVerifierSnapshotInputV1:
-        residual_errors = (_QUALITY_ERROR,) if request.round_number == 0 else (_RESIDUAL_ERROR,)
-        return DirectorRepairVerifierSnapshotInputV1(
-            residual_artifact_quality_errors=residual_errors,
-            command=("rtk", "tsc", "--noEmit"),
-            exit_code=1,
-            raw_output_ref=f"runtime/verifier/adapter-failure-round-{request.round_number}.log",
-            metadata=_trusted_verifier_metadata("typescript"),
-        )
-
-    results = _run_runtime_bridge(
-        tmp_path,
-        convergence_verifier=convergence_verifier,
-        max_rounds=1,
-    )
-
-    assert len(results) == 1
-    assert results[0]["success"] is False
-    result = results[0]["result"]
-    assert result["error_code"] == "max_rounds_exhausted"
-    assert len(result["receipts"]) == 1
-    assert len(result["rounds"]) == 1
-    assert result["final_diagnostics"][0]["code"] == "typescript_ts2304"
-    repair_kernel = result["repair_kernel"]
-    assert repair_kernel["convergence_status"] == "max_rounds_exhausted"
-    assert repair_kernel["convergence_round_count"] == 1
-    assert len(repair_kernel["receipts"]) == 1
-    receipt = repair_kernel["receipts"][0]
-    assert receipt["authority_hash"]
-    assert receipt["projection_hash"]
-    assert receipt["requires_revalidation"] is False
-    assert receipt["revalidation_evidence"]["exit_code"] == 1
-    assert receipt["errors_before"] == 1
-    assert receipt["errors_after"] == 1
-    assert repair_kernel["coverage_report"]["total_diagnostics"] == 1
-    assert repair_kernel["final_diagnostics"][0]["code"] == "typescript_ts2304"
-    assert repair_kernel["metadata"]["status"] == "max_rounds_exhausted"
-
-
-def test_runtime_bridge_convergence_coverage_gap_fails_without_verifier(tmp_path: Path) -> None:
-    verifier_called = False
-
-    def convergence_verifier(
-        _: DirectorRepairConvergenceVerifierRequestV1,
-    ) -> DirectorRepairVerifierSnapshotInputV1:
-        nonlocal verifier_called
-        verifier_called = True
-        raise AssertionError("coverage gap should fail before verifier")
-
-    results = _run_runtime_bridge(
-        tmp_path,
-        convergence_verifier=convergence_verifier,
-        artifact_quality_errors=(_UNCOVERED_ERROR,),
-    )
-
-    assert verifier_called is False
-    assert results == []
-
-
-def test_rust_post_execution_bridge_runs_dedicated_method_self_runtime_binding(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    cargo = tmp_path / "Cargo.toml"
-    source = tmp_path / "src" / "lib.rs"
-    source.parent.mkdir(parents=True)
-    cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    broken = "pub struct Demo;\nimpl Demo {\n    pub fn foo(&) -> i32 { 1 }\n    pub fn bar(&mut) { }\n}\n"
-    source.write_text(broken, encoding="utf-8")
-    adapter = _FakeAdapter(tmp_path)
-    adapter.artifact_quality_errors = [
-        "error: expected parameter name, found `)`\n --> src/lib.rs:3:17\n  |\n3 |     pub fn foo(&) -> i32 { 1 }",
-        "error: expected parameter name, found `)`\n --> src/lib.rs:4:20\n  |\n4 |     pub fn bar(&mut) { }",
-    ]
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_rust_post_repairs(
-        adapter,
-        tmp_path,
-        task_id="task-rust-method-self",
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool_name"] == "edit_file"
-    payload = results[0]["result"]
-    assert payload["source_tool"] == "deterministic_rust_method_self_signature_repair"
-    assert payload["file"] == "src/lib.rs"
-    assert payload["repair_kernel"]["owner_cell"] == "director.runtime"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["rule_id"] == "rust.method_self_signature"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["source_tool"] == (
-        "deterministic_rust_method_self_signature_repair"
-    )
-    repaired = source.read_text(encoding="utf-8")
-    assert "pub fn foo(&self)" in repaired
-    assert "pub fn bar(&mut self)" in repaired
-
-
-def test_rust_post_execution_bridge_runs_dedicated_wrong_crate_path_runtime_binding_with_edit_file(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    cargo = tmp_path / "Cargo.toml"
-    source = tmp_path / "src" / "lib.rs"
-    source.parent.mkdir(parents=True)
-    cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    source.write_text("    use crate::recipe::Recipe;\npub fn keep() {}\n", encoding="utf-8")
-    adapter = _FakeAdapter(tmp_path)
-    adapter.artifact_quality_errors = [
-        "error[E0432]: unresolved import `crate::recipe`\n"
-        " --> src/lib.rs:1:16\n"
-        "  |\n"
-        "1 |     use crate::recipe::Recipe;\n"
-        "  |                ^^^^^^ help: a similar path exists: `models::recipe`\n"
-        "help: a similar path exists\n"
-        "  |\n"
-        "1 | use crate::models::recipe::Recipe;\n",
-    ]
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_rust_post_repairs(
-        adapter,
-        tmp_path,
-        task_id="task-rust-wrong-crate-path",
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool_name"] == "edit_file"
-    payload = results[0]["result"]
-    assert payload["source_tool"] == "deterministic_rust_wrong_crate_path_repair"
-    assert payload["source_tool"] != "deterministic_rust_post_repair"
-    assert payload["file"] == "src/lib.rs"
-    assert payload["operation"] == "edit_file"
-    assert payload["repair_kernel"]["owner_cell"] == "director.runtime"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["rule_id"] == "rust.wrong_crate_path"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["source_tool"] == (
-        "deterministic_rust_wrong_crate_path_repair"
-    )
-    repaired = source.read_text(encoding="utf-8")
-    assert "    use crate::models::recipe::Recipe;" in repaired
-    assert "use crate::recipe::Recipe;" not in repaired
-
-
-def test_rust_post_execution_bridge_runs_dedicated_copy_derive_runtime_binding_with_edit_file(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    cargo = tmp_path / "Cargo.toml"
-    source = tmp_path / "src" / "lib.rs"
-    source.parent.mkdir(parents=True)
-    cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    source.write_text(
-        "#[derive(Debug, Clone, Copy)]\npub struct Demo { value: String }\n",
-        encoding="utf-8",
-    )
-    adapter = _FakeAdapter(tmp_path)
-    adapter.artifact_quality_errors = [
-        "error[E0204]: the trait `Copy` cannot be implemented for this type\n"
-        " --> src/lib.rs:2:10\n"
-        "  |\n"
-        "2 | pub struct Demo { value: String }\n"
-        "  |          ^^^^",
-    ]
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_rust_post_repairs(
-        adapter,
-        tmp_path,
-        task_id="task-rust-copy-derive",
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool_name"] == "edit_file"
-    payload = results[0]["result"]
-    assert payload["source_tool"] == "deterministic_rust_incompatible_copy_derive_repair"
-    assert payload["source_tool"] != "deterministic_rust_post_repair"
-    assert payload["source_tool"] != "deterministic_rust_derive_repair"
-    assert payload["file"] == "src/lib.rs"
-    assert payload["operation"] == "edit_file"
-    assert payload["repair_kernel"]["owner_cell"] == "director.runtime"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["rule_id"] == "rust.incompatible_copy_derive"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["source_tool"] == (
-        "deterministic_rust_incompatible_copy_derive_repair"
-    )
-    repaired = source.read_text(encoding="utf-8")
-    assert "#[derive(Debug, Clone)]" in repaired
-    assert "Copy" not in repaired
-
-
-def test_rust_post_execution_bridge_runs_dedicated_unused_import_runtime_binding_with_edit_file(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    cargo = tmp_path / "Cargo.toml"
-    source = tmp_path / "src" / "lib.rs"
-    source.parent.mkdir(parents=True)
-    cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    source.write_text("use foo::{A, B};\npub fn keep() {}\n", encoding="utf-8")
-    adapter = _FakeAdapter(tmp_path)
-    adapter.artifact_quality_errors = [
-        "warning: unused import: `B`\n --> src/lib.rs:1:14\n  |\n1 | use foo::{A, B};\n  |              ^\n",
-    ]
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_rust_post_repairs(
-        adapter,
-        tmp_path,
-        task_id="task-rust-unused-import",
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool_name"] == "edit_file"
-    payload = results[0]["result"]
-    assert payload["source_tool"] == "deterministic_rust_unused_import_repair"
-    assert payload["source_tool"] != "deterministic_rust_post_repair"
-    assert payload["file"] == "src/lib.rs"
-    assert payload["operation"] == "edit_file"
-    assert payload["repair_kernel"]["owner_cell"] == "director.runtime"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["rule_id"] == "rust.unused_import"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["source_tool"] == (
-        "deterministic_rust_unused_import_repair"
-    )
-    repaired = source.read_text(encoding="utf-8")
-    assert "use foo::{A};" in repaired
-    assert "use foo::{A, B};" not in repaired
-
-
-def test_rust_post_execution_bridge_runs_dedicated_unresolved_pub_use_runtime_binding(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    cargo = tmp_path / "Cargo.toml"
-    source = tmp_path / "src" / "lib.rs"
-    source.parent.mkdir(parents=True)
-    cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    source.write_text("pub use foo::{A, Missing, B};\npub fn keep() {}\n", encoding="utf-8")
-    adapter = _FakeAdapter(tmp_path)
-    adapter.artifact_quality_errors = [
-        "error[E0432]: unresolved import `foo::Missing`\n"
-        " --> src/lib.rs:1:18\n"
-        "  |\n"
-        "1 | pub use foo::{A, Missing, B};\n"
-        "  |                  ^^^^^^^ no `Missing` in `foo`",
-    ]
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_rust_post_repairs(
-        adapter,
-        tmp_path,
-        task_id="task-rust-pub-use",
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool_name"] == "edit_file"
-    payload = results[0]["result"]
-    assert payload["source_tool"] == "deterministic_rust_unresolved_pub_use_repair"
-    assert payload["file"] == "src/lib.rs"
-    assert payload["repair_kernel"]["owner_cell"] == "director.runtime"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["rule_id"] == "rust.unresolved_pub_use"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["source_tool"] == (
-        "deterministic_rust_unresolved_pub_use_repair"
-    )
-    repaired = source.read_text(encoding="utf-8")
-    assert "pub use foo::{A, B};" in repaired
-    assert "Missing" not in repaired
-
-
-def test_rust_post_execution_bridge_runs_dedicated_trait_import_runtime_binding_with_edit_file(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    cargo = tmp_path / "Cargo.toml"
-    source = tmp_path / "src" / "lib.rs"
-    source.parent.mkdir(parents=True)
-    cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    broken = "use crate::bar::Bar;\n\npub fn run() {}\n"
-    source.write_text(broken, encoding="utf-8")
-    adapter = _FakeAdapter(tmp_path)
-    adapter.artifact_quality_errors = [
-        "error[E0599]: no method named `render` found for struct `Widget` in the current scope\n"
-        " --> src/lib.rs:3:12\n"
-        "  |\n"
-        "help: trait `Renderable` which provides `render` is implemented but not in scope; "
-        "perhaps add a use for it:\n"
-        "  |\n"
-        "1 + use crate::render::Renderable;\n",
-    ]
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_rust_post_repairs(
-        adapter,
-        tmp_path,
-        task_id="task-rust-trait-import",
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool_name"] == "edit_file"
-    payload = results[0]["result"]
-    assert payload["source_tool"] == "deterministic_rust_trait_import_repair"
-    assert payload["file"] == "src/lib.rs"
-    assert payload["operation"] == "edit_file"
-    assert payload["repair_kernel"]["owner_cell"] == "director.runtime"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["rule_id"] == "rust.trait_import"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["source_tool"] == (
-        "deterministic_rust_trait_import_repair"
-    )
-    repaired = source.read_text(encoding="utf-8")
-    assert "use crate::render::Renderable;" in repaired
-    assert payload["source_tool"] != "deterministic_rust_post_repair"
-
-
-def test_rust_post_execution_bridge_runs_dedicated_line_suggestion_runtime_binding_with_edit_file(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    cargo = tmp_path / "Cargo.toml"
-    source = tmp_path / "src" / "lib.rs"
-    source.parent.mkdir(parents=True)
-    cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    broken = "fn takes(_: &String) {}\nfn main() {\n    takes(value)\n}\n"
-    source.write_text(broken, encoding="utf-8")
-    adapter = _FakeAdapter(tmp_path)
-    adapter.artifact_quality_errors = [
-        "error[E0308]: mismatched types\n"
-        " --> src/lib.rs:3:11\n"
-        "  |\n"
-        "3 |     takes(value)\n"
-        "  |           ^^^^^ expected `&String`, found `String`\n"
-        "help: consider borrowing here\n"
-        "  |\n"
-        "3 |     takes(&value)",
-    ]
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_rust_post_repairs(
-        adapter,
-        tmp_path,
-        task_id="task-rust-line-suggestion",
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool_name"] == "edit_file"
-    payload = results[0]["result"]
-    assert payload["source_tool"] == "deterministic_rust_line_suggestion_repair"
-    assert payload["file"] == "src/lib.rs"
-    assert payload["operation"] == "edit_file"
-    assert payload["repair_kernel"]["owner_cell"] == "director.runtime"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["rule_id"] == "rust.line_suggestion"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["source_tool"] == (
-        "deterministic_rust_line_suggestion_repair"
-    )
-    repaired = source.read_text(encoding="utf-8")
-    assert "takes(&value)" in repaired
-    assert "takes(value)" not in repaired
-
-
-def test_rust_post_execution_bridge_runs_missing_module_runtime_binding_with_write_file(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    cargo = tmp_path / "Cargo.toml"
-    source = tmp_path / "src" / "lib.rs"
-    source.parent.mkdir(parents=True)
-    cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    source.write_text("pub mod models;\n", encoding="utf-8")
-    adapter = _FakeAdapter(tmp_path)
-    adapter.artifact_quality_errors = [
-        "error[E0583]: file not found for module `models`\n"
-        " --> src/lib.rs:1:1\n"
-        "  |\n"
-        "1 | pub mod models;\n"
-        "  | ^^^^^^^^^^^^^^^\n"
-        "  |\n"
-        '  = help: to create the module `models`, create file "src/models.rs" or "src/models/mod.rs"\n',
-    ]
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_rust_post_repairs(
-        adapter,
-        tmp_path,
-        task_id="task-rust-missing-module",
-    )
-
-    assert len(results) == 1
-    assert results[0]["tool_name"] == "write_file"
-    payload = results[0]["result"]
-    assert payload["source_tool"] == "deterministic_rust_missing_module_file_repair"
-    assert payload["source_tool"] != "deterministic_rust_post_repair"
-    assert payload["file"] == "src/models.rs"
-    assert payload["operation"] == "write_file"
-    assert payload["repair_kernel"]["owner_cell"] == "director.runtime"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["rule_id"] == "rust.missing_module_file"
-    assert payload["repair_kernel"]["planning"]["plan_summary"]["source_tool"] == (
-        "deterministic_rust_missing_module_file_repair"
-    )
-    created = (tmp_path / "src" / "models.rs").read_text(encoding="utf-8")
-    assert "Polaris marker: rust.missing_module_file" in created
-    assert "pub struct" not in created
+# DEO-2C removed the synchronous adapter-owned mutation contract. Its
+# replacement coverage lives in test_director_repair_writers.py and the
+# roles.kernel deferred-repair effect/follow-up suites.
 
 
 def test_rust_post_execution_bridge_runs_runtime_source_tool_sequence_without_adapter_aggregate(
@@ -1465,7 +441,7 @@ def test_rust_post_execution_bridge_runs_runtime_source_tool_sequence_without_ad
         workspace_path: Path,
         task_id: str,
         source_tool: str,
-        executor_factory: Any,
+        execution_attempt: Any,
         base_files: dict[str, str],
         artifact_quality_errors: tuple[str, ...] = (),
         allowed_paths: tuple[str, ...] = (),
@@ -1475,7 +451,7 @@ def test_rust_post_execution_bridge_runs_runtime_source_tool_sequence_without_ad
         use_editor: bool = False,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        del executor_factory, kwargs
+        del execution_attempt, kwargs
         assert adapter_arg is adapter
         assert workspace_path == tmp_path.resolve()
         assert task_id == "task-rust-runtime-sequence"
@@ -1493,7 +469,7 @@ def test_rust_post_execution_bridge_runs_runtime_source_tool_sequence_without_ad
             assert use_editor is True
             assert advisor_notes == expected_advisor_notes
             assert convergence_verifier is sentinel_verifier
-            assert max_rounds == 3
+            assert max_rounds == 1
         return []
 
     monkeypatch.setattr(
@@ -1632,12 +608,12 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
         workspace_path: Path,
         task_id: str,
         source_tool: str,
-        executor_factory: Any,
+        execution_attempt: Any,
         base_files: dict[str, str],
         convergence_verifier: Any = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        del adapter, executor_factory, kwargs
+        del adapter, execution_attempt, kwargs
         call = {
             "workspace_path": workspace_path,
             "task_id": task_id,
@@ -1760,14 +736,14 @@ def test_materialization_python_import_runs_through_runtime_bridge(
         workspace_path: Path,
         task_id: str,
         source_tool: str,
-        executor_factory: Any,
+        execution_attempt: Any,
         base_files: dict[str, str],
         artifact_quality_errors: list[str],
         allowed_paths: tuple[str, ...],
         use_editor: bool,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        del adapter, executor_factory, kwargs
+        del adapter, execution_attempt, kwargs
         runtime_calls.append(
             {
                 "workspace_path": workspace_path,
@@ -1896,7 +872,7 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
         workspace_path: Path,
         task_id: str,
         source_tool: str,
-        executor_factory: Any,
+        execution_attempt: Any,
         base_files: dict[str, str],
         artifact_quality_errors: list[str],
         allowed_paths: tuple[str, ...],
@@ -1904,7 +880,7 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
         convergence_verifier: Any = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        del adapter, executor_factory, artifact_quality_errors, kwargs
+        del adapter, execution_attempt, artifact_quality_errors, kwargs
         runtime_calls.append(
             {
                 "workspace_path": workspace_path,
@@ -2064,14 +1040,14 @@ def test_materialization_target_runtime_intersects_allowed_paths_with_current_ta
         workspace_path: Path,
         task_id: str,
         source_tool: str,
-        executor_factory: Any,
+        execution_attempt: Any,
         base_files: dict[str, str],
         artifact_quality_errors: list[str],
         allowed_paths: tuple[str, ...],
         use_editor: bool,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        del adapter, executor_factory, base_files, artifact_quality_errors, kwargs
+        del adapter, execution_attempt, base_files, artifact_quality_errors, kwargs
         runtime_calls.append(
             {
                 "workspace_path": workspace_path,
@@ -2281,14 +1257,14 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         workspace_path: Path,
         task_id: str,
         source_tool: str,
-        executor_factory: Any,
+        execution_attempt: Any,
         base_files: dict[str, str],
         artifact_quality_errors: list[str],
         allowed_paths: tuple[str, ...],
         use_editor: bool,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        del adapter, executor_factory, artifact_quality_errors, kwargs
+        del adapter, execution_attempt, artifact_quality_errors, kwargs
         runtime_calls.append(
             {
                 "workspace_path": workspace_path,
@@ -3187,149 +2163,6 @@ def test_post_execution_migration_debt_marks_runtime_verifier_evidence_without_a
     assert "adapter_projection_record_requires_revalidation" in java_step["blockers"]
 
 
-def test_java_post_execution_junit_dependency_runs_runtime_binding(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    relative_path = "src/test/java/AppTest.java"
-    target = tmp_path / relative_path
-    target.parent.mkdir(parents=True)
-    target.write_text(
-        "import org.junit.jupiter.api.Test;\n"
-        "import static org.junit.jupiter.api.Assertions.assertEquals;\n\n"
-        "public class AppTest {\n"
-        "    @Test\n"
-        "    public void addsNumbers() {\n"
-        "        assertEquals(4, 2 + 2);\n"
-        "    }\n"
-        "}\n",
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_java_post_repairs(
-        _FakeAdapter(tmp_path),
-        tmp_path,
-        task_id="task-java-junit-runtime",
-    )
-
-    payloads = [item["result"] for item in results]
-    source_tools = [payload["source_tool"] for payload in payloads]
-    assert source_tools == ["deterministic_java_post_repair"]
-    updated = target.read_text(encoding="utf-8")
-    assert "org.junit" not in updated
-    assert "assertEquals" not in updated
-    assert "public static void main" in updated
-    repair_kernel = payloads[0]["repair_kernel"]
-    assert repair_kernel["owner_cell"] == "director.runtime"
-    assert repair_kernel["planning_preflight"]["plan_summary"]["rule_id"] == "java.post_execution_conservative"
-
-
-def test_java_post_execution_eof_truncation_runs_aggregate_runtime_binding(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    relative_path = "src/test/java/polaris/factory/RhythmEngineTest.java"
-    target = tmp_path / relative_path
-    target.parent.mkdir(parents=True)
-    target.write_text(
-        "package polaris.factory;\n\n"
-        "public final class RhythmEngineTest {\n"
-        "    public static void main(String[] args) {\n"
-        "        int defaultRc = Main.run(new String[]{});\n"
-        '        check("cli",\n',
-        encoding="utf-8",
-    )
-    raw_error = (
-        f'{target}:6: error: reached end of file while parsing\n        check("cli",\n                    ^\n1 error'
-    )
-    adapter = _FakeAdapter(tmp_path)
-    adapter.artifact_quality_errors = [raw_error]
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-
-    results = post_execution_repair_bridge._run_java_post_repairs(
-        adapter,
-        tmp_path,
-        task_id="task-java-eof-runtime",
-    )
-
-    payloads = [item["result"] for item in results]
-    source_tools = [payload["source_tool"] for payload in payloads]
-    assert source_tools == ["deterministic_java_post_repair"]
-    updated = target.read_text(encoding="utf-8")
-    assert 'check("cli",' not in updated
-    assert updated.endswith("}\n}\n")
-    repair_kernel = payloads[0]["repair_kernel"]
-    assert repair_kernel["owner_cell"] == "director.runtime"
-    assert repair_kernel["planning_preflight"]["plan_summary"]["rule_id"] == "java.post_execution_conservative"
-    assert repair_kernel["planning_preflight"]["diagnostic_count"] == 1
-    assert payloads[0]["operation"] == "edit_file"
-
-
-def test_post_execution_runtime_bound_repair_passes_convergence_verifier(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    header = tmp_path / "src" / "models" / "postcard.hpp"
-    target = tmp_path / "src" / "engine" / "generator.cpp"
-    header.parent.mkdir(parents=True)
-    target.parent.mkdir(parents=True)
-    header.write_text("#pragma once\n", encoding="utf-8")
-    target.write_text('#include "src/models/postcard.hpp"\n#include <string>\n', encoding="utf-8")
-
-    class FakeAdapter:
-        def __init__(self) -> None:
-            self.workspace = str(tmp_path)
-            self._execution = SimpleNamespace(_message_bus=None)
-            self.progress: list[tuple[str, str, str | None]] = []
-
-        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
-            self.progress.append((task_id, state, current_file))
-
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
-    requests: list[DirectorRepairConvergenceVerifierRequestV1] = []
-
-    def convergence_verifier(
-        request: DirectorRepairConvergenceVerifierRequestV1,
-    ) -> DirectorRepairVerifierSnapshotInputV1:
-        requests.append(request)
-        current = target.read_text(encoding="utf-8")
-        residual_errors = (
-            ()
-            if '#include "../models/postcard.hpp"' in current
-            else ("src/engine/generator.cpp:1:10: fatal error: 'src/models/postcard.hpp' file not found",)
-        )
-        return DirectorRepairVerifierSnapshotInputV1(
-            residual_artifact_quality_errors=residual_errors,
-            command=("rtk", "cmake", "--build", "build"),
-            exit_code=0 if not residual_errors else 1,
-            raw_output_ref=f"runtime/verifier/cpp-post-round-{request.round_number}.log",
-            metadata=_trusted_verifier_metadata("cpp"),
-        )
-
-    results = post_execution_repair_bridge._run_cpp_include_path_runtime_repair(
-        FakeAdapter(),
-        tmp_path,
-        task_id="task-cpp-convergence",
-        convergence_verifier=convergence_verifier,
-    )
-
-    assert len(results) == 1
-    assert [request.round_number for request in requests] == [0, 1]
-    assert requests[0].receipts == ()
-    assert len(requests[1].receipts) == 1
-    assert '#include "../models/postcard.hpp"' in target.read_text(encoding="utf-8")
-    repair_kernel = results[0]["result"]["repair_kernel"]
-    assert repair_kernel["owner_cell"] == "director.runtime"
-    assert repair_kernel["authoritative"] is True
-    assert repair_kernel["requires_revalidation"] is False
-    assert repair_kernel["convergence_status"] == "converged"
-    assert repair_kernel["convergence_round_count"] == 1
-    assert repair_kernel["revalidation_evidence"]["command"] == ["rtk", "cmake", "--build", "build"]
-    assert repair_kernel["revalidation_evidence"]["exit_code"] == 0
-
-
 def test_post_execution_scheduler_bridge_counts_callback_receipt_projections_without_authority(
     tmp_path: Path,
     monkeypatch: Any,
@@ -3541,7 +2374,7 @@ def test_post_execution_scheduler_bridge_prefers_public_result_receipt_projectio
     ) -> SimpleNamespace:
         del runner
         assert "cpp.post_execution" in runner_step_ids
-        assert max_rounds == 3
+        assert max_rounds == 1
         return SimpleNamespace(
             ordered_steps=(step,),
             tool_results=(tool_result,),

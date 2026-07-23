@@ -92,7 +92,12 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
     FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS,
     FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.contracts import FILE_ABSENT_HASH, sha256_text
+from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
+    FILE_ABSENT_HASH,
+    ComposedPatch,
+    CompositionResult,
+    sha256_text,
+)
 from polaris.cells.director.runtime.internal.repair_kernel.generic_hygiene_syntax import (
     SCAFFOLD_MARKER_QUALITY_CLEANUP_SOURCE_TOOL,
     build_scaffold_marker_cleanup_plan,
@@ -121,6 +126,8 @@ from polaris.cells.director.runtime.public import (
     DirectorRepairAdvisoryPolicyResultV1,
     DirectorRepairAdvisoryValidationResultV1,
     DirectorRepairCoverageReportV1,
+    DirectorRepairEffectPlanV1,
+    DirectorRepairEffectV1,
     DirectorRepairKernelSummaryProjectionResultV1,
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
@@ -156,6 +163,7 @@ from polaris.cells.director.runtime.public import (
     build_director_repair_kernel_summary,
     compare_director_repair_shadow_run,
     evaluate_director_repair_cutover_readiness,
+    hash_director_repair_effect_plan,
     normalize_director_repair_issue_diagnostics,
     plan_director_repair,
     project_director_repair_kernel_summary,
@@ -176,6 +184,7 @@ from polaris.cells.director.runtime.public import (
     service as runtime_public_service,
     validate_director_repair_advisory,
 )
+from polaris.cells.director.runtime.public.directed_effect_contracts import hash_directed_effect_arguments
 from polaris.cells.director.runtime.public.service import normalize_director_repair_diagnostics
 from polaris.kernelone.quality import artifact_quality_issues_from_errors
 from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
@@ -1094,7 +1103,7 @@ def test_repair_rule_registry_matches_existing_multilanguage_legacy_strategy_met
     assert payload["items"][0]["diagnostic_language"] == "cpp"
     assert "deterministic_java_post_repair" in matched_source_tools[1]
     assert payload["items"][1]["diagnostic_language"] == "java"
-    assert matched_source_tools[2] == ["deterministic_python_package_shadow_bridge_repair"]
+    assert matched_source_tools[2] == ["deterministic_python_missing_module_alias_repair"]
     assert payload["items"][2]["diagnostic_language"] == "python"
     assert matched_source_tools[3] == [
         "deterministic_node_test_script_contract_repair",
@@ -2804,6 +2813,245 @@ def test_public_typescript_import_specifier_keyword_repair_plans_precise_text_re
     assert payload["composition_summary"]["ok"] is True
     assert payload["composition_summary"]["changed_paths"] == ["src/models/Market.ts"]
     assert "  type ReputationTier," in payload["composition_summary"]["patches"][0]["content_after"]
+
+    effect_plan = planning_result.effect_plan
+    assert effect_plan is not None
+    forward_effects = tuple(effect for effect in effect_plan.effects if effect.contingency_kind == "forward")
+    rollback_effects = tuple(effect for effect in effect_plan.effects if effect.contingency_kind == "rollback")
+    assert len(forward_effects) == 1
+    assert len(rollback_effects) == 1
+    assert forward_effects[0].tool_name == "edit_file"
+    assert dict(forward_effects[0].arguments) == {
+        "file": "src/models/Market.ts",
+        "replace": "  type ReputationTier,\n",
+        "search": "  export type ReputationTier,\n",
+    }
+    assert rollback_effects[0].tool_name == "write_file"
+    assert dict(rollback_effects[0].arguments) == {
+        "content": content,
+        "file": "src/models/Market.ts",
+    }
+    assert rollback_effects[0].activates_after_call_id == forward_effects[0].call_id
+    assert effect_plan.effect_count == 2
+    assert payload["effect_plan"]["plan_hash"] == effect_plan.plan_hash
+
+
+def test_director_repair_effect_plan_is_recursive_immutable_and_hash_bound() -> None:
+    arguments = (
+        ("file", "src/app.ts"),
+        ("replace", "good"),
+        ("search", "bad"),
+    )
+    effect = DirectorRepairEffectV1(
+        call_id="repair-call-1",
+        operation_id="repair-op-1",
+        tool_name="edit_file",
+        arguments=arguments,
+        contingency_kind="forward",
+        target_path="src/app.ts",
+        expected_before_hash="a" * 64,
+        expected_after_hash="b" * 64,
+        exists_before=True,
+        exists_after=True,
+    )
+    rollback_effect = DirectorRepairEffectV1(
+        call_id="repair-call-rollback-1",
+        operation_id="repair-op-rollback-1",
+        tool_name="write_file",
+        arguments=(("content", "bad"), ("file", "src/app.ts")),
+        contingency_kind="rollback",
+        activates_after_call_id=effect.call_id,
+        target_path="src/app.ts",
+        expected_before_hash="b" * 64,
+        expected_after_hash="a" * 64,
+        exists_before=True,
+        exists_after=True,
+    )
+    plan = DirectorRepairEffectPlanV1(
+        plan_id="repair-plan-1",
+        source_tool="deterministic_test_repair",
+        effects=(effect, rollback_effect),
+        round_number=1,
+    )
+
+    assert effect.arguments_hash == hash_directed_effect_arguments(arguments)
+    assert plan.effect_count == 2
+    assert plan.plan_hash == hash_director_repair_effect_plan(
+        plan_id=plan.plan_id,
+        source_tool=plan.source_tool,
+        round_number=plan.round_number,
+        effects=plan.effects,
+    )
+    assert plan.to_dict()["effects"][0]["arguments"] == {
+        "file": "src/app.ts",
+        "replace": "good",
+        "search": "bad",
+    }
+    assert plan.plan_hash != hash_director_repair_effect_plan(
+        plan_id=plan.plan_id,
+        source_tool=plan.source_tool,
+        round_number=plan.round_number,
+        effects=plan.effects,
+        schema_version="director.repair_effect_plan.v2",
+        owner_cell=plan.owner_cell,
+    )
+
+    with pytest.raises(ValueError, match="schema_version"):
+        DirectorRepairEffectPlanV1(
+            plan_id="repair-plan-schema-drift",
+            source_tool="deterministic_test_repair",
+            effects=(effect, rollback_effect),
+            schema_version="director.repair_effect_plan.v2",
+        )
+
+    with pytest.raises(ValueError, match="owner_cell"):
+        DirectorRepairEffectPlanV1(
+            plan_id="repair-plan-owner-drift",
+            source_tool="deterministic_test_repair",
+            effects=(effect, rollback_effect),
+            owner_cell="roles.kernel",
+        )
+
+    with pytest.raises(TypeError, match="tuple of immutable key/value pairs"):
+        DirectorRepairEffectV1(
+            call_id="repair-call-2",
+            operation_id="repair-op-2",
+            tool_name="edit_file",
+            arguments={"file": "src/app.ts"},  # type: ignore[arg-type]
+            contingency_kind="forward",
+            target_path="src/app.ts",
+            expected_before_hash="a" * 64,
+            expected_after_hash="b" * 64,
+            exists_before=True,
+            exists_after=True,
+        )
+
+    with pytest.raises(TypeError, match="tuple of immutable key/value pairs"):
+        DirectorRepairEffectV1(
+            call_id="repair-call-list",
+            operation_id="repair-op-list",
+            tool_name="edit_file",
+            arguments=list(arguments),  # type: ignore[arg-type]
+            contingency_kind="forward",
+            target_path="src/app.ts",
+            expected_before_hash="a" * 64,
+            expected_after_hash="b" * 64,
+            exists_before=True,
+            exists_after=True,
+        )
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'arguments_hash'"):
+        DirectorRepairEffectV1(  # type: ignore[call-arg]
+            call_id="repair-call-forged-hash",
+            operation_id="repair-op-forged-hash",
+            tool_name="edit_file",
+            arguments=arguments,
+            arguments_hash="f" * 64,
+            contingency_kind="forward",
+            target_path="src/app.ts",
+            expected_before_hash="a" * 64,
+            expected_after_hash="b" * 64,
+            exists_before=True,
+            exists_after=True,
+        )
+
+    with pytest.raises(ValueError, match=r"workspace-relative|traversal-free"):
+        DirectorRepairEffectV1(
+            call_id="repair-call-traversal",
+            operation_id="repair-op-traversal",
+            tool_name="delete_file",
+            arguments=(("file", "../app.ts"),),
+            contingency_kind="forward",
+            target_path="../app.ts",
+            expected_before_hash="a" * 64,
+            expected_after_hash="b" * 64,
+            exists_before=True,
+            exists_after=False,
+        )
+
+    with pytest.raises(ValueError, match="tool_name"):
+        DirectorRepairEffectV1(
+            call_id="repair-call-shell",
+            operation_id="repair-op-shell",
+            tool_name="execute_command",  # type: ignore[arg-type]
+            arguments=(("file", "src/app.ts"),),
+            contingency_kind="forward",
+            target_path="src/app.ts",
+            expected_before_hash="a" * 64,
+            expected_after_hash="b" * 64,
+            exists_before=True,
+            exists_after=True,
+        )
+
+    with pytest.raises(ValueError, match="round_number must be exactly 1"):
+        DirectorRepairEffectPlanV1(
+            plan_id="repair-plan-round-2",
+            source_tool="deterministic_test_repair",
+            effects=(effect, rollback_effect),
+            round_number=2,  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="call_id values must be unique"):
+        DirectorRepairEffectPlanV1(
+            plan_id="repair-plan-duplicate",
+            source_tool="deterministic_test_repair",
+            effects=(effect, effect),
+            round_number=1,
+        )
+
+
+def test_multi_edit_patch_collapses_to_one_atomic_forward_and_rollback() -> None:
+    before = "abcde"
+    after_second = "aBcDe"
+    first = RepairOperation(
+        kind="text_replace",
+        path="src/app.ts",
+        operation_id="edit-first",
+        span_start=1,
+        span_end=2,
+        expected="b",
+        replacement="B",
+    )
+    second = RepairOperation(
+        kind="text_replace",
+        path="src/app.ts",
+        operation_id="edit-second",
+        span_start=3,
+        span_end=4,
+        expected="d",
+        replacement="D",
+    )
+    plan = RepairPlan(
+        plan_id="multi-edit-plan",
+        rule_id="multi-edit-rule",
+        source_tool="deterministic_multi_edit_repair",
+        operations=(first, second),
+    )
+    composition = CompositionResult(
+        ok=True,
+        patches=(
+            ComposedPatch(
+                path="src/app.ts",
+                content_before=before,
+                content_after=after_second,
+                operation_ids=(first.operation_id, second.operation_id),
+            ),
+        ),
+    )
+
+    effect_plan = runtime_public_service._to_public_repair_effect_plan(plan, composition)
+
+    assert effect_plan is not None
+    rollbacks = tuple(effect for effect in effect_plan.effects if effect.contingency_kind == "rollback")
+    forwards = tuple(effect for effect in effect_plan.effects if effect.contingency_kind == "forward")
+    assert len(rollbacks) == 1
+    assert len(forwards) == 1
+    assert forwards[0].tool_name == "write_file"
+    assert dict(forwards[0].arguments)["content"] == after_second
+    assert rollbacks[0].tool_name == "write_file"
+    assert dict(rollbacks[0].arguments)["content"] == before
+    assert rollbacks[0].expected_before_hash == forwards[0].expected_after_hash
+    assert rollbacks[0].expected_after_hash == sha256_text(before)
 
 
 def test_typescript_import_specifier_keyword_rule_fails_closed_without_named_import_clause() -> None:
@@ -5824,6 +6072,69 @@ def test_public_runtime_dependency_repair_plans_node_types_dev_dependency() -> N
     assert payload["composition_summary"]["ok"] is True
     assert payload["composition_summary"]["changed_paths"] == ["package.json"]
     assert '"@types/node"' in payload["composition_summary"]["patches"][0]["content_after"]
+
+
+def test_public_runtime_dependency_repair_covers_and_plans_missing_python_requirements() -> None:
+    source_tool = "deterministic_runtime_dependency_repair"
+    diagnostics = (
+        "requirements.txt must declare requests",
+        "requirements.txt must declare pydantic",
+    )
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=diagnostics))
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={"src/main.py": "import requests\nfrom pydantic import BaseModel\n"},
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    )
+
+    coverage_payload = coverage.to_dict()
+    assert coverage_payload["covered_diagnostic_count"] == 2
+    assert coverage_payload["uncovered_diagnostic_count"] == 0
+    assert all(item["executable_runtime_plan_matched"] is True for item in coverage_payload["items"])
+    assert all(item["matched_source_tools"] == [source_tool] for item in coverage_payload["items"])
+
+    assert planning.ok is True
+    assert planning.planned is True
+    assert planning.effect_plan is not None
+    forward = tuple(effect for effect in planning.effect_plan.effects if effect.contingency_kind == "forward")
+    assert len(forward) == 1
+    assert forward[0].tool_name == "write_file"
+    assert forward[0].target_path == "requirements.txt"
+    assert forward[0].exists_before is False
+    assert dict(forward[0].arguments) == {
+        "content": "pydantic\nrequests\n",
+        "file": "requirements.txt",
+    }
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    (
+        "requirements.txt must declare at least one dependency",
+        "requirements.txt must declare ../../evil",
+        "requirements.txt must declare requests/evil",
+        "requirements.txt must declare https://example.invalid/pkg.whl",
+        "requirements.txt must declare requests>=2",
+    ),
+)
+def test_public_runtime_dependency_repair_rejects_ambiguous_python_requirements_evidence(
+    diagnostic: str,
+) -> None:
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool="deterministic_runtime_dependency_repair",
+            base_files={"src/main.py": "print('ok')\n"},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+
+    assert planning.planned is False
+    assert planning.effect_plan is None
 
 
 def test_public_runtime_dependency_repair_covers_node_scheme_ts2307() -> None:

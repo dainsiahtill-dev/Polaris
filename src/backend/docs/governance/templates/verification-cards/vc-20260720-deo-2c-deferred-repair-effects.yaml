@@ -1,0 +1,80 @@
+card_id: vc-20260720-deo-2c-deferred-repair-effects
+bug_summary: >-
+  Deterministic repair callbacks currently construct DirectorToolExecutor or
+  inject it through executor_factory and synchronously perform write, edit, or
+  delete effects outside the canonical kernel-owned DEO inventory and claim path.
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_path:
+  files:
+    - polaris/cells/roles/adapters/internal/director/runtime_repair_tool_adapter.py
+    - polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py
+    - polaris/cells/roles/adapters/internal/director/materialization_quality_callback_ports.py
+    - polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py
+    - polaris/cells/director/runtime/public/contracts.py
+  symptom: >-
+    Repair planning is Director-owned, but adapter callbacks synchronously bind
+    writer/editor/deleter callables to a physical executor. One repair effect is
+    therefore not guaranteed to equal one sealed TaskRuntime operation and one
+    fresh claim grant.
+assumptions:
+  - id: A1
+    statement: Director Runtime can project every planned repair effect without executing it.
+    status: verified_true
+    evidence: Director Runtime projects an immutable, hash-bound effect plan; adapter bridge tests prove zero physical execution during projection.
+  - id: A2
+    statement: Kernel can schedule one visible follow-up batch after the active batch returns.
+    status: verified_true
+    evidence: Kernel consumes one typed deferred request as one visible counted follow-up ToolBatch; second-round and nested dispatch are rejected.
+  - id: A3
+    statement: One repair round is sufficient for DEO-2C without receipt closure.
+    status: verified_true
+    evidence: DEO-2 blueprint permits one planned round and reserves later rounds for DEO-3.
+pre_mortem:
+  failure_point: >-
+    A deferred request could become a second authority source, a nested hidden
+    batch, or a mutable adapter-controlled plan if exact re-planning, hashing,
+    batch visibility, and single-round limits are omitted.
+  risk_zone:
+    - repair plan projection and canonical hash
+    - adapter callback mutation paths
+    - ToolBatchExecutor follow-up scheduling
+    - rollback contingency admission
+verification_plan:
+  unit_tests:
+    - Director immutable effect projection and plan hash tests
+    - kernel deferred request validation and synthetic invocation tests
+    - adapter zero-effect deferred projection tests
+    - one-round follow-up batch integration and negative controls
+  static_gates:
+    - exact baseline and closure AST inventory
+    - dependency direction and no nested batch architecture tests
+    - ruff check and format
+    - mypy and compileall
+    - YAML parse and catalog hard-fail
+    - git diff --check
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  closed_at: "2026-07-20"
+  evidence:
+    provider_requests: 0
+    target_project_physical_effects: 0
+    isolated_test_workspace_physical_effects: verified
+    bench_runs: 0
+    final_provider_request_qualification: N/A
+    independent_reviews: PASS/PASS
+    catalog_issue_count: 0
+    catalog_mismatch_count: 0
+    cross_cell_composition_tests: 27 passed
+    focused_tests:
+      roles_kernel: 141 passed
+      roles_adapters_and_architecture: 134 passed
+      director_runtime: 598 passed
+      task_runtime_owned_suite: 395 passed
+      kernelone_guarded_fs: 53 passed
+      independent_review_target: 101 passed
+    physical_receipt_boundary: non_authoritative_non_durable_hash_bound
+    receipt_authoritative_tamper_rejected: true
+    real_production_composition_test: true

@@ -1470,3 +1470,252 @@ Runs:
   final provider request and readable-snapshot qualification for every role and
   every physical attempt. Provider/Bench remain forbidden; Bench is
   `not_schedulable` until B3.4-B3.6, integration and pre-bench gates close.
+
+## 2026-07-20 - DEO-2B Task 5 prepared lifecycle closure
+
+- Task 5 is closed. Every sealed member binds the exact Task 4 authorization
+  binding/hash before any operation admission; all six pre-claim TaskRuntime
+  results require exact type plus recursive contract reconstruction.
+- The process-local fence has separate admin/consume views, fixed capacity,
+  exact attempt-scoped cleanup, one-shot identity spending, and PID denial
+  before lock acquisition. A regression forks while another thread owns the
+  inherited lock and proves bounded `deo_fence_pid_mismatch` instead of deadlock.
+- Frozen evidence: focused `271 passed`, complete TaskRuntime `841 passed in
+  148.53s`, adjacent guard `25 passed`; Ruff/format/mypy/compileall/catalog/diff
+  green; independent spec and security reviews `CLEAR`, P0/P1/P2 zero.
+- Task 5 performs no claim, current-policy capture, revalidation, consume,
+  mutation, or Provider call; FPR=`N/A`. Task 6 is the sole active DEO-2B
+  bucket. Task 9 and all later DEO/Bench work remain `not_schedulable`.
+
+## 2026-07-20 - DEO-2B Task 6 claim and consume-only adapter closure
+
+- Task 6 is closed. Lifecycle claim construction accepts only an exact fresh,
+  non-idempotent TaskRuntime grant, binds current PID plus the exact member,
+  authorization evidence, bound policy snapshot, and current Job Token
+  restriction evidence, then registers through the admin fence only.
+- The adapter public surface exposes only a factory returning the mutation
+  protocol. The private order is structural validation -> current-policy
+  revalidation -> one-shot consume -> physical executor. It owns no claim,
+  retry, raw fallback, receipt, transport, or terminal-admission authority.
+- Frozen evidence: directed-effect matrix `264 passed`, complete TaskRuntime
+  `841 passed in 148.31s`; Ruff/format/mypy/compileall/import/catalog/diff gates
+  green. Denial tests cover outer/nested forgery, stale policy, target drift,
+  reconstruction, replay, mismatch, and PID with zero physical calls.
+- Task 9 still owns authoritative versioned current-policy capture and
+  production wiring. Task 7 subsequently closed and Task 8 is the sole active
+  DEO-2B bucket. Provider/Bench remain forbidden and FPR=`N/A` for Task 6.
+
+## 2026-07-20 - DEO-2B Task 7 attempt validation and heartbeat closure
+
+- Task 7 is closed. Guarded session stream, non-stream, direct-stream, and
+  controller entrypoints validate exact public TaskRuntime attempt identity
+  before request or kernel construction.
+- Lifecycle batch preparation, per-call claim, and the transaction tool guard
+  share one public heartbeat path with TTL 120, lock timeout 5, canonical
+  verdict reconstruction, and stable-binding checks. No private authority state
+  is read.
+- Frozen evidence: focused `76 passed`; roles-runtime public `259 passed`;
+  related kernel `116 passed`; complete TaskRuntime `841 passed in 145.41s`;
+  Ruff/format/mypy/compileall/import/acyclicity/catalog/diff gates green.
+- Provider requests and physical effects are zero; FPR=`N/A`. Task 8 is now the
+  sole active DEO-2B bucket; later DEO and Bench work remain not schedulable.
+
+## 2026-07-20 - DEO-2B Task 8 exact production wiring closure
+
+- Task 8 is closed. Director creates one policy port, one PID-bound fence pair,
+  and one consume-only mutation port, then injects their exact immutable bundle
+  through roles.runtime and roles.kernel to both authoritative and speculative
+  ToolBatchRuntime construction.
+- The fresh public TaskRuntime attempt identity travels separately; required
+  mode rejects missing authority before provider dependency construction.
+  Uninjected legacy callers retain the explicit `None` path. No DEO state is
+  hidden in metadata, events, tool arguments, a singleton, or private authority
+  fields.
+- Frozen evidence: focused `104 passed`; roles-runtime plus directed-effect
+  adapter `328 passed`; Ruff/format/mypy/compileall/import/acyclicity/YAML/
+  catalog/diff gates green, with catalog issue/mismatch counts both zero.
+- Provider requests and physical effects are zero; FPR=`N/A`. Task 9 is now the
+  sole active/schedulable DEO-2B bucket; later DEO and Bench remain not
+  schedulable.
+
+## 2026-07-20 - DEO-2B Task 9 classify, claim, and dispatch closure
+
+- Task 9 is closed. ToolBatchExecutor classifies the final batch once and
+  completes every mutation authorization plus inventory seal before any mixed
+  READ. READ retains the raw executor path; WRITE, ASYNC, and unknown/default-
+  write calls cannot use raw or speculative adoption in required DEO mode.
+- ToolBatchRuntime claims each exact prepared member just in time, captures
+  current policy only through the adapter-owned port, registers the exact
+  context, and calls only the mutation port. First denial stops later calls;
+  an earlier successful effect remains recorded. Batch fence entries are
+  released once on completion to prevent successful-run capacity leaks.
+- Frozen evidence: locked suites `232 passed`; exact production authority
+  wiring `57 passed`; Ruff/format/mypy/compileall/diff checks green. The named
+  duplicate-dispatch test passed once; `pytest-repeat` is not installed, while
+  the existing 32-way consume race remains green.
+- Provider requests and Bench runs are zero; FPR=`N/A`. Task 10 is now the sole
+  active/schedulable DEO-2B bucket. Later DEO and Bench remain not schedulable.
+
+## 2026-07-20 - DEO-2B Task 10 in-process authority fence closure
+
+- Task 10 is closed. `DirectedEffectExecutionContextV1` rejects pickle,
+  `ForkingPickler`, `SimpleQueue`, and `Pipe`; JSON/public projections cannot
+  carry context or grant objects/keys. No record or transport constructor was
+  added.
+- A copied fork child receives `deo_fence_pid_mismatch`, creates no sentinel
+  effect, and cannot spend the parent capability; the parent retains its one
+  valid consume.
+- Architecture fences lock dependency direction, stable pure command-
+  capability delegation, hidden adapter executor types, exact one-bundle
+  wiring, raw READ-only shape, mutation validation/revalidation/consume order,
+  and absence of transport/terminal authority in new DEO modules.
+- Frozen evidence: architecture/wiring `27 passed`; command-capability `13
+  passed`; Ruff/format/mypy/compileall/diff green. Provider requests, Bench
+  runs, and real physical effects are zero; FPR=`N/A`. Task 11 is sole active
+  DEO-2B bucket; later DEO and Bench remain not schedulable.
+
+## 2026-07-20 - DEO-2B Task 11 nested-grant and consumer-fence closure
+
+- Task 11 is closed without changing TaskRuntime production code. The old
+  guarded suite passed before the planned consumer assertion existed; the new
+  RED exact-inventory assertion exposed only canonical claimant, constructor,
+  validator, adapter mutation-port, tool-batch, and public re-export sites.
+- GREEN freezes that exact allowlist and singleton grant issuer, lifecycle
+  claimant/context constructor, pure validator, and physical consumer. The
+  integrated TaskRuntime regression proves actual command identity/CAS/hash
+  binding, all nested grant fields, canonical grant hash, one operation append,
+  unchanged registry, and replay with `claim_grant is None`.
+- Frozen evidence: locked Task 11 suite `373 passed in 147.78s`; Ruff, format,
+  mypy, compileall, and `git diff --check` green on all three files. Provider
+  requests, Bench runs, and physical effects are zero; FPR=`N/A`. Task 12 is
+  sole active DEO-2B bucket; later DEO and Bench remain not schedulable.
+
+## 2026-07-20 - DEO-2B Task 12 final closure
+
+- DEO-2B Tasks 1-12 are closed. Final behavior evidence: targeted `675`,
+  policy snapshot `117`, selected command capability `17`, KernelOne
+  architecture `18`, aggregate KernelOne release gate exit `0`; all locked
+  Ruff/format/mypy/compileall/YAML/diff gates green.
+- Independent pre-closure specification and quality reviews returned
+  `PASS/PASS`; specification decided B1-B7 explicitly. After correcting only
+  TaskRuntime cell/README/catalog status text, catalog hard-fail reported
+  `issue_count=0` and `mismatch_count=0`, closure tests passed `385`, and final
+  diff reviews returned `PASS/PASS`.
+- Closure scope is only the selected canonical in-process grant-consuming
+  Director path. TaskRuntime remains sole durable directed-effect authority.
+  DEO-2 overall remains `p0_open`; 38 other mutation surfaces, DEO-2C/2D,
+  receipt closure, recovery, parent close, terminal admission, pre-bench, and
+  Bench remain outside this closure and not schedulable. Provider requests,
+  Bench runs, target-project changes, and Task 12 physical effects were zero.
+
+## 2026-07-20 - DEO-2C deferred repair effect closure
+
+- DEO-2C is closed. Director Runtime projects an immutable, hash-bound repair
+  effect/rollback plan; roles.kernel consumes one typed deferred request as one
+  visible counted follow-up ToolBatch and rejects any second round. The central
+  adapter repair bridge performs no physical mutation.
+- Physical write/edit/delete executes only after real TaskRuntime claim, PID
+  fence registration/consume, current-policy revalidation, and guarded
+  KernelOne CAS. Pre-claim denial aborts the current and every later inventory
+  member in order; claimed failures execute only activated rollback effects;
+  unknown/cancelled outcomes retain the fence for DEO-3.
+- Physical success now returns a hash-bound receipt including
+  `authoritative=false`, `durable=false`, and `parent_close_eligible=false`.
+  A regression proves changing `authoritative` to true invalidates the hash;
+  another real composition test covers TaskRuntime -> production mutation port
+  -> DirectorToolExecutor -> ToolBatchRuntime success.
+- Evidence: roles.kernel `141`, adapters+architecture `134`, Director Runtime
+  `598`, TaskRuntime-owned `395`, guarded FS `53`, prior complete TaskRuntime
+  `843`; static gates green; independent reviews `PASS/PASS`. Provider/Bench
+  calls and target-project effects were zero; FPR=`N/A`. DEO-2D is the sole
+  next bucket; DEO-3/4/pre-bench/Bench remain `not_schedulable`.
+
+## 2026-07-20 - DEO-2D zero-unbound mutation closure
+
+- DEO-2D is closed. Repository-wide AST fences permit exactly one physical
+  `DirectorToolExecutor` composition root and one execute call, both inside the
+  directed-effect mutation port. Director execution/planning, Tasking raw and
+  PATCH apply, adapter base/QA process paths, and legacy repair writers now
+  fail closed or project typed deferred requests.
+- Deferred repair and command requests share one bounded replay fence. Mapping,
+  list, and tuple traversal is depth/node/capacity bounded; successful typed
+  requests are collected and removed, while failed/raw requests are removed
+  without execution. Real, no-mock-writer integration proves both request types
+  reach TaskRuntime claim, lifecycle/fence, production mutation port, and a
+  physical receipt.
+- Frozen evidence: roles.kernel `2716`, roles.adapters `1238`, Director Runtime
+  plus TaskRuntime `1597`, KernelOne guarded FS/command `282`, Tasking `47`, QA
+  `82`, traversal review `20`; Ruff, production mypy, catalog, and focused
+  architecture gates green. Independent reviews `PASS/PASS`, Critical and
+  Important zero. Provider/Bench calls and target-project effects were zero.
+- DEO-2 is complete. DEO-3 is now the sole active bucket for durable receipt
+  commit, recovery, parent close, and terminal admission. DEO-4, pre-bench,
+  Provider, and Bench remain `not_schedulable`.
+
+## 2026-07-20 - DEO-3 durable receipt settlement closure
+
+- DEO-3 is closed. TaskRuntime owns strict durable receipt/recovery/dead-letter
+  facts, pending terminal intent, outcome-bound child/parent close, finite
+  startup reconciliation, and heartbeat/reclaim/deadline fences. The Director
+  mutation port validates the exact TaskRuntime receipt commit before success;
+  ambiguous post-effect outcomes never blindly re-execute.
+- Run Ledger remains read-only and shares one strict receipt validator with
+  tool lifecycle. Missing evidence and present-but-failed evidence are distinct;
+  malformed/padded hashes, identifiers, versions, flags, outcomes, extra fields,
+  and non-finite values fail closed.
+- Frozen evidence: TaskRuntime `409 + 486`, Run Ledger `311`, architecture
+  `1402 passed, 8 skipped`; Ruff/format/mypy(9)/compileall/YAML/import/catalog/
+  diff gates green; catalog issue/mismatch counts `0/0`; independent reviews
+  `CLEAR/CLEAR`, Critical/Important `0/0`.
+- Provider requests, Bench runs, and target-project effects are zero. DEO-4 is
+  now the sole active bucket; pre-bench, Provider, and Bench remain
+  `not_schedulable`.
+
+## 2026-07-20 - DEO-4 legacy removal architecture closure
+
+- DEO-4 is closed. `DirectorToolExecutor` physical authority is exact
+  process-local instance identity registered only by the private canonical
+  factory. Direct construction, manual `object.__new__`/`__dict__` clones,
+  copy/deepcopy, pickle, and stolen marker state cannot grant authority.
+- The canonical mutation port has no injectable executor slot. After its
+  one-shot fence is consumed, both factory-construction and physical-execution
+  exceptions durably enter recovery; replay remains denied and cannot duplicate
+  an effect.
+- The production architecture fence covers direct/module imports, aliases,
+  assignment/taint, wildcard imports, constant/dynamic `getattr`, `vars`,
+  `__dict__`, importlib exact-module strings, public re-exports, and executor
+  self-factory attempts. It freezes one private constructor, one canonical
+  factory consumer, and one physical execute consumer.
+- Frozen evidence: `100` focused tests, roles.adapters `1250`, TaskRuntime plus
+  Run Ledger `720`, roles.kernel `2716`, guarded FS/FactStream `283`;
+  repository architecture `1411 passed, 8 skipped in 1351.24s`;
+  Ruff/format/strict-mypy/compileall/import/YAML-JSON/catalog/diff gates green;
+  independent reviews `CLEAR/CLEAR`, Critical/Important/Minor `0/0/0`.
+- Provider requests, Bench runs, and target-project effects are `0/0/0`.
+  Pre-bench is now the sole active gate; Provider and Bench remain
+  `not_schedulable` until B3 physical dispatch, final provider-request context,
+  isolated startup, and the closed DEO inventory are independently revalidated.
+
+## 2026-07-22 - Pre-bench execution fact chain gate closure
+
+- Pre-bench is closed and grants exactly one fresh isolated L1-04 acceptance
+  run. DEO-1A through DEO-4 and B3.4-B3.6 are physically wired; no Provider or
+  Bench call occurred before closure.
+- TaskRuntime Factory owner recovery now binds only explicit Factory metadata
+  or stable `session_id + attempt` row identity. It never treats a role child
+  `run_id` as Factory authority and never rejects a legitimate owner because a
+  heartbeat deadline projection lags. Recovery tests explicitly bind Factory
+  ownership instead of relying on the retired inference.
+- Context snapshot e2e inspection now reads the same resolved project runtime
+  root used by producer and `/v2/context/*`; it no longer constructs a doubled
+  `projects/<workspace>/runtime` path.
+- Fresh evidence: TaskRuntime `895 passed`; TaskRuntime plus Factory recovery
+  `141 passed`; physical/final-request pre-bench matrix `582 passed`, including
+  PM/Architect/Chief Engineer/Director/QA; ContextOS, fresh-workspace and
+  instance gates `250 passed`; Ruff and strict TaskRuntime mypy green.
+- Frozen executable diff SHA-256 is
+  `c06f8df50a43b6274d5642cea5a05d21f2f70770497ce15dcbae7746491d11b2`
+  at HEAD `5a758d7d236f534e41287211707aa6a7152ed7a0`, unchanged before/after the
+  final matrix. Main ports `49977/5173` remain reserved; the long-lived main
+  backend is source-stale, so acceptance must use a fresh non-main isolated
+  backend and audit every final provider-request snapshot.

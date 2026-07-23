@@ -567,6 +567,21 @@ class FactorySettlementConsumer:
                 reason_code="stale_workspace_fencing_token",
             )
         if not barrier.source_fact_visible or not barrier.closed:
+            if (
+                state is not None
+                and state.status is SettlementJournalStatus.PENDING
+                and state.pending_phase is SettlementPendingPhase.WAITING_BARRIER
+            ):
+                return SettlementDecision(
+                    source_fact_event_id=source.event_id,
+                    source_fact_seq=source.event_seq,
+                    factory_run_id=source.factory_run_id,
+                    workspace_fencing_token=source.workspace_fencing_token,
+                    outcome=SettlementOutcome.PENDING,
+                    ack_safe=False,
+                    journal_event_id=state.event_id,
+                    reason_code="run_ledger_barrier_open",
+                )
             pending = self._journal.append_waiting_barrier(
                 identity,
                 source_fact_seq=source.event_seq,
@@ -658,6 +673,7 @@ class FactorySettlementConsumer:
             pending = self._journal.append_waiting_retry(
                 identity,
                 source_fact_seq=source.event_seq,
+                claim_id=claim.claim_id,
                 error_code=exc.code,
                 barrier_hash=barrier.barrier_hash,
                 evidence_refs=evidence_refs,

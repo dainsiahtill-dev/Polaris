@@ -21,6 +21,7 @@ from typing import Any, Final, NoReturn
 
 _READ_CHUNK_BYTES: Final[int] = 64 * 1024
 _MAX_RELATIVE_PATH_UTF8_BYTES: Final[int] = 1024
+_RENAME_NOREPLACE: Final[int] = 1
 _RENAME_EXCHANGE: Final[int] = 2
 
 
@@ -457,6 +458,18 @@ def _before_guarded_replace_revalidation(parent_fd: int, leaf_name: str) -> None
     del parent_fd, leaf_name
 
 
+def _before_guarded_create_commit(parent_fd: int, leaf_name: str) -> None:
+    """Injectable no-op seam immediately before the atomic absent-leaf create."""
+
+    del parent_fd, leaf_name
+
+
+def _before_guarded_remove_revalidation(parent_fd: int, leaf_name: str) -> None:
+    """Injectable no-op seam before compare-and-remove captures commit state."""
+
+    del parent_fd, leaf_name
+
+
 def _after_guarded_replace(parent_fd: int, leaf_name: str) -> None:
     """Injectable no-op seam immediately before the replacement post-read."""
 
@@ -492,6 +505,34 @@ def _exchange_guarded_leaves(left_name: str, right_name: str, parent_fd: int) ->
             raise _fail(
                 "guarded_replace_capability_unavailable",
                 "renameat2(RENAME_EXCHANGE) is unsupported by the running kernel or filesystem",
+                errno=error_number,
+            )
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _rename_guarded_leaf_noreplace(source_name: str, target_name: str, parent_fd: int) -> None:
+    """Atomically move one same-parent entry only when the target is absent."""
+
+    renameat2 = _load_renameat2()
+    if renameat2 is None:
+        raise _fail(
+            "guarded_replace_capability_unavailable",
+            "renameat2(RENAME_NOREPLACE) became unavailable",
+        )
+    ctypes.set_errno(0)
+    result = renameat2(
+        parent_fd,
+        os.fsencode(source_name),
+        parent_fd,
+        os.fsencode(target_name),
+        _RENAME_NOREPLACE,
+    )
+    if result != 0:
+        error_number = ctypes.get_errno() or errno.EIO
+        if error_number in {errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP}:
+            raise _fail(
+                "guarded_replace_capability_unavailable",
+                "renameat2(RENAME_NOREPLACE) is unsupported by the running kernel or filesystem",
                 errno=error_number,
             )
         raise OSError(error_number, os.strerror(error_number))
@@ -1083,3 +1124,259 @@ def guarded_compare_and_replace_regular_file(
         finally:
             if temp_state == "replacement":
                 _cleanup_guarded_temp(current.fd, temp_name)
+
+
+def guarded_compare_and_create_regular_file(
+    root: str | PathLike[str],
+    relative_path: str,
+    content: bytes,
+    *,
+    max_bytes: int,
+) -> GuardedRegularFileSnapshotV1:
+    """Create one exact regular file only when its commit-time leaf is absent."""
+
+    bound = _validated_max_bytes(max_bytes)
+    if type(content) is not bytes:
+        raise ValueError("content must be exact immutable bytes")
+    if len(content) > bound:
+        raise _fail(
+            "guarded_create_max_bytes_exceeded",
+            "guarded create content exceeds max_bytes",
+            max_bytes=bound,
+            size=len(content),
+        )
+    path_parts = _validated_relative_parts(relative_path)
+    root_path, root_parts = _validated_root(root)
+    _require_replace_capabilities()
+
+    with ExitStack() as stack:
+        directories: list[_DirectoryWitness] = []
+        current = _retain_directory(stack, parent=None, entry_name="/", display_name="/")
+        directories.append(current)
+        display_parts: list[str] = []
+        for component in root_parts:
+            display_parts.append(component)
+            current = _retain_directory(
+                stack,
+                parent=current,
+                entry_name=component,
+                display_name="/" + "/".join(display_parts),
+            )
+            directories.append(current)
+        root_witness = current
+
+        relative_display: list[str] = []
+        for component in path_parts[:-1]:
+            relative_display.append(component)
+            current = _retain_directory(
+                stack,
+                parent=current,
+                entry_name=component,
+                display_name=f"{root_path.rstrip('/')}/{'/'.join(relative_display)}",
+            )
+            directories.append(current)
+
+        leaf_name = path_parts[-1]
+        temp_name, temp_fd = _open_guarded_replace_temp(current.fd, leaf_name)
+        stack.callback(os.close, temp_fd)
+        temp_present = True
+        try:
+            _write_all(temp_fd, content, name=temp_name)
+            os.fsync(temp_fd)
+            temp_fingerprint = _file_fingerprint(temp_fd, name=temp_name)
+            os.lseek(temp_fd, 0, os.SEEK_SET)
+            if _read_bounded(temp_fd, max_bytes=max(1, bound), name=temp_name) != content:
+                raise _fail(
+                    "guarded_create_temp_verify_failed",
+                    "guarded create temporary bytes differ before commit",
+                )
+            _verify_leaf_entry(current.fd, temp_name, temp_fingerprint)
+            for witness in directories:
+                _verify_directory_witness(witness)
+
+            _before_guarded_create_commit(current.fd, leaf_name)
+            try:
+                os.stat(leaf_name, dir_fd=current.fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise _fail(
+                    "guarded_create_expected_mismatch",
+                    "guarded create target exists at commit time",
+                    name=relative_path,
+                )
+            try:
+                _rename_guarded_leaf_noreplace(temp_name, leaf_name, current.fd)
+            except FileExistsError as exc:
+                raise _fail(
+                    "guarded_create_expected_mismatch",
+                    "guarded create target appeared at commit time",
+                    name=relative_path,
+                ) from exc
+            except OSError as exc:
+                if exc.errno == errno.EEXIST:
+                    raise _fail(
+                        "guarded_create_expected_mismatch",
+                        "guarded create target appeared at commit time",
+                        name=relative_path,
+                    ) from exc
+                raise _fail(
+                    "guarded_create_commit_failed",
+                    "guarded create atomic no-replace commit failed",
+                    errno=exc.errno,
+                ) from exc
+            temp_present = False
+            os.fsync(current.fd)
+
+            new_fd = _open_descriptor(stack, leaf_name, parent_fd=current.fd, directory=False)
+            new_fingerprint = _file_fingerprint(new_fd, name=relative_path)
+            new_content = _read_bounded(new_fd, max_bytes=max(1, bound), name=relative_path)
+            _verify_leaf_entry(current.fd, leaf_name, new_fingerprint)
+            if new_content != content or new_fingerprint.size != len(content):
+                raise _fail(
+                    "guarded_create_postread_mismatch",
+                    "guarded create post-read bytes or size differ",
+                )
+            for witness in directories:
+                _verify_directory_witness(witness)
+            return GuardedRegularFileSnapshotV1(
+                relative_path=relative_path,
+                content=new_content,
+                size=new_fingerprint.size,
+                device=new_fingerprint.device,
+                inode=new_fingerprint.inode,
+                mtime_ns=new_fingerprint.mtime_ns,
+                ctime_ns=new_fingerprint.ctime_ns,
+                root_device=root_witness.device,
+                root_inode=root_witness.inode,
+            )
+        except OSError as exc:
+            raise _fail(
+                "guarded_create_io_failed",
+                "guarded create I/O failed",
+                errno=exc.errno,
+            ) from exc
+        finally:
+            if temp_present:
+                _cleanup_guarded_temp(current.fd, temp_name)
+
+
+def guarded_compare_and_remove_regular_file(
+    root: str | PathLike[str],
+    expected: GuardedRegularFileSnapshotV1,
+    *,
+    max_bytes: int,
+) -> None:
+    """Remove one exact snapshot without deleting a commit-time replacement."""
+
+    bound = _validated_max_bytes(max_bytes)
+    if type(expected) is not GuardedRegularFileSnapshotV1:
+        raise ValueError("expected must be an exact GuardedRegularFileSnapshotV1")
+    if expected.size != len(expected.content) or expected.size > bound:
+        raise _fail(
+            "guarded_remove_expected_invalid",
+            "expected snapshot size/content is internally inconsistent or unbounded",
+        )
+
+    path_parts = _validated_relative_parts(expected.relative_path)
+    root_path, root_parts = _validated_root(root)
+    _require_replace_capabilities()
+
+    # Reuse the proven atomic exchange CAS. The unique tombstone is then moved
+    # out of the logical path with RENAME_NOREPLACE before it is unlinked.
+    tombstone = f"polaris-guarded-remove:{uuid.uuid4().hex}".encode("ascii")
+    _before_guarded_remove_revalidation(-1, path_parts[-1])
+    try:
+        replacement = guarded_compare_and_replace_regular_file(
+            root,
+            expected,
+            tombstone,
+            max_bytes=max(bound, len(tombstone)),
+        )
+    except GuardedRegularFileSnapshotError as exc:
+        if exc.code == "guarded_replace_expected_mismatch":
+            raise _fail(
+                "guarded_remove_expected_mismatch",
+                "guarded remove target differs from the expected snapshot",
+                source_error_code=exc.code,
+            ) from exc
+        raise
+
+    with ExitStack() as stack:
+        directories: list[_DirectoryWitness] = []
+        current = _retain_directory(stack, parent=None, entry_name="/", display_name="/")
+        directories.append(current)
+        display_parts: list[str] = []
+        for component in root_parts:
+            display_parts.append(component)
+            current = _retain_directory(
+                stack,
+                parent=current,
+                entry_name=component,
+                display_name="/" + "/".join(display_parts),
+            )
+            directories.append(current)
+        if (current.device, current.inode) != (replacement.root_device, replacement.root_inode):
+            raise _fail(
+                "guarded_remove_expected_mismatch",
+                "guarded remove root differs after compare-and-replace",
+            )
+        relative_display: list[str] = []
+        for component in path_parts[:-1]:
+            relative_display.append(component)
+            current = _retain_directory(
+                stack,
+                parent=current,
+                entry_name=component,
+                display_name=f"{root_path.rstrip('/')}/{'/'.join(relative_display)}",
+            )
+            directories.append(current)
+
+        leaf_name = path_parts[-1]
+        leaf_fd = _open_descriptor(stack, leaf_name, parent_fd=current.fd, directory=False)
+        _verify_expected_leaf(
+            leaf_fd,
+            parent_fd=current.fd,
+            leaf_name=leaf_name,
+            expected=replacement,
+        )
+        for witness in directories:
+            _verify_directory_witness(witness)
+
+        removed_name = f".{leaf_name[:64]}.{uuid.uuid4().hex}.tmp"
+        try:
+            _rename_guarded_leaf_noreplace(leaf_name, removed_name, current.fd)
+        except OSError as exc:
+            raise _fail(
+                "guarded_remove_commit_failed",
+                "guarded remove atomic no-replace move failed",
+                errno=exc.errno,
+            ) from exc
+        moved_identity = _entry_identity(current.fd, removed_name)
+        try:
+            moved_fd = _open_descriptor(stack, removed_name, parent_fd=current.fd, directory=False)
+            moved_fingerprint = _file_fingerprint(moved_fd, name=removed_name)
+            moved_content = _read_bounded(moved_fd, max_bytes=max(1, len(tombstone)), name=removed_name)
+            if (
+                not _exchange_fingerprint_matches(moved_fingerprint, _expected_fingerprint(replacement))
+                or moved_content != tombstone
+            ):
+                raise _fail(
+                    "guarded_remove_expected_mismatch",
+                    "guarded remove moved a leaf different from its private tombstone",
+                )
+            _verify_entry_identity(current.fd, removed_name, moved_identity)
+        except GuardedRegularFileSnapshotError:
+            try:
+                _rename_guarded_leaf_noreplace(removed_name, leaf_name, current.fd)
+            except OSError as rollback_exc:
+                raise _fail(
+                    "guarded_remove_reconciliation_required",
+                    "guarded remove preserved a concurrent leaf but could not restore its path",
+                    errno=rollback_exc.errno,
+                    preserved_name=removed_name,
+                ) from rollback_exc
+            raise
+
+        _cleanup_guarded_temp(current.fd, removed_name)
+        os.fsync(current.fd)

@@ -6,6 +6,7 @@ import asyncio
 import multiprocessing
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,6 +20,7 @@ from polaris.cells.events.fact_stream.public import (
     fact_stream_bootstrap_streams,
 )
 from polaris.cells.factory.pipeline.internal import (
+    factory_run_service as factory_run_service_module,
     factory_stage_executor as stage_executor_module,
 )
 from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
@@ -46,6 +48,12 @@ from polaris.cells.factory.pipeline.public.contracts import (
     FactoryWorkspaceRunLeaseConflictError,
 )
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+    RESERVE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+    FactoryPhysicalAttemptGrantViewV1,
+    ReserveFactoryPhysicalAttemptV1,
+)
 from polaris.cells.runtime.task_runtime.public.contracts import (
     BindRuntimeTaskToFactoryRunCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
@@ -951,6 +959,476 @@ async def test_second_service_cannot_bypass_replay_to_execute_live_stage(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_recovery_durably_fences_still_running_peer_service(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    restarted = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    created = await owner.create_run(FactoryConfig(name="cross-process-replay-fence"))
+    running = await owner.start_run(created.id)
+    old_token = running.metadata["factory_workspace_run_lease"]["fencing_token"]
+    stage_lease = owner._admission.claim_stage(
+        created.id,
+        fencing_token=old_token,
+        stage="director_dispatch",
+        nonce="old-service-stage-claim",
+    )
+    stage_claim = stage_lease.stage_execution_claim
+    assert stage_claim is not None
+    old_port = owner._physical_attempt_coordinator(created.id)
+    grant = FactoryPhysicalAttemptGrantViewV1(
+        schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+        verification_scope="factory",
+        factory_run_id=created.id,
+        role="director",
+        stage="director_dispatch",
+        workspace_fencing_token=old_token,
+        stage_claim_attempt=stage_claim.attempt,
+        stage_claim_nonce=stage_claim.nonce,
+        execution_authority_hash="a" * 64,
+        attempt_budget=2,
+    )
+    old_port.register_grant(grant)
+    old_command = ReserveFactoryPhysicalAttemptV1(
+        schema_version=RESERVE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+        verification_scope="factory",
+        factory_run_id=created.id,
+        run_id="director-child-run",
+        role="director",
+        turn_id="director-turn",
+        call_id="pre-recovery-call",
+        request_freeze_id="freeze-1",
+        execution_authority_hash=grant.execution_authority_hash,
+        attempt_budget=2,
+        provider="openai_compat",
+        model="bound-model",
+        semantic_request_hash="b" * 64,
+        physical_wire_hash="c" * 64,
+    )
+    old_port.reserve(old_command)
+    assert old_port.admission_closed is False
+
+    recovered = await restarted.recover_run(created.id)
+    durable_before_old_peer = restarted._admission.current()
+
+    assert durable_before_old_peer is not None
+    assert durable_before_old_peer.state.value == "released"
+    assert durable_before_old_peer.fencing_token > old_token
+    assert durable_before_old_peer.lifecycle_operation_claim is None
+    assert recovered.metadata["factory_workspace_run_lease"]["state"] == "released"
+    assert restarted._physical_attempt_coordinator(created.id).admission_closed is True
+    assert old_port.admission_closed is False
+
+    with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_authority_closed"):
+        old_port.reserve(replace(old_command, call_id="post-recovery-call"))
+
+    with pytest.raises(
+        FactoryPhysicalAttemptControlError,
+        match="factory_physical_attempt_recovered_run_permanently_closed",
+    ):
+        await owner.execute_stage(
+            created.id,
+            "pm_planning",
+            {"heartbeat_interval_seconds": 0},
+        )
+
+    assert restarted._admission.current() == durable_before_old_peer
+
+    with pytest.raises(
+        FactoryPhysicalAttemptControlError,
+        match="factory_physical_attempt_recovered_run_permanently_closed",
+    ):
+        await owner.start_run(created.id)
+    assert restarted._admission.current() == durable_before_old_peer
+
+
+@pytest.mark.asyncio
+async def test_recovery_deadline_is_rechecked_after_blocking_replay_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    restarted = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    created = await owner.create_run(FactoryConfig(name="replay-deadline-after-capture"))
+    await owner.start_run(created.id)
+    expired = False
+    original_capture = restarted._capture_physical_attempt_replay_fence
+
+    def capture_then_expire(*args: Any, **kwargs: Any) -> object:
+        nonlocal expired
+        result = original_capture(*args, **kwargs)
+        expired = True
+        return result
+
+    monkeypatch.setattr(restarted, "_capture_physical_attempt_replay_fence", capture_then_expire)
+
+    class _ReplayTime:
+        @staticmethod
+        def monotonic() -> float:
+            return 31.0 if expired else 0.0
+
+    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+    with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
+        await restarted.recover_run(created.id)
+
+    assert created.id not in restarted._physical_attempt_coordinators
+
+
+@pytest.mark.asyncio
+async def test_recovery_deadline_stops_before_lifecycle_read_after_role_read_expires(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    restarted = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    created = await owner.create_run(FactoryConfig(name="replay-deadline-between-role-lifecycle"))
+    await owner.start_run(created.id)
+    expired = False
+    lifecycle_reads = 0
+    original_role_query = factory_run_service_module.query_factory_role_evidence_replay_snapshot
+    original_lifecycle_query = factory_run_service_module.query_factory_provider_attempt_lifecycle_replay
+
+    def role_query_then_expire(*args: Any, **kwargs: Any) -> object:
+        nonlocal expired
+        result = original_role_query(*args, **kwargs)
+        expired = True
+        return result
+
+    def lifecycle_query(*args: Any, **kwargs: Any) -> object:
+        nonlocal lifecycle_reads
+        lifecycle_reads += 1
+        return original_lifecycle_query(*args, **kwargs)
+
+    class _ReplayTime:
+        @staticmethod
+        def monotonic() -> float:
+            return 31.0 if expired else 0.0
+
+    monkeypatch.setattr(
+        factory_run_service_module, "query_factory_role_evidence_replay_snapshot", role_query_then_expire
+    )
+    monkeypatch.setattr(factory_run_service_module, "query_factory_provider_attempt_lifecycle_replay", lifecycle_query)
+    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+
+    with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
+        await restarted.recover_run(created.id)
+
+    assert lifecycle_reads == 0
+    assert created.id not in restarted._physical_attempt_coordinators
+
+
+@pytest.mark.asyncio
+async def test_recovery_deadline_stops_before_snapshot_read_after_event_read_expires(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    restarted = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    created = await owner.create_run(FactoryConfig(name="replay-deadline-between-event-snapshot"))
+    await owner.start_run(created.id)
+    expired = False
+    deadline_started = False
+    snapshot_reads = 0
+    original_event_read = restarted.store._read_authoritative_events_sync
+    original_snapshot_read = restarted.store._read_strict_snapshot_sync
+
+    def event_read_then_expire(*args: Any, **kwargs: Any) -> object:
+        nonlocal expired
+        result = original_event_read(*args, **kwargs)
+        if deadline_started:
+            expired = True
+        return result
+
+    def snapshot_read(*args: Any, **kwargs: Any) -> object:
+        nonlocal snapshot_reads
+        if deadline_started:
+            snapshot_reads += 1
+        return original_snapshot_read(*args, **kwargs)
+
+    class _ReplayTime:
+        @staticmethod
+        def monotonic() -> float:
+            nonlocal deadline_started
+            deadline_started = True
+            return 31.0 if expired else 0.0
+
+    monkeypatch.setattr(restarted.store, "_read_authoritative_events_sync", event_read_then_expire)
+    monkeypatch.setattr(restarted.store, "_read_strict_snapshot_sync", snapshot_read)
+    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+
+    with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
+        await restarted.recover_run(created.id)
+
+    assert snapshot_reads == 0
+    assert created.id not in restarted._physical_attempt_coordinators
+
+
+@pytest.mark.asyncio
+async def test_recovery_deadline_stops_after_lifecycle_hold_entry_before_second_storage_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    restarted = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    created = await owner.create_run(FactoryConfig(name="replay-deadline-after-hold-entry"))
+    await owner.start_run(created.id)
+    expired = False
+    yielded_revalidations = 0
+    original_hold = restarted._admission.hold_active_lifecycle_operation_claim
+
+    @contextmanager
+    def hold_then_expire(*args: Any, **kwargs: Any) -> Any:
+        nonlocal expired
+        with original_hold(*args, **kwargs) as revalidate:
+            expired = True
+
+            def counted_revalidate() -> object:
+                nonlocal yielded_revalidations
+                yielded_revalidations += 1
+                return revalidate()
+
+            yield counted_revalidate
+
+    class _ReplayTime:
+        @staticmethod
+        def monotonic() -> float:
+            return 31.0 if expired else 0.0
+
+    monkeypatch.setattr(restarted._admission, "hold_active_lifecycle_operation_claim", hold_then_expire)
+    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+
+    with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
+        await restarted.recover_run(created.id)
+
+    assert yielded_revalidations == 0
+    assert created.id not in restarted._physical_attempt_coordinators
+
+
+@pytest.mark.asyncio
+async def test_recovery_deadline_stops_after_final_lease_revalidation_before_final_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    restarted = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    created = await owner.create_run(FactoryConfig(name="replay-deadline-after-final-revalidation"))
+    await owner.start_run(created.id)
+    expired = False
+    yielded_revalidations = 0
+    fence_captures = 0
+    original_hold = restarted._admission.hold_active_lifecycle_operation_claim
+    original_capture = restarted._capture_physical_attempt_replay_fence
+
+    @contextmanager
+    def counted_hold(*args: Any, **kwargs: Any) -> Any:
+        with original_hold(*args, **kwargs) as revalidate:
+
+            def counted_revalidate() -> object:
+                nonlocal expired, yielded_revalidations
+                yielded_revalidations += 1
+                result = revalidate()
+                if yielded_revalidations == 3:
+                    expired = True
+                return result
+
+            yield counted_revalidate
+
+    def count_capture(*args: Any, **kwargs: Any) -> object:
+        nonlocal fence_captures
+        fence_captures += 1
+        return original_capture(*args, **kwargs)
+
+    class _ReplayTime:
+        @staticmethod
+        def monotonic() -> float:
+            return 31.0 if expired else 0.0
+
+    monkeypatch.setattr(restarted._admission, "hold_active_lifecycle_operation_claim", counted_hold)
+    monkeypatch.setattr(restarted, "_capture_physical_attempt_replay_fence", count_capture)
+    monkeypatch.setattr(factory_run_service_module, "time", _ReplayTime)
+
+    with pytest.raises(RuntimeError, match="factory_physical_attempt_replay_head_unstable"):
+        await restarted.recover_run(created.id)
+
+    assert yielded_revalidations == 3
+    assert fence_captures == 2
+    assert created.id not in restarted._physical_attempt_coordinators
+
+
+@pytest.mark.asyncio
+async def test_replay_failure_leaves_durable_fence_closed_to_old_peer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+    owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    restarted = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
+    created = await owner.create_run(FactoryConfig(name="failed-cross-process-replay-fence"))
+    running = await owner.start_run(created.id)
+    old_token = running.metadata["factory_workspace_run_lease"]["fencing_token"]
+    stage_lease = owner._admission.claim_stage(
+        created.id,
+        fencing_token=old_token,
+        stage="director_dispatch",
+        nonce="old-service-failed-replay-stage-claim",
+    )
+    stage_claim = stage_lease.stage_execution_claim
+    assert stage_claim is not None
+    old_port = owner._physical_attempt_coordinator(created.id)
+    grant = FactoryPhysicalAttemptGrantViewV1(
+        schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+        verification_scope="factory",
+        factory_run_id=created.id,
+        role="director",
+        stage="director_dispatch",
+        workspace_fencing_token=old_token,
+        stage_claim_attempt=stage_claim.attempt,
+        stage_claim_nonce=stage_claim.nonce,
+        execution_authority_hash="d" * 64,
+        attempt_budget=2,
+    )
+    old_port.register_grant(grant)
+    old_command = ReserveFactoryPhysicalAttemptV1(
+        schema_version=RESERVE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+        verification_scope="factory",
+        factory_run_id=created.id,
+        run_id="director-child-failed-replay",
+        role="director",
+        turn_id="director-turn-failed-replay",
+        call_id="pre-failed-replay-call",
+        request_freeze_id="freeze-failed-replay",
+        execution_authority_hash=grant.execution_authority_hash,
+        attempt_budget=2,
+        provider="openai_compat",
+        model="bound-model",
+        semantic_request_hash="e" * 64,
+        physical_wire_hash="f" * 64,
+    )
+    old_port.reserve(old_command)
+
+    def fail_replay(**_kwargs: object) -> None:
+        raise RuntimeError("forced-cross-process-replay-failure")
+
+    monkeypatch.setattr(restarted, "_recover_physical_attempt_coordinator", fail_replay)
+    with pytest.raises(RuntimeError, match="forced-cross-process-replay-failure"):
+        await restarted.recover_run(created.id)
+
+    durable_after_failure = restarted._admission.current()
+    assert durable_after_failure is not None
+    assert durable_after_failure.state.value == "draining"
+    assert durable_after_failure.fencing_token > old_token
+    assert durable_after_failure.lifecycle_operation_claim is None
+    failed_run = await restarted.get_run(created.id)
+    assert failed_run is not None
+    assert failed_run.metadata["factory_physical_attempt_admission_dead"] is True
+
+    with pytest.raises(FactoryPhysicalAttemptControlError, match="factory_physical_attempt_authority_closed"):
+        old_port.reserve(replace(old_command, call_id="post-failed-replay-call"))
+
+    with pytest.raises(
+        FactoryPhysicalAttemptControlError,
+        match="factory_physical_attempt_recovered_run_permanently_closed",
+    ):
+        await owner.execute_stage(
+            created.id,
+            "pm_planning",
+            {"heartbeat_interval_seconds": 0},
+        )
+
+    assert restarted._admission.current() == durable_after_failure
+
+
+def test_lifecycle_claim_blocks_new_stage_before_replay_or_mutation(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    admission = FactoryWorkspaceRunAdmission(
+        workspace,
+        state_root=tmp_path / "runtime" / "factory",
+    )
+    lease = admission.acquire("factory-lifecycle-stage-fence")
+    claimed = admission.claim_lifecycle_operation(
+        lease.run_id,
+        operation="retry_run_from_stage",
+        nonce="retry-fence",
+        acquire_if_available=False,
+        expected_fencing_token=lease.fencing_token,
+    )
+
+    with pytest.raises(FactoryWorkspaceRunLeaseConflictError) as conflict:
+        admission.claim_stage(
+            lease.run_id,
+            fencing_token=claimed.fencing_token,
+            stage="pm_planning",
+            nonce="must-not-start",
+        )
+
+    assert conflict.value.code == "factory_lifecycle_operation_inflight"
+    assert admission.current() == claimed
+
+
+def test_replay_fence_invalidates_preexisting_stage_authority(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    admission = FactoryWorkspaceRunAdmission(
+        workspace,
+        state_root=tmp_path / "runtime" / "factory",
+    )
+    lease = admission.acquire("factory-replay-stage-authority-fence")
+    stage_lease = admission.claim_stage(
+        lease.run_id,
+        fencing_token=lease.fencing_token,
+        stage="director_dispatch",
+        nonce="old-stage-authority",
+    )
+    stage_claim = stage_lease.stage_execution_claim
+    assert stage_claim is not None
+
+    replay_lease = admission.claim_lifecycle_operation(
+        lease.run_id,
+        operation="recover_run",
+        nonce="restart-replay-fence",
+        acquire_if_available=False,
+        expected_fencing_token=lease.fencing_token,
+        replay_fence=True,
+    )
+
+    assert replay_lease.state.value == "draining"
+    assert replay_lease.fencing_token > lease.fencing_token
+    with (
+        pytest.raises(FactoryWorkspaceRunLeaseConflictError) as conflict,
+        admission.hold_active_stage_claim(
+            lease.run_id,
+            fencing_token=lease.fencing_token,
+            stage=stage_claim.stage,
+            attempt=stage_claim.attempt,
+            nonce=stage_claim.nonce,
+        ),
+    ):
+        pytest.fail("stale stage authority crossed the restart replay fence")
+
+    assert conflict.value.code == "factory_workspace_run_fenced"
+    assert admission.current() == replay_lease
+
+
+@pytest.mark.asyncio
 async def test_failed_settled_stage_retains_exact_claim_until_explicit_reconciliation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1433,10 +1911,12 @@ async def test_stale_owner_replay_failure_rolls_back_claim_without_release(
 
     durable = admission.current()
     assert durable is not None
-    assert durable.state.value == "active"
+    assert durable.state.value == "draining"
+    assert durable.fencing_token > stale.fencing_token
     assert durable.expires_at == stale.expires_at
     assert durable.lifecycle_operation_claim is None
     assert run.id not in restarted._physical_attempt_coordinators
+
 
 @pytest.mark.asyncio
 async def test_retry_run_rejects_active_factory_child(tmp_path: Path) -> None:

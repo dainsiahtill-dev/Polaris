@@ -215,6 +215,11 @@ class FailureInfo(BaseModel):
     recoverable: bool  # 是否可恢复
     suggested_action: str | None = None  # 建议操作
     hops: list[dict[str, Any]] = Field(default_factory=list)  # 调试线索
+    stage: str | None = None
+    error_code: str | None = None
+    failure_class: str | None = None
+    responsible_layer: str | None = None
+    root_cause_hint: str | None = None
 
 
 class RoleStatus(BaseModel):

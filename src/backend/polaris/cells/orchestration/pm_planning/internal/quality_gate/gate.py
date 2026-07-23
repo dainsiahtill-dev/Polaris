@@ -83,6 +83,7 @@ _PM_BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
 _PM_DOCUMENTATION_ONLY_SUFFIXES = (".md", ".markdown", ".mdx", ".txt")
 _MAX_DIRECTOR_TASK_FILE_TARGETS = 6
 _MAX_DIRECTOR_TASK_SOURCE_TARGETS = 4
+_MAX_LIGHTWEIGHT_BENCH_TASK_FILE_TARGETS = _MAX_DIRECTOR_TASK_FILE_TARGETS * 2
 _MANIFEST_OR_CONFIG_FILENAMES = frozenset(
     {
         "package.json",
@@ -366,7 +367,7 @@ def _lightweight_bench_task_can_stay_single_boundary(task: dict[str, Any], paths
     level = _task_factory_bench_level(task)
     if level is None or level > 1:
         return False
-    return 1 < len(paths) <= 8
+    return 1 < len(paths) <= _MAX_LIGHTWEIGHT_BENCH_TASK_FILE_TARGETS
 
 
 def _director_task_is_too_broad(task: dict[str, Any]) -> bool:

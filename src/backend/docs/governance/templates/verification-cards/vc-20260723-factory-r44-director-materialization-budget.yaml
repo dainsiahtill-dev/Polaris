@@ -1,0 +1,50 @@
+schema_version: verification-card.v1
+card_id: vc-20260723-factory-r44-director-materialization-budget
+title: Factory R44 Director materialization budget convergence
+status: closed
+bench_status: not_schedulable
+bench_schedulable: false
+owner: main_agent
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  active_bucket: none
+symptom:
+  run: R43
+  project: L1-04
+  terminal_stage: director_dispatch
+  director_round_2_stage_lease_seconds: 69
+  director_round_2_execution_lease_seconds: 64
+  physical_write_observed: true
+  task_terminalized_before_barrier: false
+  error_code: director.execution_barrier_timeout
+root_cause:
+  category: conflicting_deadline_authorities
+  detail: >-
+    timeout projection used minimum downstream reserve while canonical
+    admission always reserved full QA and downgraded later materialization
+    waves to the generic follow-up minimum
+required_invariants:
+  first_vs_followup_execution_minimum_unchanged: pass
+  multi_wave_materialization_uses_minimum_qa_start_reserve: pass
+  final_materialization_wave_retains_full_qa_reserve: pass
+  future_waves_and_safety_remain_reserved: pass
+  selected_reserve_mode_is_auditable: pass
+required_gates:
+  tdd_red: pass
+  focused_deadline_policy: 13_passed
+  factory_characterization: 4_passed
+  factory_pipeline: 1240_passed
+  ruff: pass
+  format: pass
+  mypy: pass
+  compileall: pass
+  diff_audit: pass
+authorization:
+  provider_requests: 0
+  bench_runs: 0
+  next_fresh_bench: forbidden_until_r44_and_prebench_close
+evidence:
+  blueprint: src/backend/docs/blueprints/FACTORY_R44_DIRECTOR_MATERIALIZATION_BUDGET_BLUEPRINT_20260723.md
+  r43_audit: /tmp/factory-bench-l1-04-r43/factory_audits.json
+  r43_director_result: director-4b92f8a917e4

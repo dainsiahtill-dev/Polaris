@@ -1,0 +1,61 @@
+schema_version: "verification-card/v1"
+id: "vc-20260722-factory-r7b-upstream-failure-attribution"
+title: "Factory Bench preserves structured upstream stage failure causality"
+classification: "execution_fact_chain"
+severity: "P0"
+status: "complete"
+bench_status: "not_schedulable"
+scope:
+  files:
+    - "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    - "src/backend/polaris/cells/factory/pipeline/internal/bench_gates.py"
+    - "src/backend/polaris/cells/factory/pipeline/public/types.py"
+    - "src/backend/polaris/delivery/http/routers/factory.py"
+    - "src/backend/polaris/cells/factory/pipeline/tests/test_factory_failure_attribution.py"
+    - "src/backend/polaris/delivery/tests/test_factory_audit_bundle.py"
+defect:
+  project_id: "L1-04"
+  bench_run_id: "57d40c7e2b37"
+  factory_run_id: "factory_9b8b93173904"
+  actual_upstream_stage: "chief_engineer_review"
+  actual_upstream_error_code: "chief_engineer.llm_review_failed"
+  incorrect_taxonomy: "control_plane:task_boundary_verdict_missing"
+  why_incorrect: >-
+    Director, TaskBoundary, TaskRuntime, and QA are expected to be absent when
+    the authoritative Factory chain terminates in Chief Engineer review.
+root_cause: >-
+  Chief Engineer StageResult encoded its stable error only inside human prose.
+  FactoryRun retained the StageResult metadata in stage_results, but the public
+  FailureInfo projection discarded it behind generic FACTORY_STAGE_FAILED. The
+  canonical Bench projection therefore saw only the consequential missing
+  TaskBoundary.
+repair_contract:
+  structured_stage_result_metadata: true
+  generic_factory_failure_code_preserved: true
+  stable_error_code_preserved: true
+  failure_class_preserved: true
+  responsible_layer_preserved: true
+  root_cause_hint_preserved: true
+  prose_parsing_for_authority: forbidden
+  runtime_start_failure_still_precedes_stale_factory_failure: true
+  missing_boundary_without_upstream_failure_still_causal: true
+  target_project_edits: forbidden
+verification:
+  tdd_red: "structured attribution 1 failed; audit projection 1 failed"
+  focused_green: "structured attribution and audit projection 3 passed"
+  bench_gates_full: "193 passed"
+  factory_full: "1287 passed, 2 warnings"
+  delivery_full: "375 passed, 9 warnings"
+  ruff: "pass"
+  format: "pass"
+  mypy_strict_new_tests: "pass"
+  mypy_existing_production_debt: "14 pre-existing no-any-return findings; no R7B expansion"
+  compileall: "pass"
+  yaml_utf8: "pass"
+next_gate:
+  state: "not_schedulable"
+  action: >-
+    R7 through R10 broad gates are closed. Refreeze the pre-bench source
+    manifest before authorizing one fresh isolated L1-04 attempt.
+owner: "Codex /root"
+opened_at: "2026-07-22"

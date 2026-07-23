@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.interaction_contract import TurnIntent, infer_turn_intent
@@ -55,6 +55,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecision,
     TurnDecisionKind,
     TurnId,
+    classify_tool_invocation,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 from polaris.kernelone.context.contracts import TurnEngineContextRequest
@@ -75,14 +76,14 @@ def _canonical_decision(
     normalized_invocations: list[ToolInvocation] = []
     for index, invocation in enumerate(invocations or []):
         tool_name = str(invocation.get("tool_name") or "")
-        is_write = tool_name in _WRITE_TOOL_NAMES
+        classification = classify_tool_invocation(tool_name)
         normalized_invocations.append(
             ToolInvocation(
                 call_id=ToolCallId(str(invocation.get("call_id") or f"{turn_id}_call_{index + 1}")),
                 tool_name=tool_name,
                 arguments=dict(cast(Mapping[str, Any], invocation.get("arguments") or {})),
-                effect_type=ToolEffectType.WRITE if is_write else ToolEffectType.READ,
-                execution_mode=(ToolExecutionMode.WRITE_SERIAL if is_write else ToolExecutionMode.READONLY_SERIAL),
+                effect_type=classification.effect_type,
+                execution_mode=classification.execution_mode,
             )
         )
 
@@ -1411,6 +1412,121 @@ async def test_stream_provider_tool_events_materialize_native_tool_calls(monkeyp
     assert invocations
     assert invocations[0].get("tool_name") == "write_file"
     assert invocations[0].get("arguments") == {"file": "README.md", "content": "done\n"}
+
+
+@pytest.mark.asyncio
+async def test_stream_provider_error_is_not_followed_by_generic_materialization_error(monkeypatch) -> None:
+    from polaris.cells.roles.kernel.public.turn_events import ErrorEvent
+
+    async def _fake_llm_provider_stream(_payload):
+        yield {"type": "error", "error": "provider_stream_timeout:125s"}
+
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+        llm_provider_stream=_fake_llm_provider_stream,
+    )
+    monkeypatch.setattr(controller._stream_orchestrator, "build_stream_shadow_engine", lambda **_kwargs: None)
+
+    events = [
+        event
+        async for event in controller.execute_stream(
+            "turn_stream_provider_timeout",
+            [{"role": "user", "content": "review this plan"}],
+            [],
+        )
+    ]
+
+    errors = [event for event in events if isinstance(event, ErrorEvent)]
+    assert [event.message for event in errors] == ["provider_stream_timeout:125s"]
+
+
+@pytest.mark.asyncio
+async def test_stream_final_answer_has_one_terminal_truth_and_preserves_provider_audit(monkeypatch) -> None:
+    from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
+
+    final_request_audit = {
+        "schema_version": "llm.final_request_context_audit.v1",
+        "final_request_token_estimate": 987,
+    }
+    context_snapshot_ref = "abcdef123456abcdef123456"
+
+    async def _fake_llm_provider_stream(_payload):
+        yield {"type": "chunk", "content": "Complete CE blueprint."}
+        yield {
+            "type": "complete",
+            "content": "Complete CE blueprint.",
+            "metadata": {
+                "final_request_context_audit": final_request_audit,
+                "context_snapshot_ref": context_snapshot_ref,
+            },
+        }
+
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+        llm_provider_stream=_fake_llm_provider_stream,
+    )
+    monkeypatch.setattr(controller._stream_orchestrator, "build_stream_shadow_engine", lambda **_kwargs: None)
+    phase_events = MagicMock()
+    monkeypatch.setattr(controller, "_emit_phase_event", phase_events)
+
+    events = [
+        event
+        async for event in controller.execute_stream(
+            "turn_stream_ce_blueprint",
+            [
+                {
+                    "role": "user",
+                    "content": "[mode:analyze_only]\nProduce the implementation blueprint.",
+                }
+            ],
+            [],
+        )
+    ]
+
+    completions = [event for event in events if isinstance(event, CompletionEvent)]
+    assert len(completions) == 1
+    assert completions[0].status == "success"
+    assert completions[0].monitoring["final_request_context_audit"] == final_request_audit
+    assert completions[0].monitoring["context_snapshot_ref"] == context_snapshot_ref
+    assert not any(call.args and isinstance(call.args[0], CompletionEvent) for call in phase_events.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_stream_materialize_bypass_emits_one_failed_terminal(monkeypatch) -> None:
+    from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
+
+    async def _fake_llm_provider_stream(_payload):
+        yield {"type": "chunk", "content": "I would implement it later."}
+
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+        llm_provider_stream=_fake_llm_provider_stream,
+    )
+    monkeypatch.setattr(controller._stream_orchestrator, "build_stream_shadow_engine", lambda **_kwargs: None)
+    phase_events = MagicMock()
+    monkeypatch.setattr(controller, "_emit_phase_event", phase_events)
+
+    events = [
+        event
+        async for event in controller.execute_stream(
+            "turn_stream_materialize_bypass",
+            [{"role": "user", "content": "[mode:materialize]\nImplement the requested files."}],
+            [],
+        )
+    ]
+
+    completions = [event for event in events if isinstance(event, CompletionEvent)]
+    assert len(completions) == 1
+    assert completions[0].status == "failed"
+    assert completions[0].turn_kind == "mutation_bypass_blocked"
+    assert completions[0].error == "MUTATION_BYPASS_BLOCKED"
+    assert not any(call.args and isinstance(call.args[0], CompletionEvent) for call in phase_events.call_args_list)
 
 
 @pytest.mark.asyncio

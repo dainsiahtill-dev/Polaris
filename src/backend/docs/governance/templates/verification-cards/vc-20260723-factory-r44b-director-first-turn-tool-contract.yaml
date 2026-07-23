@@ -1,0 +1,47 @@
+schema_version: verification-card.v1
+card_id: vc-20260723-factory-r44b-director-first-turn-tool-contract
+title: Factory R44B Director first-turn physical tool contract
+status: closed
+bench_status: not_schedulable
+bench_schedulable: false
+owner: main_agent
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  active_bucket: none
+symptom:
+  run: R43
+  project: L1-04
+  role: director
+  physical_tools:
+    - write_file
+  prompt_claimed_verification_same_batch: true
+root_cause:
+  category: final_request_tool_prompt_mismatch
+  detail: >-
+    exact first-write Provider schema was safe, but decision prompt projected
+    auto-derived verification as executable in the same batch despite no
+    verification tool being physically exposed
+required_invariants:
+  exact_first_write_schema_preserved: pass
+  current_turn_tools_match_provider_schema: pass
+  unavailable_auto_verification_deferred_explicitly: pass
+  explicit_required_tools_fail_closed: pass
+  exposed_verification_remains_same_batch: pass
+required_gates:
+  tdd_red: pass
+  focused: 20_passed
+  transaction_internal: 370_passed
+  roles_kernel: 4168_passed
+  ruff: pass
+  format: pass
+  mypy: pass
+  compileall: pass
+  diff_audit: pass
+authorization:
+  provider_requests: 0
+  bench_runs: 0
+  next_fresh_bench: forbidden_until_r44c_and_prebench_close
+evidence:
+  blueprint: src/backend/docs/blueprints/FACTORY_R44B_DIRECTOR_FIRST_TURN_TOOL_CONTRACT_BLUEPRINT_20260723.md
+  r43_context_snapshot_ref: 5fb4893fe92058f556d9f429

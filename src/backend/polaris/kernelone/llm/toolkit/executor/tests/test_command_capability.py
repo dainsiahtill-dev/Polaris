@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import builtins
 import hashlib
@@ -29,6 +30,32 @@ from polaris.kernelone.llm.toolkit.executor.handlers.command import (
 
 _TOKEN_HASH = "a" * 64
 _HASH_FRAME = b"polaris.kernelone.command-capability.hash.v1\0"
+
+
+def test_command_capability_module_imports_only_pure_stdlib_dependencies() -> None:
+    """Static fence: capability decisions cannot acquire I/O or process authority."""
+    module_path = Path(__file__).resolve().parents[1] / "command_capability.py"
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+    imported: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported.append(node.module or "")
+
+    forbidden_prefixes = (
+        "multiprocessing",
+        "polaris.cells",
+        "polaris.kernelone.fs",
+        "polaris.kernelone.process",
+        "polaris.kernelone.single_agent",
+        "subprocess",
+    )
+    assert [
+        module
+        for module in imported
+        if any(module == prefix or module.startswith(f"{prefix}.") for prefix in forbidden_prefixes)
+    ] == []
 
 
 class _CapabilityExecutor:
@@ -115,7 +142,7 @@ def test_pure_validator_has_handler_parity_without_constructor_or_io(monkeypatch
     monkeypatch.setattr("polaris.kernelone.single_agent.skill_system.install_default_skills", fail_skill_install)
     patched_entrypoints.add("install_default_skills")
 
-    cases = (
+    cases: tuple[tuple[dict[str, Any], tuple[str, ...], str, bool], ...] = (
         ({}, (), "python --version", True),
         ({"allowed_commands": ["python --version"]}, ("python --version",), "python --version", True),
         ({"allowed_commands": ["python"]}, ("python",), "python -m pytest", True),
@@ -138,7 +165,7 @@ def test_pure_validator_has_handler_parity_without_constructor_or_io(monkeypatch
                 **token,
             }
         result = validate_command_capability(_input(allowed_commands=allowed_commands, command=command))
-        legacy = _validate_command_capability(_CapabilityExecutor(token), command)
+        legacy = _validate_command_capability(_CapabilityExecutor(token), command)  # type: ignore[arg-type]
 
         assert result.allowed is expected_allowed
         assert (legacy is None) is expected_allowed
@@ -249,7 +276,9 @@ def test_container_order_and_duplicates_have_one_canonical_authorization_result(
     results = []
     canonical_inputs = []
     for variant in variants:
-        extracted = _capability_allowed_commands(_CapabilityExecutor({"allowed_commands": variant}))
+        extracted = _capability_allowed_commands(
+            _CapabilityExecutor({"allowed_commands": variant})  # type: ignore[arg-type]
+        )
         validation_input = _input(allowed_commands=tuple(extracted), command="python --version")
         canonical_inputs.append(validation_input.allowed_commands)
         results.append(validate_command_capability(validation_input))
@@ -319,8 +348,8 @@ def test_head_legacy_extraction_match_and_denial_payload_matrix(
     """Compatibility projection preserves HEAD extraction, match, and payload behavior."""
     executor = _CapabilityExecutor(token)
 
-    assert _capability_allowed_commands(executor) == expected_allowed_commands
-    assert _validate_command_capability(executor, command) == expected_denial
+    assert _capability_allowed_commands(executor) == expected_allowed_commands  # type: ignore[arg-type]
+    assert _validate_command_capability(executor, command) == expected_denial  # type: ignore[arg-type]
 
 
 def test_hashes_are_stable_across_python_hash_seeds() -> None:

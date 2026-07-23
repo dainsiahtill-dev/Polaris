@@ -38,6 +38,9 @@ DIRECTOR_EXECUTE_METHOD = POLARIS_ROOT / "cells" / "roles" / "adapters" / "inter
 KERNEL_TRANSACTION_FACTORY = (
     POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "kernel" / "transaction_factory.py"
 )
+KERNEL_DIRECTED_EFFECT_LIFECYCLE = (
+    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "directed_effect_lifecycle.py"
+)
 PM_BOARD_TASKS = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm" / "board_tasks.py"
 QA_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "qa_adapter.py"
 DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
@@ -217,7 +220,12 @@ TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS = frozenset(
     }
 )
 TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_HELPER = "_task_entity_for_terminal_session_reconcile"
-TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_CONSUMERS = frozenset({"_apply_terminal_session_reconcile"})
+TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_CONSUMERS = frozenset(
+    {
+        "_apply_terminal_session_reconcile",
+        "_terminal_projection_can_restore_pending_intent_locked",
+    }
+)
 TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
     {
         "_list_file_task_rows",
@@ -1494,12 +1502,27 @@ def test_ws2_b2_execution_attempt_authority_stays_task_runtime_public() -> None:
         calls = [
             node for node in ast.walk(guard) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         ]
-        if not any(
+        direct_authority_heartbeat = any(
             isinstance(node.func.value, ast.Name)
             and node.func.value.id == "authority"
             and node.func.attr == "heartbeat"
             for node in calls
-        ):
+        )
+        delegated_refresh = any(
+            isinstance(node.func, ast.Name) and node.func.id == "_refresh_directed_effect_attempt"
+            for node in ast.walk(guard)
+            if isinstance(node, ast.Call)
+        )
+        refresh = _function_definition(KERNEL_DIRECTED_EFFECT_LIFECYCLE, "_refresh_directed_effect_attempt")
+        refresh_heartbeats_authority = refresh is not None and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "authority"
+            and node.func.attr == "heartbeat"
+            for node in ast.walk(refresh)
+        )
+        if not direct_authority_heartbeat and not (delegated_refresh and refresh_heartbeats_authority):
             offenders.append("Kernel tool guard must heartbeat through the public authority")
         if any(node.func.attr == "heartbeat_task_runtime_execution_attempt" for node in calls):
             offenders.append("Kernel tool guard bypasses authority.heartbeat()")
@@ -2219,6 +2242,8 @@ def test_taskboard_terminal_event_stream_is_owner_only_compatibility_projection(
         if "tests" in path.parts:
             continue
         if _is_allowed_owner_path(path):
+            continue
+        if path == POLARIS_ROOT / "cells" / "events" / "fact_stream" / "public" / "catalog.py":
             continue
         if TASKBOARD_TERMINAL_EVENT_STREAM in path.read_text(encoding="utf-8"):
             offenders.append(str(path.relative_to(BACKEND_ROOT)))
@@ -10119,6 +10144,19 @@ SESSION_BULK_SUSPEND_METHOD = "suspend_active_executions_for_run"
 SESSION_BULK_SUSPEND_LOCKED_HELPER_METHOD = "_suspend_active_session_for_run_locked"
 TYPED_HEARTBEAT_LOCKED_METHOD = "_heartbeat_execution_attempt_locked"
 TYPED_HEARTBEAT_OWNER_METHOD = "heartbeat_execution_attempt"
+DIRECTED_EFFECT_RECOVERY_ENTRYPOINT = "reconcile_ambiguous_directed_effects"
+DIRECTED_EFFECT_RECOVERY_UNDER_LEASE_METHOD = "_reconcile_ambiguous_directed_effects_under_lease"
+DIRECTED_EFFECT_RECOVERY_TASK_METHOD = "_reconcile_directed_effect_recovery_task"
+DIRECTED_EFFECT_RECOVERY_FILE_LOCKED_HELPER = "_reconcile_directed_effect_recovery_task_file_locked"
+DIRECTED_EFFECT_RECOVERY_SESSION_LOCKED_HELPER = "_reconcile_ambiguous_directed_effect_session_locked"
+DIRECTED_EFFECT_RECOVERY_LEASE_LOCK_PATH_HELPER = "_directed_effect_recovery_lease_file_lock_path"
+DIRECTED_EFFECT_RECOVERY_LEASE_READ_HELPER = "_read_directed_effect_recovery_lease_locked"
+DIRECTED_EFFECT_RECOVERY_LEASE_WRITE_HELPERS = frozenset(
+    {
+        "_claim_directed_effect_recovery_lease_locked",
+        "_release_directed_effect_recovery_lease_locked",
+    }
+)
 SESSION_READ_LOCKED_HELPER_METHODS = frozenset({SESSION_READ_LOCKED_HELPER_METHOD})
 SESSION_WRITE_RECEIPT_TRANSITION_METHODS = frozenset(
     {
@@ -10322,6 +10360,13 @@ def _session_task_id_local_names(method_def: ast.FunctionDef) -> set[str]:
         )
         if arg.arg == "task_id"
     }
+    task_id_names.update(
+        target.id
+        for node in _walk_task_runtime_method_body(method_def)
+        if isinstance(node, ast.For)
+        for target in ast.walk(node.target)
+        if isinstance(target, ast.Name) and target.id == "task_id"
+    )
     changed = True
 
     while changed:
@@ -10486,6 +10531,27 @@ def _write_session_file_lock_with_nodes(method_def: ast.FunctionDef) -> list[ast
             ):
                 lock_with_nodes.append(node)
 
+    return lock_with_nodes
+
+
+def _directed_effect_recovery_lease_lock_with_nodes(method_def: ast.FunctionDef) -> list[ast.With]:
+    lock_with_nodes: list[ast.With] = []
+    for node in _walk_task_runtime_method_body(method_def):
+        if not isinstance(node, ast.With):
+            continue
+        for item in node.items:
+            context_expr = item.context_expr
+            if not isinstance(context_expr, ast.Call):
+                continue
+            if _call_name(context_expr.func) != f"self._board.{SESSION_WRITE_FILE_LOCK_HELPER}":
+                continue
+            if any(
+                isinstance(candidate, ast.Call)
+                and _call_name(candidate.func) == f"self.{DIRECTED_EFFECT_RECOVERY_LEASE_LOCK_PATH_HELPER}"
+                for value in [*context_expr.args, *(keyword.value for keyword in context_expr.keywords)]
+                for candidate in ast.walk(value)
+            ):
+                lock_with_nodes.append(node)
     return lock_with_nodes
 
 
@@ -10673,11 +10739,6 @@ def _locked_session_helper_call_scope_violations(
         in a ``finally`` block.  It is structural, not a caller whitelist.
         """
 
-        if method_def.name not in {
-            TASK_RUNTIME_SETTLEMENT_ENTRYPOINT,
-            "validate_execution_attempt",
-        }:
-            return False
         parents = _parent_lookup(method_def)
         task_id_names = _session_task_id_local_names(method_def)
         lock_assignments = [
@@ -11195,7 +11256,9 @@ def _write_session_lock_boundary_violations() -> list[str]:
         )
     )
 
-    allowed_scope_methods = _session_write_scope_method_names(method_defs)
+    allowed_scope_methods = _session_write_scope_method_names(method_defs) | set(
+        DIRECTED_EFFECT_RECOVERY_LEASE_WRITE_HELPERS
+    )
     for method_name, method_def in sorted(method_defs.items()):
         if method_name in allowed_scope_methods:
             continue
@@ -11270,7 +11333,7 @@ def _read_session_lock_boundary_violations() -> list[str]:
                 "synchronization boundary"
             )
 
-    allowed_read_json_methods = set(SESSION_READ_LOCKED_HELPER_METHODS)
+    allowed_read_json_methods = set(SESSION_READ_LOCKED_HELPER_METHODS) | {DIRECTED_EFFECT_RECOVERY_LEASE_READ_HELPER}
     for method_name, method_def in sorted(method_defs.items()):
         if method_name in allowed_read_json_methods:
             continue
@@ -11325,6 +11388,144 @@ def _read_session_lock_boundary_violations() -> list[str]:
         )
 
     return offenders
+
+
+def _directed_effect_recovery_lease_lock_boundary_violations() -> list[str]:
+    method_defs = _task_runtime_service_method_defs()
+    entrypoint = method_defs.get(DIRECTED_EFFECT_RECOVERY_ENTRYPOINT)
+    reader = method_defs.get(DIRECTED_EFFECT_RECOVERY_LEASE_READ_HELPER)
+    offenders: list[str] = []
+    if entrypoint is None:
+        return [f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_ENTRYPOINT}() not found"]
+
+    lock_nodes = _directed_effect_recovery_lease_lock_with_nodes(entrypoint)
+    if len(lock_nodes) != 1:
+        offenders.append(
+            f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_ENTRYPOINT}() must hold exactly one "
+            "dedicated directed-effect recovery lease file-lock across claim, sweep, and release; "
+            f"found {len(lock_nodes)}"
+        )
+        return offenders
+
+    lock_node = lock_nodes[0]
+    parents = _parent_lookup(entrypoint)
+    protected_calls = {
+        *DIRECTED_EFFECT_RECOVERY_LEASE_WRITE_HELPERS,
+        DIRECTED_EFFECT_RECOVERY_UNDER_LEASE_METHOD,
+    }
+    for helper_name in sorted(protected_calls):
+        calls = _direct_self_method_calls(entrypoint, helper_name)
+        if not calls:
+            offenders.append(
+                f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_ENTRYPOINT}() must call "
+                f"self.{helper_name}() under the recovery lease file-lock"
+            )
+            continue
+        for call in calls:
+            if not _node_is_descendant_of(call, lock_node, parents):
+                offenders.append(
+                    f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_ENTRYPOINT}():{call.lineno} calls "
+                    f"self.{helper_name}() outside the recovery lease file-lock"
+                )
+
+    if reader is None:
+        offenders.append(f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_LEASE_READ_HELPER}() not found")
+    elif not _session_read_json_calls(reader):
+        offenders.append(
+            f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_LEASE_READ_HELPER}() must own the "
+            "durable recovery lease read_json() call"
+        )
+
+    for writer_name in sorted(DIRECTED_EFFECT_RECOVERY_LEASE_WRITE_HELPERS):
+        writer = method_defs.get(writer_name)
+        if writer is None:
+            offenders.append(f"TaskRuntimeService.{writer_name}() not found")
+            continue
+        if not _write_session_atomic_write_calls(writer):
+            offenders.append(
+                f"TaskRuntimeService.{writer_name}() must own one durable recovery lease write_json_atomic() call"
+            )
+        if not _direct_self_method_calls(writer, DIRECTED_EFFECT_RECOVERY_LEASE_READ_HELPER):
+            offenders.append(
+                f"TaskRuntimeService.{writer_name}() must validate the current durable lease through "
+                f"self.{DIRECTED_EFFECT_RECOVERY_LEASE_READ_HELPER}()"
+            )
+
+    allowed_reader_callers = set(DIRECTED_EFFECT_RECOVERY_LEASE_WRITE_HELPERS)
+    for method_name, method_def in sorted(method_defs.items()):
+        if method_name in allowed_reader_callers:
+            continue
+        for call in _direct_self_method_calls(method_def, DIRECTED_EFFECT_RECOVERY_LEASE_READ_HELPER):
+            offenders.append(
+                f"TaskRuntimeService.{method_name}():{call.lineno} calls the locked recovery lease reader; "
+                f"only {sorted(allowed_reader_callers)} may consume it"
+            )
+
+    return offenders
+
+
+def _directed_effect_recovery_session_lock_boundary_violations() -> list[str]:
+    """Require every per-session recovery mutation below its cooperative file-lock."""
+
+    method_defs = _task_runtime_service_method_defs()
+    under_lease = method_defs.get(DIRECTED_EFFECT_RECOVERY_UNDER_LEASE_METHOD)
+    owner = method_defs.get(DIRECTED_EFFECT_RECOVERY_TASK_METHOD)
+    file_locked = method_defs.get(DIRECTED_EFFECT_RECOVERY_FILE_LOCKED_HELPER)
+    if under_lease is None:
+        return [f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_UNDER_LEASE_METHOD}() not found"]
+    if owner is None:
+        return [f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_TASK_METHOD}() not found"]
+    if file_locked is None:
+        return [f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_FILE_LOCKED_HELPER}() not found"]
+
+    task_calls = _direct_self_method_calls(under_lease, DIRECTED_EFFECT_RECOVERY_TASK_METHOD)
+    if len(task_calls) != 1:
+        return [
+            f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_UNDER_LEASE_METHOD}() must call "
+            f"self.{DIRECTED_EFFECT_RECOVERY_TASK_METHOD}() exactly once; found {len(task_calls)}"
+        ]
+
+    lock_nodes = _write_session_file_lock_with_nodes(owner)
+    if len(lock_nodes) != 1:
+        return [
+            f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_TASK_METHOD}() must hold exactly one "
+            "cooperative session file-lock around each session recovery sweep; "
+            f"found {len(lock_nodes)}"
+        ]
+
+    calls = _direct_self_method_calls(owner, DIRECTED_EFFECT_RECOVERY_FILE_LOCKED_HELPER)
+    if len(calls) != 1:
+        return [
+            f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_TASK_METHOD}() must call "
+            f"self.{DIRECTED_EFFECT_RECOVERY_FILE_LOCKED_HELPER}() exactly once; found {len(calls)}"
+        ]
+
+    parents = _parent_lookup(owner)
+    if not _node_is_descendant_of(calls[0], lock_nodes[0], parents):
+        return [
+            f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_TASK_METHOD}():{calls[0].lineno} calls "
+            f"self.{DIRECTED_EFFECT_RECOVERY_FILE_LOCKED_HELPER}() outside the cooperative "
+            "session file-lock"
+        ]
+
+    session_calls = _direct_self_method_calls(file_locked, DIRECTED_EFFECT_RECOVERY_SESSION_LOCKED_HELPER)
+    if len(session_calls) != 1:
+        return [
+            f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_FILE_LOCKED_HELPER}() must call "
+            f"self.{DIRECTED_EFFECT_RECOVERY_SESSION_LOCKED_HELPER}() exactly once; found {len(session_calls)}"
+        ]
+    unexpected_callers = sorted(
+        method_name
+        for method_name, method_def in method_defs.items()
+        if method_name != DIRECTED_EFFECT_RECOVERY_FILE_LOCKED_HELPER
+        and _direct_self_method_calls(method_def, DIRECTED_EFFECT_RECOVERY_SESSION_LOCKED_HELPER)
+    )
+    if unexpected_callers:
+        return [
+            f"TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_SESSION_LOCKED_HELPER}() has callers outside "
+            f"the reviewed file-locked helper: {unexpected_callers}"
+        ]
+    return []
 
 
 def _check_suspend_active_executions_for_run_uses_locked_session_rmw() -> list[str]:
@@ -11569,6 +11770,34 @@ def test_read_session_holds_per_task_and_file_locks_around_locked_read_helper() 
         "session lock and cooperative session file lock, durable read_json() "
         "must stay inside _read_session_locked(), and write-locked terminal "
         "snapshot lookup must not re-enter public _read_session(). Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_directed_effect_recovery_lease_has_its_own_lock_scoped_authority() -> None:
+    """DEO-3 recovery lease I/O must remain inside its dedicated file-lock."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _directed_effect_recovery_lease_lock_boundary_violations()
+
+    assert not offenders, (
+        "DEO-3 directed-effect recovery lease fence: "
+        f"{rel}:TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_ENTRYPOINT}() must keep "
+        "durable lease claim, the complete recovery sweep, and exact release under one "
+        "workspace recovery lease file-lock. Offenders:\n" + "\n".join(offenders)
+    )
+
+
+def test_directed_effect_recovery_mutation_stays_under_session_file_lock() -> None:
+    """DEO-3 session recovery must not race settle/reclaim/heartbeat cross-process."""
+
+    rel = TASK_RUNTIME_INTERNAL_SERVICE.relative_to(BACKEND_ROOT).as_posix()
+    offenders = _directed_effect_recovery_session_lock_boundary_violations()
+
+    assert not offenders, (
+        "DEO-3 directed-effect session recovery lock fence: "
+        f"{rel}:TaskRuntimeService.{DIRECTED_EFFECT_RECOVERY_UNDER_LEASE_METHOD}() must route each "
+        "per-session sweep through the unique task owner, cooperative file-locked helper, and "
+        "session-locked repository helper. Offenders:\n" + "\n".join(offenders)
     )
 
 

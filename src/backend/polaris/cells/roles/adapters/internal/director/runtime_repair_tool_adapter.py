@@ -1,25 +1,147 @@
-"""Adapter-only bridge from deterministic repair plans to Director tools."""
+"""Pure adapter bridge from Director repair planning to deferred effects.
+
+The adapter may discover and plan a deterministic repair, but it never owns a
+physical tool executor.  Physical mutation is deferred to ``roles.kernel`` so
+the exact TaskRuntime attempt, Job Token, TaskBoundary, lifecycle and receipt
+facts can be validated at the single execution boundary.
+"""
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.director.runtime.public import (
     PlanDirectorRepairCommandV1,
-    QueryDirectorRepairPlanProbeV1,
-    QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
-    RunDirectorRepairCommandV1,
-    RunDirectorRepairConvergenceCommandV1,
     plan_director_repair,
-    query_director_repair_plan_probe,
-    query_director_repair_strategy_catalog,
-    run_director_repair,
-    run_director_repair_convergence,
 )
+from polaris.cells.roles.kernel.public import (
+    DeferredDirectorCommandRequestV1,
+    DeferredDirectorRepairRequestV1,
+    create_deferred_director_command_request,
+    create_deferred_director_repair_request,
+)
+from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
+
+
+def _failure(
+    *,
+    source_tool: str,
+    error_code: str,
+    error_message: str,
+    planning: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "tool": "director_repair_kernel",
+        "tool_name": "director_repair_kernel",
+        "success": False,
+        "result": {
+            "ok": False,
+            "source_tool": source_tool,
+            "error_code": error_code,
+            "error_message": error_message,
+            "repair_applied": False,
+            "repair_kernel": {
+                "owner_cell": "director.runtime",
+                "planning": dict(planning or {}),
+                "execution_skipped": True,
+                "execution_skip_reason": error_code,
+                "physical_executor_owned": False,
+            },
+        },
+    }
+
+
+def _deferred_result(
+    *,
+    source_tool: str,
+    request: DeferredDirectorRepairRequestV1,
+    planning: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "tool": "deferred_director_repair",
+        "tool_name": "deferred_director_repair",
+        "success": True,
+        "result": {
+            "ok": True,
+            "status": "deferred_repair_effects_pending",
+            "repair_applied": False,
+            "source_tool": source_tool,
+            "request_id": request.request_id,
+            "request_hash": request.request_hash,
+            "plan_hash": request.plan.plan_hash,
+            "allowed_paths": list(request.allowed_paths),
+            "deferred_request": request,
+            "repair_kernel": {
+                "owner_cell": "director.runtime",
+                "planning": dict(planning),
+                "execution_deferred": True,
+                "execution_authority": "roles.kernel",
+                "physical_executor_owned": False,
+            },
+        },
+    }
+
+
+def defer_director_command_with_director_tools(
+    *,
+    workspace_path: Path,
+    task_id: str,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None,
+    command: str,
+    timeout_seconds: int = 60,
+    purpose: str = "verification",
+    cwd: str = ".",
+) -> dict[str, Any]:
+    """Return one typed command request; never execute the command locally."""
+
+    if type(execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1:
+        return _failure(
+            source_tool="director_deferred_command",
+            error_code="deo_deferred_command_attempt_required",
+            error_message="a canonical TaskRuntime execution attempt is required before command effects can be deferred",
+        )
+    typed_execution_attempt = cast(TaskRuntimeExecutionAttemptIdentityV1, execution_attempt)
+    try:
+        requested_task_id = str(task_id or "").strip()
+        bound_external_task_id = typed_execution_attempt.external_task_id
+        bound_private_task_id = str(typed_execution_attempt.task_id)
+        if requested_task_id not in {bound_external_task_id, bound_private_task_id}:
+            raise ValueError(
+                "task_id must match the execution attempt's external task id or exact private TaskRuntime row id"
+            )
+        request: DeferredDirectorCommandRequestV1 = create_deferred_director_command_request(
+            workspace=workspace_path.resolve().as_posix(),
+            task_id=bound_external_task_id,
+            execution_attempt=typed_execution_attempt,
+            command=command,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            purpose=purpose,
+        )
+    except (TypeError, ValueError) as exc:
+        return _failure(
+            source_tool="director_deferred_command",
+            error_code="deo_deferred_command_request_invalid",
+            error_message=str(exc),
+        )
+    return {
+        "tool": "deferred_director_command",
+        "tool_name": "deferred_director_command",
+        "success": True,
+        "result": {
+            "ok": True,
+            "status": "deferred_command_effect_pending",
+            "request_id": request.request_id,
+            "request_hash": request.request_hash,
+            "purpose": request.purpose,
+            "deferred_request": request,
+            "execution_authority": "roles.kernel",
+            "physical_executor_owned": False,
+        },
+    }
 
 
 def run_runtime_repair_with_director_tools(
@@ -28,7 +150,7 @@ def run_runtime_repair_with_director_tools(
     workspace_path: Path,
     task_id: str,
     source_tool: str,
-    executor_factory: Callable[..., Any],
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str] = (),
     artifact_quality_issues: Sequence[Mapping[str, Any]] = (),
@@ -37,533 +159,69 @@ def run_runtime_repair_with_director_tools(
     use_editor: bool = True,
     revalidator: Callable[[Any], Any] | None = None,
     convergence_verifier: Callable[[Any], Any] | None = None,
-    max_rounds: int = 3,
+    max_rounds: int = 1,
 ) -> list[dict[str, Any]]:
-    """Execute a runtime repair while preserving Director as the effect owner."""
+    """Plan exactly one repair round and return one typed deferred request.
 
+    ``adapter``, ``use_editor`` and ``revalidator`` remain accepted while the
+    legacy callers migrate, but they grant no execution authority and are not
+    invoked.  Multi-round convergence requires the first round's lifecycle,
+    receipt and revalidation facts, so it is rejected at this pure boundary.
+    """
+
+    del adapter, use_editor, revalidator, convergence_verifier
     if not base_files:
         return []
-
-    quality_issues = tuple(dict(item) for item in artifact_quality_issues)
-    planning_preflight_payload = _runtime_repair_planning_preflight(
-        source_tool=source_tool,
-        base_files=base_files,
-        artifact_quality_errors=artifact_quality_errors,
-        artifact_quality_issues=quality_issues,
-        advisor_notes=advisor_notes,
-        convergence_verifier_present=convergence_verifier is not None,
-    )
-    if planning_preflight_payload is None:
-        return []
-    if (
-        planning_preflight_payload.get("error_code")
-        or planning_preflight_payload.get("planned") is False
-        or planning_preflight_payload.get("ok") is False
-    ):
+    if max_rounds != 1:
         return [
-            _project_failed_planning_preflight(
+            _failure(
                 source_tool=source_tool,
-                planning_preflight=planning_preflight_payload,
+                error_code="deo_multi_round_repair_requires_receipt_close",
+                error_message="multi-round repair requires receipt-backed closure of the previous round",
+            )
+        ]
+    if type(execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1:
+        return [
+            _failure(
+                source_tool=source_tool,
+                error_code="deo_deferred_repair_attempt_required",
+                error_message="a canonical TaskRuntime execution attempt is required before repair effects can be deferred",
             )
         ]
 
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    executor = executor_factory(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
+    command = PlanDirectorRepairCommandV1(
+        source_tool=source_tool,
+        artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+        artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
+        base_files=dict(base_files),
+        deterministic_only=True,
+        advisor_notes=tuple(advisor_notes),
     )
-    write_results: dict[str, dict[str, Any]] = {}
-    edit_results: dict[str, dict[str, Any]] = {}
-    delete_results: dict[str, dict[str, Any]] = {}
-
-    def _mark_progress(path: str) -> None:
-        progress_update = getattr(adapter, "_update_task_progress", None)
-        if not callable(progress_update):
-            return
-        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-            progress_update(task_id, "executing", current_file=path)
-
-    def _policy_gated_writer(path: str, content: str) -> dict[str, Any]:
-        write_result = executor.execute_tool(
-            "write_file",
-            {"file": path, "content": content},
-            task_id=task_id,
-        )
-        write_results[path] = dict(write_result)
-        if bool(write_result.get("ok")):
-            _mark_progress(path)
-        return dict(write_result)
-
-    def _policy_gated_editor(operation: Any) -> dict[str, Any]:
-        path = str(getattr(operation, "path", "") or "")
-        edit_result = executor.execute_tool(
-            "edit_file",
-            {
-                "file": path,
-                "search": str(getattr(operation, "expected", "") or ""),
-                "replace": str(getattr(operation, "replacement", "") or ""),
-            },
-            task_id=task_id,
-        )
-        edit_results[path] = dict(edit_result)
-        if bool(edit_result.get("ok")):
-            _mark_progress(path)
-        return dict(edit_result)
-
-    def _policy_gated_deleter(path: str) -> dict[str, Any]:
-        try:
-            delete_result = executor.execute_tool(
-                "delete_file",
-                {"file": path},
-                task_id=task_id,
-            )
-        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            delete_result = {
-                "ok": False,
-                "file": path,
-                "error_code": "delete_file_requires_policy_gated_deleter",
-                "error": f"delete_file requires policy-gated Director deleter: {exc}",
-            }
-        delete_results[path] = dict(delete_result)
-        if bool(delete_result.get("ok")):
-            _mark_progress(path)
-        return dict(delete_result)
-
-    policy_gated_deleter = _policy_gated_deleter if _supports_policy_gated_delete_tool(executor) else None
-
-    if convergence_verifier is not None:
-        convergence_result = run_director_repair_convergence(
-            RunDirectorRepairConvergenceCommandV1(
-                task_id=task_id,
-                workspace=str(workspace_path),
-                source_tools=(source_tool,),
-                artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
-                artifact_quality_issues=quality_issues,
-                base_files=dict(base_files),
-                allowed_paths=tuple(allowed_paths or base_files.keys()),
-                advisor_notes=tuple(advisor_notes),
-                max_rounds=max_rounds,
-                metadata={"adapter_bridge": "runtime_repair_tool_adapter"},
-            ),
-            writer=_policy_gated_writer,
-            editor=_policy_gated_editor if use_editor else None,
-            deleter=policy_gated_deleter,
-            verifier=convergence_verifier,
-        )
-        if not convergence_result.ok:
-            return [
-                _project_failed_convergence_repair(
-                    source_tool=source_tool,
-                    convergence_result=convergence_result,
-                    delete_results=delete_results,
-                    delete_tool_available=policy_gated_deleter is not None,
-                )
-            ]
-        return _project_successful_repair_results(
-            repair_result=convergence_result,
-            planning_preflight=planning_preflight_payload,
-            write_results=write_results,
-            edit_results=edit_results,
-            delete_results=delete_results,
-            workspace_path=workspace_path,
-            mark_progress=_mark_progress,
-            convergence_result=convergence_result,
-        )
-
-    canonical_result = run_director_repair(
-        RunDirectorRepairCommandV1(
-            task_id=task_id,
-            workspace=str(workspace_path),
-            source_tool=source_tool,
-            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
-            artifact_quality_issues=quality_issues,
-            base_files=dict(base_files),
-            allowed_paths=tuple(allowed_paths or base_files.keys()),
-            advisor_notes=tuple(advisor_notes),
-        ),
-        writer=_policy_gated_writer,
-        editor=_policy_gated_editor if use_editor else None,
-        deleter=policy_gated_deleter,
-        revalidator=revalidator,
-    )
-    if not canonical_result.ok:
-        if canonical_result.error_code == "repair_not_planned":
+    planning = plan_director_repair(command)
+    planning_payload = planning.to_dict()
+    if not planning.ok:
+        if planning.error_code == "repair_not_planned" or (not planning.planned and not planning.error_code):
             return []
         return [
-            _project_failed_repair(
+            _failure(
                 source_tool=source_tool,
-                canonical_result=canonical_result,
-                planning_preflight=planning_preflight_payload,
-                delete_results=delete_results,
-                delete_tool_available=policy_gated_deleter is not None,
+                error_code=str(planning.error_code or "director_repair_planning_failed"),
+                error_message=str(planning.error_message or "Director repair planning failed"),
+                planning=planning_payload,
             )
         ]
+    if not planning.planned or planning.effect_plan is None:
+        return []
 
-    return _project_successful_repair_results(
-        repair_result=canonical_result,
-        planning_preflight=planning_preflight_payload,
-        write_results=write_results,
-        edit_results=edit_results,
-        delete_results=delete_results,
-        workspace_path=workspace_path,
-        mark_progress=_mark_progress,
+    request = create_deferred_director_repair_request(
+        workspace=workspace_path.resolve().as_posix(),
+        task_id=task_id,
+        execution_attempt=execution_attempt,
+        planning_command=command,
+        planning_result=planning,
+        allowed_paths=tuple(allowed_paths or base_files.keys()),
     )
+    return [_deferred_result(source_tool=source_tool, request=request, planning=planning_payload)]
 
 
-def _runtime_repair_planning_preflight(
-    *,
-    source_tool: str,
-    base_files: Mapping[str, str],
-    artifact_quality_errors: Sequence[str],
-    artifact_quality_issues: Sequence[Mapping[str, Any]],
-    advisor_notes: Sequence[RepairAdvisoryV1],
-    convergence_verifier_present: bool,
-) -> dict[str, Any] | None:
-    errors = tuple(str(item) for item in artifact_quality_errors if str(item or "").strip())
-    issues = tuple(dict(item) for item in artifact_quality_issues)
-    if not errors and not issues:
-        return _direct_runtime_repair_planning_preflight(
-            source_tool=source_tool,
-            base_files=base_files,
-            artifact_quality_errors=(),
-            artifact_quality_issues=(),
-            advisor_notes=advisor_notes,
-        )
-
-    plan_probe = query_director_repair_plan_probe(
-        QueryDirectorRepairPlanProbeV1(
-            source_tools=(source_tool,),
-            artifact_quality_errors=errors,
-            artifact_quality_issues=issues,
-            base_files=dict(base_files),
-            advisor_notes=tuple(advisor_notes),
-        )
-    )
-    plan_probe_payload = plan_probe.to_dict()
-    probe_item = next((item for item in plan_probe.items if item.source_tool == source_tool), None)
-    if probe_item is None or probe_item.status == "not_covered_by_source_tool":
-        if _source_tool_is_registered_runtime_repair(source_tool):
-            return None
-        return {
-            "ok": False,
-            "planned": False,
-            "source_tool": source_tool,
-            "status": "not_covered_by_source_tool",
-            "error_code": "unsupported_repair_source_tool",
-            "error_message": f"source_tool is not covered by director.runtime repair catalog: {source_tool}",
-            "plan_probe": plan_probe_payload,
-        }
-    payload = probe_item.planning_result.to_dict() if probe_item is not None else {"source_tool": source_tool}
-    payload["plan_probe"] = plan_probe_payload
-    if probe_item.status != "covered_plannable":
-        return None
-    return payload
-
-
-def _source_tool_is_registered_runtime_repair(source_tool: str) -> bool:
-    normalized = str(source_tool or "").strip()
-    if not normalized:
-        return False
-    catalog = query_director_repair_strategy_catalog(QueryDirectorRepairStrategyCatalogV1(include_items=False))
-    summary = dict(catalog.summary)
-    runtime_source_tools = {str(item or "") for item in summary.get("executable_runtime_source_tools", [])}
-    metadata_source_tools = {
-        str(item.get("source_tool") or "")
-        for item in summary.get("executable_runtime_bindings", [])
-        if isinstance(item, dict)
-    }
-    return normalized in runtime_source_tools or normalized in metadata_source_tools
-
-
-def _direct_runtime_repair_planning_preflight(
-    *,
-    source_tool: str,
-    base_files: Mapping[str, str],
-    artifact_quality_errors: Sequence[str],
-    artifact_quality_issues: Sequence[Mapping[str, Any]],
-    advisor_notes: Sequence[RepairAdvisoryV1],
-) -> dict[str, Any] | None:
-    planning = plan_director_repair(
-        PlanDirectorRepairCommandV1(
-            source_tool=source_tool,
-            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
-            artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
-            base_files=dict(base_files),
-            advisor_notes=tuple(advisor_notes),
-        )
-    )
-    payload = planning.to_dict()
-    if not planning.ok and (
-        planning.error_code == "repair_not_planned" or (not planning.planned and not planning.error_code)
-    ):
-        return None
-    return payload
-
-
-def _supports_policy_gated_delete_tool(executor: Any) -> bool:
-    supports_tool = getattr(executor, "supports_tool", None)
-    if callable(supports_tool):
-        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-            return bool(supports_tool("delete_file"))
-
-    for attr_name in ("available_tools", "tools", "tool_names"):
-        raw_tools = getattr(executor, attr_name, None)
-        if raw_tools is None:
-            continue
-        if callable(raw_tools):
-            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                raw_tools = raw_tools()
-        if isinstance(raw_tools, Mapping):
-            return "delete_file" in {str(key) for key in raw_tools}
-        with contextlib.suppress(TypeError):
-            return "delete_file" in {str(item) for item in raw_tools}
-
-    return False
-
-
-def _project_successful_repair_results(
-    *,
-    repair_result: Any,
-    planning_preflight: dict[str, Any],
-    write_results: Mapping[str, dict[str, Any]],
-    edit_results: Mapping[str, dict[str, Any]],
-    delete_results: Mapping[str, dict[str, Any]],
-    workspace_path: Path,
-    mark_progress: Callable[[str], None],
-    convergence_result: Any | None = None,
-) -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-    for receipt in repair_result.receipts:
-        for patch_path in receipt.files_changed:
-            tool_result = (
-                delete_results.get(patch_path) or edit_results.get(patch_path) or write_results.get(patch_path, {})
-            )
-            if patch_path in delete_results:
-                tool_name = "delete_file"
-            elif patch_path in edit_results:
-                tool_name = "edit_file"
-            else:
-                tool_name = "write_file"
-            if not bool(tool_result.get("ok")) and receipt.authoritative:
-                continue
-            bytes_written = tool_result.get("bytes_written")
-            if bytes_written is None and tool_name != "delete_file":
-                full_path = (workspace_path / patch_path).resolve()
-                with contextlib.suppress(OSError, ValueError):
-                    bytes_written = len(full_path.read_text(encoding="utf-8").encode("utf-8"))
-            mark_progress(patch_path)
-            results.append(
-                {
-                    "tool": tool_name,
-                    "tool_name": tool_name,
-                    "success": True,
-                    "result": {
-                        "ok": True,
-                        "source_tool": receipt.source_tool,
-                        "file": patch_path,
-                        "bytes_written": int(bytes_written or 0),
-                        "operation": str(tool_result.get("operation") or tool_name),
-                        "before_hash": str(receipt.before_hashes.get(patch_path) or ""),
-                        "after_hash": str(receipt.after_hashes.get(patch_path) or ""),
-                        "broadcast_ok": bool(tool_result.get("broadcast_ok")),
-                        "director_policy": tool_result.get("director_policy"),
-                        "repair_kernel": _project_receipt_kernel(
-                            receipt=receipt,
-                            canonical_result=repair_result,
-                            planning_preflight=planning_preflight,
-                            convergence_result=convergence_result,
-                        ),
-                    },
-                }
-            )
-    return results
-
-
-def _project_failed_planning_preflight(
-    *,
-    source_tool: str,
-    planning_preflight: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "tool": "director_repair_kernel",
-        "tool_name": "director_repair_kernel",
-        "success": False,
-        "result": {
-            "ok": False,
-            "source_tool": source_tool,
-            "error_code": planning_preflight.get("error_code"),
-            "error_message": planning_preflight.get("error_message"),
-            "repair_kernel": {
-                "owner_cell": "director.runtime",
-                "planning_preflight": dict(planning_preflight),
-                "planning": dict(planning_preflight),
-                "execution_skipped": True,
-                "execution_skip_reason": "planning_preflight_failed",
-            },
-        },
-    }
-
-
-def _project_failed_repair(
-    *,
-    source_tool: str,
-    canonical_result: Any,
-    planning_preflight: dict[str, Any],
-    delete_results: Mapping[str, dict[str, Any]],
-    delete_tool_available: bool,
-) -> dict[str, Any]:
-    return {
-        "tool": "director_repair_kernel",
-        "tool_name": "director_repair_kernel",
-        "success": False,
-        "result": {
-            "ok": False,
-            "source_tool": source_tool,
-            "error_code": canonical_result.error_code,
-            "error_message": canonical_result.error_message,
-            "repair_kernel": {
-                "owner_cell": "director.runtime",
-                "receipts": [receipt.to_dict() for receipt in canonical_result.receipts],
-                "planning_preflight": dict(planning_preflight),
-                "planning": dict(canonical_result.metadata.get("planning") or {}),
-                "planning_error": dict(canonical_result.metadata.get("planning_error") or {}),
-                "plan_policy": dict(canonical_result.metadata.get("plan_policy") or {}),
-                "composition_policy": dict(canonical_result.metadata.get("composition_policy") or {}),
-                "execution_error": canonical_result.metadata.get("execution_error"),
-                "execution_error_code": canonical_result.metadata.get("execution_error_code"),
-                "delete_results": dict(delete_results),
-                "delete_tool_available": bool(delete_tool_available),
-                "rolled_back": bool(canonical_result.metadata.get("rolled_back")),
-            },
-        },
-    }
-
-
-def _project_failed_convergence_repair(
-    *,
-    source_tool: str,
-    convergence_result: Any,
-    delete_results: Mapping[str, dict[str, Any]],
-    delete_tool_available: bool,
-) -> dict[str, Any]:
-    metadata = dict(getattr(convergence_result, "metadata", {}) or {})
-    rounds = [_object_to_dict(round_result) for round_result in getattr(convergence_result, "rounds", ())]
-    receipts = [_project_receipt_payload(receipt) for receipt in getattr(convergence_result, "receipts", ())]
-    final_diagnostics = _project_diagnostics(getattr(convergence_result, "final_diagnostics", ()))
-    return {
-        "tool": "director_repair_kernel",
-        "tool_name": "director_repair_kernel",
-        "success": False,
-        "result": {
-            "ok": False,
-            "source_tool": source_tool,
-            "status": getattr(convergence_result, "status", None),
-            "converged": bool(getattr(convergence_result, "converged", False)),
-            "error_code": getattr(convergence_result, "error_code", None),
-            "error_message": getattr(convergence_result, "error_message", None),
-            "receipts": receipts,
-            "rounds": rounds,
-            "final_diagnostics": final_diagnostics,
-            "metadata": metadata,
-            "delete_results": dict(delete_results),
-            "repair_kernel": {
-                "owner_cell": "director.runtime",
-                "convergence_status": getattr(convergence_result, "status", None),
-                "converged": bool(getattr(convergence_result, "converged", False)),
-                "convergence_round_count": len(rounds),
-                "convergence_rounds": rounds,
-                "rounds": rounds,
-                "receipts": receipts,
-                "final_diagnostics": final_diagnostics,
-                "metadata": metadata,
-                "delete_results": dict(delete_results),
-                "delete_tool_available": bool(delete_tool_available),
-                "coverage_report": dict(metadata.get("coverage_report") or {}),
-                "error_code": getattr(convergence_result, "error_code", None),
-                "error_message": getattr(convergence_result, "error_message", None),
-            },
-        },
-    }
-
-
-def _project_receipt_kernel(
-    *,
-    receipt: Any,
-    canonical_result: Any,
-    planning_preflight: dict[str, Any],
-    convergence_result: Any | None = None,
-) -> dict[str, Any]:
-    receipt_metadata = dict(receipt.metadata)
-    payload = {
-        "owner_cell": "director.runtime",
-        "receipt_id": receipt.receipt_id,
-        "plan_id": receipt.plan_id,
-        "status": receipt.status,
-        "authoritative": receipt.authoritative,
-        "requires_revalidation": _receipt_requires_revalidation(receipt),
-        "authority_hash": receipt.authority_hash,
-        "projection_hash": receipt.projection_hash,
-        "before_hashes": dict(receipt.before_hashes),
-        "after_hashes": dict(receipt.after_hashes),
-        "round_number": receipt.round_number,
-        "errors_before": receipt.errors_before,
-        "errors_after": receipt.errors_after,
-        "net_error_reduction": receipt.net_error_reduction,
-        "revalidation_evidence": dict(receipt.revalidation_evidence),
-        "metadata": receipt_metadata,
-        "planning_preflight": dict(planning_preflight),
-        "planning": dict(canonical_result.metadata.get("planning") or {}),
-        "plan_policy": dict(canonical_result.metadata.get("plan_policy") or {}),
-        "composition_policy": dict(canonical_result.metadata.get("composition_policy") or {}),
-    }
-    advisor_notes = (
-        receipt_metadata.get("advisor_notes")
-        or payload["planning"].get("advisor_notes")
-        or planning_preflight.get("advisor_notes")
-    )
-    if isinstance(advisor_notes, list):
-        payload["advisor_notes"] = advisor_notes
-    if convergence_result is not None:
-        metadata = dict(getattr(convergence_result, "metadata", {}) or {})
-        rounds = [_object_to_dict(round_result) for round_result in getattr(convergence_result, "rounds", ())]
-        payload.update(
-            {
-                "convergence_status": getattr(convergence_result, "status", None),
-                "converged": bool(getattr(convergence_result, "converged", False)),
-                "convergence_round_count": len(rounds),
-                "convergence_rounds": rounds,
-                "final_diagnostics": _project_diagnostics(getattr(convergence_result, "final_diagnostics", ())),
-                "coverage_report": dict(metadata.get("coverage_report") or {}),
-                "convergence_metadata": metadata,
-            }
-        )
-    return payload
-
-
-def _receipt_requires_revalidation(receipt: Any) -> bool:
-    metadata = dict(getattr(receipt, "metadata", {}) or {})
-    if "requires_revalidation" in metadata:
-        return bool(metadata.get("requires_revalidation"))
-    return not bool(getattr(receipt, "revalidation_evidence", {}) or {})
-
-
-def _project_receipt_payload(receipt: Any) -> dict[str, Any]:
-    payload = _object_to_dict(receipt)
-    payload["requires_revalidation"] = _receipt_requires_revalidation(receipt)
-    return payload
-
-
-def _project_diagnostics(diagnostics: Sequence[Any]) -> list[dict[str, Any]]:
-    return [_object_to_dict(diagnostic) for diagnostic in diagnostics]
-
-
-def _object_to_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, Mapping):
-        return dict(value)
-    to_dict = getattr(value, "to_dict", None)
-    if callable(to_dict):
-        return dict(to_dict())
-    if hasattr(value, "__dict__"):
-        return dict(value.__dict__)
-    return {"value": value}
+__all__ = ["defer_director_command_with_director_tools", "run_runtime_repair_with_director_tools"]

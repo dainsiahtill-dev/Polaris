@@ -1,0 +1,72 @@
+card_id: vc-20260722-factory-r14-stream-buffer-budget
+classification: physical_attempt_conservation
+status: complete
+bench_status: closed
+bug_summary: >-
+  The tenth authorized fresh isolated L1-04 run proved R13: streamed CE
+  terminal metadata reached Factory and the prior final-request audit failure
+  disappeared. The real CE Provider stream then failed inside the physical
+  attempt conservation gate with factory_provider_stream_buffer_limit_exceeded.
+  The fixed 4096-event limit was lower than the exact qualified physical output
+  budget of 16384 tokens, so a legitimate long structured stream was rejected
+  before its terminal fact could authorize release upstream.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: 25b6350aac9b
+  factory_run_id: factory_5793716523bb
+  stage: chief_engineer_review
+  error_code: factory_provider_stream_buffer_limit_exceeded
+  wall_clock_seconds: 180.3
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_artifact_materialized: true
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r14/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r14/audits/25b6350aac9b/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r14/L1-04.chain.log
+    provider_lifecycle_segment: >-
+      /home/dains/.cache/kernelone/.polaris/projects/15dc37c4e573c63b78c8c200-8cdfbcab79b3/runtime/events/.segmented/22014db69401bd250888608b/segments/segment-000000.jsonl
+root_cause:
+  code: qualified_stream_budget_below_physical_output_budget
+  summary: >-
+    FinalProviderAttemptGate buffers every raw structured Provider stream item
+    until response closure and durable terminal acknowledgement, but capped all
+    requests at 4096 events regardless of their already-qualified physical
+    max_tokens. Kimi's Anthropic-compatible 16384-token response can emit more
+    than 4096 structured deltas without violating its request contract.
+  fix: >-
+    Derive a bounded event-count budget from the exact qualified physical
+    max_tokens/max_output_tokens while retaining the independent 8 MiB byte cap,
+    a strict global event hard cap, durable terminal-before-release ordering,
+    and zero leakage on every failure path.
+required_gates:
+  regression_test_red_green: pass
+  focused_test_file: "70 passed"
+  roles_kernel_full: "2738 passed, 1 warning"
+  factory_pipeline_full: "1219 passed, 2 warnings"
+  provider_route_integration: "77 passed"
+  ruff: pass
+  ruff_format: pass
+  mypy_source: pass
+  compileall: pass
+  codegraph_structural_review: pass
+  source_snapshot_stability: pass
+source_hashes:
+  final_provider_attempt_gate_sha256: 88864d1dd078046276d1045aad06239300581fb758786fed7fa3965e4b005817
+  regression_test_sha256: beace41abd5f09e4b6430570397ba99bd31adea01534d62d469df9b51bf8d22d
+scheduling:
+  bench_schedulable: true
+  authorization_scope: delegated_to_pre_bench_one_shot_gate
+  next_action: recapture_source_snapshot_then_authorize_one_fresh_isolated_l1_04
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

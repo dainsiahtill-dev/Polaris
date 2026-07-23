@@ -18,6 +18,7 @@ from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, M
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 from .http_utils import join_url, normalize_base_url, validate_base_url_for_ssrf
+from .provider_helpers import _blocking_http_post
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -140,7 +141,9 @@ class GeminiAPIProvider(BaseProvider):
             warnings.append("Invalid temperature, using default 0.7")
             normalized["temperature"] = 0.7
 
-        return ProviderConfigValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized)
+        return ProviderConfigValidationResult(
+            valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized
+        )
 
     def __init__(self) -> None:
         pass
@@ -276,11 +279,11 @@ class GeminiAPIProvider(BaseProvider):
 
         while True:
             try:
-                response = requests.post(
+                response = _blocking_http_post(
                     url,
-                    headers=self._headers(config, api_key),
-                    json=payload,
-                    timeout=timeout if timeout > 0 else None,
+                    self._headers(config, api_key),
+                    payload,
+                    timeout if timeout > 0 else None,
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -305,8 +308,7 @@ class GeminiAPIProvider(BaseProvider):
         the blocking sync invoke() to a thread pool. When the response is ready,
         emit a single chunk instead of synthetic typewriter replay.
         """
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, lambda: self.invoke(prompt, model, config))
+        result = await asyncio.to_thread(self.invoke, prompt, model, config)
         if result.ok and result.output:
             yield result.output
         elif result.error:

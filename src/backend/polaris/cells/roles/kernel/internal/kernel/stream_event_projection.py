@@ -34,6 +34,7 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion impo
     record_missing_dispatch_lifecycle_receipt,
     task_boundary_ledger_append_failure_error,
 )
+from polaris.cells.roles.kernel.internal.kernel.turn_output_validation import validate_turn_output
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ContentChunkEvent,
@@ -218,6 +219,39 @@ class StreamEventProjector:
             tool_results=tool_results,
             batch_receipt=batch_receipt,
         )
+        structured_output: dict[str, Any] | None = None
+        if lifecycle_receipt is None and self.request.validate_output:
+            quality_result, _ = validate_turn_output(
+                kernel=self.kernel,
+                profile=self.profile,
+                content=final_content,
+                response_schema=None,
+                attempt=0,
+                max_retries=max(0, int(self.request.max_retries)),
+                last_error=None,
+                has_tool_activity=bool(tool_calls or tool_results),
+            )
+            metadata["output_validation"] = {
+                "success": bool(quality_result.success),
+                "errors": list(quality_result.errors),
+                "suggestions": list(quality_result.suggestions),
+                "quality_score": float(quality_result.quality_score),
+            }
+            if not quality_result.success:
+                self._record_projection_outcome(success=False, reason="stream output validation failed")
+                validation_error = "; ".join(str(item) for item in quality_result.errors)
+                return await self._publish_result(
+                    {
+                        "type": "error",
+                        "error": f"Output validation failed: {validation_error or 'unknown validation error'}",
+                        "error_type": "output_validation_failed",
+                        "turn_id": event.turn_id,
+                        "metadata": dict(metadata),
+                    },
+                    should_stop=True,
+                )
+            if isinstance(quality_result.data, dict):
+                structured_output = dict(quality_result.data)
         task_boundary_verdict = self._append_task_boundary_verdict(
             event.turn_id,
             tool_results,
@@ -285,7 +319,7 @@ class StreamEventProjector:
         event_dict["result"] = role_turn_completion_result(
             content=final_content,
             thinking=final_thinking,
-            structured_output=None,
+            structured_output=structured_output,
             tool_calls=tool_calls,
             tool_results=tool_results,
             batch_receipt=batch_receipt,

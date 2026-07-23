@@ -12,8 +12,33 @@ from typing import Any
 FINAL_REQUEST_EVIDENCE_SCHEMA = "llm.final_request_evidence.v1"
 FINAL_REQUEST_EVIDENCE_AUTHORITY_SCHEMA = "polaris.final_request_evidence_authority.v1"
 AUDIT_REFS_SCHEMA = "llm.final_request_audit_refs.v1"
+ROLE_FINAL_REQUEST_POLICY_PROMPT_SCHEMA = "polaris.role_final_request_evidence_prompt.v1"
+ROLE_FINAL_REQUEST_EVIDENCE_PROMPT_SLOT_SCHEMA = "polaris.role_final_request_evidence_slot_prompt.v1"
+FINAL_REQUEST_EVIDENCE_PROMPT_ANCHOR_SCHEMA = "polaris.final_request_evidence_anchor_prompt.v1"
+_ROLE_FINAL_REQUEST_POLICY_PROMPT_FIELDS = frozenset({"schema_version", "role", "slots"})
+_ROLE_FINAL_REQUEST_PROMPT_SLOT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "ref_kind",
+        "state",
+        "canonical_source_ref",
+        "source_fact_schema",
+        "source_fact_version",
+        "items",
+    }
+)
+_ROLE_FINAL_REQUEST_PROMPT_ANCHOR_FIELDS = frozenset(
+    {
+        "schema_version",
+        "ref_kind",
+        "canonical_source_ref",
+        "canonical_ref",
+        "canonical_hash",
+        "source_fact_schema",
+        "source_fact_version",
+    }
+)
 _CONTEXT_SNAPSHOT_HASH_RE = re.compile(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{24})(?![0-9A-Fa-f])")
-_EXACT_CONTEXT_SNAPSHOT_HASH_RE = re.compile(r"^[0-9a-f]{24}$")
 _EXACT_HASH_64_RE = re.compile(r"^[0-9a-f]{64}$")
 _CONTEXT_SNAPSHOT_AUDIT_PIN_FIELDS = frozenset(
     {
@@ -36,6 +61,23 @@ _CONTEXT_SNAPSHOT_AUDIT_PIN_FIELDS = frozenset(
         "pin_hash",
     }
 )
+
+
+def _validate_exact_context_snapshot_hash(value: str) -> str:
+    """Lazily consume the canonical validator without creating an import cycle.
+
+    ``context_store_retention`` owns the audit-pin repository and imports this
+    event contract. Importing the engine package while this module is still
+    initializing makes the canonical Run Ledger public import order-dependent.
+    The validator is a pure leaf, so deferring its import until validation keeps
+    one hash authority while preserving a cold-import-safe module graph.
+    """
+
+    from polaris.kernelone.llm.engine.internal.context_hash import validate_context_hash
+
+    return validate_context_hash(value)
+
+
 _SECRET_KEYS = frozenset(
     {
         "api_key",
@@ -2001,11 +2043,118 @@ class RoleFinalRequestPolicyFactsV1:
 
 
 def render_role_final_request_policy_facts(facts: RoleFinalRequestPolicyFactsV1) -> str:
-    """Render validated policy facts as one provider-visible canonical JSON block."""
+    """Render a prompt-safe projection of validated authority facts.
+
+    ``RoleFinalRequestPolicyFactsV1.to_record()`` is the durable control-plane
+    authority record.  Provider prompts need only evidence meaning and immutable
+    content references; attempt, cutoff, source-head, and execution-authority
+    identities must remain outside the data plane.
+    """
 
     if not isinstance(facts, RoleFinalRequestPolicyFactsV1):
         raise ValueError("role_final_request_policy_facts_typed_value_required")
-    return canonical_role_final_request_json(facts.to_record())
+    prompt_projection = {
+        "schema_version": ROLE_FINAL_REQUEST_POLICY_PROMPT_SCHEMA,
+        "role": facts.role,
+        "slots": [
+            {
+                "schema_version": ROLE_FINAL_REQUEST_EVIDENCE_PROMPT_SLOT_SCHEMA,
+                "ref_kind": slot.ref_kind,
+                "state": slot.state,
+                "canonical_source_ref": slot.canonical_source_ref,
+                "source_fact_schema": slot.source_fact_schema,
+                "source_fact_version": slot.source_fact_version,
+                "items": [
+                    {
+                        "schema_version": FINAL_REQUEST_EVIDENCE_PROMPT_ANCHOR_SCHEMA,
+                        "ref_kind": item.ref_kind,
+                        "canonical_source_ref": item.canonical_source_ref,
+                        "canonical_ref": item.canonical_ref,
+                        "canonical_hash": item.canonical_hash,
+                        "source_fact_schema": item.source_fact_schema,
+                        "source_fact_version": item.source_fact_version,
+                    }
+                    for item in slot.items
+                ],
+            }
+            for slot in facts.slots
+        ],
+    }
+    return canonical_role_final_request_json(prompt_projection)
+
+
+def validate_role_final_request_policy_prompt_projection(
+    record: Mapping[str, Any],
+    *,
+    expected_role: str,
+) -> None:
+    """Validate provider-visible evidence meaning without recreating authority.
+
+    The prompt projection is deliberately incapable of reconstructing cutoff,
+    execution, or attempt authority.  Runtime authorization must come from the
+    separately carried ``RoleFinalRequestPolicyFactsV1`` binding; this validator
+    checks only the closed, prompt-safe schema and its semantic invariants.
+    """
+
+    if not isinstance(record, Mapping) or frozenset(record) != _ROLE_FINAL_REQUEST_POLICY_PROMPT_FIELDS:
+        raise ValueError("role_final_request_prompt_fields_mismatch")
+    role = _require_role_final_request_string("role", record.get("role")).strip()
+    expected = _require_role_final_request_string("expected_role", expected_role).strip()
+    if role != expected:
+        raise ValueError("role_final_request_prompt_role_mismatch")
+    if record.get("schema_version") != ROLE_FINAL_REQUEST_POLICY_PROMPT_SCHEMA:
+        raise ValueError("role_final_request_prompt_schema_mismatch")
+    policy = role_final_request_policy(role)
+    slots = record.get("slots")
+    if not isinstance(slots, list) or len(slots) != len(policy.slot_order):
+        raise ValueError("role_final_request_prompt_slot_order_mismatch")
+
+    for expected_kind, slot in zip(policy.slot_order, slots, strict=True):
+        if not isinstance(slot, Mapping) or frozenset(slot) != _ROLE_FINAL_REQUEST_PROMPT_SLOT_FIELDS:
+            raise ValueError("role_final_request_prompt_slot_fields_mismatch")
+        if slot.get("schema_version") != ROLE_FINAL_REQUEST_EVIDENCE_PROMPT_SLOT_SCHEMA:
+            raise ValueError("role_final_request_prompt_slot_schema_mismatch")
+        ref_kind = _require_role_final_request_string("ref_kind", slot.get("ref_kind")).strip()
+        if ref_kind != expected_kind:
+            raise ValueError("role_final_request_prompt_slot_order_mismatch")
+        state = _require_role_final_request_string("state", slot.get("state")).strip()
+        if state not in _ROLE_FINAL_REQUEST_STATES:
+            raise ValueError("role_final_request_prompt_slot_state_invalid")
+        canonical_source_ref = _require_role_final_request_string(
+            "canonical_source_ref", slot.get("canonical_source_ref")
+        ).strip()
+        source_fact_schema = _require_role_final_request_string(
+            "source_fact_schema", slot.get("source_fact_schema")
+        ).strip()
+        source_fact_version = _require_role_final_request_string(
+            "source_fact_version", slot.get("source_fact_version")
+        ).strip()
+        if not canonical_source_ref or not source_fact_schema or not source_fact_version:
+            raise ValueError("role_final_request_prompt_slot_empty_binding")
+        items = slot.get("items")
+        if not isinstance(items, list):
+            raise ValueError("role_final_request_prompt_items_must_be_list")
+        if state == "present" and not items:
+            raise ValueError("role_final_request_prompt_present_items_missing")
+        if state == "absent_at_request_time" and items:
+            raise ValueError("role_final_request_prompt_absent_items_present")
+        for item in items:
+            if not isinstance(item, Mapping) or frozenset(item) != _ROLE_FINAL_REQUEST_PROMPT_ANCHOR_FIELDS:
+                raise ValueError("role_final_request_prompt_anchor_fields_mismatch")
+            if item.get("schema_version") != FINAL_REQUEST_EVIDENCE_PROMPT_ANCHOR_SCHEMA:
+                raise ValueError("role_final_request_prompt_anchor_schema_mismatch")
+            item_binding = (
+                _require_role_final_request_string("ref_kind", item.get("ref_kind")).strip(),
+                _require_role_final_request_string("canonical_source_ref", item.get("canonical_source_ref")).strip(),
+                _require_role_final_request_string("source_fact_schema", item.get("source_fact_schema")).strip(),
+                _require_role_final_request_string("source_fact_version", item.get("source_fact_version")).strip(),
+            )
+            if item_binding != (ref_kind, canonical_source_ref, source_fact_schema, source_fact_version):
+                raise ValueError("role_final_request_prompt_anchor_binding_mismatch")
+            canonical_ref = _require_role_final_request_string("canonical_ref", item.get("canonical_ref")).strip()
+            canonical_hash = _require_role_final_request_string("canonical_hash", item.get("canonical_hash")).strip()
+            if not canonical_ref or not _EXACT_HASH_64_RE.fullmatch(canonical_hash):
+                raise ValueError("role_final_request_prompt_anchor_identity_invalid")
 
 
 def redact_provider_transport(value: Any, *, key: str = "") -> Any:
@@ -2064,9 +2213,10 @@ class ContextSnapshotAuditPinV1:
         snapshot_content_hash: str,
         composite_request_hash: str,
     ) -> ContextSnapshotAuditPinV1:
-        ref = str(context_snapshot_ref or "").strip()
-        if not _EXACT_CONTEXT_SNAPSHOT_HASH_RE.fullmatch(ref):
-            raise ValueError("context_snapshot_ref must be exactly 24 lowercase hex")
+        try:
+            ref = _validate_exact_context_snapshot_hash(str(context_snapshot_ref or ""))
+        except ValueError as exc:
+            raise ValueError("context_snapshot_ref must be exactly 24 lowercase hex") from exc
         payload = {
             "schema_version": "llm.context_snapshot_audit_pin.v1",
             "workspace_abs": str(workspace_abs or "").strip(),
@@ -2090,8 +2240,10 @@ class ContextSnapshotAuditPinV1:
         for field_name in ("snapshot_content_hash", "composite_request_hash"):
             if not _EXACT_HASH_64_RE.fullmatch(str(payload[field_name])):
                 raise ValueError(f"{field_name} must be exactly 64 lowercase hex")
-        if not _EXACT_CONTEXT_SNAPSHOT_HASH_RE.fullmatch(str(payload["storage_identity_token"])):
-            raise ValueError("storage_identity_token must be exactly 24 lowercase hex")
+        try:
+            _validate_exact_context_snapshot_hash(str(payload["storage_identity_token"]))
+        except ValueError as exc:
+            raise ValueError("storage_identity_token must be exactly 24 lowercase hex") from exc
         return cls(**payload, pin_hash=canonical_final_request_hash(payload))
 
     @classmethod

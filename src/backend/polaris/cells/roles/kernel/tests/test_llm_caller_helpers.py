@@ -452,6 +452,41 @@ class TestResolveTimeoutSeconds:
         )
         assert timeout == 45
 
+    def test_director_absolute_execution_deadline_is_final_timeout_ceiling(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.roles.kernel.internal.llm_caller import helpers as helpers_module
+
+        monkeypatch.setattr(helpers_module.time, "time", lambda: 100.0)
+        profile = MockProfile(role_id="director")
+
+        timeout = resolve_timeout_seconds(
+            cast("RoleProfile", profile),
+            {"factory_director_execution_deadline_epoch_seconds": 112.5},
+        )
+
+        assert timeout == 12
+
+    def test_director_expired_absolute_execution_deadline_fails_closed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.roles.kernel.internal.llm_caller import helpers as helpers_module
+
+        monkeypatch.setattr(helpers_module.time, "time", lambda: 113.0)
+        profile = MockProfile(role_id="director")
+
+        with pytest.raises(RuntimeError, match="factory_director_execution_deadline_exhausted"):
+            resolve_timeout_seconds(
+                cast("RoleProfile", profile),
+                {
+                    "metadata": {
+                        "factory_director_execution_deadline_epoch_seconds": 112.5,
+                    }
+                },
+            )
+
     def test_non_director_context_timeout_override_wins(self) -> None:
         profile = MockProfile(role_id="pm")
         timeout = resolve_timeout_seconds(

@@ -1,0 +1,79 @@
+card_id: vc-20260723-factory-r42b-final-request-evidence-prompt-isolation
+classification: structural
+status: closed
+bench_status: not_schedulable
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  audit_relaxation: forbidden
+  authority_record_schema_change: forbidden
+defect:
+  project_id: L1-04
+  bench_attempt: R41
+  final_request_context_snapshot_ref: f1215054efb6f54c8c96f259
+  symptom: context_os_audit_failed_control_plane_isolation
+  root: full_authoritative_role_evidence_record_rendered_into_provider_prompt
+  secondary_root: frozen_request_reconstructed_control_plane_authority_from_provider_prompt
+assumptions:
+  provider_needs_evidence_refs_not_attempt_identity: validated
+  authoritative_record_remains_byte_stable: validated
+  typed_binding_preserves_qualification_drift_check: validated_focused
+implementation:
+  owners:
+    - kernelone.events
+    - roles.kernel
+  targets:
+    - render_role_final_request_policy_facts
+    - validate_role_final_request_policy_prompt_projection
+    - validate_factory_role_frozen_semantic_evidence_policy
+    - FactorySemanticDispatchPropagationPort._live_pairing_projection
+  allowlist_projection:
+    top_level:
+      - schema_version
+      - role
+      - slots
+    slot:
+      - schema_version
+      - ref_kind
+      - state
+      - canonical_source_ref
+      - source_fact_schema
+      - source_fact_version
+      - items
+    item:
+      - schema_version
+      - ref_kind
+      - canonical_source_ref
+      - canonical_ref
+      - canonical_hash
+      - source_fact_schema
+      - source_fact_version
+  excluded_control_plane_fields:
+    - factory_run_id
+    - run_id
+    - request_freeze_id
+    - cutoff_fact_id
+    - cutoff_fact_sequence
+    - cutoff_fact_hash
+    - source_fact_id
+    - source_fact_sequence
+    - source_fact_hash
+    - source_head_sequence
+    - source_head_hash
+    - execution_authority_hash
+validation:
+  renderer_unit: pass_57_event_tests
+  context_os_prompt_isolation: pass_all_5_factory_roles
+  request_preparer_integration: pass
+  typed_binding_tamper_rejection: pass
+  final_provider_qualification: pass_321_combined_tests
+  roles_kernel_full: 2747_passed_1_warning
+  factory_pipeline_full: 1237_passed_2_warnings
+  kernelone_release: 415_passed_1_skipped_2_warnings_ok_true
+  architecture: 1411_passed_8_skipped
+  static_gates: pass
+  post_edit_codegraph_review: pass
+closure:
+  provider_requests: 0
+  bench_runs: 0
+next_action: none_r42b_closed

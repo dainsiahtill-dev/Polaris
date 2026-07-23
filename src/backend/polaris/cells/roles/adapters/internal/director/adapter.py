@@ -115,6 +115,13 @@ _ROLE_CALL_TIMEOUT_KEYS = TIMEOUT_OVERRIDE_CONTEXT_KEYS
 _FORCED_WRITE_STAGE_MARKERS = FORCED_WRITE_STAGE_MARKERS
 _FORCED_WRITE_CONTEXT_KEYS = FORCED_WRITE_CONTEXT_KEYS
 _OUTPUT_BUDGET_CONTEXT_KEYS = OUTPUT_BUDGET_CONTEXT_KEYS
+_TRANSACTION_EXECUTION_SCOPE_KEYS = (
+    "execution_attempt_id",
+    "turn_request_id",
+    "execution_id",
+    "task_runtime_session_id",
+)
+_DIRECTOR_ROLE_SUBINVOCATION_SCHEMA = "director.role_subinvocation.v1"
 
 
 def _coerce_positive_float(value: Any) -> float | None:
@@ -181,7 +188,24 @@ def _context_has_forced_write_retry(context: dict[str, Any], *, stage_label: str
     normalized_stage = str(stage_label or "").strip().lower()
     if any(marker in normalized_stage for marker in _FORCED_WRITE_STAGE_MARKERS):
         return True
-    return any(key in context for key in _FORCED_WRITE_CONTEXT_KEYS)
+    if any(key in context for key in _FORCED_WRITE_CONTEXT_KEYS):
+        return True
+    if normalized_stage != "first_call" or not _string_list_payload(context.get("target_files"), limit=64):
+        return False
+    for key in (
+        "task_execution_profile",
+        "director_execution_profile",
+        "task_execution_contract",
+        "director_execution_contract",
+    ):
+        payload = context.get(key)
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("task_type") or "").strip().lower() == "write_code":
+            return True
+        if str(payload.get("output_contract_id") or "").strip().lower() == "director.patch_file.v1":
+            return True
+    return False
 
 
 def _forced_write_effective_output_budget(context: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -220,6 +244,128 @@ def _current_task_write_boundary_context(context: dict[str, Any]) -> dict[str, A
     }
 
 
+def _bind_director_role_subinvocation(
+    context: dict[str, Any],
+    *,
+    stage_label: str,
+) -> None:
+    """Bind one stable logical role call beneath a parent execution attempt.
+
+    TaskRuntime owns the parent authorization. Director orchestration may issue
+    several independent RoleRuntime calls inside that attempt, so each stage
+    needs its own replay-stable ``turn_request_id``. The parent scope remains
+    evidence and never becomes a second authorization source.
+    """
+
+    metadata_raw = context.get("metadata")
+    metadata_source: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    # ``runtime_execution`` is a TaskRuntime-owned execution-state projection.
+    # Director may inspect it to bind the parent identity, but a child role
+    # request must not carry a rewritten or partial copy.  The typed
+    # ``director_role_subinvocation`` evidence below is the sole parent/child
+    # projection for the outbound role call.
+    metadata: dict[str, Any] = {
+        key: value for key, value in metadata_source.items() if key != "runtime_execution"
+    }
+    candidates: list[tuple[str, str]] = []
+
+    metadata_evidence_raw = metadata.get("director_role_subinvocation")
+    context_evidence_raw = context.get("director_role_subinvocation")
+    if (
+        metadata_evidence_raw is not None
+        and context_evidence_raw is not None
+        and metadata_evidence_raw != context_evidence_raw
+    ):
+        raise RuntimeError("director_role_invocation_prior_evidence_mismatch")
+    prior_evidence_raw = metadata_evidence_raw
+    if prior_evidence_raw is None:
+        prior_evidence_raw = context_evidence_raw
+    if prior_evidence_raw is not None:
+        if not isinstance(prior_evidence_raw, dict):
+            raise RuntimeError("director_role_invocation_prior_evidence_invalid")
+        prior_schema = str(prior_evidence_raw.get("schema_version") or "").strip()
+        parent_scope_kind = str(prior_evidence_raw.get("parent_execution_scope_kind") or "").strip()
+        parent_scope_id = str(prior_evidence_raw.get("parent_execution_scope_id") or "").strip()
+        prior_turn_request_id = str(prior_evidence_raw.get("turn_request_id") or "").strip()
+        if (
+            prior_schema != _DIRECTOR_ROLE_SUBINVOCATION_SCHEMA
+            or parent_scope_kind not in _TRANSACTION_EXECUTION_SCOPE_KEYS
+            or not parent_scope_id
+            or not prior_turn_request_id
+        ):
+            raise RuntimeError("director_role_invocation_prior_evidence_invalid")
+        for projected_turn_id in (
+            str(metadata.get("turn_request_id") or "").strip(),
+            str(context.get("turn_request_id") or "").strip(),
+        ):
+            if projected_turn_id and projected_turn_id != prior_turn_request_id:
+                raise RuntimeError("director_role_invocation_prior_evidence_mismatch")
+        for key in _TRANSACTION_EXECUTION_SCOPE_KEYS:
+            token = str(metadata.get(key) or "").strip()
+            expected = prior_turn_request_id if key == "turn_request_id" else parent_scope_id
+            if token and token != expected:
+                raise RuntimeError("director_role_invocation_prior_evidence_mismatch")
+        candidates.append((parent_scope_kind, parent_scope_id))
+    else:
+        for key in _TRANSACTION_EXECUTION_SCOPE_KEYS:
+            token = str(metadata.get(key) or "").strip()
+            if token:
+                candidates.append((key, token))
+
+    runtime_execution_raw = metadata_source.get("runtime_execution")
+    runtime_execution = dict(runtime_execution_raw) if isinstance(runtime_execution_raw, dict) else None
+    if runtime_execution is not None and prior_evidence_raw is not None:
+        for key in (*_TRANSACTION_EXECUTION_SCOPE_KEYS, "session_id"):
+            token = str(runtime_execution.get(key) or "").strip()
+            expected = prior_turn_request_id if key == "turn_request_id" else parent_scope_id
+            if token and token != expected:
+                raise RuntimeError("director_role_invocation_prior_evidence_mismatch")
+    if runtime_execution is not None and prior_evidence_raw is None:
+        for key in (*_TRANSACTION_EXECUTION_SCOPE_KEYS, "session_id"):
+            token = str(runtime_execution.get(key) or "").strip()
+            if not token:
+                continue
+            canonical_key = "task_runtime_session_id" if key == "session_id" else key
+            candidates.append((canonical_key, token))
+
+    if not candidates:
+        return
+    distinct_parent_ids = {scope_id for _, scope_id in candidates}
+    if len(distinct_parent_ids) != 1:
+        fields = ",".join(scope_kind for scope_kind, _ in candidates)
+        raise RuntimeError(f"director_role_invocation_parent_identity_mismatch fields={fields}")
+
+    normalized_stage = str(stage_label or "").strip().lower()
+    if not normalized_stage:
+        raise RuntimeError("director_role_invocation_stage_missing")
+    parent_scope_kind, parent_scope_id = candidates[0]
+    stage_token = re.sub(r"[^a-z0-9._-]+", "-", normalized_stage).strip("-._")[:32] or "stage"
+    identity_material = "\n".join(
+        (
+            _DIRECTOR_ROLE_SUBINVOCATION_SCHEMA,
+            parent_scope_kind,
+            parent_scope_id,
+            normalized_stage,
+        )
+    ).encode("utf-8")
+    turn_request_id = f"director-{stage_token}-{hashlib.sha256(identity_material).hexdigest()[:24]}"
+
+    for key in _TRANSACTION_EXECUTION_SCOPE_KEYS:
+        metadata.pop(key, None)
+    evidence = {
+        "schema_version": _DIRECTOR_ROLE_SUBINVOCATION_SCHEMA,
+        "parent_execution_scope_kind": parent_scope_kind,
+        "parent_execution_scope_id": parent_scope_id,
+        "stage_label": normalized_stage,
+        "turn_request_id": turn_request_id,
+    }
+    metadata["turn_request_id"] = turn_request_id
+    metadata["director_role_subinvocation"] = evidence
+    context["turn_request_id"] = turn_request_id
+    context["director_role_subinvocation"] = dict(evidence)
+    context["metadata"] = metadata
+
+
 def _prepare_role_dialogue_context(
     context: dict[str, Any] | None,
     *,
@@ -227,10 +373,15 @@ def _prepare_role_dialogue_context(
     stage_label: str,
 ) -> tuple[dict[str, Any], float]:
     context_payload = dict(context) if isinstance(context, dict) else {}
+    _bind_director_role_subinvocation(context_payload, stage_label=stage_label)
     timeout = _resolve_role_call_timeout(
         context=context_payload,
         stage_label=stage_label,
         requested_timeout_seconds=timeout_seconds,
+    )
+    timeout = DirectorPatchExecutor.clamp_llm_call_timeout_to_factory_deadline(
+        context_payload,
+        timeout,
     )
     for key in _ROLE_CALL_TIMEOUT_CEILING_KEYS:
         context_payload[key] = timeout
@@ -1379,8 +1530,21 @@ class DirectorAdapter(BaseRoleAdapter):
     ) -> dict[str, Any]:
         """Call roles.runtime so Context OS and Cognitive Runtime participate."""
 
+        from polaris.cells.roles.adapters.public import (
+            directed_effect_policy_service,
+            directed_effect_service as directed_effect_mutation_service,
+        )
+        from polaris.cells.roles.kernel.public import (
+            DirectedEffectRuntimeDependenciesV1,
+            directed_effect_service as directed_effect_fence_service,
+        )
         from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+        from polaris.cells.runtime.task_runtime.public import (
+            TaskRuntimeExecutionAttemptAuthoritySnapshotV1,
+            TaskRuntimeExecutionAttemptAuthorityV1,
+            TaskRuntimeExecutionAttemptIdentityV1,
+        )
 
         context_payload = dict(context) if isinstance(context, dict) else {}
         _inject_director_actual_sibling_exports(context_payload, workspace=str(self.workspace))
@@ -1412,6 +1576,27 @@ class DirectorAdapter(BaseRoleAdapter):
             run_id=run_id,
             message=message,
         )
+        authority = context_payload.get("task_runtime_execution_attempt_authority")
+        if isinstance(authority, TaskRuntimeExecutionAttemptAuthorityV1):
+            try:
+                snapshot = authority.snapshot(lock_timeout_seconds=5.0)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                snapshot = None
+            if (
+                type(snapshot) is TaskRuntimeExecutionAttemptAuthoritySnapshotV1
+                and snapshot.success
+                and not snapshot.closed
+                and type(snapshot.identity) is TaskRuntimeExecutionAttemptIdentityV1
+            ):
+                attempt_identity = snapshot.identity
+                # TaskRuntime rows use a private integer id while guarded role
+                # sessions bind to the PM/CE external task identity. Preserve a
+                # genuinely drifting caller id so RoleRuntime still rejects it;
+                # normalize only the canonical internal-row projection.
+                if task_id == str(attempt_identity.task_id):
+                    context_payload["task_runtime_internal_task_id"] = task_id
+                    metadata["task_runtime_internal_task_id"] = task_id
+                    task_id = attempt_identity.external_task_id
         timeout_seconds = _context_timeout_seconds_for_runtime_command(context_payload)
         command = ExecuteRoleSessionCommandV1(
             role=self.role_id,
@@ -1428,7 +1613,24 @@ class DirectorAdapter(BaseRoleAdapter):
             host_kind="director_adapter",
             timeout_seconds=timeout_seconds,
         )
-        runtime = RoleRuntimeService()
+        policy_snapshot_port = directed_effect_policy_service.create_director_effect_policy_snapshot_port(
+            str(self.workspace)
+        )
+        fence_ports = directed_effect_fence_service.create_directed_effect_fence_ports()
+        mutation_port = directed_effect_mutation_service.create_director_directed_effect_mutation_port(
+            workspace=str(self.workspace),
+            policy_snapshot_port=policy_snapshot_port,
+            fence_consume_port=fence_ports.consume,
+        )
+        directed_effect_runtime = DirectedEffectRuntimeDependenciesV1(
+            policy_snapshot_port=policy_snapshot_port,
+            fence_admin_port=fence_ports.admin,
+            mutation_port=mutation_port,
+        )
+        runtime = RoleRuntimeService(
+            directed_effect_runtime=directed_effect_runtime,
+            directed_effect_required=True,
+        )
         result = await runtime.execute_role_session(command)
         result_metadata = dict(getattr(result, "metadata", {}) or {})
         result_usage = dict(getattr(result, "usage", {}) or {})

@@ -1325,6 +1325,7 @@ class TestDeterministicContractsFlag:
                     "metadata": {
                         "deterministic_pm_contracts": True,
                         "pm_route_audit_probe": True,
+                        "factory_run_id": "factory-run-1",
                     }
                 },
                 {},
@@ -1338,6 +1339,8 @@ class TestDeterministicContractsFlag:
         assert calls[0]["context"]["route_audit_probe"] is True
         assert calls[0]["context"]["task_id"] == "pm-route-probe"
         assert calls[0]["context"]["pm_task_id"] == "pm-route-probe"
+        assert calls[0]["context"]["turn_request_id"].startswith("pm-route-probe-")
+        assert len(calls[0]["context"]["turn_request_id"]) == len("pm-route-probe-") + 24
         assert calls[0]["context"]["disable_internal_tool_rounds"] is True
         assert calls[0]["context"]["tool_contract_require_no_tool_calls"] is True
         assert calls[0]["context"]["require_no_tool_calls"] is True
@@ -1351,6 +1354,21 @@ class TestDeterministicContractsFlag:
         assert calls[0]["context"]["_transaction_kernel_suppress_session_patch"] is True
         signals = result["quality_gate"]["signals"]
         assert any(signal["code"] == "pm.contracts.deterministic_route_probe" for signal in signals)
+
+    def test_route_probe_turn_request_identity_is_stable_and_run_scoped(self) -> None:
+        build = PMAdapter._build_deterministic_pm_route_probe_context
+        input_data = {"metadata": {"factory_run_id": "factory-run-1"}}
+
+        first = build(task_id="pm-route-probe", input_data=input_data, context={})
+        repeated = build(task_id="pm-route-probe", input_data=input_data, context={})
+        other_run = build(
+            task_id="pm-route-probe",
+            input_data={"metadata": {"factory_run_id": "factory-run-2"}},
+            context={},
+        )
+
+        assert first["turn_request_id"] == repeated["turn_request_id"]
+        assert first["turn_request_id"] != other_run["turn_request_id"]
 
 
 # ---------------------------------------------------------------------------

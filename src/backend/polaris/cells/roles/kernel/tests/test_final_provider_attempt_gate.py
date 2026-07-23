@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
 import threading
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+import time
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Coroutine, Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
+    QueryFactEventsV1,
     bootstrap_fact_stream_workspace,
+    query_fact_events,
 )
-from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
-    FactoryPhysicalAttemptLiveControlPort,
+from polaris.cells.roles.kernel.internal.llm_caller import (
+    final_provider_attempt_gate as gate_module,
+    final_provider_attempt_qualification as qualification_module,
+    invoker as invoker_module,
+)
+from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+    FinalRequestEvidenceCoverageError,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate import (
     DurableFinalProviderAttemptSnapshotStore,
@@ -27,18 +37,31 @@ from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_infli
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle import (
     StrictProviderAttemptLifecycleStore,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.final_request_metrics import (
+    provider_native_request_metrics,
+    validated_final_context_evidence,
+)
+from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
+from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
 from polaris.cells.roles.kernel.public.physical_attempt_control import (
     FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
     FactoryPhysicalAttemptGrantViewV1,
 )
+from polaris.cells.roles.kernel.tests import test_role_turn_request_fact_projection as request_fact_test
+from polaris.cells.roles.kernel.tests._physical_attempt_control_test_double import (
+    FactoryPhysicalAttemptTestControlError as FactoryPhysicalAttemptControlError,
+    FactoryPhysicalAttemptTestControlPort as FactoryPhysicalAttemptLiveControlPort,
+)
 from polaris.infrastructure.llm.providers import provider_helpers
+from polaris.infrastructure.llm.providers.anthropic_provider import AnthropicProvider
 from polaris.infrastructure.llm.providers.provider_helpers import (
     invoke_stream_with_retry,
     invoke_stream_with_retry_and_handler,
     invoke_with_retry,
 )
 from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
-from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1
+from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1, bind_physical_provider_dispatch_port
+from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.types import Usage
 
 
@@ -55,6 +78,22 @@ class _Response:
 
 class ClientResponseError(RuntimeError):
     """Retry-shaped aiohttp response error for physical stream tests."""
+
+
+def test_final_context_evidence_rejects_incomplete_claimed_physical_audit() -> None:
+    context_ref = "a" * 24
+
+    class _ForgedPort:
+        def final_context_evidence(self) -> tuple[str, dict[str, Any]]:
+            return (
+                context_ref,
+                {
+                    "audit_scope": "provider_native_wire",
+                    "final_request_evidence_coverage": {"context_snapshot_ref": context_ref},
+                },
+            )
+
+    assert validated_final_context_evidence(_ForgedPort(), expected_port_type=_ForgedPort) is None
 
 
 class _AsyncStreamContent:
@@ -134,17 +173,427 @@ def _bootstrap(workspace: Path) -> None:
     )
 
 
+def _run_fixture_coroutine(coroutine: Coroutine[Any, Any, Any]) -> Any:
+    """Run async request preparation without nesting the caller's event loop."""
+
+    result: list[Any] = []
+    errors: list[BaseException] = []
+
+    def _target() -> None:
+        try:
+            result.append(asyncio.run(coroutine))
+        except Exception as exc:  # noqa: BLE001 - test helper must preserve the original failure
+            errors.append(exc)
+
+    worker = threading.Thread(target=_target, daemon=False)
+    worker.start()
+    worker.join()
+    if errors:
+        raise errors[0]
+    assert len(result) == 1
+    return result[0]
+
+
+def _wire_body_from_semantic(
+    *,
+    semantic_request: Mapping[str, Any],
+    model: str,
+) -> dict[str, Any]:
+    options = semantic_request["semantic_options"]
+    assert isinstance(options, Mapping)
+    body = {
+        "model": model,
+        "messages": semantic_request["messages"],
+        "tools": semantic_request["tools"],
+        "tool_choice": semantic_request["tool_choice"],
+        "response_format": semantic_request["response_format"],
+        "temperature": options["temperature"],
+    }
+    if "max_tokens" in options:
+        body["max_tokens"] = options["max_tokens"]
+    return body
+
+
+def _qualified_factory_fixture(
+    *,
+    workspace: Path,
+    physical_attempt_control_port: FactoryPhysicalAttemptLiveControlPort,
+    semantic_options: Mapping[str, Any] | None = None,
+    stream: bool = False,
+    provider_type: str = "openai_compat",
+    provider_config: Mapping[str, Any] | None = None,
+    wire_factory: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    role: str = "director",
+) -> tuple[
+    qualification_module._FinalProviderAttemptQualificationProofV1,
+    Mapping[str, Any],
+    dict[str, Any],
+    Any,
+    Any,
+]:
+    """Build a real frozen request, snapshot, audit, route, wire, and proof."""
+
+    options = dict(semantic_options or {"temperature": 0.1, "max_tokens": 128})
+    options.setdefault("max_tokens", 128)
+    _, _, _, prepared = _run_fixture_coroutine(
+        request_fact_test._prepare_b33_factory_request(
+            role,
+            workspace=str(workspace),
+            physical_attempt_control_port=physical_attempt_control_port,
+            execution_authority_hash="f" * 64,
+            attempt_budget=32,
+            tool_choice="auto",
+            temperature=float(options["temperature"]),
+            max_tokens=int(options["max_tokens"]),
+            stream=stream,
+        )
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        workspace=str(workspace),
+        messages=payload["messages"],
+        trace_id=frozen.identity.run_id,
+        call_id=frozen.identity.call_id,
+        provider_request=request_fact_test._b35_provider_request_snapshot(frozen=frozen),
+    )
+    audit = request_fact_test._b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref)
+    dispatch_port.qualify(
+        final_request_context_audit=audit,
+        context_snapshot_ref=context_snapshot_ref,
+    )
+    dispatch_port.bind_provider_route_authority(
+        provider_id=str(payload["provider_id"]),
+        provider_type=provider_type,
+        model=str(payload["model"]),
+        mode="stream" if payload["stream"] else "invoke",
+        provider_config=dict(provider_config or {"base_url": "https://example.test"}),
+    )
+    semantic_request = qualification_module.final_gate_semantic_request(frozen)
+    route = dispatch_port._physical_route_authority
+    assert isinstance(route, dict)
+    body = dict(route["expected_body"])
+    wire = (
+        wire_factory(body)
+        if wire_factory is not None
+        else {
+            "endpoint": route["exact_endpoint"],
+            "headers": {},
+            "body": body,
+            "transport": (
+                {"kind": route["exact_transport_kind"], "timeout_seconds": 5}
+                if stream
+                else {"kind": route["exact_transport_kind"], "timeout": 1}
+            ),
+        }
+    )
+    transport = wire.get("transport")
+    assert isinstance(transport, Mapping)
+    endpoint = str(wire.get("endpoint") or "")
+    assert endpoint.startswith("https://example.test/")
+    final_context_ref, final_audit = dispatch_port._persist_final_physical_request_context(
+        wire_request=wire,
+    )
+    proof = qualification_module._mint_final_provider_attempt_qualification_proof(
+        workspace=str(workspace),
+        frozen=frozen,
+        binding=dispatch_port._binding,
+        final_request_context_audit=final_audit,
+        context_snapshot_ref=final_context_ref,
+        wire_request=wire,
+        physical_route_authority=route,
+    )
+    return proof, semantic_request, wire, frozen, dispatch_port
+
+
+def _prepared_with_dispatch_port(*, frozen: Any, dispatch_port: Any) -> PreparedLLMRequest:
+    payload = json.loads(frozen.canonical_final_payload_json)
+    return PreparedLLMRequest(
+        messages=payload["messages"],
+        input_text="",
+        context_result=SimpleNamespace(
+            token_estimate=1,
+            compression_applied=False,
+            compression_strategy=None,
+        ),
+        context_summary="",
+        request_options={},
+        ai_request=SimpleNamespace(
+            context={"context_snapshot_ref": "b" * 24},
+            provider_id=payload["provider_id"],
+            model=payload["model"],
+            options={},
+        ),
+        context_os_audit={},
+        factory_semantic_request=frozen,
+        factory_dispatch_port=dispatch_port,
+    )
+
+
+def _failed_coverage_audit(dispatch_port: Any, *, case: str = "missing_refs") -> dict[str, Any]:
+    audit = copy.deepcopy(dispatch_port._qualified_audit)
+    coverage = audit["final_request_evidence_coverage"]
+    coverage["pass"] = False
+    if case == "missing_refs":
+        coverage["missing_required_refs"] = ["pm_contract_ref"]
+    elif case == "missing_tools":
+        coverage["missing_required_tools"] = ["write_file"]
+    elif case == "wrong_role":
+        coverage["role_identity_ok"] = False
+        coverage["role_id"] = "pm"
+    else:
+        raise AssertionError(f"unsupported coverage failure case: {case}")
+    return audit
+
+
+def _assert_one_coverage_rejection_and_zero_physical_effects(
+    *,
+    workspace: Path,
+    gate: FinalProviderAttemptGate,
+    lifecycle: StrictProviderAttemptLifecycleStore,
+    rejection_code: str = "final_request_evidence_coverage_failed",
+) -> None:
+    events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream=qualification_module.qualification_rejection_stream("factory-run-1"),
+            limit=10,
+        )
+    )
+    assert events.total == 1
+    assert events.events[0]["payload"]["rejection_code"] == rejection_code
+    state = gate._physical_attempt_control_port.budget_state("f" * 64)
+    assert state.reserved_count == 0
+    assert state.committed_count == 0
+    assert state.terminal_count == 0
+    assert state.consumed_attempts == 0
+    assert state.remaining_attempts == 32
+    assert state.settled is True
+    assert lifecycle.query_strict() == ()
+    assert gate._test_dispatch_port.final_context_evidence() is None
+
+
+@pytest.mark.parametrize(
+    ("case", "rejection_code"),
+    [
+        ("missing_tools", "final_request_evidence_coverage_failed"),
+        ("wrong_role", "final_request_role_identity_mismatch"),
+    ],
+)
+def test_port_owned_prequalification_rejection_covers_tools_and_role_without_effects(
+    tmp_path: Path,
+    case: str,
+    rejection_code: str,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    dispatch_port = gate._test_dispatch_port
+    request = SimpleNamespace(
+        context={"final_request_evidence_required": True},
+        options={},
+    )
+
+    with pytest.raises(FinalRequestEvidenceCoverageError):
+        dispatch_port.enforce_final_request_evidence_coverage(
+            ai_request=request,
+            audit=_failed_coverage_audit(dispatch_port, case=case),
+        )
+
+    _assert_one_coverage_rejection_and_zero_physical_effects(
+        workspace=tmp_path,
+        gate=gate,
+        lifecycle=lifecycle,
+        rejection_code=rejection_code,
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_prequalification_coverage_failure_records_one_rejection_and_zero_effects(
+    tmp_path: Path,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    dispatch_port = gate._test_dispatch_port
+    frozen = dispatch_port.frozen_semantic_request
+    prepared = _prepared_with_dispatch_port(frozen=frozen, dispatch_port=dispatch_port)
+    prepared.ai_request.context["final_request_evidence_required"] = True
+    executor_calls = 0
+
+    class _Executor:
+        async def invoke(self, _request: object, *, physical_dispatch_port: object) -> str:
+            del _request, physical_dispatch_port
+            nonlocal executor_calls
+            executor_calls += 1
+            return "forbidden"
+
+    with (
+        patch.object(invoker_module, "context_snapshot_matches_frozen_attempt", return_value=True),
+        patch.object(
+            invoker_module,
+            "build_final_request_context_audit_for_request",
+            return_value=_failed_coverage_audit(dispatch_port),
+        ),
+        pytest.raises(FinalRequestEvidenceCoverageError),
+    ):
+        await invoker_module._invoke_executor_with_factory_dispatch(
+            executor=_Executor(),
+            prepared=prepared,
+            request=prepared.ai_request,
+            profile=request_fact_test._profile("director"),
+        )
+
+    assert executor_calls == 0
+    _assert_one_coverage_rejection_and_zero_physical_effects(
+        workspace=tmp_path,
+        gate=gate,
+        lifecycle=lifecycle,
+    )
+
+
+@pytest.mark.asyncio
+async def test_structured_prequalification_coverage_failure_records_one_rejection_and_zero_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    dispatch_port = gate._test_dispatch_port
+    prepared = _prepared_with_dispatch_port(
+        frozen=dispatch_port.frozen_semantic_request,
+        dispatch_port=dispatch_port,
+    )
+    prepared.ai_request.context["final_request_evidence_required"] = True
+    profile = request_fact_test._profile("director")
+    invoker = invoker_module.LLMInvoker(workspace=str(tmp_path))
+    native_dispatch = AsyncMock(side_effect=AssertionError("structured provider dispatch must not run"))
+    instructor_dispatch = AsyncMock(side_effect=AssertionError("instructor dispatch must not run"))
+    fallback_dispatch = AsyncMock(side_effect=AssertionError("structured fallback must not run"))
+    monkeypatch.setattr(invoker_module.LLMInvoker, "_profile_for_healthy_binding", lambda *_args: profile)
+    monkeypatch.setattr(invoker_module.LLMInvoker, "_try_native_response_format_structured", native_dispatch)
+    monkeypatch.setattr(invoker_module.LLMInvoker, "_try_instructor_structured", instructor_dispatch)
+    monkeypatch.setattr(invoker_module.LLMInvoker, "_run_structured_fallback", fallback_dispatch)
+
+    with (
+        patch.object(
+            invoker_module.LLMRequestPreparer,
+            "_prepare_llm_request",
+            AsyncMock(return_value=prepared),
+        ),
+        patch.object(invoker_module, "_store_call_start_context_snapshot", AsyncMock()),
+        patch.object(
+            invoker_module,
+            "build_final_request_context_audit_for_request",
+            return_value=_failed_coverage_audit(dispatch_port),
+        ),
+    ):
+        response = await invoker.call_structured(
+            profile=profile,
+            system_prompt="You are Director.",
+            context=SimpleNamespace(message="Implement.", domain="code", context_override={}),
+            response_model=dict,
+            run_id=prepared.factory_semantic_request.identity.run_id,
+        )
+
+    assert "Final provider request evidence coverage failed" in str(response.error)
+    native_dispatch.assert_not_awaited()
+    instructor_dispatch.assert_not_awaited()
+    fallback_dispatch.assert_not_awaited()
+    _assert_one_coverage_rejection_and_zero_physical_effects(
+        workspace=tmp_path,
+        gate=gate,
+        lifecycle=lifecycle,
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_prequalification_coverage_failure_records_one_rejection_and_zero_effects(
+    tmp_path: Path,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path, stream=True)
+    dispatch_port = gate._test_dispatch_port
+    prepared = _prepared_with_dispatch_port(
+        frozen=dispatch_port.frozen_semantic_request,
+        dispatch_port=dispatch_port,
+    )
+    prepared.ai_request.context["final_request_evidence_required"] = True
+    executor_calls = 0
+    store_calls = 0
+
+    class _Executor:
+        async def invoke_stream(self, _request: object, *, physical_dispatch_port: object):
+            del _request, physical_dispatch_port
+            nonlocal executor_calls
+            executor_calls += 1
+            yield {"type": "chunk", "content": "forbidden"}
+
+    async def _store_context_messages(*_args: object, **_kwargs: object) -> str:
+        nonlocal store_calls
+        store_calls += 1
+        return "a" * 24
+
+    engine = StreamEngine(
+        workspace=str(tmp_path),
+        get_executor=lambda: _Executor(),
+        allow_native_tool_text_fallback_fn=Mock(return_value=False),
+        emit_call_start_event=Mock(),
+        emit_call_error_event=Mock(),
+        emit_call_end_event=Mock(),
+        emit_call_retry_event=Mock(),
+        store_context_messages=_store_context_messages,
+    )
+    with (
+        patch(
+            "polaris.cells.roles.kernel.internal.llm_caller.stream_engine.build_final_request_context_audit_for_request",
+            return_value=_failed_coverage_audit(dispatch_port),
+        ),
+        pytest.raises(FinalRequestEvidenceCoverageError),
+    ):
+        _ = [
+            event
+            async for event in engine.run_stream(
+                profile=request_fact_test._profile("director"),
+                prepared=prepared,
+                context=SimpleNamespace(context_override={}, stream_cancelled=False),
+                start_time=time.perf_counter(),
+                role_id="director",
+                run_id=dispatch_port.frozen_semantic_request.identity.run_id,
+                task_id=None,
+                attempt=0,
+                model="model-a",
+                call_id=dispatch_port.frozen_semantic_request.identity.call_id,
+                event_emitter=None,
+                turn_round=0,
+            )
+        ]
+
+    assert executor_calls == 0
+    assert store_calls == 0
+    _assert_one_coverage_rejection_and_zero_physical_effects(
+        workspace=tmp_path,
+        gate=gate,
+        lifecycle=lifecycle,
+    )
+
+
 def _gate(
     workspace: Path,
     *,
     snapshot_store: object | None = None,
     semantic_options: dict[str, Any] | None = None,
+    stream: bool = False,
+    wire_factory: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> tuple[FinalProviderAttemptGate, StrictProviderAttemptLifecycleStore]:
     lifecycle = StrictProviderAttemptLifecycleStore.for_factory_run(
         workspace=str(workspace),
         factory_run_id="factory-run-1",
     )
-    physical_attempt_control_port = FactoryPhysicalAttemptLiveControlPort(factory_run_id="factory-run-1")
+    physical_attempt_control_port = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
     physical_attempt_control_port.register_grant(
         FactoryPhysicalAttemptGrantViewV1(
             schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
@@ -159,31 +608,444 @@ def _gate(
             attempt_budget=32,
         )
     )
+    qualification_proof, semantic_request, qualified_wire, frozen, dispatch_port = _qualified_factory_fixture(
+        workspace=workspace,
+        physical_attempt_control_port=physical_attempt_control_port,
+        semantic_options=semantic_options,
+        stream=stream,
+        wire_factory=wire_factory,
+    )
+    payload = json.loads(frozen.canonical_final_payload_json)
     gate = FinalProviderAttemptGate(
         workspace=str(workspace),
         verification_scope="factory",
         factory_run_id="factory-run-1",
-        run_id="run-1",
+        run_id=frozen.identity.run_id,
         role="director",
-        turn_id="turn-1",
-        call_id="call-1",
-        request_freeze_id="freeze-1",
-        provider="openai",
-        model="model-1",
-        semantic_request={
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "response_format": None,
-            "semantic_options": semantic_options or {"temperature": 0.1},
-        },
+        turn_id=frozen.identity.turn_id,
+        call_id=frozen.identity.call_id,
+        request_freeze_id=frozen.identity.request_freeze_id,
+        provider=str(payload["provider_id"]),
+        model=str(payload["model"]),
+        semantic_request=semantic_request,
         physical_attempt_control_port=physical_attempt_control_port,
         execution_authority_hash="f" * 64,
         attempt_budget=32,
         lifecycle=lifecycle,
         snapshot_store=snapshot_store or DurableFinalProviderAttemptSnapshotStore(str(workspace)),
+        qualification_proof=qualification_proof,
     )
+    gate._test_qualified_wire = qualified_wire  # type: ignore[attr-defined]
+    gate._test_dispatch_port = dispatch_port  # type: ignore[attr-defined]
     return gate, lifecycle
+
+
+def test_factory_gate_without_sidecar_minted_qualification_proof_fails_closed(tmp_path: Path) -> None:
+    semantic_request = {
+        "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
+        "tools": [],
+        "tool_choice": "auto",
+        "response_format": None,
+        "semantic_options": {"temperature": 0.1},
+    }
+    with pytest.raises(RuntimeError, match="final_provider_attempt_qualification_proof_required"):
+        FinalProviderAttemptGate(
+            workspace=str(tmp_path),
+            verification_scope="factory",
+            factory_run_id="factory-run-1",
+            run_id="run-1",
+            role="director",
+            turn_id="turn-1",
+            call_id="call-1",
+            request_freeze_id="freeze-1",
+            provider="openai",
+            model="model-1",
+            semantic_request=semantic_request,
+            lifecycle=None,
+            snapshot_store=None,
+            physical_attempt_control_port=None,
+            execution_authority_hash="f" * 64,
+            attempt_budget=32,
+        )
+
+
+def test_factory_gate_rejects_qualification_proof_bound_to_other_request(tmp_path: Path) -> None:
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    proof, semantic_request, _wire, frozen, _dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+    )
+    payload = json.loads(frozen.canonical_final_payload_json)
+    drifted_request = {**semantic_request, "tool_choice": "required"}
+    with pytest.raises(RuntimeError, match="final_provider_attempt_qualification_proof_invalid"):
+        FinalProviderAttemptGate(
+            workspace=str(tmp_path),
+            verification_scope="factory",
+            factory_run_id="factory-run-1",
+            run_id=frozen.identity.run_id,
+            role="director",
+            turn_id=frozen.identity.turn_id,
+            call_id=frozen.identity.call_id,
+            request_freeze_id=frozen.identity.request_freeze_id,
+            provider=str(payload["provider_id"]),
+            model=str(payload["model"]),
+            semantic_request=drifted_request,
+            lifecycle=None,
+            snapshot_store=None,
+            physical_attempt_control_port=None,
+            execution_authority_hash="f" * 64,
+            attempt_budget=32,
+            qualification_proof=proof,
+        )
+
+
+def test_factory_gate_rejects_provider_identity_mutation_before_reservation(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    gate._provider = "forged-provider-id"
+
+    with pytest.raises(RuntimeError, match="final_provider_attempt_qualification_proof_invalid"):
+        gate._freeze(gate._test_qualified_wire)  # type: ignore[attr-defined]
+
+    assert lifecycle.query_strict() == ()
+
+
+def test_qualification_context_ref_contains_exact_final_physical_request(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    proof, _semantic_request, wire, _frozen, _dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+    )
+    repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
+    snapshot = json.loads(Path(repository.snapshot_path(proof.context_snapshot_ref)).read_text(encoding="utf-8"))
+
+    assert snapshot["schema_version"] == "llm.final_physical_provider_request_context.v1"
+    provider_request = snapshot["provider_request"]
+    assert provider_request["final_physical_request"] == wire
+    assert provider_request["physical_route_authority"]["provider_type"] == "openai_compat"
+    assert (
+        provider_request["final_physical_wire_hash"]
+        == provider_request["final_request_context_audit"]["final_physical_wire_hash"]
+    )
+    audit = provider_request["final_request_context_audit"]
+    expected_metrics = provider_native_request_metrics(
+        body=wire["body"],
+        native_protocol=provider_request["physical_route_authority"]["native_protocol"],
+        context_window_tokens=audit["context_window_tokens"],
+    )
+    assert {key: audit[key] for key in expected_metrics} == expected_metrics
+    assert audit["audit_scope"] == "provider_native_wire"
+
+
+@pytest.mark.parametrize(
+    ("provider_type", "provider_config", "native_protocol"),
+    [
+        (
+            "openai_compat",
+            {"base_url": "https://example.test", "api_path": "/v1/chat/completions"},
+            "openai_chat_completions",
+        ),
+        (
+            "anthropic_compat",
+            {"base_url": "https://example.test", "api_path": "/v1/messages"},
+            "anthropic_messages",
+        ),
+    ],
+)
+def test_stream_final_audit_is_recomputed_from_exact_native_body(
+    tmp_path: Path,
+    provider_type: str,
+    provider_config: dict[str, Any],
+    native_protocol: str,
+) -> None:
+    _bootstrap(tmp_path)
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    proof, _semantic, wire, _frozen, _dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+        provider_type=provider_type,
+        provider_config=provider_config,
+        stream=True,
+    )
+
+    audit = proof.audit()
+    expected = provider_native_request_metrics(
+        body=wire["body"],
+        native_protocol=native_protocol,
+        context_window_tokens=audit["context_window_tokens"],
+    )
+    assert {key: audit[key] for key in expected} == expected
+    assert wire["body"]["stream"] is True
+
+
+@pytest.mark.parametrize("role", ["pm", "architect", "chief_engineer", "director", "qa"])
+def test_native_metric_tamper_fails_closed_for_every_factory_role(
+    tmp_path: Path,
+    role: str,
+) -> None:
+    _bootstrap(tmp_path)
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    proof, _semantic, wire, frozen, dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+        role=role,
+    )
+    tampered_audit = proof.audit()
+    tampered_audit["request_control_token_estimate"] += 1
+
+    with pytest.raises(
+        qualification_module.FinalProviderAttemptQualificationError,
+        match="final_request_native_request_control_token_estimate_mismatch",
+    ):
+        qualification_module._mint_final_provider_attempt_qualification_proof(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=tampered_audit,
+            context_snapshot_ref=proof.context_snapshot_ref,
+            wire_request=wire,
+            physical_route_authority=dispatch_port._physical_route_authority,
+        )
+
+
+def test_sync_terminal_event_uses_one_physical_ref_and_native_audit(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    _proof, _semantic, wire, frozen, dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+    )
+    dispatch_port._qualified_gate(wire, expected_stream=False)
+    final_evidence = dispatch_port.final_context_evidence()
+    assert final_evidence is not None
+    final_ref, final_audit = final_evidence
+    prepared = _prepared_with_dispatch_port(frozen=frozen, dispatch_port=dispatch_port)
+    emitted = Mock()
+    invoker = invoker_module.LLMInvoker(workspace=str(tmp_path))
+    invoker._event_emitter = SimpleNamespace(emit_call_end_event=emitted)
+
+    invoker._finalize_call_response(
+        cache=None,
+        prepared=prepared,
+        active_request=prepared.ai_request,
+        response=SimpleNamespace(
+            raw={},
+            output="ok",
+            model="model-a",
+            provider_id="provider-a",
+            usage=None,
+        ),
+        cache_eligible=False,
+        prompt_fingerprint=None,
+        temperature=0.0,
+        model="model-a",
+        profile=SimpleNamespace(provider_id="provider-a", model="model-a"),
+        prompt_tokens=1,
+        turn_round=0,
+        role_id="director",
+        run_id="run-1",
+        task_id=None,
+        attempt=0,
+        call_id="call-1",
+        event_emitter=None,
+        start_time=time.perf_counter(),
+    )
+
+    metadata = emitted.call_args.kwargs["metadata"]
+    assert metadata["context_snapshot_ref"] == final_ref
+    assert metadata["final_request_context_audit"] == final_audit
+    assert metadata["final_request_context_audit"]["audit_scope"] == "provider_native_wire"
+
+
+@pytest.mark.asyncio
+async def test_stream_terminal_events_use_one_physical_ref_and_native_audit(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    _proof, _semantic, wire, frozen, dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+        stream=True,
+    )
+    semantic_ref = dispatch_port._qualified_context_snapshot_ref
+    semantic_audit = copy.deepcopy(dispatch_port._qualified_audit)
+    prepared = _prepared_with_dispatch_port(frozen=frozen, dispatch_port=dispatch_port)
+    emitted_end = Mock()
+
+    class _Executor:
+        async def invoke_stream(self, _request: object, *, physical_dispatch_port: object):
+            assert physical_dispatch_port is dispatch_port
+            dispatch_port._qualified_gate(wire, expected_stream=True)
+            yield {"type": "chunk", "content": "ok"}
+
+    async def _store_context_messages(*_args: object, **_kwargs: object) -> str:
+        return semantic_ref
+
+    engine = StreamEngine(
+        workspace=str(tmp_path),
+        get_executor=lambda: _Executor(),
+        allow_native_tool_text_fallback_fn=Mock(return_value=False),
+        emit_call_start_event=Mock(),
+        emit_call_error_event=Mock(),
+        emit_call_end_event=emitted_end,
+        emit_call_retry_event=Mock(),
+        store_context_messages=_store_context_messages,
+    )
+    with patch(
+        "polaris.cells.roles.kernel.internal.llm_caller.stream_engine.build_final_request_context_audit_for_request",
+        return_value=semantic_audit,
+    ):
+        events = [
+            event
+            async for event in engine.run_stream(
+                profile=SimpleNamespace(
+                    provider_id="provider-a",
+                    role_id="director",
+                    max_context_tokens=32768,
+                ),
+                prepared=prepared,
+                context=SimpleNamespace(context_override={}, stream_cancelled=False),
+                start_time=time.perf_counter(),
+                role_id="director",
+                run_id="run-1",
+                task_id=None,
+                attempt=0,
+                model="model-a",
+                call_id="call-1",
+                event_emitter=None,
+                turn_round=0,
+            )
+        ]
+
+    final_evidence = dispatch_port.final_context_evidence()
+    assert final_evidence is not None
+    final_ref, final_audit = final_evidence
+    context_metadata = next(event for event in events if event.get("type") == "context_metadata")
+    assert context_metadata["context_snapshot_ref"] == final_ref
+    assert context_metadata["final_request_context_audit"] == final_audit
+    terminal_metadata = emitted_end.call_args.kwargs["metadata"]
+    assert terminal_metadata["context_snapshot_ref"] == final_ref
+    assert terminal_metadata["final_request_context_audit"] == final_audit
+
+
+def test_real_anthropic_provider_crosses_native_sidecar_and_factory_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bootstrap(tmp_path)
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    control.register_grant(
+        FactoryPhysicalAttemptGrantViewV1(
+            schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+            verification_scope="factory",
+            factory_run_id="factory-run-1",
+            role="director",
+            stage="director_dispatch",
+            workspace_fencing_token=1,
+            stage_claim_attempt=1,
+            stage_claim_nonce="stage-nonce-anthropic",
+            execution_authority_hash="f" * 64,
+            attempt_budget=32,
+        )
+    )
+    provider_config = {
+        "base_url": "https://example.test",
+        "api_path": "/v1/messages",
+        "api_key": "secret",
+    }
+    _proof, _semantic, _wire, frozen, dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+        provider_type="anthropic_compat",
+        provider_config=provider_config,
+    )
+    payload = json.loads(frozen.canonical_final_payload_json)
+    actual_config = {
+        **provider_config,
+        "chat_messages": payload["messages"],
+        "tools": payload["tools"],
+        "tool_choice": payload["tool_choice"],
+        "temperature": payload["temperature"],
+        "max_tokens": payload["max_tokens"],
+    }
+    posts: list[dict[str, Any]] = []
+
+    class _AnthropicResponse(_Response):
+        def json(self) -> dict[str, Any]:
+            return {
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+
+    def _post(*_args: object, **kwargs: Any) -> _AnthropicResponse:
+        posts.append(dict(kwargs))
+        return _AnthropicResponse()
+
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    with bind_physical_provider_dispatch_port(dispatch_port):
+        result = AnthropicProvider().invoke("unused fallback", str(payload["model"]), actual_config)
+
+    assert result.ok is True
+    assert len(posts) == 1
+    assert posts[0]["json"] == dispatch_port._physical_route_authority["expected_body"]
+    facts = StrictProviderAttemptLifecycleStore.for_factory_run(
+        workspace=str(tmp_path),
+        factory_run_id="factory-run-1",
+    ).query_strict()
+    assert [fact["event_type"] for fact in facts] == [
+        "provider_attempt.started",
+        "provider_attempt.terminal",
+    ]
+    final_evidence = dispatch_port.final_context_evidence()
+    assert final_evidence is not None
+    _final_ref, final_audit = final_evidence
+    expected_metrics = provider_native_request_metrics(
+        body=posts[0]["json"],
+        native_protocol="anthropic_messages",
+        context_window_tokens=final_audit["context_window_tokens"],
+    )
+    assert {key: final_audit[key] for key in expected_metrics} == expected_metrics
+    prepared = PreparedLLMRequest(
+        messages=payload["messages"],
+        input_text="",
+        context_result=None,
+        context_summary="",
+        request_options={},
+        ai_request=SimpleNamespace(context={"context_snapshot_ref": "b" * 24}),
+        factory_semantic_request=frozen,
+        factory_dispatch_port=dispatch_port,
+    )
+    active_request = prepared.ai_request
+    assert invoker_module.LLMInvoker._extract_final_context_snapshot_ref(prepared, active_request) == _final_ref
+    projected = invoker_module._with_final_request_context_audit(
+        {},
+        prepared=prepared,
+        active_request=active_request,
+        profile=SimpleNamespace(),
+    )
+    assert projected["final_request_context_audit"] == final_audit
+    assert projected["contextTokens"] == final_audit["final_request_token_estimate"]
 
 
 def test_factory_gate_conserves_reserve_start_send_terminal_under_one_authority(tmp_path: Path) -> None:
@@ -192,7 +1054,7 @@ def test_factory_gate_conserves_reserve_start_send_terminal_under_one_authority(
     sends: list[Mapping[str, Any]] = []
 
     result = gate.dispatch_sync(
-        wire_request=_wire_request(),
+        wire_request=_wire_request(gate),
         send=lambda frozen: sends.append(frozen) or "ok",
     )
 
@@ -206,6 +1068,75 @@ def test_factory_gate_conserves_reserve_start_send_terminal_under_one_authority(
     assert state.settled is True
 
 
+def test_invalid_factory_authority_creates_no_lifecycle_ledger_or_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bootstrap(tmp_path)
+    ensure_calls: list[object] = []
+    snapshot_calls: list[object] = []
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle.ensure_segmented_fact_ledger",
+        ensure_calls.append,
+    )
+
+    class _SnapshotStore:
+        def persist_and_pin(self, attempt: object) -> object:
+            snapshot_calls.append(attempt)
+            raise AssertionError("invalid authority reached snapshot persistence")
+
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    control.register_grant(
+        FactoryPhysicalAttemptGrantViewV1(
+            schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+            verification_scope="factory",
+            factory_run_id="factory-run-1",
+            role="director",
+            stage="director_dispatch",
+            workspace_fencing_token=1,
+            stage_claim_attempt=1,
+            stage_claim_nonce="stage-nonce-1",
+            execution_authority_hash="f" * 64,
+            attempt_budget=32,
+        )
+    )
+    proof, semantic_request, qualified_wire, frozen, _dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+    )
+    payload = json.loads(frozen.canonical_final_payload_json)
+    gate = FinalProviderAttemptGate.for_factory_run(
+        workspace=str(tmp_path),
+        factory_run_id="factory-run-1",
+        run_id=frozen.identity.run_id,
+        role="director",
+        turn_id=frozen.identity.turn_id,
+        call_id=frozen.identity.call_id,
+        request_freeze_id=frozen.identity.request_freeze_id,
+        provider=str(payload["provider_id"]),
+        model=str(payload["model"]),
+        semantic_request=semantic_request,
+        snapshot_store=_SnapshotStore(),
+        physical_attempt_control_port=control,
+        execution_authority_hash="e" * 64,
+        attempt_budget=32,
+        qualification_proof=proof,
+    )
+    gate._test_qualified_wire = qualified_wire  # type: ignore[attr-defined]
+
+    assert ensure_calls == []
+    with pytest.raises(
+        FactoryPhysicalAttemptControlError,
+        match="factory_physical_attempt_execution_authority_hash_mismatch",
+    ):
+        gate.dispatch_sync(wire_request=_wire_request(gate), send=lambda _request: "must-not-send")
+    assert ensure_calls == []
+    assert snapshot_calls == []
+
+
 def test_factory_gate_uses_injected_physical_control_port_as_only_drain_state(tmp_path: Path) -> None:
     _bootstrap(tmp_path)
     gate, _lifecycle = _gate(tmp_path)
@@ -213,16 +1144,26 @@ def test_factory_gate_uses_injected_physical_control_port_as_only_drain_state(tm
     assert gate.drain_coordinator is gate._physical_attempt_control_port
 
 
-def _wire_request() -> dict[str, Any]:
+def _wire_request(gate: FinalProviderAttemptGate) -> dict[str, Any]:
+    qualified = getattr(gate, "_test_qualified_wire", None)
+    if qualified is not None:
+        return json.loads(json.dumps(qualified))
     return {
-        "body": {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "response_format": None,
-            "temperature": 0.1,
-        }
+        "endpoint": "https://example.test/v1/chat/completions",
+        "headers": {},
+        "body": _wire_body(gate),
+        "transport": {"kind": "requests.post", "timeout": 1},
     }
+
+
+def _wire_body(gate: FinalProviderAttemptGate) -> dict[str, Any]:
+    qualified_wire = getattr(gate, "_test_qualified_wire", None)
+    if isinstance(qualified_wire, dict) and isinstance(qualified_wire.get("body"), dict):
+        return copy.deepcopy(qualified_wire["body"])
+    return _wire_body_from_semantic(
+        semantic_request=gate._semantic_request,
+        model=gate._model,
+    )
 
 
 def test_governed_physical_http_attempt_persists_snapshot_pin_start_and_terminal_before_return(
@@ -230,7 +1171,15 @@ def test_governed_physical_http_attempt_persists_snapshot_pin_start_and_terminal
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _bootstrap(tmp_path)
-    gate, lifecycle = _gate(tmp_path)
+    gate, lifecycle = _gate(
+        tmp_path,
+        wire_factory=lambda body: {
+            "endpoint": "https://example.test/v1/chat/completions",
+            "headers": {"Authorization": "Bearer secret"},
+            "body": body,
+            "transport": {"kind": "requests.post", "timeout": 1},
+        },
+    )
     physical_calls: list[dict[str, Any]] = []
 
     def _post(*_args: object, **kwargs: Any) -> _Response:
@@ -241,12 +1190,7 @@ def test_governed_physical_http_attempt_persists_snapshot_pin_start_and_terminal
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {"Authorization": "Bearer secret"},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         0,
         "prompt",
@@ -278,7 +1222,7 @@ def test_governed_physical_http_attempt_persists_snapshot_pin_start_and_terminal
     assert pin.factory_run_id == "factory-run-1"
     assert pin.role == "director"
     assert pin.verification_scope == "factory"
-    assert pin.request_freeze_id == "freeze-1"
+    assert pin.request_freeze_id == gate._request_freeze_id
     assert pin.provider_request_id == facts[0]["payload"]["provider_request_id"]
     assert pin.composite_request_hash == facts[0]["payload"]["composite_request_hash"]
     assert Path(repository.pin_path(pin.context_snapshot_ref, pin.provider_request_id)).is_file()
@@ -303,12 +1247,7 @@ def test_governed_json_parse_failure_records_failed_physical_terminal(
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         0,
         "prompt",
@@ -356,12 +1295,7 @@ def test_governed_json_parse_failure_retries_as_new_failed_then_completed_attemp
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         1,
         "prompt",
@@ -401,12 +1335,7 @@ def test_governed_extract_output_error_records_failed_terminal(
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         0,
         "prompt",
@@ -438,12 +1367,7 @@ def test_governed_usage_extraction_error_records_failed_terminal(
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         0,
         "prompt",
@@ -481,12 +1405,7 @@ def test_governed_finalize_exception_records_failed_terminal(
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         0,
         "prompt",
@@ -528,12 +1447,7 @@ def test_governed_finalize_semantic_failure_keeps_physical_terminal_completed(
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         2,
         "prompt",
@@ -595,12 +1509,7 @@ def test_governed_success_parses_extracts_and_projects_usage_exactly_once(
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         0,
         "prompt",
@@ -668,12 +1577,7 @@ def test_governed_provider_retry_creates_one_unique_lifecycle_pair_per_physical_
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         0,
         "prompt",
@@ -696,12 +1600,15 @@ def test_governed_provider_retry_creates_one_unique_lifecycle_pair_per_physical_
     assert [item["payload"]["status"] for item in terminals] == ["failed", "completed"]
 
 
-def test_governed_context_overflow_self_heal_records_failed_then_completed_without_duplicate_post(
+def test_governed_context_overflow_rewrite_requires_new_freeze_before_second_post(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _bootstrap(tmp_path)
-    gate, lifecycle = _gate(tmp_path)
+    gate, lifecycle = _gate(
+        tmp_path,
+        semantic_options={"temperature": 0.1, "max_tokens": 4096},
+    )
     responses = iter(
         (
             _Response(
@@ -720,32 +1627,29 @@ def test_governed_context_overflow_self_heal_records_failed_then_completed_witho
         sent_max_tokens.append(int(kwargs["json"]["max_tokens"]))
         return next(responses)
 
-    payload = {
-        "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-        "tools": [],
-        "tool_choice": "auto",
-        "temperature": 0.1,
-        "max_tokens": 4096,
-    }
+    payload = _wire_body(gate)
     monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
-    result = invoke_with_retry(
-        "https://example.test/v1/chat/completions",
-        {},
-        payload,
-        1,
-        0,
-        "prompt",
-        lambda body: body["choices"][0]["message"]["content"],
-        lambda _prompt, _output, _body: Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
-        physical_dispatch_port=gate,
-    )
+    with pytest.raises(
+        qualification_module.FinalProviderAttemptQualificationError,
+        match="physical_wire_max_tokens_drift",
+    ):
+        invoke_with_retry(
+            "https://example.test/v1/chat/completions",
+            {},
+            payload,
+            1,
+            0,
+            "prompt",
+            lambda body: body["choices"][0]["message"]["content"],
+            lambda _prompt, _output, _body: Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            physical_dispatch_port=gate._test_dispatch_port,  # type: ignore[attr-defined]
+        )
 
-    assert result.ok is True
-    assert sent_max_tokens == [4096, 1176]
+    assert sent_max_tokens == [4096]
     assert payload["max_tokens"] == 1176
     terminals = tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
-    assert [item["payload"]["status"] for item in terminals] == ["failed", "completed"]
-    assert [item["payload"]["attempt_number"] for item in terminals] == [1, 2]
+    assert [item["payload"]["status"] for item in terminals] == ["failed"]
+    assert [item["payload"]["attempt_number"] for item in terminals] == [1]
 
 
 @pytest.mark.parametrize("status_code", [401, 500])
@@ -766,14 +1670,9 @@ def test_governed_http_failure_records_failed_terminal_and_preserves_response_bo
 
     monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
     result = invoke_with_retry(
-        f"https://example.test/{status_code}/v1/chat/completions",
+        "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         1,
         0,
         "prompt",
@@ -816,12 +1715,7 @@ def test_governed_snapshot_or_pin_failure_keeps_physical_http_count_zero(
         invoke_with_retry(
             "https://example.test/v1/chat/completions",
             {},
-            {
-                "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                "tools": [],
-                "tool_choice": "auto",
-                "temperature": 0.1,
-            },
+            _wire_body(gate),
             1,
             0,
             "prompt",
@@ -838,13 +1732,7 @@ def test_frozen_wire_is_detached_from_original_and_callback_cannot_mutate_author
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _bootstrap(tmp_path)
-    payload = {
-        "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-        "tools": [],
-        "tool_choice": "auto",
-        "temperature": 0.1,
-        "max_tokens": 128,
-    }
+    payload: dict[str, Any] = {}
 
     class _MutatingSnapshotStore:
         frozen_attempt: FrozenFinalProviderAttemptV1 | None = None
@@ -863,6 +1751,7 @@ def test_frozen_wire_is_detached_from_original_and_callback_cannot_mutate_author
         snapshot_store=snapshot_store,
         semantic_options={"temperature": 0.1, "max_tokens": 128},
     )
+    payload.update(_wire_body(gate))
     dispatched_bodies: list[dict[str, Any]] = []
 
     def _post(*_args: object, **kwargs: Any) -> _Response:
@@ -904,12 +1793,7 @@ def test_sync_cancellation_records_terminal_before_it_escapes(
         invoke_with_retry(
             "https://example.test/v1/chat/completions",
             {},
-            {
-                "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                "tools": [],
-                "tool_choice": "auto",
-                "temperature": 0.1,
-            },
+            _wire_body(gate),
             1,
             0,
             "prompt",
@@ -948,12 +1832,7 @@ def test_terminal_fsync_failure_blocks_successful_physical_result(
         invoke_with_retry(
             "https://example.test/v1/chat/completions",
             {},
-            {
-                "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                "tools": [],
-                "tool_choice": "auto",
-                "temperature": 0.1,
-            },
+            _wire_body(gate),
             1,
             0,
             "prompt",
@@ -987,19 +1866,14 @@ def test_actual_pin_fsync_or_reread_failure_keeps_physical_http_count_zero(
             raise OSError("pin fsync reread failed")
         original_verify(self, path, expected)
 
-    monkeypatch.setattr(ContextSnapshotAuditPinRepository, "_fsync_and_verify", _fail_pin_verify)
     monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
     gate, lifecycle = _gate(tmp_path)
+    monkeypatch.setattr(ContextSnapshotAuditPinRepository, "_fsync_and_verify", _fail_pin_verify)
     with pytest.raises(OSError, match="pin fsync reread failed"):
         invoke_with_retry(
             "https://example.test/v1/chat/completions",
             {},
-            {
-                "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                "tools": [],
-                "tool_choice": "auto",
-                "temperature": 0.1,
-            },
+            _wire_body(gate),
             1,
             0,
             "prompt",
@@ -1019,13 +1893,13 @@ async def test_async_success_and_failure_each_append_exactly_one_terminal(tmp_pa
     async def _success(_wire: object) -> str:
         return "ok"
 
-    assert await gate.dispatch_async(wire_request=_wire_request(), send=_success) == "ok"
+    assert await gate.dispatch_async(wire_request=_wire_request(gate), send=_success) == "ok"
 
     async def _failure(_wire: object) -> str:
         raise ValueError("provider failed")
 
     with pytest.raises(ValueError, match="provider failed"):
-        await gate.dispatch_async(wire_request=_wire_request(), send=_failure)
+        await gate.dispatch_async(wire_request=_wire_request(gate), send=_failure)
 
     facts = lifecycle.query_strict()
     starts = tuple(item for item in facts if item["event_type"] == "provider_attempt.started")
@@ -1071,7 +1945,7 @@ async def test_async_cancel_waits_for_shielded_terminal_ack_even_after_second_ca
         await never.wait()
         return "unreachable"
 
-    task = asyncio.create_task(gate.dispatch_async(wire_request=_wire_request(), send=_send))
+    task = asyncio.create_task(gate.dispatch_async(wire_request=_wire_request(gate), send=_send))
     await asyncio.sleep(0)
     task.cancel()
     assert await asyncio.to_thread(terminal_entered.wait, 1)
@@ -1099,7 +1973,7 @@ async def test_blocking_worker_outlives_cancelled_waiter_and_owns_terminal(tmp_p
         assert release_worker.wait(timeout=2)
         return "worker-result"
 
-    task = asyncio.create_task(gate.dispatch_blocking_async(wire_request=_wire_request(), send=_worker))
+    task = asyncio.create_task(gate.dispatch_blocking_async(wire_request=_wire_request(gate), send=_worker))
     assert await asyncio.to_thread(worker_entered.wait, 1)
     task.cancel()
     await asyncio.sleep(0.02)
@@ -1147,7 +2021,7 @@ async def test_async_terminal_persistence_failure_rejects_result_and_fails_drain
         return "must-not-escape"
 
     with pytest.raises(OSError, match="terminal fsync failed"):
-        await gate.dispatch_async(wire_request=_wire_request(), send=_send)
+        await gate.dispatch_async(wire_request=_wire_request(gate), send=_send)
     with pytest.raises(ProviderAttemptDrainError) as drain_failure:
         await gate.drain_coordinator.wait_settled(
             verification_scope="factory",
@@ -1191,7 +2065,7 @@ async def test_role_session_gate_uses_separate_ledger_and_cannot_drain_as_factor
     async def _send(_wire: object) -> str:
         return "role-result"
 
-    assert await gate.dispatch_async(wire_request=_wire_request(), send=_send) == "role-result"
+    assert await gate.dispatch_async(wire_request=_wire_request(gate), send=_send) == "role-result"
     role_facts = role_lifecycle.query_strict()
     assert [item["event_type"] for item in role_facts] == [
         "provider_attempt.started",
@@ -1257,25 +2131,85 @@ async def test_async_stream_terminal_waits_for_response_exit_and_full_consumptio
         yield "second"
 
     stream = gate.dispatch_stream_async(
-        wire_request=_wire_request(),
+        wire_request=_wire_request(gate),
         open_stream=_open_stream,
         consume=_consume,
     )
     assert await anext(stream) == "first"
-    assert events == ["start_ack", "post_enter"]
-    assert not tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
+    assert events == ["start_ack", "post_enter", "response_exit", "terminal_ack"]
+    terminal = tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "completed"
     assert await anext(stream) == "second"
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
 
     assert events == ["start_ack", "post_enter", "response_exit", "terminal_ack"]
-    terminal = tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
-    assert len(terminal) == 1
-    assert terminal[0]["payload"]["status"] == "completed"
 
 
 @pytest.mark.asyncio
-async def test_async_stream_consumer_aclose_exits_response_before_cancelled_terminal(
+async def test_async_stream_cleanup_timeout_fails_terminal_and_leaks_zero_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    cleanup_entered = asyncio.Event()
+    cleanup_cancelled = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    monkeypatch.setattr(
+        gate_module,
+        "_STREAM_CONTEXT_CLEANUP_TIMEOUT_SECONDS",
+        0.05,
+        raising=False,
+    )
+
+    class _ResponseContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            cleanup_entered.set()
+            try:
+                await release_cleanup.wait()
+            except asyncio.CancelledError:
+                cleanup_cancelled.set()
+                raise
+
+    async def _consume(_response: object) -> AsyncIterator[str]:
+        yield "must-not-leak"
+
+    async def _collect() -> list[str]:
+        return [
+            item
+            async for item in gate.dispatch_stream_async(
+                wire_request=_wire_request(gate),
+                open_stream=lambda _wire: _ResponseContext(),
+                consume=_consume,
+            )
+        ]
+
+    task = asyncio.create_task(_collect())
+    await asyncio.wait_for(cleanup_entered.wait(), timeout=1)
+    done, _pending = await asyncio.wait({task}, timeout=0.5)
+    if task not in done:
+        release_cleanup.set()
+        assert await task == ["must-not-leak"]
+        pytest.fail("stream cleanup exceeded its terminalization deadline")
+
+    with pytest.raises(RuntimeError, match="provider_stream_cleanup_timeout"):
+        await task
+    assert cleanup_cancelled.is_set()
+    terminal = tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "failed"
+    assert "provider_stream_cleanup_timeout" in terminal[0]["payload"]["error"]
+    assert gate.drain_coordinator.inflight_request_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_async_stream_consumer_cancellation_exits_response_before_cancelled_terminal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1307,17 +2241,24 @@ async def test_async_stream_consumer_aclose_exits_response_before_cancelled_term
     def _open_stream(_wire: Mapping[str, Any]) -> _ResponseContext:
         return _ResponseContext()
 
+    first_item_buffered = asyncio.Event()
+
     async def _consume(_response: object) -> AsyncIterator[str]:
+        first_item_buffered.set()
         yield "first"
         await asyncio.Event().wait()
 
     stream = gate.dispatch_stream_async(
-        wire_request=_wire_request(),
+        wire_request=_wire_request(gate),
         open_stream=_open_stream,
         consume=_consume,
     )
     assert isinstance(stream, AsyncGenerator)
-    assert await anext(stream) == "first"
+    first_item = asyncio.create_task(anext(stream))
+    await asyncio.wait_for(first_item_buffered.wait(), timeout=1)
+    first_item.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first_item
     await stream.aclose()
 
     assert events == ["post_enter", "response_exit", "terminal_ack"]
@@ -1350,13 +2291,15 @@ async def test_async_stream_terminal_persistence_failure_rejects_normal_completi
     async def _consume(_response: object) -> AsyncIterator[str]:
         yield "must-not-produce-success-verdict"
 
+    escaped: list[str] = []
     with pytest.raises(OSError, match="stream terminal fsync failed"):
-        async for _item in gate.dispatch_stream_async(
-            wire_request=_wire_request(),
+        async for item in gate.dispatch_stream_async(
+            wire_request=_wire_request(gate),
             open_stream=lambda _wire: _ResponseContext(),
             consume=_consume,
         ):
-            pass
+            escaped.append(item)
+    assert escaped == []
     with pytest.raises(ProviderAttemptDrainError):
         await gate.drain_coordinator.wait_settled(
             verification_scope="factory",
@@ -1366,20 +2309,235 @@ async def test_async_stream_terminal_persistence_failure_rejects_normal_completi
 
 
 @pytest.mark.asyncio
+async def test_async_stream_buffer_limit_fails_terminal_and_leaks_zero_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    monkeypatch.setattr(gate_module, "_MAX_BUFFERED_STREAM_EVENTS", 2)
+    monkeypatch.setattr(gate_module, "_MAX_BUFFERED_STREAM_EVENTS_HARD", 2)
+    monkeypatch.setattr(gate_module, "_MAX_BUFFERED_STREAM_BYTES", 1024)
+    response_exited = False
+
+    class _ResponseContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            nonlocal response_exited
+            response_exited = True
+
+    async def _consume(_response: object) -> AsyncIterator[str]:
+        yield "one"
+        yield "two"
+        yield "three"
+
+    escaped: list[str] = []
+    with pytest.raises(RuntimeError, match="factory_provider_stream_buffer_limit_exceeded"):
+        async for item in gate.dispatch_stream_async(
+            wire_request=_wire_request(gate),
+            open_stream=lambda _wire: _ResponseContext(),
+            consume=_consume,
+        ):
+            escaped.append(item)
+
+    assert escaped == []
+    assert response_exited is True
+    terminal = tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "failed"
+    assert "factory_provider_stream_buffer_limit_exceeded" in terminal[0]["payload"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_async_stream_event_budget_scales_with_qualified_physical_output_budget(
+    tmp_path: Path,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(
+        tmp_path,
+        semantic_options={"temperature": 0.1, "max_tokens": 16_384},
+        stream=True,
+    )
+    wire_request = _wire_request(gate)
+    assert wire_request["body"]["max_tokens"] == 16_384
+    response_exited = False
+
+    class _ResponseContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            nonlocal response_exited
+            response_exited = True
+
+    async def _consume(_response: object) -> AsyncIterator[dict[str, int]]:
+        for index in range(4_097):
+            yield {"delta": index}
+
+    escaped: list[dict[str, int]] = []
+    async for item in gate.dispatch_stream_async(
+        wire_request=wire_request,
+        open_stream=lambda _wire: _ResponseContext(),
+        consume=_consume,
+    ):
+        escaped.append(item)
+
+    assert len(escaped) == 4_097
+    assert response_exited is True
+    terminal = tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({}, 4_096),
+        ({"max_tokens": 128}, 4_096),
+        ({"max_output_tokens": 2_000}, 8_000),
+        ({"max_completion_tokens": 4_000}, 16_000),
+        ({"max_tokens": True}, 4_096),
+        ({"max_tokens": 1_000_000}, 65_536),
+    ],
+)
+def test_qualified_stream_event_limit_is_protocol_aware_and_hard_bounded(
+    body: dict[str, object],
+    expected: int,
+) -> None:
+    assert gate_module._qualified_stream_event_limit({"body": body}) == expected
+
+
+@pytest.mark.asyncio
+async def test_async_stream_byte_limit_fails_terminal_and_leaks_zero_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    monkeypatch.setattr(gate_module, "_MAX_BUFFERED_STREAM_EVENTS", 100)
+    monkeypatch.setattr(gate_module, "_MAX_BUFFERED_STREAM_BYTES", 10)
+    response_exited = False
+
+    class _ResponseContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            nonlocal response_exited
+            response_exited = True
+
+    async def _consume(_response: object) -> AsyncIterator[str]:
+        yield "1234"  # canonical JSON size: 6 bytes
+        yield "5678"  # cumulative 12 bytes -> fail before append
+
+    escaped: list[str] = []
+    with pytest.raises(RuntimeError, match="factory_provider_stream_buffer_limit_exceeded"):
+        async for item in gate.dispatch_stream_async(
+            wire_request=_wire_request(gate),
+            open_stream=lambda _wire: _ResponseContext(),
+            consume=_consume,
+        ):
+            escaped.append(item)
+
+    assert escaped == []
+    assert response_exited is True
+    terminal = tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "failed"
+    assert "factory_provider_stream_buffer_limit_exceeded" in terminal[0]["payload"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_async_stream_opaque_item_fails_closed_without_string_coercion_or_leak(
+    tmp_path: Path,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    response_exited = False
+
+    class _OpaqueLargeItem:
+        def __init__(self) -> None:
+            self.payload = "x" * (9 * 1024 * 1024)
+
+        def __str__(self) -> str:
+            return "tiny-string-must-not-bypass-canonical-bound"
+
+    class _ResponseContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            nonlocal response_exited
+            response_exited = True
+
+    async def _consume(_response: object) -> AsyncIterator[object]:
+        yield _OpaqueLargeItem()
+
+    escaped: list[object] = []
+    with pytest.raises(RuntimeError, match="factory_provider_stream_buffer_item_unserializable"):
+        async for item in gate.dispatch_stream_async(
+            wire_request=_wire_request(gate),
+            open_stream=lambda _wire: _ResponseContext(),
+            consume=_consume,
+        ):
+            escaped.append(item)
+
+    assert escaped == []
+    assert response_exited is True
+    terminal = tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "failed"
+    assert "factory_provider_stream_buffer_item_unserializable" in terminal[0]["payload"]["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("non_finite_item", [float("nan"), float("inf"), float("-inf")])
+async def test_async_stream_non_finite_json_number_fails_closed_without_leak(
+    tmp_path: Path,
+    non_finite_item: float,
+) -> None:
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    response_exited = False
+
+    class _ResponseContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            nonlocal response_exited
+            response_exited = True
+
+    async def _consume(_response: object) -> AsyncIterator[float]:
+        yield non_finite_item
+
+    escaped: list[float] = []
+    with pytest.raises(RuntimeError, match="factory_provider_stream_buffer_item_unserializable"):
+        async for item in gate.dispatch_stream_async(
+            wire_request=_wire_request(gate),
+            open_stream=lambda _wire: _ResponseContext(),
+            consume=_consume,
+        ):
+            escaped.append(item)
+
+    assert escaped == []
+    assert response_exited is True
+    terminal = tuple(item for item in lifecycle.query_strict() if item["event_type"] == "provider_attempt.terminal")
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "failed"
+    assert "factory_provider_stream_buffer_item_unserializable" in terminal[0]["payload"]["error"]
+
+
+@pytest.mark.asyncio
 async def test_real_async_helper_retries_each_post_with_exact_frozen_mutation_and_lifecycle_pair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _bootstrap(tmp_path)
     events: list[str] = []
-    payload = {
-        "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-        "tools": [],
-        "tool_choice": "auto",
-        "response_format": None,
-        "temperature": 0.1,
-        "max_tokens": 128,
-    }
+    payload: dict[str, Any] = {}
 
     class _MutatingSnapshotStore:
         attempts: list[FrozenFinalProviderAttemptV1] = []
@@ -1395,7 +2553,17 @@ async def test_real_async_helper_retries_each_post_with_exact_frozen_mutation_an
         tmp_path,
         snapshot_store=snapshot_store,
         semantic_options={"temperature": 0.1, "max_tokens": 128},
+        stream=True,
     )
+    payload.update(_wire_body(gate))
+    original_gate_factory = FinalProviderAttemptGate.for_factory_run.__func__
+
+    def _gate_with_test_stores(cls: type[FinalProviderAttemptGate], **kwargs: Any) -> FinalProviderAttemptGate:
+        kwargs["snapshot_store"] = snapshot_store
+        kwargs["lifecycle"] = lifecycle
+        return original_gate_factory(cls, **kwargs)
+
+    monkeypatch.setattr(FinalProviderAttemptGate, "for_factory_run", classmethod(_gate_with_test_stores))
     original_start = lifecycle.append_start
     original_terminal = lifecycle.append_terminal
 
@@ -1430,42 +2598,31 @@ async def test_real_async_helper_retries_each_post_with_exact_frozen_mutation_an
         AsyncMock(),
     )
 
-    result = [
-        item
-        async for item in invoke_stream_with_retry(
-            "https://example.test/stream",
-            {},
-            payload,
-            5,
-            max_attempts=3,
-            retry_delay_seconds=0,
-            governance_mode="governed_required",
-            physical_dispatch_port=gate,
-        )
-    ]
+    with pytest.raises(
+        qualification_module.FinalProviderAttemptQualificationError,
+        match="physical_wire_max_tokens_drift",
+    ):
+        _ = [
+            item
+            async for item in invoke_stream_with_retry(
+                "https://example.test/v1/chat/completions",
+                {},
+                payload,
+                5,
+                max_attempts=3,
+                retry_delay_seconds=0,
+                governance_mode="governed_required",
+                physical_dispatch_port=gate._test_dispatch_port,  # type: ignore[attr-defined]
+            )
+        ]
 
-    assert result == [{"ok": True}]
     attempts = snapshot_store.attempts
-    assert len(attempts) == 3
-    assert len({attempt.provider_request_id for attempt in attempts}) == 3
-    assert [attempt.dispatch_copy()["body"]["max_tokens"] for attempt in attempts] == [128, 64, 64]
-    assert [attempt.durable_copy()["physical_wire"]["body"]["max_tokens"] for attempt in attempts] == [
-        128,
-        64,
-        64,
-    ]
-    assert [session.posts[0]["json"]["max_tokens"] for session in sessions] == [128, 64, 64]
+    assert len(attempts) == 1
+    assert [attempt.dispatch_copy()["body"]["max_tokens"] for attempt in attempts] == [128]
+    assert [attempt.durable_copy()["physical_wire"]["body"]["max_tokens"] for attempt in attempts] == [128]
+    assert [session.posts[0]["json"]["max_tokens"] for session in sessions[:1]] == [128]
+    assert all(not session.posts for session in sessions[1:])
     assert events == [
-        "start_ack",
-        "post_enter",
-        "response_exit",
-        "session_close",
-        "terminal_ack",
-        "start_ack",
-        "post_enter",
-        "response_exit",
-        "session_close",
-        "terminal_ack",
         "start_ack",
         "post_enter",
         "response_exit",
@@ -1475,8 +2632,8 @@ async def test_real_async_helper_retries_each_post_with_exact_frozen_mutation_an
     facts = lifecycle.query_strict()
     starts = tuple(item for item in facts if item["event_type"] == "provider_attempt.started")
     terminals = tuple(item for item in facts if item["event_type"] == "provider_attempt.terminal")
-    assert len(starts) == len(terminals) == 3
-    assert [item["payload"]["status"] for item in terminals] == ["failed", "failed", "completed"]
+    assert len(starts) == len(terminals) == 1
+    assert [item["payload"]["status"] for item in terminals] == ["failed"]
     assert [item["payload"]["provider_request_id"] for item in starts] == [
         item["payload"]["provider_request_id"] for item in terminals
     ]
@@ -1497,7 +2654,11 @@ async def test_real_async_helper_pin_or_start_failure_keeps_post_count_zero(
                 raise OSError("pin fsync failed")
             return SimpleNamespace(context_snapshot_ref="d" * 24, pin_hash="e" * 64)
 
-    gate, lifecycle = _gate(tmp_path, snapshot_store=_SnapshotStore())
+    gate, lifecycle = _gate(
+        tmp_path,
+        snapshot_store=_SnapshotStore(),
+        stream=True,
+    )
     if failure_phase == "start":
         monkeypatch.setattr(
             lifecycle,
@@ -1516,15 +2677,9 @@ async def test_real_async_helper_pin_or_start_failure_keeps_post_count_zero(
         _create_session,
     )
     stream = invoke_stream_with_retry(
-        "https://example.test/stream",
+        "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "response_format": None,
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         5,
         max_attempts=1,
         governance_mode="governed_required",
@@ -1562,7 +2717,7 @@ def test_start_append_with_durable_fact_but_lost_ack_is_ambiguous_and_never_disp
 
     monkeypatch.setattr(lifecycle, "append_start", _persist_then_lose_ack)
     with pytest.raises(OSError, match="start durability ack lost"):
-        gate.dispatch_sync(wire_request=_wire_request(), send=_send)
+        gate.dispatch_sync(wire_request=_wire_request(gate), send=_send)
 
     state = gate._physical_attempt_control_port.budget_state("f" * 64)
     assert sends == 0
@@ -1578,7 +2733,10 @@ async def test_real_async_helper_second_cancellation_closes_session_before_termi
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _bootstrap(tmp_path)
-    gate, lifecycle = _gate(tmp_path)
+    gate, lifecycle = _gate(
+        tmp_path,
+        stream=True,
+    )
     events: list[str] = []
     session = _AsyncSession(_AsyncResponse(), events)
     entered_handler = asyncio.Event()
@@ -1611,15 +2769,9 @@ async def test_real_async_helper_second_cancellation_closes_session_before_termi
         _create_session,
     )
     stream = invoke_stream_with_retry_and_handler(
-        "https://example.test/custom-stream",
+        "https://example.test/v1/chat/completions",
         {},
-        {
-            "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-            "tools": [],
-            "tool_choice": "auto",
-            "response_format": None,
-            "temperature": 0.1,
-        },
+        _wire_body(gate),
         5,
         _handler,  # type: ignore[arg-type]
         max_attempts=1,
@@ -1661,7 +2813,7 @@ async def test_async_stream_sync_open_failure_records_failed_terminal_before_esc
 
     with pytest.raises(RuntimeError, match="open stream construction failed"):
         async for _item in gate.dispatch_stream_async(
-            wire_request=_wire_request(),
+            wire_request=_wire_request(gate),
             open_stream=_open_stream,
             consume=_consume,
         ):
@@ -1700,7 +2852,7 @@ async def test_async_stream_consume_keyboard_interrupt_exits_response_and_record
 
     with pytest.raises(KeyboardInterrupt, match="consume interrupted"):
         async for _item in gate.dispatch_stream_async(
-            wire_request=_wire_request(),
+            wire_request=_wire_request(gate),
             open_stream=lambda _wire: _ResponseContext(),
             consume=_consume,
         ):
@@ -1737,7 +2889,7 @@ async def test_async_stream_cleanup_system_exit_is_cancelled_and_preserves_both_
 
     with pytest.raises(ValueError, match="consume failed"):
         async for _item in gate.dispatch_stream_async(
-            wire_request=_wire_request(),
+            wire_request=_wire_request(gate),
             open_stream=lambda _wire: _ResponseContext(),
             consume=_consume,
         ):

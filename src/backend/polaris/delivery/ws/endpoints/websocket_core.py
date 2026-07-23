@@ -49,13 +49,22 @@ async def runtime_websocket(
     connection_id = uuid.uuid4().hex
     query_workspace = str(workspace or "").strip()
     settings_workspace = str(getattr(state.settings, "workspace", "") or "").strip()
-    configured_workspace = query_workspace or settings_workspace
     ramdisk_root = str(getattr(state.settings, "ramdisk_root", "") or "").strip()
     workspace_ctx = resolve_workspace_runtime_context(
-        configured_workspace=configured_workspace,
+        configured_workspace=settings_workspace,
         default_workspace=DEFAULT_WORKSPACE,
         ramdisk_root=ramdisk_root,
     )
+    workspace_binding_mismatch = False
+    requested_workspace = ""
+    if query_workspace:
+        query_workspace_ctx = resolve_workspace_runtime_context(
+            configured_workspace=query_workspace,
+            default_workspace=DEFAULT_WORKSPACE,
+            ramdisk_root=ramdisk_root,
+        )
+        requested_workspace = query_workspace_ctx.workspace
+        workspace_binding_mismatch = bool(settings_workspace and requested_workspace != workspace_ctx.workspace)
     resolved_workspace = workspace_ctx.workspace
     cache_root = workspace_ctx.runtime_root
     workspace_details = {
@@ -105,6 +114,34 @@ async def runtime_websocket(
             connection_id,
             "closed",
             {"close_code": 1008, "reason": "auth_rejected", "client": client, **workspace_details},
+        )
+        return
+
+    if workspace_binding_mismatch:
+        await _log_connection_event(
+            resolved_workspace,
+            cache_root,
+            connection_id,
+            "workspace_rejected",
+            {
+                "client": client,
+                "requested_workspace": requested_workspace,
+                "reason": "workspace_binding_mismatch",
+                **workspace_details,
+            },
+        )
+        await websocket.close(code=1008)
+        await _log_connection_event(
+            resolved_workspace,
+            cache_root,
+            connection_id,
+            "closed",
+            {
+                "close_code": 1008,
+                "reason": "workspace_binding_mismatch",
+                "client": client,
+                **workspace_details,
+            },
         )
         return
 

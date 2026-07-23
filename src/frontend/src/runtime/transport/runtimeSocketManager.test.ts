@@ -243,3 +243,41 @@ describe("runtimeSocketManager connection coalescing", () => {
     expect(manager.getState().connected).toBe(true);
   });
 });
+
+describe("runtimeSocketManager policy rejection", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    socket = createMockSocket();
+    mockConnectWebSocket.mockReset();
+    mockConnectWebSocket.mockResolvedValue(socket as unknown as WebSocket);
+
+    const runtimeModule = await import("./runtimeSocketManager");
+    manager = runtimeModule.runtimeSocketManager;
+
+    manager.start();
+    await flushMicrotasks();
+    socket.readyState = WebSocket.OPEN;
+    socket.onopen?.(new Event("open"));
+  });
+
+  afterEach(() => {
+    manager.close();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it("does not reconnect after the backend rejects the instance binding", () => {
+    socket.onclose?.({ code: 1008 } as CloseEvent);
+    vi.runAllTimers();
+
+    expect(mockConnectWebSocket).toHaveBeenCalledTimes(1);
+    expect(manager.getState()).toMatchObject({
+      connected: false,
+      reconnecting: false,
+      attemptCount: 0,
+      error: "Runtime connection rejected by instance policy (1008)",
+    });
+  });
+});

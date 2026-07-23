@@ -1,0 +1,79 @@
+card_id: vc-20260720-deo-2b-task7-attempt-freshness
+bug_summary: >-
+  Guarded Director session entrypoints can create a kernel or prepare a request
+  without first validating the process-local TaskRuntime execution-attempt
+  authority, while the tool guard owns an independent inline heartbeat path.
+classification: structural
+status: verified_closed
+bench_status: not_schedulable
+bug_path:
+  files:
+    - polaris/cells/roles/runtime/public/service.py
+    - polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py
+    - polaris/cells/roles/kernel/internal/kernel/transaction_factory.py
+  symptom: >-
+    Stream, non-stream, direct stream, and controller construction can cross
+    request or kernel boundaries before a guarded session proves exact attempt
+    identity and freshness.
+assumptions:
+  - id: A1
+    statement: TaskRuntimeExecutionAttemptAuthorityV1 remains the sole process-local freshness handle.
+    status: verified_true
+    evidence: Public snapshot and heartbeat methods expose bounded-lock identity without private-field access.
+  - id: A2
+    statement: Lease renewal may change only lease_expires_at, not stable attempt identity.
+    status: verified_true
+    evidence: TaskRuntime authority heartbeat already rejects stable-binding drift before replacing identity.
+  - id: A3
+    statement: Guarded session identity must align workspace, external task, run, role, and session before request or kernel creation.
+    status: verified_true
+    evidence: ExecuteRoleTaskCommandV1 already enforces the equivalent alignment before request preparation.
+  - id: A4
+    statement: Unguarded ordinary role chat must remain behavior-compatible.
+    status: verified_true
+    evidence: Existing session contract permits no TaskRuntime authority and task_runtime_guard is the explicit opt-in boundary.
+pre_mortem:
+  failure_point: >-
+    A partial fix could validate only non-stream execution, heartbeat only at
+    tool time, accept a closed/mismatched authority, or create the kernel before
+    fail-closed validation.
+  risk_zone:
+    - polaris/cells/roles/runtime/public/service.py
+    - polaris/cells/roles/kernel/internal/directed_effect_lifecycle.py
+    - polaris/cells/roles/kernel/internal/kernel/transaction_factory.py
+verification_plan:
+  unit_tests:
+    - Guarded stream and non-stream sessions validate before request and kernel access.
+    - Direct stream and controller construction preserve the same ordering.
+    - Missing, closed, mismatched, invalid, expired, callback-failed, and drifted authorities deny with no later effect.
+    - Lifecycle preparation and per-call claim heartbeat with distinct context summaries.
+    - Existing tool guard reuses the shared freshness helper and preserves raw denial behavior.
+  static_gates:
+    - ruff check and format
+    - mypy
+    - compileall
+    - git diff --check
+  broader_gates:
+    - focused directed-effect matrix
+    - complete TaskRuntime suite
+    - catalog hard-fail
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  completed_at: "2026-07-20"
+  verdict: clear
+closure_evidence:
+  red: 3 failed because guarded entrypoints reached request or kernel before attempt validation
+  focused: 76 passed
+  roles_runtime_public: 259 passed
+  kernel_related: 116 passed
+  complete_task_runtime: 841 passed in 145.41s
+  static_gates: green
+  catalog_hard_fail:
+    exit_code: 0
+    issue_count: 0
+    mismatch_count: 0
+  private_authority_field_access: 0
+  provider_requests: 0
+  physical_effects: 0
+  final_provider_request_qualification: N/A

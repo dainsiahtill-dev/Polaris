@@ -12,6 +12,10 @@ purpose: 'Provide the stable adapter factory and structured output schemas for r
   '
 current_modules:
 - polaris.cells.roles.adapters.public.service
+- polaris.cells.roles.adapters.public.directed_effect_policy_service
+- polaris.cells.roles.adapters.public.directed_effect_service
+- polaris.cells.roles.adapters.internal.director.directed_effect_policy_snapshot
+- polaris.cells.roles.adapters.internal.director.directed_effect_mutation_port
 - polaris.cells.roles.adapters.internal
 - polaris.cells.roles.adapters.internal.schemas
 - polaris.cells.roles.adapters.internal.architect_adapter
@@ -27,6 +31,8 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.roles.adapters.public.contracts
+  - polaris.cells.roles.adapters.public.directed_effect_policy_service
+  - polaris.cells.roles.adapters.public.directed_effect_service
   commands:
   - CreateRoleAdapterCommandV1
   queries:
@@ -52,6 +58,7 @@ depends_on:
 - roles.runtime
 - roles.session
 - runtime.task_runtime
+- events.fact_stream
 subgraphs:
 - execution_governance_pipeline
 state_owners: []
@@ -67,6 +74,13 @@ verification:
   - tests/test_role_adapters_taskboard_alignment.py
   - tests/test_runtime_role_binding.py
   - tests/test_role_chat_status.py
+  - polaris/cells/roles/adapters/tests/test_director_directed_effect_policy_snapshot.py
+  - polaris/cells/roles/adapters/tests/test_director_directed_effect_mutation_port.py
+  - polaris/cells/roles/adapters/tests/test_director_execution_authority.py
+  - polaris/cells/roles/adapters/tests/test_director_adapter_repair_bridge.py
+  - polaris/cells/roles/adapters/tests/test_director_execution_tools.py
+  - polaris/cells/roles/adapters/tests/test_director_deo_production_wiring.py
+  - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
   gaps:
   - Director adapter import remains best-effort because its upstream application package
     still fails on import.
@@ -76,5 +90,10 @@ verification:
     are surfaced explicitly instead of falling back to standalone role execution.
   - Structured output schema exports are stable, but implementation convergence is
     ongoing.
+  - DEO-4 is closed. Physical execution requires the canonical mutation port,
+    an exact process-local executor instance registered by its private factory,
+    and durable post-consume recovery; the repository alias/taint/importlib/
+    re-export fence proves zero legacy production seams.
+  - Pre-bench is the only active gate. Provider and Bench remain not_schedulable.
   smoke_commands: []
 generated_artifacts: []

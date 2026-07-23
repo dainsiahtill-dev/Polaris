@@ -1,0 +1,29 @@
+card_id: vc-20260723-factory-r33-ws-policy-rejection-terminal
+classification: multi_instance_runtime_isolation
+status: closed
+bench_status: not_schedulable
+bug_summary: >-
+  R32 proved the isolated backend rejected an R24 stale token/workspace with
+  WebSocket close code 1008, but RuntimeSocketManager retried every non-normal
+  close. The old page consequently generated 802 accepted-then-rejected
+  handshakes against the new backend and amplified one stale binding into an
+  unbounded reconnect/audit storm.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+root_cause:
+  code: runtime_ws_policy_rejection_was_treated_as_retryable
+  expected: close_code_1008_stops_automatic_reconnect
+  actual: every_close_except_1000_1001_scheduled_reconnect
+required_gates:
+  focused_frontend_regression: "9 passed"
+  frontend_typecheck: pass
+  frontend_lint: pass
+scheduling:
+  bench_schedulable: false
+  next_action: continue_r32_ce_terminalization
+sign_off:
+  owner: Codex /root
+  closed_at: "2026-07-23"

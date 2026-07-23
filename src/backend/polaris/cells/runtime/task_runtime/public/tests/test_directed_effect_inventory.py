@@ -2942,9 +2942,9 @@ def test_task4_fixed_timestamp_concurrent_exact_mutation_is_one_fresh_and_one_ty
 
     class FixedDateTime(datetime):
         @classmethod
-        def now(cls, tz: object = None) -> datetime:
+        def now(cls, tz: object = None) -> FixedDateTime:
             assert tz is not None
-            return fixed_instant.astimezone(cast(Any, tz))
+            return cls.fromtimestamp(fixed_instant.timestamp(), cast(Any, tz))
 
     monkeypatch.setattr(deo_internal, "datetime", FixedDateTime)
     barrier = Barrier(2)
@@ -3513,6 +3513,83 @@ def test_task5_fresh_ready_claim_returns_exact_frozen_grant_and_replay_has_none(
     assert _runtime_events(identity.workspace, binding.operation_stream_token) == operation_before_replay
 
 
+def test_task11_complete_claim_chain_binds_command_cas_hashes_and_nested_grant(
+    tmp_path: Path,
+) -> None:
+    identity, binding, sealed, finalize = _runtime_ready_candidate(tmp_path)
+    member = sealed.members[0]
+    registry_before_ready = _runtime_events(identity.workspace, binding.registry_stream_token)
+    operation_before_ready = _runtime_events(identity.workspace, binding.operation_stream_token)
+    assert len(registry_before_ready) == 2
+    assert len(operation_before_ready) == 1
+
+    ready = _runtime_finalize_inventory(finalize)
+    assert ready.code == "inventory_ready"
+    registry_ready = _runtime_events(identity.workspace, binding.registry_stream_token)
+    operation_ready = _runtime_events(identity.workspace, binding.operation_stream_token)
+    assert len(registry_ready) == 3
+    assert operation_ready == operation_before_ready
+
+    command = _runtime_claim_command(identity, binding, member)
+    assert command.workspace == identity.workspace
+    assert command.task_id == identity.task_id
+    assert command.execution_attempt is identity
+    assert command.parent_binding is binding
+    assert command.tool_call_id == member.tool_call_id
+    assert command.effect_id == member.effect_id
+    assert command.expected_version == 1
+    assert command.expected_seq == 2
+    assert command.intended_effect_fingerprint == member.intended_effect_fingerprint
+    assert command.policy_verdict_hash == member.policy_verdict_hash
+    assert command.expected_receipt_binding_hash == member.expected_receipt_binding_hash
+
+    claimed = claim_directed_effect(command)
+    grant = claimed.claim_grant
+    assert claimed.code == "effect_claimed"
+    assert type(grant) is DirectedEffectClaimGrantV1
+    assert grant.execution_attempt == identity
+    assert grant.parent_binding == binding
+    assert grant.operation == claimed.operation
+    assert grant.member == member
+    assert grant.inventory_hash == sealed.inventory_hash
+    assert grant.operation_version == claimed.version == command.expected_version + 1
+    assert grant.claim_event_id == claimed.evidence["event_id"]
+    assert grant.claim_event_seq == claimed.evidence["appended_seq"] == command.expected_seq
+    assert grant.operation_source_head_seq == command.expected_seq
+    assert grant.parent_registry_source_head_seq == len(registry_ready)
+    grant_record = grant.to_record()
+    assert set(grant_record) == {
+        "schema_version",
+        "execution_attempt",
+        "parent_binding",
+        "operation",
+        "member",
+        "inventory_hash",
+        "operation_version",
+        "claim_event_id",
+        "claim_event_seq",
+        "operation_source_head_seq",
+        "parent_registry_source_head_seq",
+        "grant_hash",
+    }
+    assert grant_record["execution_attempt"] == identity.to_record()
+    assert grant_record["parent_binding"] == binding.to_record()
+    assert grant_record["operation"] == grant.operation.to_record()
+    assert grant_record["member"] == member.to_record()
+    unsigned_grant_record = dict(grant_record)
+    assert unsigned_grant_record.pop("grant_hash") == grant.grant_hash
+    assert _canonical_sha256(unsigned_grant_record) == grant.grant_hash
+    operation_claimed = _runtime_events(identity.workspace, binding.operation_stream_token)
+    assert len(operation_claimed) == 2
+    assert _runtime_events(identity.workspace, binding.registry_stream_token) == registry_ready
+
+    replay = claim_directed_effect(command)
+    assert replay.code == "idempotent_replay"
+    assert replay.claim_grant is None
+    assert _runtime_events(identity.workspace, binding.operation_stream_token) == operation_claimed
+    assert _runtime_events(identity.workspace, binding.registry_stream_token) == registry_ready
+
+
 def test_task5_fresh_abort_after_ready_succeeds_without_grant(tmp_path: Path) -> None:
     identity, binding, sealed, finalize = _runtime_ready_candidate(tmp_path)
     assert _runtime_finalize_inventory(finalize).code == "inventory_ready"
@@ -3933,6 +4010,10 @@ _AUTHORITY_SUCCESS_CODES = (
     "admitted",
     "effect_claimed",
     "aborted",
+    "receipt_committed",
+    "recovery_pending",
+    "dead_lettered",
+    "closed_by_parent",
     "found",
     "idempotent_replay",
 )
@@ -4012,11 +4093,11 @@ def test_inventory_result_evidence_is_recursively_detached_and_immutable() -> No
         }
     }
     with pytest.raises(TypeError):
-        operator.setitem(result.evidence, "new", True)
+        operator.setitem(cast(dict[str, Any], result.evidence), "new", True)
     nested = result.evidence["nested"]
     assert isinstance(nested, Mapping)
     with pytest.raises(TypeError):
-        operator.setitem(nested, "new", True)
+        operator.setitem(cast(dict[str, Any], nested), "new", True)
     with pytest.raises(FrozenInstanceError):
         result.ok = True  # type: ignore[misc]
 

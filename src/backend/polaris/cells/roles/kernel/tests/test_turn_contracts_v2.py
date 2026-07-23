@@ -79,18 +79,18 @@ class TestTurnResultV2:
 
         assert result["protocol_version"] == "2.2"
 
-    def test_tool_batch_supports_readonly_serial(self) -> None:
-        serial_tool = ToolInvocation(
-            call_id=ToolCallId("call_serial"),
+    def test_tool_batch_supports_parallel_readonly(self) -> None:
+        read_tool = ToolInvocation(
+            call_id=ToolCallId("call_read"),
             tool_name="read_file",
             arguments={"path": "ordered.py"},
             effect_type=ToolEffectType.READ,
-            execution_mode=ToolExecutionMode.READONLY_SERIAL,
+            execution_mode=ToolExecutionMode.READONLY_PARALLEL,
         )
 
-        batch = ToolBatch(batch_id=BatchId("batch_1"), readonly_serial=[serial_tool], invocations=[serial_tool])
+        batch = ToolBatch(batch_id=BatchId("batch_1"), parallel_readonly=[read_tool], invocations=[read_tool])
 
-        assert batch["readonly_serial"][0]["execution_mode"] == ToolExecutionMode.READONLY_SERIAL
+        assert batch["parallel_readonly"][0]["execution_mode"] == ToolExecutionMode.READONLY_PARALLEL
 
 
 class TestTurnFailureClassBoundary:

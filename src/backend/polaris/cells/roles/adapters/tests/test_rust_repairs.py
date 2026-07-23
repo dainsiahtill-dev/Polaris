@@ -8,9 +8,12 @@ from polaris.cells.director.runtime.public.repair_kernel_contracts import (
     RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
     RUST_MISSING_MODULE_FILE_STUB,
 )
-from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
 from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
     run_runtime_repair_with_director_tools,
+)
+from polaris.cells.roles.adapters.tests.test_director_adapter_pure import (
+    _project_deferred_repair_results_for_test,
+    _test_execution_attempt,
 )
 
 
@@ -27,17 +30,19 @@ def _run_runtime_rust_repair(
         for relative_path in relative_paths
         if (workspace / relative_path).is_file()
     }
-    return run_runtime_repair_with_director_tools(
+    task_id = "factory-quality-gate:test"
+    results = run_runtime_repair_with_director_tools(
         SimpleNamespace(workspace=str(workspace), _execution=SimpleNamespace(_message_bus=None)),
         workspace_path=workspace,
-        task_id="factory-quality-gate:test",
+        task_id=task_id,
         source_tool=source_tool,
-        executor_factory=DirectorToolExecutor,
+        execution_attempt=_test_execution_attempt(workspace, task_id),
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=allowed_paths or relative_paths,
         use_editor=True,
     )
+    return _project_deferred_repair_results_for_test(workspace, results)
 
 
 def _rust_e0583_missing_module_error(

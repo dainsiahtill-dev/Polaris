@@ -363,11 +363,18 @@ class TestContextSnapshotRefInjection:
         )
         executor = AIExecutor()
 
-        async def _mock_execute_invoke(request: Any, trace_id: str) -> Any:
+        async def _mock_execute_invoke(
+            request: Any,
+            trace_id: str,
+            *,
+            physical_dispatch_port: Any | None = None,
+        ) -> Any:
             # Simulate the context_snapshot_ref injection that the real code does
             # We mock _store_context_messages to return a known hash, then call
             # the real injection logic by replicating the relevant lines
             from polaris.kernelone.llm.engine.executor import AIResponse
+
+            del physical_dispatch_port
 
             # Call the real async _store_context_messages with test data —
             # the async variant runs the disk write in the default thread pool

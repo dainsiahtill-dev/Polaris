@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import polaris.cells.factory.pipeline.internal.run_ledger as run_ledger_module
 import pytest
+from polaris.cells.control_plane.run_ledger.public import projection as run_ledger_projection_module
 from polaris.cells.control_plane.run_ledger.public.projection import (
     summarize_run_ledger_projection as summarize_platform_run_ledger_projection,
 )
@@ -12,6 +13,7 @@ from polaris.cells.control_plane.verifier_policy.public import (
     UpdateVerifierPolicyCommandV1,
     update_verifier_policy,
 )
+from polaris.cells.director.runtime.public import hash_directed_effect_arguments
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
@@ -628,12 +630,297 @@ def test_run_ledger_projection_accepts_token_scoped_tool_receipt(tmp_path: Path)
     RunLedger(tmp_path, run_id="bench_1").append_event(event)
     projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
 
-    assert projection["ok"] is True
-    assert projection["evidence_policy"]["missing_required_modalities"] == []
-    assert projection["evidence_modalities"]["tool_receipt"]["ok"] == 1
+    assert projection["ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["tool_receipt"]
+    assert projection["evidence_modalities"]["tool_receipt"]["ok"] == 0
     gate_receipt = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
-    assert gate_receipt["metadata"]["receipt_count"] == 1
+    assert gate_receipt["present"] is False
+    assert gate_receipt["metadata"]["receipt_count"] == 0
+    assert gate_receipt["metadata"]["legacy_receipt_count"] == 1
     assert gate_receipt["metadata"]["expected_token_id"] == token.token_id
+
+
+def _directed_effect_receipt(
+    *,
+    operation_id: str,
+    receipt_outcome: str,
+) -> dict[str, object]:
+    payload = {
+        "arguments_hash": "1" * 64,
+        "authoritative": True,
+        "batch_id": "batch-deo3",
+        "claim_grant_hash": "2" * 64,
+        "context_id": "context-deo3",
+        "durable": True,
+        "effect_call_id": None,
+        "effect_operation_id": None,
+        "normalized_tool_name": "write_file",
+        "operation_id": operation_id,
+        "parent_close_eligible": True,
+        "physical_result_hash": "3" * 64,
+        "plan_hash": None,
+        "policy_evidence_hash": "4" * 64,
+        "repair_binding_hash": None,
+        "repair_contingency_kind": None,
+        "repair_request_hash": None,
+        "receipt_binding_hash": "c" * 64,
+        "receipt_outcome": receipt_outcome,
+        "schema_version": "roles.adapters.director_physical_effect_receipt.v2",
+        "target_state_hash": "5" * 64,
+        "tool_call_id": "call-deo3",
+    }
+    receipt_hash = hash_directed_effect_arguments(tuple(sorted(payload.items())))
+    return {
+        **payload,
+        "receipt_hash": receipt_hash,
+        "receipt_id": f"director-physical-effect-{receipt_hash[:24]}",
+    }
+
+
+@pytest.mark.parametrize(
+    ("receipt_outcome", "expected_ok", "expected_failed"),
+    [
+        ("succeeded", True, []),
+        ("failed", False, ["tool_receipt"]),
+    ],
+)
+def test_run_ledger_projection_binds_directed_effect_receipt_to_task_runtime_commit(
+    tmp_path: Path,
+    receipt_outcome: str,
+    expected_ok: bool,
+    expected_failed: list[str],
+) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_deo3",
+        "project_id": "P1",
+        "factory_run_id": "bench_deo3",
+        "target_files": ["src/app.ts"],
+        "scope_paths": ["src/app.ts"],
+        "required_evidence_modalities": ["tool_receipt"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-deo3"}},
+        "chain_results": {"contract_goal": "write app source"},
+    }
+    token = build_job_token_from_record(
+        record,
+        run_id="bench_deo3",
+        project_id="P1",
+        stage="director_mutation",
+    )
+    operation_id = "deo_v1_" + "a" * 48
+    receipt = _directed_effect_receipt(operation_id=operation_id, receipt_outcome=receipt_outcome)
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": expected_ok,
+            "summary": "mutation carries a TaskRuntime-bound physical receipt",
+            "commands": [
+                {
+                    "ok": expected_ok,
+                    "tool": "write_file",
+                    "effect_receipt": receipt,
+                    "effect_receipt_commit": {
+                        "code": "receipt_committed",
+                        "event_id": "fact-deo3-receipt",
+                        "operation_id": operation_id,
+                        "receipt_ref": receipt["receipt_id"],
+                        "receipt_hash": receipt["receipt_hash"],
+                        "receipt_binding_hash": "c" * 64,
+                        "receipt_outcome": receipt_outcome,
+                        "state": "RECEIPT_COMMITTED",
+                        "version": 3,
+                    },
+                }
+            ],
+        },
+        gate_name="director_mutation",
+    )
+
+    RunLedger(tmp_path, run_id="bench_deo3").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_deo3")
+
+    assert projection["ok"] is expected_ok
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == expected_failed
+    gate_receipt = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
+    assert gate_receipt["present"] is True
+    assert gate_receipt["ok"] is expected_ok
+    assert gate_receipt["metadata"]["task_runtime_receipt_count"] == 1
+    assert gate_receipt["metadata"]["task_runtime_event_ids"] == ["fact-deo3-receipt"]
+
+
+def test_run_ledger_projection_rejects_commit_for_another_receipt() -> None:
+    operation_id = "deo_v1_" + "a" * 48
+    receipt = _directed_effect_receipt(operation_id=operation_id, receipt_outcome="succeeded")
+    errors = run_ledger_projection_module._directed_effect_receipt_errors(
+        {
+            **receipt,
+            "_task_runtime_receipt_commit": {
+                "code": "receipt_committed",
+                "event_id": "fact-deo3-receipt",
+                "operation_id": operation_id,
+                "receipt_ref": receipt["receipt_id"],
+                "receipt_hash": "0" * 64,
+                "receipt_binding_hash": "c" * 64,
+                "receipt_outcome": "succeeded",
+                "state": "RECEIPT_COMMITTED",
+                "version": 3,
+            },
+        },
+        index=0,
+    )
+
+    assert errors == ["receipt[0]:task_runtime_receipt_hash_mismatch"]
+
+
+def test_run_ledger_projection_treats_uncommitted_directed_effect_receipt_as_missing(
+    tmp_path: Path,
+) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_deo3_missing",
+        "project_id": "P1",
+        "factory_run_id": "bench_deo3_missing",
+        "target_files": ["src/app.ts"],
+        "scope_paths": ["src/app.ts"],
+        "required_evidence_modalities": ["tool_receipt"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-deo3"}},
+        "chain_results": {"contract_goal": "write app source"},
+    }
+    token = build_job_token_from_record(
+        record,
+        run_id="bench_deo3_missing",
+        project_id="P1",
+        stage="director_mutation",
+    )
+    receipt = _directed_effect_receipt(
+        operation_id="deo_v1_" + "d" * 48,
+        receipt_outcome="succeeded",
+    )
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "mutation only claims a physical receipt",
+            "commands": [
+                {
+                    "ok": True,
+                    "tool": "write_file",
+                    "effect_receipt": receipt,
+                }
+            ],
+        },
+        gate_name="director_mutation",
+    )
+
+    RunLedger(tmp_path, run_id="bench_deo3_missing").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_deo3_missing")
+
+    assert projection["ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["tool_receipt"]
+    assert projection["evidence_policy"]["failed_required_modalities"] == []
+    gate_receipt = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
+    assert gate_receipt["present"] is False
+    assert gate_receipt["metadata"]["receipt_count"] == 0
+    assert gate_receipt["metadata"]["observed_receipt_count"] == 1
+    assert gate_receipt["metadata"]["invalid"] == ["receipt[0]:missing_task_runtime_commit"]
+
+
+def test_run_ledger_projection_rejects_receipt_hash_not_bound_to_payload() -> None:
+    operation_id = "deo_v1_" + "e" * 48
+    receipt = _directed_effect_receipt(operation_id=operation_id, receipt_outcome="succeeded")
+    receipt["physical_result_hash"] = "9" * 64
+    errors = run_ledger_projection_module._directed_effect_receipt_errors(
+        {
+            **receipt,
+            "_task_runtime_receipt_commit": {
+                "code": "receipt_committed",
+                "event_id": "fact-deo3-receipt",
+                "operation_id": operation_id,
+                "receipt_ref": receipt["receipt_id"],
+                "receipt_hash": receipt["receipt_hash"],
+                "receipt_binding_hash": receipt["receipt_binding_hash"],
+                "receipt_outcome": receipt["receipt_outcome"],
+                "state": "RECEIPT_COMMITTED",
+                "version": 3,
+            },
+        },
+        index=0,
+    )
+
+    assert errors == ["receipt[0]:receipt_payload_hash_mismatch"]
+
+
+@pytest.mark.parametrize(
+    ("state", "code", "evidence_prefix"),
+    [
+        ("RECOVERY_PENDING", "recovery_pending", "recovery"),
+        ("DEAD_LETTER", "dead_lettered", "resolution"),
+    ],
+)
+def test_run_ledger_projects_recovery_and_dead_letter_as_present_failed_evidence(
+    tmp_path: Path,
+    state: str,
+    code: str,
+    evidence_prefix: str,
+) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_deo3_recovery",
+        "project_id": "P1",
+        "factory_run_id": "bench_deo3_recovery",
+        "target_files": ["src/app.ts"],
+        "scope_paths": ["src/app.ts"],
+        "required_evidence_modalities": ["tool_receipt"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-deo3"}},
+        "chain_results": {"contract_goal": "write app source"},
+    }
+    token = build_job_token_from_record(
+        record,
+        run_id="bench_deo3_recovery",
+        project_id="P1",
+        stage="director_mutation",
+    )
+    recovery = {
+        "schema_version": "roles.adapters.directed_effect_recovery_fact.v1",
+        "authoritative": True,
+        "durable": True,
+        "code": code,
+        "event_id": f"fact-{code}",
+        "operation_id": "deo_v1_" + "7" * 48,
+        "state": state,
+        "version": 3,
+        f"{evidence_prefix}_evidence_ref": f"{evidence_prefix}://director/context-deo3",
+        f"{evidence_prefix}_evidence_hash": "8" * 64,
+    }
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": False,
+            "summary": "mutation has durable unresolved-effect evidence",
+            "commands": [
+                {
+                    "ok": False,
+                    "tool": "write_file",
+                    "result": {"effect_recovery": recovery},
+                }
+            ],
+        },
+        gate_name="director_mutation",
+    )
+
+    RunLedger(tmp_path, run_id="bench_deo3_recovery").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_deo3_recovery")
+
+    assert projection["ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == ["tool_receipt"]
+    modality = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
+    assert modality["present"] is True
+    assert modality["ok"] is False
+    assert modality["metadata"]["recovery_count"] == 1
+    assert modality["metadata"]["recovery_states"] == [state]
+    assert modality["metadata"]["recovery_event_ids"] == [f"fact-{code}"]
 
 
 def test_run_ledger_event_preserves_top_level_batch_receipt(tmp_path: Path) -> None:
@@ -681,8 +968,10 @@ def test_run_ledger_event_preserves_top_level_batch_receipt(tmp_path: Path) -> N
 
     physical_evidence = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
     assert event["physical_evidence"]["batch_receipt"]["ok"] is True
-    assert projection["ok"] is True
-    assert physical_evidence["ok"] is True
+    assert projection["ok"] is False
+    assert physical_evidence["present"] is False
+    assert physical_evidence["ok"] is False
+    assert physical_evidence["metadata"]["legacy_receipt_count"] == 1
     assert physical_evidence["metadata"]["operations"] == ["write_file"]
 
 
@@ -723,12 +1012,16 @@ def test_run_ledger_projection_rejects_mismatched_tool_receipt_token(tmp_path: P
     projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
 
     assert projection["ok"] is False
-    assert projection["evidence_policy"]["missing_required_modalities"] == []
-    assert projection["evidence_policy"]["failed_required_modalities"] == ["tool_receipt"]
-    assert projection["gates"][0]["failed_required_evidence_modalities"] == ["tool_receipt"]
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["tool_receipt"]
+    assert projection["evidence_policy"]["failed_required_modalities"] == []
+    assert projection["gates"][0]["missing_required_evidence_modalities"] == ["tool_receipt"]
     gate_receipt = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
+    assert gate_receipt["present"] is False
     assert gate_receipt["ok"] is False
-    assert gate_receipt["metadata"]["invalid"] == ["receipt[0]:token_mismatch"]
+    assert gate_receipt["metadata"]["invalid"] == [
+        "receipt[0]:legacy_receipt_non_authoritative",
+        "receipt[0]:token_mismatch",
+    ]
 
 
 def test_run_ledger_policy_does_not_require_browser_unless_explicit(tmp_path: Path) -> None:

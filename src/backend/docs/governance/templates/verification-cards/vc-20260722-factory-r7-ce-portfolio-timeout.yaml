@@ -1,0 +1,68 @@
+schema_version: "verification-card/v1"
+id: "vc-20260722-factory-r7-ce-portfolio-timeout"
+title: "Factory CE portfolio uses the conserved stage budget beyond 240 seconds"
+classification: "execution_fact_chain"
+severity: "P0"
+status: "complete"
+bench_status: "not_schedulable"
+scope:
+  files:
+    - "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    - "src/backend/polaris/cells/factory/pipeline/tests/test_factory_ce_timeout_budget.py"
+defect:
+  project_id: "L1-04"
+  bench_run_id: "57d40c7e2b37"
+  factory_run_id: "factory_9b8b93173904"
+  stage: "chief_engineer_review"
+  error_code: "chief_engineer.llm_review_failed"
+  physical_error: "TransactionKernel execution failed: Request timeout (240.0s)"
+  downstream_symptom: "task_boundary_verdict_missing"
+  source_files_materialized: 0
+final_request_evidence:
+  semantic_context_snapshot_ref: "ac90cb3ca10f007ac138852c"
+  executor_context_snapshot_ref: "033b11618021b96d466c5f39"
+  role_identity_ok: true
+  provider: "anthropic_compat-1771249789301"
+  model: "kimi-for-coding"
+  physical_max_tokens: 16384
+  final_request_token_estimate: 4873
+  context_window_utilization: 0.0186
+  evidence_coverage_pass: true
+  pm_contract_present: true
+  target_files_present: true
+  output_contract_present: true
+  tool_surface_expected: false
+  tool_surface_observed: false
+root_cause: >-
+  Factory consolidated the retired per-task Chief Engineer calls into one
+  project-level structured portfolio request, but retained the old 240-second
+  default. The R7 provider request was fully qualified and correctly clamped
+  on the physical wire, yet the healthy reasoning request reached that stale
+  wall-clock cap before emitting an authoritative portfolio. Because Director
+  and TaskBoundary are downstream, their absence was consequential rather
+  than causal.
+repair_contract:
+  default_requested_timeout_seconds: 600
+  deadline_admission_remains_authoritative: true
+  director_qa_reserves_must_be_preserved: true
+  explicit_operator_overrides_remain_supported: true
+  offline_blueprint_handoff_authority: forbidden
+  target_project_edits: forbidden
+verification:
+  tdd_red: "1 failed: requested_timeout was 240, expected 600"
+  focused_green: "10 passed, 240 deselected"
+  factory_full: "1287 passed, 2 warnings"
+  delivery_full: "375 passed, 9 warnings"
+  ruff: "pass"
+  format: "pass"
+  mypy_strict_new_test: "pass"
+  mypy_existing_executor_debt: "11 pre-existing no-any-return findings; no R7 expansion"
+  compileall: "pass"
+  yaml_utf8: "pass"
+next_gate:
+  state: "not_schedulable"
+  action: >-
+    R7 through R10 broad gates are closed. Refreeze the pre-bench source
+    manifest, then authorize exactly one fresh isolated L1-04 attempt.
+owner: "Codex /root"
+opened_at: "2026-07-22"

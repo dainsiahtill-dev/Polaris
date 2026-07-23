@@ -25,12 +25,22 @@ import weakref
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
+from polaris.cells.director.runtime.public.directed_effect_policy_contracts import (
+    DirectorEffectPolicySnapshotPortV1,
+)
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
+from polaris.cells.roles.kernel.internal.directed_effect_lifecycle import (
+    _refresh_directed_effect_attempt,
+)
+from polaris.cells.roles.kernel.internal.directed_effect_policy_guard import (
+    DirectedEffectPolicyGuard,
+)
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.kernel.llm_invoker_provider import get_llm_invoker
 from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import (
     execute_single_tool,
     reset_cached_tool_gateway_turn_boundary,
+    resolve_authorized_tool_gateway,
 )
 from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
     TransactionIdentityError,
@@ -39,11 +49,16 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_context_output_budget_tokens
 from polaris.cells.roles.kernel.internal.llm_caller.request_facts import project_role_request_facts
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
+from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
+from polaris.cells.roles.kernel.public.directed_effect_contracts import (
+    DirectedEffectRuntimeDependenciesV1,
+)
 from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
 )
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
@@ -149,13 +164,64 @@ def _assert_task_runtime_guard_allows_tool(request: Any) -> None:
             "director_tool_execution_guard_misconfigured: missing task_runtime_execution_attempt_authority"
         )
 
-    verdict = authority.heartbeat(
-        lease_ttl_seconds=120,
-        lock_timeout_seconds=5.0,
+    refresh, upstream_code = _refresh_directed_effect_attempt(
+        authority=authority,
+        expected_execution_attempt=None,
         context_summary="transaction_kernel_tool_guard",
     )
-    if verdict.success is not True:
-        raise RuntimeError(f"director_tool_execution_guard_heartbeat_rejected:{verdict.code}")
+    if refresh.status != "fresh":
+        raise RuntimeError(f"director_tool_execution_guard_heartbeat_rejected:{upstream_code}")
+
+
+def _resolve_directed_effect_composition(
+    *,
+    kernel: RoleExecutionKernel,
+    request: RoleTurnRequest,
+    directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None,
+    directed_effect_required: bool | None,
+) -> tuple[
+    DirectedEffectRuntimeDependenciesV1 | None,
+    bool,
+    TaskRuntimeExecutionAttemptIdentityV1 | None,
+    TaskRuntimeExecutionAttemptAuthorityV1 | None,
+]:
+    """Resolve one explicit DEO bundle and fresh public attempt for a turn."""
+
+    kernel_runtime = kernel.directed_effect_runtime
+    kernel_required = kernel.directed_effect_required
+    if directed_effect_runtime is not None and type(directed_effect_runtime) is not DirectedEffectRuntimeDependenciesV1:
+        raise TypeError("directed_effect_runtime must be exactly DirectedEffectRuntimeDependenciesV1")
+    if (
+        kernel_runtime is not None
+        and directed_effect_runtime is not None
+        and directed_effect_runtime is not kernel_runtime
+    ):
+        raise RuntimeError("directed_effect_runtime identity mismatch")
+    runtime = directed_effect_runtime if directed_effect_runtime is not None else kernel_runtime
+    required = kernel_required if directed_effect_required is None else bool(directed_effect_required)
+    if required != kernel_required and kernel_runtime is not None:
+        raise RuntimeError("directed_effect_required drift")
+    if required and runtime is None:
+        raise RuntimeError("directed_effect_runtime_required")
+    if runtime is None:
+        return None, required, None, None
+
+    context_override = _as_mapping(getattr(request, "context_override", None))
+    authority = context_override.get("task_runtime_execution_attempt_authority")
+    if not isinstance(authority, TaskRuntimeExecutionAttemptAuthorityV1):
+        if required:
+            raise RuntimeError("directed_effect_execution_attempt_authority_required")
+        return runtime, required, None, None
+    refresh, upstream_code = _refresh_directed_effect_attempt(
+        authority=authority,
+        expected_execution_attempt=None,
+        context_summary="directed_effect_transaction_kernel_create",
+    )
+    if refresh.status != "fresh" or refresh.execution_attempt is None:
+        if required:
+            raise RuntimeError(f"directed_effect_execution_attempt_refresh_failed:{upstream_code}")
+        return runtime, required, None, None
+    return runtime, required, refresh.execution_attempt, authority
 
 
 def create_transaction_kernel(
@@ -163,14 +229,28 @@ def create_transaction_kernel(
     role: str,
     profile: RoleProfile,
     request: RoleTurnRequest,
+    *,
+    directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
+    directed_effect_required: bool | None = None,
 ) -> TransactionKernel:
     """Create a TransactionKernel with kernel-backed LLM and tool adapters.
 
     Uses explicit parameter passing instead of closures to avoid circular
     reference issues between nested classes and the kernel instance.
     """
-    # Keep the canonical invoker entrypoint so TransactionKernel context
-    # overrides (forced tool definitions/tool_choice) are preserved end-to-end.
+    (
+        resolved_deo_runtime,
+        resolved_deo_required,
+        resolved_execution_attempt,
+        resolved_execution_authority,
+    ) = _resolve_directed_effect_composition(
+        kernel=kernel,
+        request=request,
+        directed_effect_runtime=directed_effect_runtime,
+        directed_effect_required=directed_effect_required,
+    )
+    # Resolve freshness before constructing any provider-side dependency.  A
+    # missing or stale execution attempt therefore cannot reach LLM dispatch.
     llm_invoker = get_llm_invoker(kernel)
 
     def _normalize_user_text(value: Any) -> str:
@@ -425,6 +505,22 @@ def create_transaction_kernel(
             cast(Any, provider_request).turn_id = normalized_turn_id
             reset_cached_tool_gateway_turn_boundary(kernel, normalized_turn_id)
 
+        def directed_effect_policy_guard(
+            self,
+            policy_port: DirectorEffectPolicySnapshotPortV1,
+        ) -> DirectedEffectPolicyGuard:
+            kernel = kernel_weakref()
+            if kernel is None:
+                raise RuntimeError("Kernel instance no longer exists")
+            gateway = resolve_authorized_tool_gateway(
+                kernel,
+                profile=provider_profile,
+                request=provider_request,
+            )
+            if not isinstance(gateway, RoleToolGateway):
+                raise RuntimeError("directed_effect_gateway_authority_unavailable")
+            return DirectedEffectPolicyGuard(gateway, policy_port)
+
         async def __call__(self, tool_name: str, arguments: dict[str, Any]) -> Any:
             kernel = kernel_weakref()
             if kernel is None:
@@ -512,4 +608,8 @@ def create_transaction_kernel(
         ),
         workflow_runtime=workflow_runtime,
         llm_provider_stream=llm_provider_stream,
+        directed_effect_runtime=resolved_deo_runtime,
+        directed_effect_required=resolved_deo_required,
+        directed_effect_execution_attempt=resolved_execution_attempt,
+        directed_effect_execution_attempt_authority=resolved_execution_authority,
     )

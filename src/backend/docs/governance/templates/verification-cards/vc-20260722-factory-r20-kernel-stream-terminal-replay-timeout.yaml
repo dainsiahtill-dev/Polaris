@@ -1,0 +1,87 @@
+card_id: vc-20260722-factory-r20-kernel-stream-terminal-replay-timeout
+classification: execution_fact_chain
+status: closed
+bench_status: unblocked
+bug_summary: >-
+  The sixteenth authorized fresh isolated L1-04 run proved R19: the Chief
+  Engineer stream crossed the former post-terminal cancellation window without
+  cancellation or TaskRuntime suspension. It then exposed a second deadline
+  projection in KernelOne StreamExecutor. Factory had already qualified,
+  consumed, and terminalized the physical Provider stream, but the executor
+  compared buffered replay against its own 300-second wall clock. It rejected
+  the first replayed event as Stream overall timeout after 300.0s and the role
+  retry layer issued a second physical Provider request for the same logical
+  Chief Engineer call.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: a922f8362845
+  factory_run_id: factory_a622acb89b87
+  instance_id: >-
+    factory-bench-l1-04-codex-r20-l1-04-run-a922f8362845-731f085add31a6ab
+  stage: chief_engineer_review
+  runner_error: chief_engineer.llm_review_failed
+  task_error: Stream overall timeout after 300.0s
+  wall_clock_seconds: 613.5
+  logical_ce_llm_calls: 1
+  provider_wire_attempts: 2
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_materialized: true
+  director_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  context_snapshot_refs:
+    chief_engineer_first: 0281d8c1c2c50f883bced8e3
+    chief_engineer_retry: d7c8f7d9ba89eea4f7592220
+    pm_primary: d3cc4d1aa0ae3c88ba506753
+    pm_route_probe: a1a8a6ccbd819b587dd601bb
+  evidence:
+    audit_bundle: /tmp/factory-bench-l1-04-codex-r20/factory_audits.json
+    project_audit: /tmp/factory-bench-l1-04-codex-r20/audits/a922f8362845/L1-04.audit.json
+    chain_log: /tmp/factory-bench-l1-04-codex-r20/L1-04.chain.log
+root_cause:
+  code: kernel_stream_legacy_timeout_rejected_governed_terminal_replay
+  summary: >-
+    StreamExecutor started a local wall clock before invoking the Provider and
+    checked it only after each upstream event arrived. Factory governance
+    consumes the complete physical response and durably terminalizes the
+    attempt before replaying buffered events through this executor. A response
+    lasting about 300 seconds therefore arrived as already-completed evidence,
+    but the executor rejected its first replay event because local elapsed time
+    exceeded 300 seconds. The untyped error remained retryable and created a
+    duplicate physical request.
+  fix: >-
+    Transfer timeout ownership only when the bound sidecar exposes both the
+    physical stream dispatch capability and the Factory provider-route
+    authority binder. Such qualified Factory streams retain their physical
+    deadline in the dispatch gate/provider helper and skip only the legacy
+    executor wall-clock check during terminal replay. Ungoverned streams and
+    arbitrary non-null sidecars retain the historical timeout fail-closed.
+required_gates:
+  exact_red_green_factory_terminal_replay_regression: pass
+  arbitrary_non_null_sidecar_negative_control: pass
+  ungoverned_timeout_negative_control: pass
+  stream_executor_targeted: "5 passed"
+  stream_executor_full: "54 passed"
+  role_kernel_full: "2743 passed, 1 warning"
+  factory_full: "1219 passed, 2 warnings"
+  ruff: pass
+  mypy_source: pass
+  compileall: pass
+  codegraph_post_edit_review: pass
+  diff_check: pass
+scheduling:
+  bench_schedulable: true
+  authorization_scope: one_fresh_isolated_l1_04_acceptance_run
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: fresh_isolated_l1_04_r21
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"

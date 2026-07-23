@@ -39,6 +39,11 @@ from polaris.cells.control_plane.run_ledger.public import (
     read_run_ledger_projection,
 )
 from polaris.cells.control_plane.run_ledger.public.ledger import RunLedger
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
     DeliveryMode,
@@ -62,6 +67,18 @@ from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, Error
 # ---------------------------------------------------------------------------
 # Shared fixtures / builders
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolated_fact_stream_workspace(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="tool_batch_executor_decision_tree_test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
 
 
 def _build_decoded_state_machine(turn_id: str) -> TurnStateMachine:
@@ -397,8 +414,8 @@ async def test_missing_execution_mode_is_normalized_before_replay_dispatch() -> 
 
 
 @pytest.mark.asyncio
-async def test_token_scoped_effect_receipt_appends_platform_run_ledger(tmp_path) -> None:
-    """Token-scoped physical tool receipts must become platform Run Ledger evidence."""
+async def test_token_scoped_legacy_effect_receipt_is_observed_but_not_authoritative(tmp_path) -> None:
+    """A legacy token-scoped receipt cannot satisfy authoritative Run Ledger evidence."""
     capability_token = {
         "source": "control_plane.job_token",
         "token_id": "jt-tool-batch",
@@ -459,8 +476,11 @@ async def test_token_scoped_effect_receipt_appends_platform_run_ledger(tmp_path)
 
     assert projection["ok"] is True
     assert projection["projects"][0]["latest_token_id"] == "jt-tool-batch"
-    assert projection["evidence_modalities"]["tool_receipt"]["present"] == 1
-    assert projection["evidence_modalities"]["tool_receipt"]["ok"] == 1
+    assert projection["evidence_modalities"]["tool_receipt"]["present"] == 0
+    assert projection["evidence_modalities"]["tool_receipt"]["ok"] == 0
+    gate_receipt = projection["run_projection"]["gates"][0]["evidence_modalities"]["tool_receipt"]
+    assert gate_receipt["metadata"]["legacy_receipt_count"] == 1
+    assert gate_receipt["metadata"]["task_runtime_receipt_count"] == 0
     events = RunLedger(tmp_path, run_id="run-tool-batch").read_events()
     tool_receipt_event = next(event for event in events if event.get("stage") == "director_mutation")
     assert tool_receipt_event["job_token"]["execution_envelope_hash"] == "env-tool-batch"
@@ -907,24 +927,13 @@ async def test_implementing_phase_all_broad_exploration_hard_block_raises() -> N
 
 @pytest.mark.asyncio
 async def test_implementing_phase_partial_block_sets_ledger_flag() -> None:
-    """Partial block keeps non-broad tools, rewrites broad tools, sets the ledger flag.
-
-    The implementing-phase partial-block branch annotates the blocked
-    ``glob`` invocation with ``_implementing_phase_blocked``/``_blocked_reason``
-    marker fields and sets ``_implementing_phase_block_triggered`` on the
-    ledger. The downstream ``ToolBatch`` pydantic model (forbidding extras)
-    then rejects the annotated invocation when the dispatcher materialises
-    the replay bucket — which is a separate production issue beyond this
-    test's scope. We pin the actual production guarantee: the ledger flag
-    is set, and the partial-block path produced the marker (asserted via
-    ``anomaly_flags``).
-    """
-    from pydantic_core import ValidationError
+    """Partial block emits a failed receipt and never dispatches the broad tool."""
 
     captured: list[Any] = []
+    tool_runtime = AsyncMock(return_value={"success": True, "result": {"file": "a.py", "content": "x"}})
     executor = _make_executor(
         captured_events=captured,
-        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "a.py", "content": "x"}}),
+        tool_runtime=tool_runtime,
     )
     turn_id = "turn_impl_partial"
     decision = _decision(
@@ -939,17 +948,21 @@ async def test_implementing_phase_partial_block_sets_ledger_flag() -> None:
     ledger.phase_manager._current_phase = Phase.IMPLEMENTING
     # Non-mutation user request so the downstream strict mutation-guard does not fire,
     # leaving the implementing-phase PARTIAL block as the observed behavior.
-    with pytest.raises(ValidationError):
-        await executor.execute_tool_batch(
-            decision,
-            _build_decoded_state_machine(turn_id),
-            ledger,
-            [{"role": "user", "content": "show me the contents of a.py"}],
-            stream=False,
-        )
-    # The production guarantee is the ledger flag, set BEFORE ToolBatch()
-    # dispatches the annotated invocation.
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        [{"role": "user", "content": "show me the contents of a.py"}],
+        stream=False,
+    )
+
     assert getattr(ledger, "_implementing_phase_block_triggered", False) is True
+    assert tool_runtime.await_count == 1
+    assert all(call.args[0] != "glob" for call in tool_runtime.await_args_list)
+    batch_receipt = result.get("batch_receipt", {})
+    blocked = [item for item in batch_receipt.get("results", []) if item.get("tool_name") == "glob"]
+    assert blocked
+    assert blocked[0]["result"]["error_type"] == "implementing_phase_tool_blocked"
 
 
 # ---------------------------------------------------------------------------

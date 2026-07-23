@@ -48,12 +48,12 @@ from polaris.kernelone.events.final_request_evidence import ContextSnapshotAudit
 from polaris.kernelone.fs import LockedRegularFileError, LockedRegularFileSetV1
 from polaris.kernelone.fs.locked_regular_file import default_platform_lock_root
 from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.llm.engine.internal.context_hash import CONTEXT_HASH_PATTERN, validate_context_hash
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 logger = logging.getLogger(__name__)
 
 SWEEP_STATE_FILENAME = ".sweep_state.json"
-_CONTEXT_REF_RE = re.compile(r"^[0-9a-f]{24}$")
 _PROVIDER_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _AUDIT_LOCK_LOGICAL_PATH = "runtime/contexts/context_snapshot_audit.control"
 
@@ -171,7 +171,7 @@ class ContextSnapshotAuditPinRepository:
             if not self._is_snapshot_path(candidate):
                 raise ContextSnapshotAuditPinError("snapshot deletion path is outside the ContextOS store")
             ref = os.path.basename(candidate)
-            if _CONTEXT_REF_RE.fullmatch(ref):
+            if CONTEXT_HASH_PATTERN.fullmatch(ref):
                 pins = self._query_snapshot_pins_locked(ref)
                 if pins:
                     return False
@@ -325,10 +325,10 @@ class ContextSnapshotAuditPinRepository:
 
     @staticmethod
     def _validated_ref(value: str) -> str:
-        ref = str(value or "").strip()
-        if not _CONTEXT_REF_RE.fullmatch(ref):
-            raise ContextSnapshotAuditPinError("context_snapshot_ref must be exactly 24 lowercase hex")
-        return ref
+        try:
+            return validate_context_hash(str(value or ""))
+        except ValueError as exc:
+            raise ContextSnapshotAuditPinError("context_snapshot_ref must be exactly 24 lowercase hex") from exc
 
     @staticmethod
     def _storage_token(*, workspace_abs: str, workspace_key: str, runtime_root: str) -> str:

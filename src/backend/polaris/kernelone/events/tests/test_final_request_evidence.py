@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -40,6 +41,7 @@ from polaris.kernelone.events.final_request_evidence import (
     summarize_target_scope_evidence_payload,
     summarize_workspace_quality_evidence_context_slot,
     target_scope_evidence_entry,
+    validate_role_final_request_policy_prompt_projection,
 )
 
 
@@ -900,11 +902,35 @@ def test_role_final_request_policy_facts_validate_order_absence_and_hashes() -> 
             _slot("workspace_quality", state="absent_at_request_time"),
         ),
     )
+    authoritative_record = facts.to_record()
     rendered = render_role_final_request_policy_facts(facts)
-    assert '"schema_version":"polaris.role_final_request_evidence_slot.v1"' in rendered
-    assert '"schema_version":"polaris.final_request_evidence_anchor.v1"' in rendered
+    prompt_projection = json.loads(rendered)
+    validate_role_final_request_policy_prompt_projection(
+        prompt_projection,
+        expected_role="chief_engineer",
+    )
+    assert '"schema_version":"polaris.role_final_request_evidence_prompt.v1"' in rendered
+    assert '"schema_version":"polaris.role_final_request_evidence_slot_prompt.v1"' in rendered
+    assert '"schema_version":"polaris.final_request_evidence_anchor_prompt.v1"' in rendered
     assert rendered.count('"ref_kind":"pm_contract"') == 2  # slot + one typed item anchor
     assert rendered.index('"ref_kind":"pm_contract"') < rendered.index('"ref_kind":"target_files"')
+    for control_plane_field in (
+        "factory_run_id",
+        "run_id",
+        "request_freeze_id",
+        "cutoff_fact_id",
+        "cutoff_fact_sequence",
+        "cutoff_fact_hash",
+        "source_fact_id",
+        "source_fact_sequence",
+        "source_fact_hash",
+        "source_head_sequence",
+        "source_head_hash",
+        "execution_authority_hash",
+    ):
+        assert f'"{control_plane_field}"' not in rendered
+    assert authoritative_record["slots"][0]["factory_run_id"] == "factory-run-1"
+    assert authoritative_record["slots"][0]["request_freeze_id"] == "freeze-1"
     assert "stderr" not in rendered
     assert "secret" not in rendered
 
@@ -932,6 +958,13 @@ def test_role_final_request_policy_facts_validate_order_absence_and_hashes() -> 
     facts_record["unexpected"] = True
     with pytest.raises(ValueError, match="fields_mismatch"):
         RoleFinalRequestPolicyFactsV1.from_record(facts_record)
+
+    prompt_projection["factory_run_id"] = "provider-text-must-not-carry-authority"
+    with pytest.raises(ValueError, match="prompt_fields_mismatch"):
+        validate_role_final_request_policy_prompt_projection(
+            prompt_projection,
+            expected_role="chief_engineer",
+        )
 
 
 def test_role_slot_schema_is_distinct_from_legacy_generic_slot_contract() -> None:

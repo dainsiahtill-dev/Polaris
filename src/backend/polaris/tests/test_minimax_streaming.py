@@ -62,7 +62,9 @@ class TestMiniMaxStreaming:
 
         # Create mock response
         mock_response = AsyncMock()
+        mock_response.ok = True
         mock_response.status = 200
+        mock_response.raise_for_status = MagicMock()
         mock_response.headers = {"Content-Type": "text/event-stream"}
         mock_response.content = AsyncMock()
         mock_response.content.__aiter__.return_value = mock_chunks
@@ -77,7 +79,7 @@ class TestMiniMaxStreaming:
         }
 
         with patch(
-            "polaris.infrastructure.llm.providers.minimax_provider.get_stream_session",
+            "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
             AsyncMock(return_value=mock_session),
         ):
             tokens = []
@@ -97,7 +99,9 @@ class TestMiniMaxStreaming:
         mock_response_data = {"choices": [{"message": {"content": "Hello world this is a test"}}]}
 
         mock_response = AsyncMock()
+        mock_response.ok = True
         mock_response.status = 200
+        mock_response.raise_for_status = MagicMock()
         mock_response.headers = {"Content-Type": "application/json"}
         mock_response.json = AsyncMock(return_value=mock_response_data)
 
@@ -109,7 +113,7 @@ class TestMiniMaxStreaming:
         }
 
         with patch(
-            "polaris.infrastructure.llm.providers.minimax_provider.get_stream_session",
+            "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
             AsyncMock(return_value=mock_session),
         ):
             tokens = []
@@ -127,7 +131,9 @@ class TestMiniMaxStreaming:
         provider = MiniMaxProvider()
 
         mock_response = AsyncMock()
+        mock_response.ok = False
         mock_response.status = 401
+        mock_response.raise_for_status = MagicMock(side_effect=RuntimeError("HTTP 401"))
         mock_response.text = AsyncMock(return_value="Unauthorized")
 
         mock_session = _build_mock_client_session(mock_response)
@@ -138,7 +144,7 @@ class TestMiniMaxStreaming:
         }
 
         with patch(
-            "polaris.infrastructure.llm.providers.minimax_provider.get_stream_session",
+            "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
             AsyncMock(return_value=mock_session),
         ):
             tokens = []

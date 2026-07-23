@@ -15,7 +15,6 @@ from typing import Any, cast
 
 from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.kernelone.fs.text_ops import write_text_atomic
-from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage import resolve_runtime_path
 
 from .base import BaseRoleAdapter
@@ -1280,14 +1279,6 @@ class QAAdapter(BaseRoleAdapter):
         Returns:
             Test execution result with pass/fail and details
         """
-        workspace = Path(self.workspace).resolve()
-        executor = CommandExecutionService(workspace)
-        test_results: list[dict[str, Any]] = []
-        passed_count = 0
-        failed_count = 0
-        skipped_count = 0
-        errors: list[str] = []
-
         ctx_metadata = context.get("metadata") if isinstance(context, dict) else None
         test_commands = []
         if isinstance(ctx_metadata, dict):
@@ -1295,70 +1286,21 @@ class QAAdapter(BaseRoleAdapter):
 
         if not test_commands:
             test_commands = ["pytest", "python -m pytest"]
-
-        for cmd in test_commands:
-            try:
-                request = executor.parse_command(cmd, cwd=str(workspace), timeout_seconds=120)
-                result = executor.run(request)
-            except (RuntimeError, ValueError) as exc:
-                errors.append(f"test_error:{cmd}:{exc}")
-                failed_count += 1
-                continue
-
-            exit_code = int(result.get("returncode", 1))
-            output = f"{result.get('stdout') or ''}{result.get('stderr') or ''}"
-            if result.get("timed_out"):
-                errors.append(f"test_timeout:{cmd}:{result.get('error') or ''}".rstrip(":"))
-                failed_count += 1
-                test_results.append(
-                    {
-                        "command": cmd,
-                        "status": "failed",
-                        "exit_code": 124,
-                        "output": output[-500:] if len(output) > 500 else output,
-                    }
-                )
-            elif exit_code == 0:
-                passed_count += 1
-                test_results.append(
-                    {
-                        "command": cmd,
-                        "status": "passed",
-                        "exit_code": exit_code,
-                        "output_length": len(output),
-                    }
-                )
-            elif exit_code == 5:
-                skipped_count += 1
-                test_results.append(
-                    {
-                        "command": cmd,
-                        "status": "skipped",
-                        "exit_code": exit_code,
-                        "output_length": len(output),
-                    }
-                )
-            else:
-                failed_count += 1
-                test_results.append(
-                    {
-                        "command": cmd,
-                        "status": "failed",
-                        "exit_code": exit_code,
-                        "output": output[-500:] if len(output) > 500 else output,
-                    }
-                )
-
-        all_passed = passed_count > 0 and failed_count == 0 and len(errors) == 0
+        normalized_commands = [str(command or "").strip() for command in test_commands if str(command or "").strip()]
+        error_code = "qa_test_execution_requires_roles_kernel_directed_effect"
 
         return {
-            "test_execution_verified": True,
-            "passed": all_passed,
-            "passed_count": passed_count,
-            "failed_count": failed_count,
-            "skipped_count": skipped_count,
-            "test_results": test_results,
-            "errors": errors,
+            "test_execution_verified": False,
+            "passed": False,
+            "passed_count": 0,
+            "failed_count": len(normalized_commands),
+            "skipped_count": 0,
+            "test_results": [
+                {"command": command, "status": "blocked", "exit_code": None, "error_code": error_code}
+                for command in normalized_commands
+            ],
+            "errors": [f"{error_code}:{command}" for command in normalized_commands],
+            "physical_executor_owned": False,
         }
 
     def _check_semantic_equivalence(

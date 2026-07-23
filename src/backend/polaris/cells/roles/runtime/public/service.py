@@ -42,6 +42,10 @@ from polaris.cells.roles.engine.public.service import (
     get_task_classifier,
     register_engine,
 )
+from polaris.cells.roles.kernel.public import (
+    DirectedEffectAttemptValidationResultV1,
+    DirectedEffectRuntimeDependenciesV1,
+)
 from polaris.cells.roles.kernel.public.service import (
     ContextGatewayConfig as ContextGatewayConfig,
     ContextRequest,
@@ -375,9 +379,13 @@ from polaris.cells.roles.runtime.public.strategy_resolution import (
     _StrategyResolutionMixin as _StrategyResolutionMixin,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
+    TaskRuntimeExecutionAttemptAuthoritySnapshotV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptValidationVerdictV1,
     ValidateTaskRuntimeExecutionAttemptQueryV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
     validate_task_runtime_execution_attempt,
 )
 from polaris.kernelone.context.runtime_feature_flags import (
@@ -421,7 +429,21 @@ class RoleRuntimeService(
     _DOMAIN_ALIASES = RoleDomainPolicy.DOMAIN_ALIASES
     _DEFAULT_EXECUTION_DOMAIN = RoleDomainPolicy.DEFAULT_EXECUTION_DOMAIN
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
+        directed_effect_required: bool = False,
+    ) -> None:
+        if (
+            directed_effect_runtime is not None
+            and type(directed_effect_runtime) is not DirectedEffectRuntimeDependenciesV1
+        ):
+            raise TypeError("directed_effect_runtime must be exactly DirectedEffectRuntimeDependenciesV1")
+        if directed_effect_required and directed_effect_runtime is None:
+            raise ValueError("directed_effect_required needs directed_effect_runtime")
+        self._directed_effect_runtime = directed_effect_runtime
+        self._directed_effect_required = bool(directed_effect_required)
         self._kernels: dict[str, RoleExecutionKernel] = {}
         self._kernel_lock = Lock()
         self._turn_indices: dict[str, int] = {}  # session_id -> turn_index
@@ -439,6 +461,8 @@ class RoleRuntimeService(
                     workspace=token,
                     registry=registry,
                     context_gateway_config_factory=_build_context_gateway_config_for_role,
+                    directed_effect_runtime=self._directed_effect_runtime,
+                    directed_effect_required=self._directed_effect_required,
                 )
                 self._kernels[token] = kernel
         return kernel
@@ -516,17 +540,23 @@ class RoleRuntimeService(
     @staticmethod
     def _build_task_request(command: ExecuteRoleTaskCommandV1) -> RoleTurnRequest:
         metadata = dict(command.metadata)
+        context = dict(command.context)
         execution_attempt = command.execution_attempt
         if execution_attempt is not None:
             metadata["task_runtime_session_id"] = execution_attempt.session_id
             metadata["task_runtime_execution_attempt"] = execution_attempt.to_record()
         if command.timeout_seconds is not None:
-            metadata["timeout_seconds"] = int(command.timeout_seconds)
+            timeout_seconds = int(command.timeout_seconds)
+            metadata["timeout_seconds"] = timeout_seconds
+            context.setdefault("llm_call_timeout_seconds", timeout_seconds)
+            context.setdefault("request_timeout_seconds", timeout_seconds)
+            context.setdefault("timeout_seconds", timeout_seconds)
+        metadata["stream"] = bool(command.stream)
         context_override, metadata = _augment_context_with_handoff_rehydration_impl(
             workspace=command.workspace,
             role=command.role,
             session_id=None,
-            context=command.context,
+            context=context,
             metadata=metadata,
         )
         execution_domain, _ = RoleRuntimeService._resolve_execution_domain(
@@ -621,6 +651,117 @@ class RoleRuntimeService(
                 details=verdict.to_record(),
             )
 
+    def _directed_effect_guard_required(self, command: ExecuteRoleSessionCommandV1) -> bool:
+        if self._directed_effect_required:
+            return True
+        value = command.context.get("task_runtime_guard", command.metadata.get("task_runtime_guard"))
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    @staticmethod
+    def _validate_directed_effect_session_attempt(
+        command: ExecuteRoleSessionCommandV1,
+    ) -> DirectedEffectAttemptValidationResultV1:
+        """Validate one guarded session against its process-local TaskRuntime authority."""
+
+        authority = command.context.get("task_runtime_execution_attempt_authority")
+        if not isinstance(authority, TaskRuntimeExecutionAttemptAuthorityV1):
+            return DirectedEffectAttemptValidationResultV1(
+                status="denied",
+                execution_attempt=None,
+                error_code="deo_execution_attempt_missing",
+            )
+        try:
+            snapshot = authority.snapshot(lock_timeout_seconds=5.0)
+            if type(snapshot) is not TaskRuntimeExecutionAttemptAuthoritySnapshotV1:
+                raise TypeError("attempt authority snapshot must be exact")
+            canonical_snapshot = TaskRuntimeExecutionAttemptAuthoritySnapshotV1(
+                success=snapshot.success,
+                code=snapshot.code,
+                identity=snapshot.identity,
+                closed=snapshot.closed,
+            )
+            identity = canonical_snapshot.identity
+            if canonical_snapshot != snapshot or not canonical_snapshot.success or canonical_snapshot.closed:
+                raise ValueError("attempt authority snapshot unavailable or closed")
+            if type(identity) is not TaskRuntimeExecutionAttemptIdentityV1:
+                raise TypeError("attempt identity must be exact")
+            canonical_identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(identity.to_record())
+            if canonical_identity != identity:
+                raise ValueError("attempt identity is not canonical")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return DirectedEffectAttemptValidationResultV1(
+                status="denied",
+                execution_attempt=None,
+                error_code="deo_execution_attempt_invalid",
+            )
+
+        command_task_id = str(command.task_id or "").strip()
+        command_run_id = str(command.run_id or "").strip()
+        if not all(
+            (
+                command.workspace == identity.workspace,
+                command_task_id == identity.external_task_id,
+                command_run_id == identity.run_id,
+                command.role == identity.role_id,
+                command.session_id == identity.session_id,
+            )
+        ):
+            return DirectedEffectAttemptValidationResultV1(
+                status="denied",
+                execution_attempt=None,
+                error_code="deo_execution_attempt_mismatch",
+            )
+        try:
+            verdict = validate_task_runtime_execution_attempt(
+                ValidateTaskRuntimeExecutionAttemptQueryV1(
+                    workspace=command.workspace,
+                    identity=identity,
+                    lock_timeout_seconds=5.0,
+                )
+            )
+            if type(verdict) is not TaskRuntimeExecutionAttemptValidationVerdictV1:
+                raise TypeError("TaskRuntime validation verdict must be exact")
+            canonical_verdict = TaskRuntimeExecutionAttemptValidationVerdictV1(
+                valid=verdict.valid,
+                code=verdict.code,
+                workspace=verdict.workspace,
+                identity=verdict.identity,
+                evidence=verdict.evidence,
+            )
+            if canonical_verdict != verdict or verdict.identity != identity or verdict.workspace != identity.workspace:
+                raise ValueError("TaskRuntime validation verdict identity drift")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return DirectedEffectAttemptValidationResultV1(
+                status="denied",
+                execution_attempt=None,
+                error_code="deo_execution_attempt_invalid",
+            )
+        if not verdict.valid:
+            return DirectedEffectAttemptValidationResultV1(
+                status="denied",
+                execution_attempt=None,
+                error_code="deo_execution_attempt_invalid",
+            )
+        return DirectedEffectAttemptValidationResultV1(
+            status="valid",
+            execution_attempt=identity,
+            error_code=None,
+        )
+
+    def _require_directed_effect_session_attempt(self, command: ExecuteRoleSessionCommandV1) -> None:
+        if not self._directed_effect_guard_required(command):
+            return
+        result = self._validate_directed_effect_session_attempt(command)
+        if result.status != "valid":
+            raise RoleRuntimeError(
+                "Guarded role session lacks a valid TaskRuntime execution attempt",
+                code=result.error_code or "deo_execution_attempt_invalid",
+            )
+
     @staticmethod
     def _build_session_request(
         command: ExecuteRoleSessionCommandV1,
@@ -712,6 +853,7 @@ class RoleRuntimeService(
         kernel factory. This is the canonical entrypoint for RoleSessionOrchestrator
         to obtain a kernel-backed turn controller.
         """
+        self._require_directed_effect_session_attempt(command)
         _execution_domain, _ = self._resolve_execution_domain(
             command_domain=command.domain,
             context=command.context,
@@ -729,7 +871,14 @@ class RoleRuntimeService(
             raise ValueError(f"Role profile not found: {command.role}")
         from polaris.cells.roles.kernel.public.transaction_contracts import create_role_transaction_kernel
 
-        return create_role_transaction_kernel(kernel, command.role, profile, request)
+        return create_role_transaction_kernel(
+            kernel,
+            command.role,
+            profile,
+            request,
+            directed_effect_runtime=self._directed_effect_runtime,
+            directed_effect_required=self._directed_effect_required,
+        )
 
     async def execute_role_task(
         self,
@@ -738,15 +887,88 @@ class RoleRuntimeService(
         self._validate_task_execution_attempt(command)
         request = await self._prepare_task_request(command)
         kernel = self._get_kernel(command.workspace)
-        result = await kernel.run(command.role, request)
-        contract_result = _to_contract_result(
-            role=command.role,
-            workspace=command.workspace,
-            task_id=command.task_id,
-            session_id=command.session_id,
-            run_id=command.run_id,
-            result=result,
-        )
+        if command.stream:
+            full_content: list[str] = []
+            thinking: list[str] = []
+            tool_calls: list[str] = []
+            error_message: str | None = None
+            error_code: str | None = None
+            final_result: RoleTurnResult | None = None
+            stream_metadata: dict[str, Any] = {"stream": True}
+            try:
+                async for event in kernel.run_stream(command.role, request):
+                    event_metadata = event.get("metadata")
+                    if isinstance(event_metadata, Mapping):
+                        stream_metadata.update(dict(event_metadata))
+                    event_type = str(event.get("type") or "")
+                    if event_type == "content_chunk":
+                        full_content.append(str(event.get("content") or ""))
+                    elif event_type == "thinking_chunk":
+                        thinking.append(str(event.get("content") or ""))
+                    elif event_type == "tool_call":
+                        tool_name = str(event.get("tool") or "").strip()
+                        if tool_name:
+                            tool_calls.append(tool_name)
+                    elif event_type == "complete":
+                        maybe_result = event.get("result")
+                        if isinstance(maybe_result, RoleTurnResult):
+                            final_result = maybe_result
+                    elif event_type == "error" and error_message is None:
+                        # Preserve the first physical/transport failure.  A
+                        # downstream orchestrator may emit a generic terminal
+                        # error after the provider event; replacing the first
+                        # cause destroys the only actionable runtime evidence.
+                        error_message = str(event.get("error") or "stream error")
+                        error_code = str(event.get("error_type") or "role_runtime_error")
+            except (OSError, RuntimeError, ValueError) as exc:
+                error_message = str(exc)
+                error_code = "role_runtime_error"
+
+            if final_result is None and error_message is None:
+                error_message = "Role stream ended without a complete or error event"
+                error_code = "role_stream_incomplete"
+
+            if final_result is not None:
+                contract_result = _with_result_metadata_patch(
+                    _to_contract_result(
+                        role=command.role,
+                        workspace=command.workspace,
+                        task_id=command.task_id,
+                        session_id=command.session_id,
+                        run_id=command.run_id,
+                        result=final_result,
+                    ),
+                    stream_metadata,
+                )
+            else:
+                error_text = str(error_message or "")
+                contract_result = RoleExecutionResultV1(
+                    ok=not bool(error_text),
+                    status="ok" if not error_text else "failed",
+                    role=command.role,
+                    workspace=command.workspace,
+                    task_id=command.task_id,
+                    session_id=command.session_id,
+                    run_id=command.run_id,
+                    output="".join(full_content),
+                    thinking="".join(thinking) or None,
+                    tool_calls=tuple(tool_calls),
+                    artifacts=(),
+                    usage={"stream": True, "tool_calls_count": len(tool_calls)},
+                    metadata=stream_metadata,
+                    error_code=None if not error_text else error_code or "role_runtime_error",
+                    error_message=error_text or None,
+                )
+        else:
+            result = await kernel.run(command.role, request)
+            contract_result = _to_contract_result(
+                role=command.role,
+                workspace=command.workspace,
+                task_id=command.task_id,
+                session_id=command.session_id,
+                run_id=command.run_id,
+                result=result,
+            )
         evidence = self._emit_cognitive_runtime_shadow_artifacts(
             source="roles.runtime.execute_role_task",
             workspace=command.workspace,
@@ -770,6 +992,7 @@ class RoleRuntimeService(
         self,
         command: ExecuteRoleSessionCommandV1,
     ) -> RoleExecutionResultV1:
+        self._require_directed_effect_session_attempt(command)
         if command.stream:
             # Collect streaming events and assemble the final result.
             kernel = self._get_kernel(command.workspace)
@@ -989,6 +1212,7 @@ class RoleRuntimeService(
         `<metadata_dir>/runtime/strategy_runs/`.
         """
         try:
+            self._require_directed_effect_session_attempt(command)
             request = await self._prepare_session_request(
                 command,
                 include_session_snapshot=True,

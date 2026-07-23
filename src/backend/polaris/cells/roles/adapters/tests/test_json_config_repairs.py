@@ -262,10 +262,10 @@ class TestDirectorWriteFileJsonValidation:
 
     def test_write_valid_json_succeeds(self, tmp_path: Path) -> None:
         from polaris.cells.roles.adapters.internal.director.execution_tools import (
-            DirectorToolExecutor,
+            _create_director_tool_executor,
         )
 
-        executor = DirectorToolExecutor(str(tmp_path))
+        executor = _create_director_tool_executor(str(tmp_path))
         content = json.dumps({"name": "test", "version": "1.0.0"}, indent=2)
         result = executor.execute_tool(
             "write_file",
@@ -276,10 +276,10 @@ class TestDirectorWriteFileJsonValidation:
 
     def test_write_invalid_json_repaired(self, tmp_path: Path) -> None:
         from polaris.cells.roles.adapters.internal.director.execution_tools import (
-            DirectorToolExecutor,
+            _create_director_tool_executor,
         )
 
-        executor = DirectorToolExecutor(str(tmp_path))
+        executor = _create_director_tool_executor(str(tmp_path))
         content = '{ name: "test", version: "1.0.0" }'
         result = executor.execute_tool(
             "write_file",
@@ -294,10 +294,10 @@ class TestDirectorWriteFileJsonValidation:
 
     def test_write_invalid_json_repair_disabled(self, tmp_path: Path) -> None:
         from polaris.cells.roles.adapters.internal.director.execution_tools import (
-            DirectorToolExecutor,
+            _create_director_tool_executor,
         )
 
-        executor = DirectorToolExecutor(str(tmp_path))
+        executor = _create_director_tool_executor(str(tmp_path))
         # Use content that cannot be repaired
         content = '{ name: "test", invalid syntax }'
         result = executor.execute_tool(
@@ -312,10 +312,10 @@ class TestDirectorWriteFileJsonValidation:
 
     def test_write_tsconfig_js_literal_repaired(self, tmp_path: Path) -> None:
         from polaris.cells.roles.adapters.internal.director.execution_tools import (
-            DirectorToolExecutor,
+            _create_director_tool_executor,
         )
 
-        executor = DirectorToolExecutor(str(tmp_path))
+        executor = _create_director_tool_executor(str(tmp_path))
         content = """{
   compilerOptions: {
     target: ES2020,
@@ -334,10 +334,10 @@ class TestDirectorWriteFileJsonValidation:
 
     def test_write_non_json_file_skips_validation(self, tmp_path: Path) -> None:
         from polaris.cells.roles.adapters.internal.director.execution_tools import (
-            DirectorToolExecutor,
+            _create_director_tool_executor,
         )
 
-        executor = DirectorToolExecutor(str(tmp_path))
+        executor = _create_director_tool_executor(str(tmp_path))
         content = "const x = 1;\n"
         result = executor.execute_tool(
             "write_file",
@@ -347,14 +347,14 @@ class TestDirectorWriteFileJsonValidation:
 
     def test_edit_valid_json_succeeds(self, tmp_path: Path) -> None:
         from polaris.cells.roles.adapters.internal.director.execution_tools import (
-            DirectorToolExecutor,
+            _create_director_tool_executor,
         )
 
         (tmp_path / "config.json").write_text(
             json.dumps({"name": "old"}),
             encoding="utf-8",
         )
-        executor = DirectorToolExecutor(str(tmp_path))
+        executor = _create_director_tool_executor(str(tmp_path))
         result = executor.execute_tool(
             "edit_file",
             {
@@ -367,7 +367,7 @@ class TestDirectorWriteFileJsonValidation:
 
     def test_edit_invalid_json_repaired(self, tmp_path: Path) -> None:
         from polaris.cells.roles.adapters.internal.director.execution_tools import (
-            DirectorToolExecutor,
+            _create_director_tool_executor,
         )
 
         # Write a file with JS-object-literal that needs repair
@@ -375,7 +375,7 @@ class TestDirectorWriteFileJsonValidation:
             '{ name: "old", version: "1.0.0" }',
             encoding="utf-8",
         )
-        executor = DirectorToolExecutor(str(tmp_path))
+        executor = _create_director_tool_executor(str(tmp_path))
         result = executor.execute_tool(
             "edit_file",
             {

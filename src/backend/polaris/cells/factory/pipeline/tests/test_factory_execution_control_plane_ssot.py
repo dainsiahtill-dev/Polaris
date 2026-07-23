@@ -358,6 +358,73 @@ async def test_waiter_rejects_completed_session_without_canonical_outcome(
 
 
 @pytest.mark.asyncio
+async def test_waiter_does_not_treat_transient_projection_readiness_as_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A non-authoritative readiness diagnostic must not close stage authority.
+
+    Regression for R30: the Director TaskRuntime child was still active while
+    the fact-only projection was briefly not ready. Returning that diagnostic
+    as terminal let Factory close the stage-bound role-evidence authority before
+    the child reached Provider transport.
+    """
+
+    class _Lifecycle:
+        _active_runs: dict[str, asyncio.Task[Any]] = {}
+
+    async def get_lifecycle() -> _Lifecycle:
+        return _Lifecycle()
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+        get_lifecycle,
+    )
+    waiter = RunCompletionWaiter(tmp_path)
+    calls = 0
+
+    def canonical_result(**_kwargs: Any) -> CommandResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return CommandResult(
+                run_id="director-r30",
+                status="blocked",
+                message="TaskRuntime fact-only observable projection is not ready",
+                reason_code="task_runtime_fact_projection_not_ready",
+                metadata={
+                    "canonical_authoritative": False,
+                    "degraded": True,
+                    "terminal_source": "task_runtime_cutover_readiness",
+                },
+            )
+        return CommandResult(
+            run_id="director-r30",
+            status="completed",
+            message="TaskRuntime canonical projection reached completed",
+            metadata={
+                "canonical_authoritative": True,
+                "terminal_source": "task_runtime.execution_fact",
+                "fact_event_seq": 17,
+            },
+        )
+
+    monkeypatch.setattr(waiter, "canonical_terminal_result", canonical_result)
+
+    result = await waiter.wait(
+        _CompletedCommandService(),
+        CommandResult(run_id="director-r30", status="running", message="submitted"),
+        timeout_seconds=1,
+    )
+
+    assert calls >= 2
+    assert result.status == "completed"
+    assert result.metadata is not None
+    assert result.metadata["canonical_authoritative"] is True
+    assert result.metadata["fact_event_seq"] == 17
+
+
+@pytest.mark.asyncio
 async def test_cancel_during_dispatch_waits_for_committed_terminal_projection(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -1,0 +1,134 @@
+card_id: vc-20260722-factory-r25-mixed-control-plane-role-evidence
+classification: execution_fact_chain
+status: closed
+bench_status: authorization_consumed_r26
+bug_summary: >-
+  The twenty-first authorized fresh isolated L1-04 run proved R24 and reached a
+  real Director Provider request. Director materialized go.mod plus four Go
+  source files, but Factory rejected the role result with
+  factory_role_evidence_dynamic_envelope_invalid. The canonical
+  execution.control_plane stream contained a valid tool_call_lifecycle fact,
+  a valid task_boundary_verdict fact, and a valid gate_evaluated fact. The
+  role-evidence source resolver incorrectly required every record in that
+  heterogeneous control-plane stream to be gate_evaluated.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: c01b56f2ebde
+  factory_run_id: factory_044466fcd1f2
+  director_run_id: director-282d96c207b2
+  instance_id: >-
+    factory-bench-l1-04-codex-r25-l1-04-run-c01b56f2ebde-06fce6d4bdbab579
+  stage: director_dispatch
+  rejection_code: factory_role_evidence_dynamic_envelope_invalid
+  wall_clock_seconds: 714.5
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_materialized: true
+  director_provider_request_reached: true
+  qa_reached: false
+  materialized_files:
+    - go.mod
+    - main.go
+    - models/capsule.go
+    - models/exhibit.go
+    - models/gallery.go
+  control_plane_facts:
+    - sequence: 1
+      event_type: tool_call_lifecycle
+      run_id: director-282d96c207b2
+    - sequence: 2
+      event_type: task_boundary_verdict
+      run_id: director-282d96c207b2
+    - sequence: 3
+      event_type: gate_evaluated
+      run_id: c01b56f2ebde
+      factory_run_id: factory_044466fcd1f2
+  final_request_audit:
+    pm:
+      semantic_context_snapshot_ref: 9a9e57d7360785e92f8b2f24
+      physical_context_snapshot_ref: 516004ecc72f552b474bfec7
+      context_readable: pass
+      final_request_readable: pass
+      role_identity: pass
+      required_refs: [pm_raw_intent]
+      missing_refs: []
+      final_request_tokens: 2596
+      context_window: 262144
+    chief_engineer:
+      physical_context_snapshot_ref: f7e956c11e01789ac9061b02
+      context_readable: pass
+      final_request_readable: pass
+      role_identity: pass
+      required_refs: [pm_contract, target_files]
+      missing_refs: []
+      final_request_tokens: 4877
+      context_window: 262144
+    director:
+      semantic_context_snapshot_ref: 30e0118191310dbda1a14179
+      physical_context_snapshot_ref: 1ab0548bb59e7966eced8706
+      context_readable: pass
+      final_request_readable: pass
+      role_identity: pass
+      required_refs:
+        - pm_contract
+        - ce_blueprint
+        - target_files
+        - architecture_plan
+        - file_plan
+        - module_interface
+        - language_guidance
+        - execution_profile
+        - execution_strategy
+        - execution_envelope
+      missing_refs: []
+      required_tools: [write_file]
+      missing_tools: []
+      final_request_tokens: 16403
+root_cause:
+  code: factory_role_evidence_assumes_gate_only_control_plane_stream
+  summary: >-
+    _capture_dynamic_slots intentionally queried the full canonical
+    execution.control_plane stream so sequence, digest, and physical source
+    head could be audited. _validated_dynamic_event nevertheless rejected any
+    envelope whose event_type was not gate_evaluated. Canonical Run Ledger
+    producers write multiple event kinds to this same stream, so the first
+    successful Director tool lifecycle receipt deterministically poisoned the
+    later role-evidence cutoff.
+  fix: >-
+    Strictly validate every control-plane record for envelope stream, payload
+    schema, outer/nested event-type identity, run identity, Run Ledger content
+    identity, integrity digest, sequence continuity, size limit, and physical
+    stream head. Apply Job Token and Factory-run binding only to
+    gate_evaluated facts, and project only those gate facts into
+    failure_feedback, workspace_quality, and verifier_receipts slots. Valid
+    lifecycle and TaskBoundary facts remain part of the audited stream cut but
+    cannot masquerade as gate evidence.
+required_gates:
+  mixed_stream_regression: "28 passed"
+  r25_physical_fact_replay: pass
+  full_factory_pipeline: "1227 passed, 2 warnings"
+  ruff: pass
+  ruff_format: pass
+  mypy_source: pass
+  compileall: pass
+  git_diff_check: pass
+  codegraph_pre_edit_review: pass
+  codegraph_post_edit_review: pass
+scheduling:
+  bench_schedulable: false
+  authorization_scope: none
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: close_r26_reasoning_and_structured_output_budget
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"
+  r25_instance_stopped: true
+  authorization_consumed_by_r25: true
+  r26_authorization_consumed: true

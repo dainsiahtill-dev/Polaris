@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
+from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
 from polaris.kernelone.quality import artifact_quality_issues_from_errors
 
 
@@ -23,6 +24,7 @@ def run_materialization_quality_public_boundary(
     artifact_quality_errors: list[str],
     artifact_quality_issues: tuple[dict[str, Any], ...] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute materialization-quality repair through the typed public boundary."""
 
@@ -39,6 +41,7 @@ def run_materialization_quality_public_boundary(
             artifact_quality_issues=artifact_quality_issues
             or artifact_quality_issues_from_errors(artifact_quality_errors),
             convergence_verifier=convergence_verifier,
+            execution_attempt=execution_attempt,
         )
     )
     return [dict(item) for item in result.tool_results], dict(result.summary)

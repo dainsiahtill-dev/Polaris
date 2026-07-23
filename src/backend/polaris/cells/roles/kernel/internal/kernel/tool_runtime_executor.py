@@ -17,8 +17,41 @@ from polaris.cells.roles.profile.public.service import RoleTurnRequest
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+    from polaris.cells.roles.profile.public.service import RoleProfile
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_authorized_tool_gateway(
+    kernel: RoleExecutionKernel,
+    *,
+    profile: RoleProfile,
+    request: RoleTurnRequest,
+) -> object:
+    """Return the same per-turn gateway used by physical tool execution."""
+
+    from polaris.cells.roles.kernel.internal.kernel.tool_executor import (
+        KernelToolExecutor,
+    )
+
+    executor = KernelToolExecutor(kernel, kernel.workspace)
+    current_turn_id = resolve_tool_gateway_turn_key(request)
+    if (
+        kernel._cached_tool_gateway is not None
+        and kernel._cached_gateway_profile is profile
+        and current_turn_id == kernel._cached_gateway_turn_id
+    ):
+        return kernel._cached_tool_gateway
+    _reset_cached_gateway(kernel)
+    gateway = executor.create_gateway(
+        profile=profile,
+        request=request,
+        tool_gateway=kernel._tool_gateway,
+    )
+    kernel._cached_tool_gateway = gateway
+    kernel._cached_gateway_profile = profile
+    kernel._cached_gateway_turn_id = current_turn_id
+    return gateway
 
 
 async def execute_single_tool(
@@ -71,7 +104,7 @@ async def execute_single_tool(
             if not can_execute:
                 from polaris.cells.roles.kernel.internal.tool_gateway import ToolAuthorizationError
 
-                raise ToolAuthorizationError(reason)
+                raise ToolAuthorizationError(f"{reason}: tool={tool_name!r}")
 
         logger.debug(
             "[execute_single_tool] _injected_tool_executor (with auth gate): tool=%s",
@@ -161,4 +194,8 @@ def _reset_cached_gateway(kernel: RoleExecutionKernel) -> None:
         close_cached()
 
 
-__all__ = ["execute_single_tool", "reset_cached_tool_gateway_turn_boundary"]
+__all__ = [
+    "execute_single_tool",
+    "reset_cached_tool_gateway_turn_boundary",
+    "resolve_authorized_tool_gateway",
+]

@@ -28,6 +28,7 @@ from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import 
     FactorySettlementConsumerError,
     FactorySettlementLifecycleError,
     FactorySettlementRecoveryRequiredError,
+    FactorySettlementRetryableError,
     SettlementOutcome,
 )
 from polaris.cells.factory.pipeline.internal.factory_settlement_journal import (
@@ -173,6 +174,12 @@ class RecordingFactoryRuns:
     ) -> object:
         self.recover_calls.append((run_id, expected_fencing_token, reason))
         return {"run_id": run_id, "recovered": True}
+
+
+class RetryableFactoryRuns(RecordingFactoryRuns):
+    async def settle_terminal_run(self, run_id: str) -> object:
+        self.settle_calls.append(run_id)
+        raise FactorySettlementRetryableError("temporary settlement failure", code="temporary_settlement_failure")
 
 
 class BlockingFactoryRuns(RecordingFactoryRuns):
@@ -599,6 +606,89 @@ async def test_ledger_wake_rechecks_pending_source_without_polling(tmp_path: Pat
     applied_records = [record for record in journal.records() if record.status is SettlementJournalStatus.APPLIED]
     assert applied_records[-1].payload["barrier_hash"] == "barrier-2"
     assert applied_records[-1].payload["evidence_refs"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_open_barrier_wake_reuses_pending_journal_event(tmp_path: Path) -> None:
+    """A changing barrier snapshot must not mutate one idempotency key.
+
+    Every wake re-queries the live Run Ledger barrier, but while it remains
+    open the already-durable waiting record is the stable pending fact.  A new
+    barrier hash/evidence projection may not be appended under the same
+    idempotency key because that creates a conflict loop instead of progress.
+    """
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    _append_source_fact(fact_stream, workspace)
+    barrier = MutableBarrier(
+        workspace=workspace,
+        fencing_token=7,
+        source_fact_visible=False,
+        closed=False,
+    )
+    factory_runs = RecordingFactoryRuns()
+    consumer, journal = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=barrier,
+        factory_runs=factory_runs,
+    )
+
+    first = await consumer.start()
+    second = await consumer.wake()
+    third = await consumer.wake()
+
+    assert [first.decisions[0].outcome, second.decisions[0].outcome, third.decisions[0].outcome] == [
+        SettlementOutcome.PENDING,
+        SettlementOutcome.PENDING,
+        SettlementOutcome.PENDING,
+    ]
+    assert len(barrier.queries) == 3
+    assert second.decisions[0].journal_event_id == first.decisions[0].journal_event_id
+    assert third.decisions[0].journal_event_id == first.decisions[0].journal_event_id
+    pending_records = [record for record in journal.records() if record.status is SettlementJournalStatus.PENDING]
+    assert len(pending_records) == 1
+    assert pending_records[0].payload["barrier_hash"] == "barrier-1"
+    assert factory_runs.settle_calls == []
+
+    barrier.source_fact_visible = True
+    barrier.closed = True
+    applied = await consumer.wake()
+
+    assert applied.ack_safe is True
+    assert applied.decisions[-1].outcome is SettlementOutcome.APPLIED
+    assert factory_runs.settle_calls == ["factory-run-1"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_retryable_apply_uses_claim_scoped_pending_identity(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    fact_stream = FactStreamAdapter()
+    _append_source_fact(fact_stream, workspace)
+    barrier = MutableBarrier(workspace=workspace, fencing_token=7)
+    factory_runs = RetryableFactoryRuns()
+    consumer, journal = _build_consumer(
+        workspace=workspace,
+        fact_stream=fact_stream,
+        barrier=barrier,
+        factory_runs=factory_runs,
+    )
+
+    first = await consumer.start()
+    second = await consumer.wake()
+
+    assert first.decisions[0].outcome is SettlementOutcome.RETRYABLE
+    assert second.decisions[0].outcome is SettlementOutcome.RETRYABLE
+    retry_records = [
+        record
+        for record in journal.records()
+        if record.status is SettlementJournalStatus.PENDING
+        and record.pending_phase is SettlementPendingPhase.WAITING_RETRY
+    ]
+    assert len(retry_records) == 2
+    assert retry_records[0].event_id != retry_records[1].event_id
+    assert retry_records[0].payload["claim_id"] != retry_records[1].payload["claim_id"]
+    assert factory_runs.settle_calls == ["factory-run-1", "factory-run-1"]
 
 
 @pytest.mark.asyncio

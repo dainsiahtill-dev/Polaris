@@ -18,7 +18,6 @@ from polaris.cells.orchestration.workflow_runtime.public.service import RoleAdap
 from polaris.cells.runtime.task_runtime.public import task_row_execution_event_failure
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.fs.text_ops import write_text_atomic
-from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
 from polaris.kernelone.storage.paths import resolve_signal_path
 
 _logger = logging.getLogger(__name__)
@@ -129,40 +128,9 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
             "lines_changed": 0,
         }
 
-        # 尝试使用 git diff 获取准确的变更统计
-        try:
-            cmd_svc = CommandExecutionService(self.workspace)
-            request = CommandRequest(
-                executable="git",
-                args=["diff", "--numstat", "--"],
-                cwd=self.workspace,
-                timeout_seconds=30,
-            )
-            result = cmd_svc.run(request)
-            if result.get("ok") and result.get("stdout"):
-                stdout = str(result.get("stdout", ""))
-                for line in stdout.strip().split("\n"):
-                    parts = line.split("\t")
-                    if len(parts) >= 3:
-                        added_str, removed_str, _ = parts[0], parts[1], parts[2]
-                        # 处理二进制文件（显示为 "-"）
-                        added = int(added_str) if added_str.isdigit() else 0
-                        removed = int(removed_str) if removed_str.isdigit() else 0
-                        stats["lines_added"] += added
-                        stats["lines_removed"] += removed
-                        if added > 0 and removed == 0:
-                            stats["created"] += 1
-                        elif removed > 0 and added == 0:
-                            stats["deleted"] += 1
-                        else:
-                            stats["modified"] += 1
-
-                stats["lines_changed"] = stats["lines_added"] + stats["lines_removed"]
-                return stats
-        except (RuntimeError, ValueError) as exc:
-            _logger.debug("git stats unavailable, falling back to fs scan: %s", exc)
-
-        # 回退：基于文件系统扫描估算
+        # Unbound process execution is forbidden here. Use a read-only
+        # filesystem estimate; authoritative command evidence must arrive via
+        # the roles.kernel directed-effect path.
         reference_time = datetime.now(timezone.utc).timestamp() - 3600  # 1小时内视为"新"
 
         for scope_path in scope_paths:

@@ -6,6 +6,11 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
@@ -1775,10 +1780,18 @@ class TestExecuteTransactionKernelTurn:
         assert result.batch_receipt == mock_tk_result["batch_receipt"]
 
     @pytest.mark.asyncio
-    async def test_transaction_turn_executor_preserves_followup_workflow(self) -> None:
-        kernel = RoleExecutionKernel.create_default(workspace=".")
+    async def test_transaction_turn_executor_preserves_followup_workflow(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=workspace,
+                maintenance_reason="transaction-wiring-test",
+                streams=fact_stream_bootstrap_streams(),
+            )
+        )
+        kernel = RoleExecutionKernel.create_default(workspace=workspace)
         profile = _MockProfile(role_id="director")
-        request = _MockRequest(run_id="run_123")
+        request = _MockRequest(run_id="run_followup_workflow", workspace=workspace)
         fingerprint = _MockFingerprint()
 
         mock_tk_result = {
@@ -1816,7 +1829,7 @@ class TestExecuteTransactionKernelTurn:
                 request=request,
                 system_prompt="sys",
                 fingerprint=fingerprint,
-                observer_run_id="run_123",
+                observer_run_id="run_followup_workflow",
                 response_schema=None,
             )
 

@@ -6,7 +6,7 @@ Maintains backward compatibility with the sync API through module-level function
 Key improvements:
     - ``health()`` and ``list_models()`` use ``httpx.AsyncClient`` instead of ``requests``
     - ``invoke()`` uses ``async_invoke_with_retry`` for proper retry/circuit-breaker
-    - ``invoke_stream()`` uses native httpx streaming instead of aiohttp
+    - ``invoke_stream()`` uses the shared governed aiohttp streaming boundary
     - All HTTP I/O is non-blocking in async contexts
 """
 
@@ -17,7 +17,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import aiohttp
 from polaris.kernelone.llm.provider_contract import AdapterProviderContract
 from polaris.kernelone.llm.providers import (
     ProviderConfigValidationResult,
@@ -38,7 +38,7 @@ from .async_base_provider import AsyncBaseProvider
 from .async_http_client import AsyncProviderHttpClient
 from .async_provider_helpers import async_invoke_with_retry
 from .http_utils import join_url, normalize_base_url
-from .provider_helpers import build_chat_messages_payload
+from .provider_helpers import build_chat_messages_payload, invoke_stream_with_retry_and_handler
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -66,6 +66,47 @@ def _timeout_seconds(config: dict[str, Any], default: int) -> int:
 def _is_openai_compat_mode(config: dict[str, Any]) -> bool:
     api_path = str(config.get("api_path") or "").strip()
     return api_path.startswith("/v1/")
+
+
+async def _consume_ollama_stream_response(
+    response: aiohttp.ClientResponse,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Decode native NDJSON and OpenAI-compatible SSE from one governed post."""
+
+    response.raise_for_status()
+    buffer = ""
+    async for chunk in response.content:
+        text = chunk.decode("utf-8", errors="ignore")
+        if not text:
+            continue
+        buffer += text
+        lines = buffer.split("\n")
+        buffer = lines.pop() if lines else ""
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("data:"):
+                line = line[5:].lstrip()
+            if line == "[DONE]":
+                return
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                yield payload
+
+    trailing = buffer.strip()
+    if trailing.startswith("data:"):
+        trailing = trailing[5:].lstrip()
+    if trailing and trailing != "[DONE]":
+        try:
+            payload = json.loads(trailing)
+        except json.JSONDecodeError:
+            return
+        if isinstance(payload, dict):
+            yield payload
 
 
 def _build_headers(config: dict[str, Any]) -> dict[str, str]:
@@ -428,25 +469,15 @@ class AsyncOllamaProvider(AsyncBaseProvider):
         payload = self._build_stream_payload(prompt, model, config, is_compat, api_path, messages)
 
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(float(timeout))) as http_client:
-                response = await http_client.send(
-                    http_client.build_request("POST", url, headers=headers, json=payload),
-                    stream=True,
-                )
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    if is_compat and line.strip() == "data: [DONE]":
-                        break
-                    if line.startswith("data: "):
-                        line = line[6:]
-                    try:
-                        data = json.loads(line)
-                        if isinstance(data, dict):
-                            yield data
-                    except json.JSONDecodeError:
-                        continue
-        except httpx.HTTPError as exc:
+            async for event in invoke_stream_with_retry_and_handler(
+                url,
+                headers,
+                payload,
+                timeout,
+                _consume_ollama_stream_response,
+            ):
+                yield event
+        except aiohttp.ClientError as exc:
             yield {"error": True, "code": None, "message": f"Connection error: {exc}"}
         except asyncio.TimeoutError:
             yield {"error": True, "code": None, "message": "Request timeout"}

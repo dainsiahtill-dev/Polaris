@@ -4,7 +4,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -170,7 +170,7 @@ def build_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
         O(n) time and memory over the task-row payload size.
     """
 
-    return _json_compatible_copy(task_row)
+    return cast(dict[str, Any], _json_compatible_copy(task_row))
 
 
 def is_running_execution_status(status: str) -> bool:
@@ -516,9 +516,7 @@ def build_task_runtime_execution_event_append_result(
         _json_compatible_copy(dict(failure_evidence)) if isinstance(failure_evidence, Mapping) else {}
     )
     clean_projection_evidence = (
-        _json_compatible_copy(dict(projection_evidence))
-        if isinstance(projection_evidence, Mapping)
-        else {}
+        _json_compatible_copy(dict(projection_evidence)) if isinstance(projection_evidence, Mapping) else {}
     )
 
     clean_fact_event_seq = _coerce_fact_event_seq(fact_event_seq)

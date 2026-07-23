@@ -89,8 +89,9 @@ async def _measure(
 
 @pytest.mark.asyncio
 async def test_net_benefit_window_ge_delay_adopts_and_hides_delay(monkeypatch: pytest.MonkeyPatch) -> None:
-    # W >= D：应 ADOPT，端到端净收益 ≈ D。
-    w, d = 200, 80
+    # W >= D：应 ADOPT，端到端净收益 ≈ D。延迟必须显著大于真实
+    # fingerprint/registry 固定开销，否则量具测到的是调度开销而非隐藏收益。
+    w, d = 400, 200
     on_dur, on_action = await _measure(True, w, d, "a.py", monkeypatch)
     off_dur, _ = await _measure(False, w, d, "b.py", monkeypatch)
     assert on_action == "adopt"

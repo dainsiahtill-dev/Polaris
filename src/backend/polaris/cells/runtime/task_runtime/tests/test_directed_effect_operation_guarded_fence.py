@@ -153,7 +153,10 @@ def _call_owners(tree: ast.AST, target: str) -> list[str]:
             self.generic_visit(node)
             self.functions.pop()
 
-        visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self.functions.append(node.name)
+            self.generic_visit(node)
+            self.functions.pop()
 
         def visit_Call(self, node: ast.Call) -> None:
             if isinstance(node.func, ast.Attribute):
@@ -188,7 +191,8 @@ def _function_local_bindings(node: ast.FunctionDef | ast.AsyncFunctionDef) -> se
         def visit_FunctionDef(self, child: ast.FunctionDef) -> None:
             bindings.add(child.name)
 
-        visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
+        def visit_AsyncFunctionDef(self, child: ast.AsyncFunctionDef) -> None:
+            bindings.add(child.name)
 
         def visit_ClassDef(self, child: ast.ClassDef) -> None:
             bindings.add(child.name)
@@ -199,9 +203,14 @@ def _function_local_bindings(node: ast.FunctionDef | ast.AsyncFunctionDef) -> se
         def visit_ListComp(self, child: ast.ListComp) -> None:
             return
 
-        visit_SetComp = visit_ListComp  # noqa: N815
-        visit_DictComp = visit_ListComp  # noqa: N815
-        visit_GeneratorExp = visit_ListComp  # noqa: N815
+        def visit_SetComp(self, child: ast.SetComp) -> None:
+            return
+
+        def visit_DictComp(self, child: ast.DictComp) -> None:
+            return
+
+        def visit_GeneratorExp(self, child: ast.GeneratorExp) -> None:
+            return
 
         def visit_Name(self, child: ast.Name) -> None:
             if isinstance(child.ctx, (ast.Store, ast.Del)):
@@ -227,7 +236,7 @@ def _function_local_bindings(node: ast.FunctionDef | ast.AsyncFunctionDef) -> se
 class _QualifiedReferenceResolver(ast.NodeVisitor):
     def __init__(
         self,
-        tree: ast.AST,
+        tree: ast.Module,
         *,
         targets: set[str],
         protected_objects: set[str],
@@ -259,7 +268,7 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
             for member in node.body
             if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
-        self.scopes: list[dict[str, _ExpressionResolution | None]] = [{}]
+        self.scopes: list[dict[str, _ExpressionResolution | str | None]] = [{}]
         self.scopes[0].update(
             {
                 node.name: _ExpressionResolution(exact_targets=frozenset({f"{current_module}.{node.name}"}))
@@ -270,7 +279,7 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
         self.direct_call_nodes = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
 
     @property
-    def aliases(self) -> dict[str, _ExpressionResolution | None]:
+    def aliases(self) -> dict[str, _ExpressionResolution | str | None]:
         return self.scopes[-1]
 
     @property
@@ -636,7 +645,8 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
         self.scopes.pop()
         self.aliases[node.name] = function_qname
 
-    visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.visit_FunctionDef(node)  # type: ignore[arg-type]
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         class_owner = self._nested_owner(node.name)
@@ -962,7 +972,7 @@ class _QualifiedReferenceResolver(ast.NodeVisitor):
 
 
 def _qualified_references(
-    tree: ast.AST,
+    tree: ast.Module,
     *,
     targets: set[str],
     protected_objects: set[str],
@@ -1123,7 +1133,9 @@ _LEXICAL_SCOPE_BARRIERS = (
 )
 
 
-def _current_lexical_nodes(tree: ast.AST) -> tuple[ast.AST, ...]:
+def _current_lexical_nodes(tree: ast.AST | None) -> tuple[ast.AST, ...]:
+    if tree is None:
+        return ()
     roots = tuple(tree.body) if isinstance(tree, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)) else (tree,)
     observed: list[ast.AST] = []
     pending = list(reversed(roots))
@@ -1136,7 +1148,7 @@ def _current_lexical_nodes(tree: ast.AST) -> tuple[ast.AST, ...]:
     return tuple(observed)
 
 
-def _loaded_tokens(tree: ast.AST) -> set[str]:
+def _loaded_tokens(tree: ast.AST | None) -> set[str]:
     nodes = _current_lexical_nodes(tree)
     return (
         {node.id for node in nodes if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
@@ -1152,7 +1164,8 @@ def _tainted_assignment_aliases(tree: ast.AST, forbidden: set[str]) -> set[str]:
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
             return
 
-        visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            return
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:
             return
@@ -1163,9 +1176,14 @@ def _tainted_assignment_aliases(tree: ast.AST, forbidden: set[str]) -> set[str]:
         def visit_ListComp(self, node: ast.ListComp) -> None:
             return
 
-        visit_SetComp = visit_ListComp  # noqa: N815
-        visit_DictComp = visit_ListComp  # noqa: N815
-        visit_GeneratorExp = visit_ListComp  # noqa: N815
+        def visit_SetComp(self, node: ast.SetComp) -> None:
+            return
+
+        def visit_DictComp(self, node: ast.DictComp) -> None:
+            return
+
+        def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+            return
 
         def visit_Assign(self, node: ast.Assign) -> None:
             assignments.append(node)
@@ -1237,7 +1255,7 @@ def _local_tainted_assignment_aliases(tree: ast.AST, forbidden: set[str]) -> set
 
 def _expression_is_tainted(
     analysis: _SourceAnalysis,
-    expression: ast.AST,
+    expression: ast.AST | None,
     *,
     direct_seeds: set[str],
     tainted_functions: set[tuple[str, int]],
@@ -1332,15 +1350,15 @@ def _writer_taint_violations(
         if owners is not None and reference.owner not in owners:
             continue
         call = analysis.calls_by_id[reference.node_id]
-        function = analysis.functions.get((reference.owner, reference.owner_node_id))
+        owner_function = analysis.functions.get((reference.owner, reference.owner_node_id))
         local_aliases = (
             _qualified_local_tainted_aliases(
                 analysis,
-                function,
+                owner_function,
                 direct_seeds=restricted_states | module_aliases,
                 tainted_functions=tainted_returns,
             )
-            if function is not None
+            if owner_function is not None
             else set()
         )
         if any(
@@ -2737,7 +2755,6 @@ def test_parent_admission_has_one_service_owned_writer_and_no_recursive_validati
 
 def test_all_active_to_inactive_writers_reach_the_common_pre_barrier() -> None:
     direct_methods = {
-        "_settle_execution_attempt_locked",
         "fence_expired_factory_run_sessions",
         "_suspend_active_session_for_run_locked",
         "cancel_task_row_for_deduplication",
@@ -2747,6 +2764,25 @@ def test_all_active_to_inactive_writers_reach_the_common_pre_barrier() -> None:
     for method_name in direct_methods:
         calls = _called_names(_service_method_tree(method_name))
         assert "_directed_effect_inactive_pre_barrier_locked" in calls
+
+    settlement_orchestrator_calls = set(_called_names(_service_method_tree("_settle_execution_attempt_locked")))
+    assert {
+        "_load_settlement_session_locked",
+        "_settle_active_execution_attempt_locked",
+        "_settle_replayed_execution_attempt_locked",
+    } <= settlement_orchestrator_calls
+    settlement_calls = set().union(
+        settlement_orchestrator_calls,
+        _called_names(_service_method_tree("_settle_active_execution_attempt_locked")),
+        _called_names(_service_method_tree("_prepare_terminal_settlement_intent_locked")),
+        _called_names(_service_method_tree("_settle_replayed_execution_attempt_locked")),
+    )
+    assert {
+        "preflight_parent_for_terminal_intent",
+        "settle_parent_for_terminal_intent",
+        "_write_session_locked",
+    } <= settlement_calls
+    assert "_directed_effect_inactive_pre_barrier_locked" not in settlement_calls
 
     rework_calls = _called_names(_service_method_tree("fail_task_row_after_rework_exhausted"))
     reopen_calls = _called_names(_service_method_tree("reopen_task_row"))
@@ -2970,33 +3006,87 @@ def test_deo_symbol_surface_has_no_forbidden_imports_or_implicit_enrollment() ->
         assert reachable_names.isdisjoint(enrollment_calls)
 
 
-def test_inventory_and_operation_writer_paths_are_closed_to_deo3_states() -> None:
+def test_deo3_terminal_authority_has_no_cross_cell_internal_or_parent_close_bypass() -> None:
+    polaris_root = Path(inspect.getfile(deo_internal)).resolve().parents[4]
+    protected_consumers = (
+        polaris_root / "cells/control_plane/run_ledger/public/projection.py",
+        polaris_root / "cells/control_plane/run_ledger/public/tool_lifecycle.py",
+        polaris_root / "cells/roles/adapters/internal/director/directed_effect_mutation_port.py",
+    )
+    forbidden_internal_prefix = "polaris.cells.runtime.task_runtime.internal"
+    for path in protected_consumers:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)} | {
+            alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
+        }
+        assert not {
+            imported
+            for imported in imports
+            if imported == forbidden_internal_prefix or imported.startswith(f"{forbidden_internal_prefix}.")
+        }, path
+
+    forbidden_public_parent_close_symbols = {
+        "CloseDirectedEffectParentCommandV1",
+        "close_directed_effect_parent",
+        "SettleDirectedEffectParentCommandV1",
+        "settle_directed_effect_parent",
+    }
+    for module in (runtime_public_contracts, task_runtime_public, runtime_public_service):
+        assert forbidden_public_parent_close_symbols.isdisjoint(vars(module)), module.__name__
+
+    terminal_parent_callers: list[tuple[str, str]] = []
+    for path in _production_python_files():
+        relative_path = path.relative_to(Path(inspect.getfile(deo_internal)).resolve().parents[1]).as_posix()
+        if relative_path == "internal/directed_effect_operation.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        terminal_parent_callers.extend(
+            (relative_path, owner) for owner in _call_owners(tree, "settle_parent_for_terminal_intent")
+        )
+    assert terminal_parent_callers == [
+        ("internal/service.py", "_settle_active_execution_attempt_locked"),
+    ]
+    assert "_settle_active_execution_attempt_locked" in _called_names(
+        _service_method_tree("_settle_execution_attempt_locked")
+    )
+    assert "settle_parent_for_terminal_intent" in _called_names(
+        _service_method_tree("_settle_active_execution_attempt_locked")
+    )
+
+
+def test_inventory_and_operation_writer_paths_exactly_own_deo3_states() -> None:
     class_tree = ast.parse(dedent(inspect.getsource(deo_internal.DirectedEffectOperationRepository)))
     assert sorted(_call_owners(class_tree, "GuardedFactEventV1")) == [
         "_mutate",
+        "_parent_settlement_close_command",
         "finalize_inventory",
         "seal_inventory",
     ]
-    assert sorted(_call_owners(class_tree, "_mutate")) == ["abort", "admit", "claim"]
+    assert sorted(_call_owners(class_tree, "_mutate")) == [
+        "_close_by_parent",
+        "_commit_restart_dead_letter",
+        "_commit_restart_recovery_pending",
+        "abort",
+        "admit",
+        "claim",
+        "commit_receipt",
+        "dead_letter",
+        "mark_recovery_pending",
+    ]
 
     allowed_targets = {
+        "_close_by_parent": {"CLOSED_BY_PARENT"},
+        "_commit_restart_dead_letter": {"DEAD_LETTER"},
+        "_commit_restart_recovery_pending": {"RECOVERY_PENDING"},
         "abort": {"ABORTED"},
         "admit": {"INTENT_COMMITTED"},
         "claim": {"EFFECT_STARTED"},
-    }
-    forbidden_writer_constants = {
-        "RECEIPT_COMMITTED",
-        "RECOVERY_PENDING",
-        "CLOSED_BY_PARENT",
-        "DEAD_LETTER",
+        "commit_receipt": {"RECEIPT_COMMITTED"},
+        "dead_letter": {"DEAD_LETTER"},
+        "mark_recovery_pending": {"RECOVERY_PENDING"},
     }
     for method_name, expected_targets in allowed_targets.items():
         method_tree = _method_tree(method_name)
-        constants = {
-            node.value
-            for node in ast.walk(method_tree)
-            if isinstance(node, ast.Constant) and isinstance(node.value, str)
-        }
         mutation_targets = {
             keyword.value.value
             for node in ast.walk(method_tree)
@@ -3007,7 +3097,6 @@ def test_inventory_and_operation_writer_paths_are_closed_to_deo3_states() -> Non
             and isinstance(keyword.value.value, str)
         }
         assert mutation_targets == expected_targets
-        assert constants.isdisjoint(forbidden_writer_constants)
 
     for writer in ("seal_inventory", "finalize_inventory", "_mutate"):
         calls = set(_called_names(_method_tree(writer)))
@@ -3018,9 +3107,16 @@ def test_inventory_and_operation_writer_paths_are_closed_to_deo3_states() -> Non
                 "close_parent",
                 "persist_receipt",
                 "settle_task_runtime_execution_attempt",
-                "settlement_pre_barrier",
             }
         )
+    settlement_calls = set(_called_names(_method_tree("_settle_parent_for_terminal_intent")))
+    assert "_append_parent_settlement_close" in settlement_calls
+    assert "append_fact_event" not in settlement_calls
+    assert "append_if_guarded_snapshot" not in settlement_calls
+    settlement_append_calls = set(_called_names(_method_tree("_append_parent_settlement_close")))
+    assert "_parent_settlement_close_command" in settlement_append_calls
+    assert "append_if_guarded_snapshot" in settlement_append_calls
+    assert "append_fact_event" not in settlement_append_calls
 
 
 def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> None:
@@ -3059,11 +3155,19 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
                 "internal/directed_effect_operation.py",
                 "DirectedEffectOperationRepository._reconcile_operation_append",
             ),
+            (
+                "internal/directed_effect_operation.py",
+                "DirectedEffectOperationRepository._append_parent_settlement_close",
+            ),
             ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.finalize_inventory"),
             ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.seal_inventory"),
         },
         "GuardedFactEventV1": {
             ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository._mutate"),
+            (
+                "internal/directed_effect_operation.py",
+                "DirectedEffectOperationRepository._parent_settlement_close_command",
+            ),
             ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.finalize_inventory"),
             ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.seal_inventory"),
         },
@@ -3076,7 +3180,7 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
         "task_runtime.deo_parent_registry.v1.closed",
         "_PARENT_CLOSED_EVENT_TYPE",
     }
-    observed = {target: set() for target in expected_owners}
+    observed: dict[str, set[tuple[str, str]]] = {target: set() for target in expected_owners}
     dynamic_writer_getattrs: list[tuple[str, str, str]] = []
     protected_sentinels: list[tuple[str, str, str]] = []
     analyses: dict[str, _SourceAnalysis] = {}
@@ -3118,14 +3222,27 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
     assert observed == expected_owners
     assert dynamic_writer_getattrs == []
     assert protected_sentinels == []
+    allowed_terminal_writer_violations = {
+        (
+            "DirectedEffectOperationRepository._parent_settlement_close_command",
+            f"{_FACT_STREAM_PUBLIC}.GuardedFactEventV1",
+        ),
+        (
+            "DirectedEffectOperationRepository._append_parent_settlement_close",
+            f"{_FACT_STREAM_PUBLIC}.append_if_guarded_snapshot",
+        ),
+    }
     for relative_path, analysis in analyses.items():
-        assert (
+        violations = set(
             _writer_taint_violations(
                 analysis,
                 restricted_states=restricted_writer_constants,
             )
-            == ()
-        ), relative_path
+        )
+        expected = (
+            allowed_terminal_writer_violations if relative_path == "internal/directed_effect_operation.py" else set()
+        )
+        assert violations == expected, relative_path
 
     repository_analysis = analyses["internal/directed_effect_operation.py"]
     allowed_guarded_owners = {
@@ -3133,7 +3250,12 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
         for path, owner in expected_owners["append_if_guarded_snapshot"]
         if path == "internal/directed_effect_operation.py"
     }
-    for root in ("seal_inventory", "finalize_inventory", "_mutate"):
+    for root in (
+        "seal_inventory",
+        "finalize_inventory",
+        "_mutate",
+        "_settle_parent_for_terminal_intent",
+    ):
         reached = _reachable_repository_methods(root)
         guarded_owners = {
             reference.owner
@@ -3149,15 +3271,188 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
             )
             == ()
         ), root
-        assert (
+        writer_violations = set(
             _writer_taint_violations(
                 repository_analysis,
                 restricted_states=restricted_writer_constants,
                 owners=reached,
             )
-            == ()
-        ), root
+        )
+        expected_writer_violations = (
+            allowed_terminal_writer_violations if root == "_settle_parent_for_terminal_intent" else set()
+        )
+        assert writer_violations == expected_writer_violations, root
         assert guarded_owners <= allowed_guarded_owners, root
+
+
+def test_deo3_receipt_recovery_and_parent_close_writers_are_taskruntime_only_repository_wide() -> None:
+    """Freeze DEO-3 terminal fact authority across the whole production tree."""
+
+    polaris_root = Path(inspect.getfile(deo_internal)).resolve().parents[4]
+    taskruntime_root = Path(inspect.getfile(deo_internal)).resolve().parents[1]
+    restricted_states = {
+        "RECEIPT_COMMITTED",
+        "RECOVERY_PENDING",
+        "CLOSED_BY_PARENT",
+        "DEAD_LETTER",
+        "task_runtime.deo_parent_registry.v1.closed",
+        "task_runtime.directed_effect_operation.v1",
+        "_PARENT_CLOSED_EVENT_TYPE",
+        "_OPERATION_EVENT_PREFIX",
+        "DIRECTED_EFFECT_OPERATION_SCHEMA_V3",
+    }
+    cross_cell_internal_imports: list[tuple[str, str]] = []
+    writer_violations: list[tuple[str, str, str]] = []
+    for path in _polaris_production_python_files():
+        relative_path = path.relative_to(polaris_root).as_posix()
+        source = path.read_text(encoding="utf-8")
+        outside_taskruntime = not path.is_relative_to(taskruntime_root)
+        inspect_internal_imports = outside_taskruntime and _DEO_INTERNAL_PREFIX in source
+        source_restricted_states = restricted_states
+        if "DEAD_LETTER" in source and not any(
+            marker in source
+            for marker in (
+                "directed_effect",
+                "DirectedEffect",
+                "RECEIPT_COMMITTED",
+                "RECOVERY_PENDING",
+                "CLOSED_BY_PARENT",
+            )
+        ):
+            source_restricted_states = restricted_states - {"DEAD_LETTER"}
+        inspect_writers = (
+            outside_taskruntime
+            and any(state in source for state in source_restricted_states)
+            and (
+                _FACT_STREAM_PUBLIC in source
+                or any(target.rsplit(".", maxsplit=1)[-1] in source for target in _FACT_STREAM_WRITER_TARGETS)
+            )
+        )
+        if not inspect_internal_imports and not inspect_writers:
+            continue
+        current_module, current_is_package = _module_context_for_path(
+            path,
+            polaris_root=polaris_root,
+        )
+        analysis = _analyze_source(
+            source,
+            current_module=current_module,
+            current_is_package=current_is_package,
+            targets=_FACT_STREAM_WRITER_TARGETS,
+            protected_objects={
+                _FACT_STREAM_PUBLIC,
+                f"{_FACT_STREAM_PUBLIC}.service",
+                f"{_FACT_STREAM_PUBLIC}.contracts",
+                _DEO_REPOSITORY,
+            },
+        )
+        if outside_taskruntime:
+            cross_cell_internal_imports.extend(
+                (relative_path, imported_name)
+                for imported_name in analysis.imports
+                if imported_name == _DEO_INTERNAL_PREFIX or imported_name.startswith(f"{_DEO_INTERNAL_PREFIX}.")
+            )
+            writer_violations.extend(
+                (relative_path, owner, target)
+                for owner, target in _writer_taint_violations(
+                    analysis,
+                    restricted_states=source_restricted_states,
+                )
+            )
+
+    assert cross_cell_internal_imports == []
+    assert writer_violations == []
+
+    run_ledger_root = polaris_root / "cells/control_plane/run_ledger"
+    mutation_entrypoints = {
+        "commit_directed_effect_receipt",
+        "mark_directed_effect_recovery_pending",
+        "dead_letter_directed_effect_operation",
+        "reconcile_ambiguous_directed_effects",
+        "settle_task_runtime_execution_attempt",
+    }
+    taskruntime_public = "polaris.cells.runtime.task_runtime.public"
+    mutation_targets = {f"{taskruntime_public}.{entrypoint}" for entrypoint in mutation_entrypoints} | {
+        f"{taskruntime_public}.service.{entrypoint}" for entrypoint in mutation_entrypoints
+    }
+    run_ledger_mutation_calls: list[tuple[str, str, str]] = []
+    for path in sorted(run_ledger_root.rglob("*.py")):
+        if "tests" in path.relative_to(run_ledger_root).parts:
+            continue
+        relative_path = path.relative_to(polaris_root).as_posix()
+        current_module, current_is_package = _module_context_for_path(path, polaris_root=polaris_root)
+        analysis = _analyze_source(
+            path.read_text(encoding="utf-8"),
+            current_module=current_module,
+            current_is_package=current_is_package,
+            targets=mutation_targets,
+            protected_objects={taskruntime_public, f"{taskruntime_public}.service"},
+        )
+        run_ledger_mutation_calls.extend(
+            (relative_path, reference.owner, reference.target)
+            for reference in analysis.references
+            if (reference.kind == "call" and reference.target in mutation_targets)
+            or (
+                reference.kind == "dynamic_getattr"
+                and reference.target in {taskruntime_public, f"{taskruntime_public}.service"}
+            )
+        )
+    assert run_ledger_mutation_calls == []
+
+    adversarial_source = dedent(
+        f"""
+        from {taskruntime_public} import commit_directed_effect_receipt as commit
+        import {taskruntime_public} as task_runtime
+
+        def bypass(name):
+            commit(None)
+            recover = task_runtime.mark_directed_effect_recovery_pending
+            recover(None)
+            getattr(task_runtime, "settle_task_runtime_execution_attempt")(None)
+            return getattr(task_runtime, name)
+        """
+    )
+    adversarial = _analyze_source(
+        adversarial_source,
+        current_module="fixture.run_ledger_projection",
+        targets=mutation_targets,
+        protected_objects={taskruntime_public, f"{taskruntime_public}.service"},
+    )
+    adversarial_findings = {
+        (reference.kind, reference.target)
+        for reference in adversarial.references
+        if reference.kind in {"call", "constant_getattr", "dynamic_getattr"}
+    }
+    assert ("call", f"{taskruntime_public}.commit_directed_effect_receipt") in adversarial_findings
+    assert (
+        "call",
+        f"{taskruntime_public}.mark_directed_effect_recovery_pending",
+    ) in adversarial_findings
+    assert (
+        "constant_getattr",
+        f"{taskruntime_public}.settle_task_runtime_execution_attempt",
+    ) in adversarial_findings
+    assert ("dynamic_getattr", taskruntime_public) in adversarial_findings
+
+    mutation_port = polaris_root / "cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    mutation_tree = ast.parse(mutation_port.read_text(encoding="utf-8"), filename=str(mutation_port))
+    taskruntime_imports = {
+        node.module or ""
+        for node in ast.walk(mutation_tree)
+        if isinstance(node, ast.ImportFrom) and "task_runtime" in (node.module or "")
+    } | {
+        alias.name
+        for node in ast.walk(mutation_tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if "task_runtime" in alias.name
+    }
+    assert taskruntime_imports
+    assert all(
+        imported == "polaris.cells.runtime.task_runtime.public"
+        or imported.startswith("polaris.cells.runtime.task_runtime.public.")
+        for imported in taskruntime_imports
+    )
 
 
 def test_inventory_facts_use_only_factstream_public_guarded_and_strict_api() -> None:
@@ -3168,6 +3463,93 @@ def test_inventory_facts_use_only_factstream_public_guarded_and_strict_api() -> 
         if isinstance(node, ast.ImportFrom) and "fact_stream" in (node.module or "")
     }
     assert fact_stream_imports == {"polaris.cells.events.fact_stream.public"}
+
+
+def test_deo_2b_production_claimant_constructor_and_consumer_surface_is_exact() -> None:
+    """Task 11 starts from a zero-consumer fence, then freezes exact new sites."""
+    polaris_root = Path(inspect.getfile(deo_internal)).resolve().parents[4]
+    observed: list[tuple[str, str, str]] = []
+    protected_calls = (
+        "DirectedEffectClaimGrantV1",
+        "DirectedEffectExecutionContextV1",
+        "claim_operation",
+        "execute_mutation",
+        "validate_directed_effect_execution",
+    )
+    for path in _polaris_production_python_files():
+        relative = path.relative_to(polaris_root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for target in protected_calls:
+            observed.extend((relative, owner, target) for owner in _call_owners(tree, target))
+        if any(
+            isinstance(node, ast.ImportFrom) and any(alias.name == "claim_directed_effect" for alias in node.names)
+            for node in ast.walk(tree)
+        ):
+            observed.append((relative, "<module>", "import:claim_directed_effect"))
+
+    mutation_port_path = polaris_root / "cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    mutation_tree = ast.parse(
+        mutation_port_path.read_text(encoding="utf-8"),
+        filename=str(mutation_port_path),
+    )
+    assert sorted(observed) == [
+        (
+            "cells/roles/adapters/internal/director/directed_effect_mutation_port.py",
+            "_prepare_mutation",
+            "validate_directed_effect_execution",
+        ),
+        (
+            "cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py",
+            "_claim_grant_is_canonical",
+            "DirectedEffectClaimGrantV1",
+        ),
+        (
+            "cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py",
+            "_member_is_bound",
+            "DirectedEffectClaimGrantV1",
+        ),
+        (
+            "cells/roles/kernel/internal/directed_effect_lifecycle.py",
+            "<module>",
+            "import:claim_directed_effect",
+        ),
+        (
+            "cells/roles/kernel/internal/directed_effect_lifecycle.py",
+            "claim_execution_context",
+            "DirectedEffectExecutionContextV1",
+        ),
+        (
+            "cells/roles/kernel/internal/directed_effect_lifecycle.py",
+            "claim_execution_context",
+            "claim_operation",
+        ),
+        (
+            "cells/roles/kernel/internal/tool_batch_runtime.py",
+            "_execute_directed_effect",
+            "execute_mutation",
+        ),
+        (
+            "cells/roles/kernel/public/directed_effect_contracts.py",
+            "validate_directed_effect_execution_context",
+            "DirectedEffectClaimGrantV1",
+        ),
+        (
+            "cells/roles/kernel/public/directed_effect_contracts.py",
+            "validate_directed_effect_execution_context",
+            "DirectedEffectExecutionContextV1",
+        ),
+        (
+            "cells/runtime/task_runtime/internal/directed_effect_operation.py",
+            "_claim_grant",
+            "DirectedEffectClaimGrantV1",
+        ),
+        (
+            "cells/runtime/task_runtime/public/__init__.py",
+            "<module>",
+            "import:claim_directed_effect",
+        ),
+    ]
+    assert _call_owners(mutation_tree, "_prepare_mutation") == ["execute_mutation"]
     for writer in ("seal_inventory", "finalize_inventory"):
         writer_calls = set(_called_names(_method_tree(writer)))
         assert "_prepare_inventory_guarded_snapshot" in writer_calls

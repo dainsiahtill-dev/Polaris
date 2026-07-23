@@ -9,6 +9,28 @@
 from __future__ import annotations
 
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolExecutionContext
+from polaris.cells.roles.kernel.public.directed_effect_service import (
+    create_directed_effect_fence_ports,
+)
+from polaris.cells.roles.kernel.tests.test_directed_effect_dispatch_fence import (
+    _context,
+)
+
+
+def test_same_process_duplicate_directed_effect_dispatch_executes_once() -> None:
+    """A duplicate dispatch can pass the consume fence only once."""
+
+    ports = create_directed_effect_fence_ports()
+    context = _context()
+    assert ports.admin.register(context).status == "registered"
+    physical_effects: list[str] = []
+
+    for _ in range(2):
+        consumed = ports.consume.consume(context)
+        if consumed.status == "consumed":
+            physical_effects.append(context.context_id)
+
+    assert physical_effects == [context.context_id]
 
 
 class TestToolExecutionContextIdempotency:

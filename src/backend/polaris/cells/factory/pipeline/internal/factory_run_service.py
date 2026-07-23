@@ -46,6 +46,7 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
 )
 from polaris.cells.roles.kernel.public.physical_attempt_control import (
     SETTLE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
+    FactoryPhysicalAttemptGrantViewV1,
     SettleFactoryPhysicalAttemptV1,
 )
 from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import (
@@ -389,10 +390,38 @@ class FactoryRunService:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_replay_required")
         return coordinator
 
+    def _revalidate_active_physical_attempt_stage_claim(
+        self,
+        grant: FactoryPhysicalAttemptGrantViewV1,
+    ) -> None:
+        """Re-read the exact durable workspace fence and stage claim."""
+
+        with self._admission.hold_active_stage_claim(
+            grant.factory_run_id,
+            fencing_token=grant.workspace_fencing_token,
+            stage=grant.stage,
+            attempt=grant.stage_claim_attempt,
+            nonce=grant.stage_claim_nonce,
+        ):
+            pass
+
     def _require_physical_attempt_admission_open(
         self,
         factory_run_id: str,
     ) -> FactoryPhysicalAttemptLiveControlPort:
+        current = self._admission.current()
+        if (
+            current is not None
+            and current.run_id == factory_run_id
+            and (
+                current.drain_reason == "factory_physical_attempt_restart_replay_fence"
+                or (
+                    current.release_evidence is not None
+                    and current.release_evidence.details.get("physical_attempt_replay_fence") is True
+                )
+            )
+        ):
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_recovered_run_permanently_closed")
         coordinator = self._physical_attempt_coordinator(factory_run_id)
         if coordinator.admission_closed:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_recovered_run_permanently_closed")
@@ -436,13 +465,16 @@ class FactoryRunService:
         *,
         factory_run_id: str,
         lease: FactoryWorkspaceRunLeaseV1,
+        deadline: float | None = None,
     ) -> FactoryPhysicalAttemptReplayFenceV1:
         """Capture the strict Factory-chain head under an exact lifecycle hold."""
 
+        self._require_physical_attempt_replay_deadline(deadline)
         claim = lease.lifecycle_operation_claim
         if claim is None or claim.run_id != factory_run_id:
             raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_lifecycle_claim_missing")
         events = self.store._read_authoritative_events_sync(factory_run_id)
+        self._require_physical_attempt_replay_deadline(deadline)
         if not events:
             raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_factory_head_missing")
         head = events[-1]
@@ -451,6 +483,7 @@ class FactoryRunService:
         if type(head_sequence) is not int or head_sequence < 1 or type(head_hash) is not str:
             raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_factory_head_invalid")
         run_snapshot = self.store._read_strict_snapshot_sync(self.store.run_snapshot_ref(factory_run_id))
+        self._require_physical_attempt_replay_deadline(deadline)
         try:
             persisted_run = FactoryRun.from_dict(run_snapshot)
         except (KeyError, TypeError, ValueError) as exc:
@@ -480,20 +513,29 @@ class FactoryRunService:
     def _capture_physical_attempt_replay_views(
         self,
         factory_run_id: str,
+        *,
+        deadline: float | None = None,
     ) -> tuple[FactoryRoleEvidenceReplaySnapshotV1, FactoryProviderAttemptLifecycleReplaySnapshotV1]:
-        return (
-            query_factory_role_evidence_replay_snapshot(
-                workspace=self.workspace,
-                factory_run_id=factory_run_id,
-            ),
-            query_factory_provider_attempt_lifecycle_replay(
-                QueryFactoryProviderAttemptLifecycleReplayV1(
-                    schema_version=QUERY_FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SCHEMA,
-                    workspace=str(self.workspace.resolve()),
-                    factory_run_id=factory_run_id,
-                )
-            ),
+        self._require_physical_attempt_replay_deadline(deadline)
+        role_evidence = query_factory_role_evidence_replay_snapshot(
+            workspace=self.workspace,
+            factory_run_id=factory_run_id,
         )
+        self._require_physical_attempt_replay_deadline(deadline)
+        lifecycle = query_factory_provider_attempt_lifecycle_replay(
+            QueryFactoryProviderAttemptLifecycleReplayV1(
+                schema_version=QUERY_FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SCHEMA,
+                workspace=str(self.workspace.resolve()),
+                factory_run_id=factory_run_id,
+            )
+        )
+        self._require_physical_attempt_replay_deadline(deadline)
+        return role_evidence, lifecycle
+
+    @staticmethod
+    def _require_physical_attempt_replay_deadline(deadline: float | None) -> None:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_head_unstable")
 
     def _recover_physical_attempt_coordinator(
         self,
@@ -527,12 +569,19 @@ class FactoryRunService:
                     nonce=claim.nonce,
                     allow_expired_owner=claim.operation == "recover_stale_workspace_owner",
                 ) as revalidate:
+                    self._require_physical_attempt_replay_deadline(deadline)
                     held_lease = revalidate()
+                    self._require_physical_attempt_replay_deadline(deadline)
                     fence = self._capture_physical_attempt_replay_fence(
                         factory_run_id=run.id,
                         lease=held_lease,
+                        deadline=deadline,
                     )
-                    role_evidence, lifecycle = self._capture_physical_attempt_replay_views(run.id)
+                    self._require_physical_attempt_replay_deadline(deadline)
+                    role_evidence, lifecycle = self._capture_physical_attempt_replay_views(
+                        run.id,
+                        deadline=deadline,
+                    )
                     candidate = build_factory_physical_attempt_replay_candidate(
                         fence=fence,
                         role_evidence=role_evidence,
@@ -540,15 +589,20 @@ class FactoryRunService:
                     )
 
                     held_lease = revalidate()
+                    self._require_physical_attempt_replay_deadline(deadline)
                     if (
                         self._capture_physical_attempt_replay_fence(
                             factory_run_id=run.id,
                             lease=held_lease,
+                            deadline=deadline,
                         )
                         != fence
                     ):
                         continue
-                    verified_role_evidence, verified_lifecycle = self._capture_physical_attempt_replay_views(run.id)
+                    verified_role_evidence, verified_lifecycle = self._capture_physical_attempt_replay_views(
+                        run.id,
+                        deadline=deadline,
+                    )
                     if verified_role_evidence != role_evidence or verified_lifecycle != lifecycle:
                         continue
 
@@ -560,27 +614,24 @@ class FactoryRunService:
                             restart_full_replay = True
                             break
                         held_lease = revalidate()
+                        self._require_physical_attempt_replay_deadline(deadline)
                         if (
                             self._capture_physical_attempt_replay_fence(
                                 factory_run_id=run.id,
                                 lease=held_lease,
+                                deadline=deadline,
                             )
                             != fence
-                            or query_factory_role_evidence_replay_snapshot(
-                                workspace=self.workspace,
-                                factory_run_id=run.id,
-                            )
-                            != role_evidence
                         ):
                             restart_full_replay = True
                             break
-                        observed_lifecycle = query_factory_provider_attempt_lifecycle_replay(
-                            QueryFactoryProviderAttemptLifecycleReplayV1(
-                                schema_version=QUERY_FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SCHEMA,
-                                workspace=str(self.workspace.resolve()),
-                                factory_run_id=run.id,
-                            )
+                        observed_role_evidence, observed_lifecycle = self._capture_physical_attempt_replay_views(
+                            run.id,
+                            deadline=deadline,
                         )
+                        if observed_role_evidence != role_evidence:
+                            restart_full_replay = True
+                            break
                         if observed_lifecycle != current_lifecycle:
                             restart_full_replay = True
                             break
@@ -590,18 +641,21 @@ class FactoryRunService:
                             expected_role_evidence: FactoryRoleEvidenceReplaySnapshotV1 = role_evidence,
                         ) -> None:
                             current_lease = revalidate()
+                            self._require_physical_attempt_replay_deadline(deadline)
                             if (
                                 self._capture_physical_attempt_replay_fence(
                                     factory_run_id=run.id,
                                     lease=current_lease,
+                                    deadline=deadline,
                                 )
                                 != expected_fence
-                                or query_factory_role_evidence_replay_snapshot(
-                                    workspace=self.workspace,
-                                    factory_run_id=run.id,
-                                )
-                                != expected_role_evidence
                             ):
+                                raise RuntimeError("factory_physical_attempt_replay_head_drift")
+                            observed_role, _ = self._capture_physical_attempt_replay_views(
+                                run.id,
+                                deadline=deadline,
+                            )
+                            if observed_role != expected_role_evidence:
                                 raise RuntimeError("factory_physical_attempt_replay_head_drift")
 
                         terminal_receipt = append_factory_provider_attempt_recovery_terminal(
@@ -627,12 +681,9 @@ class FactoryRunService:
                                 terminal_receipt=terminal_receipt,
                             )
                         )
-                        current_lifecycle = query_factory_provider_attempt_lifecycle_replay(
-                            QueryFactoryProviderAttemptLifecycleReplayV1(
-                                schema_version=QUERY_FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SCHEMA,
-                                workspace=str(self.workspace.resolve()),
-                                factory_run_id=run.id,
-                            )
+                        _, current_lifecycle = self._capture_physical_attempt_replay_views(
+                            run.id,
+                            deadline=deadline,
                         )
                         if (
                             current_lifecycle.captured_head.global_seq != terminal_receipt.logical_sequence
@@ -644,25 +695,20 @@ class FactoryRunService:
                         continue
 
                     held_lease = revalidate()
+                    self._require_physical_attempt_replay_deadline(deadline)
+                    final_role_evidence, final_lifecycle = self._capture_physical_attempt_replay_views(
+                        run.id,
+                        deadline=deadline,
+                    )
                     if (
                         self._capture_physical_attempt_replay_fence(
                             factory_run_id=run.id,
                             lease=held_lease,
+                            deadline=deadline,
                         )
                         != fence
-                        or query_factory_role_evidence_replay_snapshot(
-                            workspace=self.workspace,
-                            factory_run_id=run.id,
-                        )
-                        != role_evidence
-                        or query_factory_provider_attempt_lifecycle_replay(
-                            QueryFactoryProviderAttemptLifecycleReplayV1(
-                                schema_version=QUERY_FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SCHEMA,
-                                workspace=str(self.workspace.resolve()),
-                                factory_run_id=run.id,
-                            )
-                        )
-                        != current_lifecycle
+                        or final_role_evidence != role_evidence
+                        or final_lifecycle != current_lifecycle
                     ):
                         continue
                     if not coordinator.drain_snapshot().settled:
@@ -743,8 +789,26 @@ class FactoryRunService:
         expected_fencing_token: int | None = None,
         allow_expired_owner: bool = False,
     ) -> FactoryWorkspaceRunLeaseV1:
+        current = self._admission.current()
+        if (
+            operation not in {"recover_run", "recover_stale_workspace_owner"}
+            and current is not None
+            and current.run_id == run.id
+            and (
+                current.drain_reason == "factory_physical_attempt_restart_replay_fence"
+                or (
+                    current.release_evidence is not None
+                    and current.release_evidence.details.get("physical_attempt_replay_fence") is True
+                )
+            )
+        ):
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_recovered_run_permanently_closed")
         expected_token = (
             self._expected_lifecycle_fencing_token(run) if expected_fencing_token is None else expected_fencing_token
+        )
+        replay_fence = (
+            run.id not in self._physical_attempt_coordinators
+            and operation in {"recover_run", "recover_stale_workspace_owner"}
         )
         lease = self._admission.claim_lifecycle_operation(
             run.id,
@@ -753,6 +817,7 @@ class FactoryRunService:
             acquire_if_available=acquire_if_available,
             expected_fencing_token=expected_token,
             allow_expired_owner=allow_expired_owner,
+            replay_fence=replay_fence,
         )
         self._attach_workspace_lease(run, lease)
         if run.id not in self._physical_attempt_coordinators:
@@ -768,6 +833,8 @@ class FactoryRunService:
                         reason="factory_physical_attempt_replay_failed",
                     )
                     self._attach_workspace_lease(run, rolled_back)
+                    if rolled_back.state.value == "draining" and replay_fence:
+                        run.metadata["factory_physical_attempt_admission_dead"] = True
                 except (OSError, RuntimeError, TypeError, ValueError) as rollback_exc:
                     logger.error(
                         "Factory physical-attempt replay rollback failed run_id=%s operation=%s: %s",
@@ -816,6 +883,11 @@ class FactoryRunService:
                 reason=reason,
             )
             self._attach_workspace_lease(run, lease)
+            if lease.state.value == "draining" and operation in {
+                "recover_run",
+                "recover_stale_workspace_owner",
+            }:
+                run.metadata["factory_physical_attempt_admission_dead"] = True
             if persist_run:
                 run.updated_at = self._now()
                 await self.store.save_run(run)
@@ -1299,7 +1371,10 @@ class FactoryRunService:
         (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
         await self.store.save_run(run)
         self._ensure_physical_attempt_replay_ledgers(run.id)
-        self._physical_attempt_coordinators[run.id] = FactoryPhysicalAttemptLiveControlPort(factory_run_id=run.id)
+        self._physical_attempt_coordinators[run.id] = FactoryPhysicalAttemptLiveControlPort(
+            factory_run_id=run.id,
+            revalidate_active_stage_claim=self._revalidate_active_physical_attempt_stage_claim,
+        )
         # Realtime observers may only learn about the run after the mutable
         # snapshot exists.  The admission bytes remain authoritative if save
         # fails, but that half-run stays quarantined and unpublished.
@@ -1530,12 +1605,13 @@ class FactoryRunService:
             nonce = f"lifecycle_{uuid.uuid4().hex}"
             claimed = False
             try:
-                self._claim_lifecycle_operation(
+                lease = self._claim_lifecycle_operation(
                     run,
                     operation=operation,
                     nonce=nonce,
                     acquire_if_available=True,
                 )
+                replay_fenced = lease.state.value == "draining"
                 claimed = True
                 settlement = await self._require_child_session_settlement_for_reentry(
                     run,
@@ -1566,11 +1642,44 @@ class FactoryRunService:
                         "timestamp": run.updated_at,
                     },
                 )
-                await self._release_lifecycle_operation(
-                    run,
-                    operation=operation,
-                    nonce=nonce,
-                )
+                if replay_fenced:
+                    physical_drain = self._physical_attempt_coordinator(run.id).close()
+                    if not physical_drain.settled:
+                        raise FactoryPhysicalAttemptReplayError(
+                            "factory_physical_attempt_replay_terminal_settlement_incomplete"
+                        )
+                    run.metadata["factory_physical_attempt_admission_dead"] = True
+                    release_evidence = self._workspace_release_evidence(
+                        run.id,
+                        settlement,
+                        source="factory_physical_attempt_restart_replay",
+                        observed_at=self._now(),
+                        details={
+                            "physical_attempt_replay_fence": True,
+                            "physical_attempt_drain": {
+                                "settled": physical_drain.settled,
+                                "blocking_reservation_ids": list(physical_drain.blocking_reservation_ids),
+                                "terminal_failure_reservation_ids": list(
+                                    physical_drain.terminal_failure_reservation_ids
+                                ),
+                            },
+                        },
+                    )
+                    released = self._admission.release(
+                        run.id,
+                        fencing_token=lease.fencing_token,
+                        settlement_evidence=release_evidence,
+                        operation_nonce=nonce,
+                    )
+                    self._attach_workspace_lease(run, released)
+                    run.updated_at = self._now()
+                    await self.store.save_run(run)
+                else:
+                    await self._release_lifecycle_operation(
+                        run,
+                        operation=operation,
+                        nonce=nonce,
+                    )
                 claimed = False
                 logger.info("Run %s recovered at stage %s", run_id, last_successful_stage)
                 return run
@@ -1582,6 +1691,9 @@ class FactoryRunService:
                         nonce=nonce,
                         reason="recover_run_failed",
                     )
+                elif run.metadata.get("factory_physical_attempt_admission_dead") is True:
+                    run.updated_at = self._now()
+                    await self.store.save_run(run)
                 raise
 
     async def retry_run_from_stage(
@@ -2136,7 +2248,7 @@ class FactoryRunService:
                 )
                 released = self._admission.recover_stale_owner(
                     run_id,
-                    fencing_token=expected_fencing_token,
+                    fencing_token=stale.fencing_token,
                     operation_nonce=operation_nonce,
                     settlement_evidence=release_evidence,
                     reason=reason,
@@ -2164,6 +2276,9 @@ class FactoryRunService:
                         nonce=operation_nonce,
                         reason="factory_stale_owner_recovery_failed",
                     )
+                elif run.metadata.get("factory_physical_attempt_admission_dead") is True:
+                    run.updated_at = self._now()
+                    await self.store.save_run(run)
                 raise
 
     async def list_runs(self) -> list[dict[str, Any]]:

@@ -87,6 +87,46 @@ class TestResolveLlmCallTimeoutSeconds:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 0.01})
         assert result >= 600.0
 
+    def test_factory_execution_deadline_clamps_timeout_at_actual_call_start(self, monkeypatch: Any) -> None:
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            lambda: 100.0,
+        )
+        result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds(
+            {
+                "llm_call_timeout_seconds": 900.0,
+                "factory_director_execution_deadline_epoch_seconds": 112.5,
+            }
+        )
+        assert result == 12.5
+
+    def test_nested_factory_execution_deadline_clamps_timeout(self, monkeypatch: Any) -> None:
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            lambda: 200.0,
+        )
+        result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds(
+            {
+                "llm_call_timeout_seconds": 900.0,
+                "metadata": {"factory_director_execution_deadline_epoch_seconds": 207.0},
+            }
+        )
+        assert result == 7.0
+
+    def test_expired_factory_execution_deadline_blocks_provider_call(self, monkeypatch: Any) -> None:
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            lambda: 300.0,
+        )
+        try:
+            DirectorPatchExecutor.resolve_llm_call_timeout_seconds(
+                {"factory_director_execution_deadline_epoch_seconds": 300.0}
+            )
+        except RuntimeError as exc:
+            assert str(exc) == "factory_director_execution_deadline_exhausted"
+        else:
+            raise AssertionError("expired Factory deadline must block Provider admission")
+
 
 class TestResolveDirectFallbackTimeoutSeconds:
     """direct text fallback must stay within the primary Director budget."""

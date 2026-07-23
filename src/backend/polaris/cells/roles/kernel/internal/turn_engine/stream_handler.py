@@ -133,6 +133,7 @@ class StreamEventHandler:
         emitted_round_thinking = ""
         realtime_seen_tool_signatures: set[str] = set()
         stream_usage: dict[str, Any] = {}
+        stream_metadata: dict[str, Any] = {}
         stream_model = "unknown"
 
         async for event in stream_iterator:
@@ -195,6 +196,9 @@ class StreamEventHandler:
                 yield {"type": "error", "error": error_message, "iteration": round_index}
                 return
             elif event_type == "context_metadata":
+                raw_metadata = event.get("metadata")
+                if isinstance(raw_metadata, dict):
+                    stream_metadata.update(raw_metadata)
                 raw_usage = event.get("usage")
                 if isinstance(raw_usage, dict):
                     stream_usage.update(raw_usage)
@@ -210,6 +214,7 @@ class StreamEventHandler:
                     full_content.append(content)
                 raw_metadata = event.get("metadata")
                 metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+                stream_metadata.update(metadata)
                 raw_usage = event.get("usage")
                 if not isinstance(raw_usage, dict):
                     raw_usage = metadata.get("usage")
@@ -283,6 +288,7 @@ class StreamEventHandler:
             "thinking_content": list(thinking_content),
             "native_tool_calls": list(native_tool_calls),
             "usage": dict(stream_usage),
+            "metadata": dict(stream_metadata),
             "model": stream_model,
         }
 

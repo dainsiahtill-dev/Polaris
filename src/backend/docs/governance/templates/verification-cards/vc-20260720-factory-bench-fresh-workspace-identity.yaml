@@ -79,15 +79,19 @@ verification_plan:
   independent_security_review: "PASS: P0=0 P1=0 P2=0"
 pre_bench_blockers:
   - id: final_provider_request_matrix
-    status: open
+    status: implementation_closed_runtime_observation_pending
     requirement: >-
-      For every PM, Chief Engineer, Director, and QA call, resolve the 24-hex
-      context_snapshot_ref and audit the final provider request system identity,
-      messages, tools, tool_choice, response_format, final token/window values,
-      and required coverage flags.
+      B3.5-B3.6 implementation and static/isolated test matrices are closed.
+      During the first authorized fresh isolated Bench, resolve every Architect,
+      PM, Chief Engineer, Director, and QA 24-hex context_snapshot_ref and audit
+      the final provider request system identity, messages, tools, tool_choice,
+      response_format, native final token/window values, and required coverage
+      flags.
   - id: broader_pre_bench_gates
     status: open
-    requirement: Close B3.4, B3.5, B3.6 and the pre-bench gate before scheduling Provider/Bench.
+    requirement: >-
+      B3.4-B3.6 are closed. Close the independent DEO-2B/2C/2D, DEO-3,
+      DEO-4 and pre-bench gates before scheduling Provider/Bench.
 sign_off:
   completed_by: Codex /root
   completed_at: "2026-07-20"

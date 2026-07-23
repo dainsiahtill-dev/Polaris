@@ -14,6 +14,9 @@ from polaris.cells.roles.adapters.public.contracts import (
 from polaris.cells.roles.adapters.public.directed_effect_policy_service import (
     create_director_effect_policy_snapshot_port,
 )
+from polaris.cells.roles.adapters.public.directed_effect_service import (
+    create_director_directed_effect_mutation_port,
+)
 from polaris.cells.roles.adapters.public.service import (
     ROLE_OUTPUT_SCHEMAS,
     ArchitectAdapter,
@@ -78,6 +81,7 @@ __all__ = [
     "WorkflowRoleAdapter",
     "WorkflowRoleResult",
     "build_director_materialization_quality_repair_message",
+    "create_director_directed_effect_mutation_port",
     "create_director_effect_policy_snapshot_port",
     "create_role_adapter",
     "execute_workflow_role",

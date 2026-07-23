@@ -1,0 +1,69 @@
+card_id: vc-20260723-factory-r32-dual-semantic-replay
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_summary: >-
+  Fresh isolated L1-04 R32 completed the Chief Engineer physical Provider
+  attempt, but replay compared the final semantic_request_hash to the earlier
+  semantic_candidate_hash. These are different canonical domains. All other
+  lifecycle/cutoff identity fields matched. Existing tests masked the defect by
+  assigning the same fixture hash to both fields.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  bench_run_id: 75b2b442beb1
+  factory_run_id: factory_af0cf43f315d
+  wall_clock_seconds: 1508.2
+  stage: chief_engineer_review
+  replay_error: factory_physical_attempt_replay_lifecycle_identity_mismatch
+  provider_request_id: provider_request_94236a69e4e94797b4c2ac89eb8618b8
+  physical_terminal_status: completed
+  role_terminal_event_present: false
+  semantic_candidate_hash: 209158e659db22ee3f4264f348870097ecda337655c392ec910a95d9a38e1786
+  semantic_request_hash: dd75ac763090e0e4d477d301238ac0917afc0833a254336db6dbc71481b4a91f
+  completed_verified: false
+root_cause:
+  code: factory_replay_compares_distinct_semantic_hash_domains
+  owner: roles.kernel.final_provider_attempt_lifecycle_and_factory_replay
+  required_fix: persist_and_validate_both_semantic_hash_domains
+  forbidden_fixes:
+    - remove_semantic_identity_validation
+    - alias_candidate_hash_to_final_request_hash
+    - accept_unbound_legacy_lifecycle
+required_gates:
+  blueprint_review: pass
+  dual_hash_lifecycle_contract: pass
+  new_format_replay_regression: pass
+  legacy_fail_closed_regression: pass
+  start_terminal_identity_regression: pass
+  focused_regression: "304 passed"
+  roles_kernel_full: "4163 passed, 2 warnings"
+  factory_pipeline_full: "1230 passed, 2 warnings"
+  ruff: pass
+  mypy: "Success: no issues found in 7 source files"
+  compileall: pass
+  yaml: pass
+  diff_check: pass
+  post_edit_codegraph_review: pass
+scheduling:
+  bench_schedulable: false
+  authorized_acceptance_bench_runs: 0
+  next_action: close_dual_semantic_replay_then_diagnose_ce_terminalization_bucket
+closure:
+  closed_at: "2026-07-23"
+  provider_requests_during_fix: 0
+  bench_runs_during_fix: 0
+  semantic_identity_validation_weakened: false
+  legacy_unbound_replay_allowed: false
+evidence:
+  work_dir: /tmp/factory-bench-l1-04-codex-r32
+  factory_audit: /tmp/factory-bench-l1-04-codex-r32/factory_audits.json
+  final_request_context_ref: 93dce28daa312eebec05fcf6
+  provider_lifecycle_segment: >-
+    /home/dains/.cache/kernelone/.polaris/projects/f9eaa57c9f77fdb0489ecbe5-efff0b5f43e8/runtime/events/.segmented/64b73c37628cf4580ebcc8e4/segments/segment-000000.jsonl
+  role_evidence_segment: >-
+    /home/dains/.cache/kernelone/.polaris/projects/f9eaa57c9f77fdb0489ecbe5-efff0b5f43e8/runtime/events/.segmented/792771eb7ec7c59407bd0793/segments/segment-000000.jsonl

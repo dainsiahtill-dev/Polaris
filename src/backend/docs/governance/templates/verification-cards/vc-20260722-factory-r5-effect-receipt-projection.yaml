@@ -1,0 +1,86 @@
+card_id: vc-20260722-factory-r5-effect-receipt-projection
+classification: execution_fact_chain
+severity: P0
+status: complete
+bench_status: closed_pending_pre_bench_refreeze
+symptom:
+  project_id: L1-04
+  factory_run_id: factory_892b88dad469
+  director_run_id: director-bce8350615be
+  instance_id: factory-bench-l1-04-codex-r5-20260722-l1-04-run-354909e6f469-116c0719f30284dc
+  stage: director_dispatch
+  error_code: control_plane:missing_effect_receipt
+  provider_response_hash: feadc166825e4beb785bb3e35f09aaf1727bf92e49fd658620d1465022282004
+  native_tool_calls: 5
+  decoded_tool_calls: 5
+  dispatched_tool_calls: 4
+  tool_results: 4
+  projected_effect_receipts: 0
+  source_files_materialized:
+    - go.mod
+evidence:
+  workspace: >-
+    /tmp/factory-bench-l1-04-codex-r5-20260722/workspaces/354909e6f469-a1692959cecb8ac4/L1-04-94fd04a84e09b5de/03402ee6d9f45cfcd37fb69c
+  runtime_root: >-
+    /home/dains/.cache/kernelone/.polaris/projects/03402ee6d9f45cfcd37fb69c-e7c310cee6e6/runtime
+  tool_call_id: call_019f877c8fac7e53a3631f6d
+  operation_id: deo_v1_87833692de24458f3b1d099ec66af902164b44ec63a31095
+  physical_receipt_hash: 2df2ecc925984c2c139825e4872db4515ee8d34b7e8ec1317339d0e3622aaa95
+  task_runtime_commit:
+    code: receipt_committed
+    state: RECEIPT_COMMITTED
+    event_id: d0b0351da006416cab61bd5b70938514
+  batch_projection:
+    results_effect_receipt_present: true
+    raw_results_effect_receipt_present: true
+    nested_task_runtime_commit_present: true
+    top_level_effect_receipts_count: 0
+  lifecycle_projection:
+    failure_class: MISSING_EFFECT_RECEIPT
+    reason: successful_write_tool_without_effect_receipt
+root_cause:
+  code: committed_effect_receipt_projection_gap
+  evidence: >-
+    The physical mutation port produced a hash-bound v2 effect receipt and
+    TaskRuntime durably committed it. ToolBatchRuntime then copied the receipt
+    into each result row but left BatchReceipt.effect_receipts empty and did
+    not project effect_receipt_commit beside the direct receipt. Run Ledger's
+    validator correctly rejects an uncommitted direct v2 receipt; the valid
+    matching commit survives only inside the nested physical result, so the
+    direct incomplete view shadows the complete nested pair and creates a
+    false MISSING_EFFECT_RECEIPT verdict.
+  repair: >-
+    Preserve the receipt and TaskRuntime commit as one canonical result-level
+    pair, populate BatchReceipt.effect_receipts from authoritative effects,
+    and let historical nested pairs be consumed only when the nested receipt
+    exactly matches the direct receipt. Preserve the existing multi-view
+    projection semantics without synthesizing or weakening receipt validation.
+repair_contract:
+  synthesize_receipts: forbidden
+  task_runtime_commit_required_for_v2: true
+  direct_nested_receipt_mismatch: fail_closed
+  missing_or_tampered_commit: fail_closed
+  run_ledger_gate_relaxation: forbidden
+  target_project_edits: forbidden
+verification:
+  tdd_red: >-
+    Three focused assertions failed before the repair: the historical nested
+    commit was shadowed, ToolExecutionResult dropped the commit, and the
+    canonical BatchReceipt left effect_receipts empty.
+  focused: "170 passed"
+  persisted_r5_replay: >-
+    effect_receipt_count=1; receipt_hash and TaskRuntime event preserved;
+    MISSING_EFFECT_RECEIPT removed; independent TOOL_RESULT_FAILED retained.
+  roles_kernel_and_run_ledger: "4451 passed, 2 warnings"
+  roles_adapters: "1286 passed"
+  task_runtime: "895 passed, 10 warnings"
+  factory_pipeline: "1216 passed, 2 warnings"
+  architecture: "1411 passed, 8 skipped"
+  ruff: pass
+  format: pass
+  mypy_strict: pass
+  compileall: pass
+  yaml: pass
+owner: Codex /root
+opened_at: "2026-07-22"
+closed_at: "2026-07-22"

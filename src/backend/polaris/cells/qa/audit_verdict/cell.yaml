@@ -37,6 +37,7 @@ public_contracts:
   errors:
   - QaAuditErrorV1
 depends_on:
+- events.fact_stream
 - control_plane.run_ledger
 - runtime.task_market
 - audit.evidence

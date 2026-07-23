@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,72 @@ class _FakeTaskRuntimeService:
 
     def list_task_rows(self) -> list[dict[str, Any]]:
         raise AssertionError("Director result artifacts must consume observable task rows")
+
+
+def _dependency_satisfaction_evidence() -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "schema_version": "task-runtime.dependency-satisfaction/1",
+        "kind": "failed_director_materialization",
+        "materialized_paths": ["main.go"],
+        "receipt_count": 1,
+        "failed_receipt_count": 0,
+        "dead_letter_count": 0,
+        "aborted_count": 0,
+    }
+    encoded = json.dumps(
+        evidence,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    evidence["evidence_hash"] = hashlib.sha256(encoded).hexdigest()
+    return evidence
+
+
+def test_dependency_propagation_consumes_only_task_runtime_satisfaction_receipt() -> None:
+    contracts = [
+        {"id": "T01"},
+        {"id": "T02", "depends_on": ["T01"]},
+    ]
+    rows = [
+        {
+            "status": "failed",
+            "metadata": {"task_runtime_dependency_satisfaction": _dependency_satisfaction_evidence()},
+        },
+        None,
+    ]
+
+    statuses, blocked_by = artifacts._propagate_dependency_blocks(
+        contracts,
+        ["failed", "pending"],
+        rows,
+    )
+
+    assert statuses == ["failed", "pending"]
+    assert blocked_by == [[], []]
+
+
+def test_dependency_propagation_rejects_forged_task_runtime_satisfaction_receipt() -> None:
+    forged = _dependency_satisfaction_evidence()
+    forged["materialized_paths"] = ["forged.go"]
+    contracts = [
+        {"id": "T01"},
+        {"id": "T02", "depends_on": ["T01"]},
+    ]
+    rows = [
+        {"status": "failed", "metadata": {"task_runtime_dependency_satisfaction": forged}},
+        None,
+    ]
+
+    statuses, blocked_by = artifacts._propagate_dependency_blocks(
+        contracts,
+        ["failed", "pending"],
+        rows,
+    )
+
+    assert statuses == ["failed", "blocked"]
+    assert blocked_by == [[], ["T01"]]
 
 
 def test_build_director_result_waits_until_all_contract_tasks_terminal(monkeypatch) -> None:

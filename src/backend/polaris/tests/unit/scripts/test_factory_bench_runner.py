@@ -570,7 +570,7 @@ def test_isolated_launch_forwards_fresh_receipt_to_supervisor(monkeypatch: Any, 
             "runtime_root": request["runtime_root"],
             "backend_url": "http://127.0.0.1:60101",
             "frontend_url": "http://127.0.0.1:5174",
-            "token": request["token"],
+            "token": "isolated-generated-token",
             "metadata": request["metadata"],
         }
 
@@ -592,6 +592,8 @@ def test_isolated_launch_forwards_fresh_receipt_to_supervisor(monkeypatch: Any, 
     assert captured["require_fresh_instance"] is True
     assert captured["workspace"] == receipt["workspace"]
     assert captured["runtime_root"] == receipt["runtime_root"]
+    assert "token" not in captured
+    assert result["token"] == "isolated-generated-token"
     assert Path(captured["polaris_root"]).resolve() == bench._REPO_ROOT
     assert (Path(captured["polaris_root"]) / "src" / "backend").resolve() == bench._BACKEND_ROOT
     assert Path(bench.__file__).resolve().parents[2] == bench._BACKEND_ROOT

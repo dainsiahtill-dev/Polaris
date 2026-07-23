@@ -363,79 +363,19 @@ class FileApplyService:
         task_id: str = "",
         allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
     ) -> list[dict]:
-        """Write generated files to workspace with broadcast support.
+        """Fail closed for legacy direct file application.
 
-        Args:
-            files: List of file dictionaries with 'path' and 'content' keys
-            task_id: Optional task ID for tracking
-
-        Returns:
-            List of successfully written file dictionaries
+        Raw generated bodies are not authoritative tool actions. Physical
+        mutation requires a typed ToolInvocation admitted by roles.kernel and
+        an exact TaskRuntime claim/fence consumed by the Director mutation
+        port. This legacy service deliberately cannot mint that authority.
         """
-        files_created: list[dict] = []
+
+        del task_id, allowed_scope_paths
         self._last_write_errors = []
-
-        # Import here to avoid circular dependencies
-        from polaris.kernelone.events.file_event_broadcaster import write_file_with_broadcast
-        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_patch_like_write_content
-
-        fs = _workspace_fs(self.workspace)
-        for file_info in files:
-            file_path = str(file_info.get("path") or "").strip()
-            content = str(file_info.get("content") or "")
-            if not file_path or not content:
-                continue
-            try:
-                full_path = self._resolve_workspace_path(file_path)
-                if full_path is None:
-                    self._last_write_errors.append(f"Unsafe file path outside workspace: {file_path}")
-                    continue
-                old_content = ""
-                if os.path.isfile(full_path):
-                    try:
-                        old_content = fs.workspace_read_text(file_path, encoding="utf-8")
-                    except OSError:
-                        old_content = ""
-                normalized = normalize_patch_like_write_content(
-                    file_path,
-                    content,
-                    existing_content=old_content if os.path.isfile(full_path) else None,
-                )
-                if normalized.error:
-                    self._last_write_errors.append(normalized.error)
-                    logger.warning("Skip file '%s': %s", file_path, normalized.error)
-                    continue
-                content = str(normalized.content or "")
-                if not content:
-                    self._last_write_errors.append(f"Empty normalized content for file: {file_path}")
-                    logger.warning("Skip file '%s': empty normalized content", file_path)
-                    continue
-                policy_error = self._validate_director_policy_for_write(
-                    rel_path=file_path,
-                    old_content=old_content,
-                    new_content=content,
-                    operation="file_apply_service.write_files",
-                    allowed_scope_paths=allowed_scope_paths,
-                )
-                if policy_error:
-                    self._last_write_errors.append(policy_error)
-                    logger.warning("Skip file '%s': %s", file_path, policy_error)
-                    continue
-                # Use unified broadcast-enabled write
-                result = write_file_with_broadcast(
-                    workspace=self.workspace,
-                    file_path=file_path,
-                    content=content,
-                    message_bus=self._bus,
-                    worker_id=self._worker_id,
-                    task_id=task_id,
-                )
-                if result.get("ok"):
-                    files_created.append({"path": file_path, "content": content})
-                    logger.debug("Created: %s", file_path)
-            except OSError as exc:
-                logger.warning("Skip file '%s': %s", file_path, exc)
-        return files_created
+        if files:
+            self._last_write_errors.append("direct_file_apply_requires_directed_effect_authority")
+        return []
 
     def _validate_applied_files_against_director_policy(
         self,
@@ -496,22 +436,6 @@ class FileApplyService:
             except OSError:
                 snapshots[path] = None
         return snapshots
-
-    def _restore_snapshots(self, snapshots: dict[str, str | None]) -> None:
-        """Restore files after a post-apply validation failure."""
-        fs = _workspace_fs(self.workspace)
-        for path, content in snapshots.items():
-            full_path = self._resolve_workspace_path(path)
-            if full_path is None:
-                continue
-            try:
-                if content is None:
-                    if os.path.exists(full_path):
-                        fs.workspace_remove(path, missing_ok=True)
-                    continue
-                fs.workspace_write_text(path, content, encoding="utf-8")
-            except OSError as exc:
-                logger.warning("Failed to restore invalid structured file '%s': %s", path, exc)
 
     @staticmethod
     def _protocol_paths(response: str) -> list[str]:
@@ -623,185 +547,21 @@ class FileApplyService:
         llm_metadata: dict[str, Any] | None = None,
         allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
     ) -> tuple[list[dict], list[str]]:
-        """Apply patch/file operations from LLM response with pre-apply validation.
+        """Validate raw protocol evidence but never apply it physically."""
 
-        Uses the KernelOne protocol package with strict mode (no fallback to full file).
-
-        Args:
-            response: LLM response text
-            task_id: Optional task ID for tracking
-            llm_metadata: Optional metadata from LLM (may contain truncation info)
-
-        Returns:
-            Tuple of (applied_files, errors)
-        """
-        # Import here to avoid circular dependencies
-        from polaris.kernelone.llm.toolkit import apply_protocol_output
-
+        del task_id, allowed_scope_paths
         normalized_response = _normalize_fenced_file_blocks(response)
         fenced_blocks = _collect_fenced_file_blocks(response)
-
-        # Phase 1: Pre-apply integrity validation
         if llm_metadata:
             validation_response = _fenced_file_blocks_to_protocol(response) if fenced_blocks else normalized_response
             integrity = validate_before_apply(validation_response, llm_metadata)
-
             if not integrity.is_valid:
                 if integrity.can_continue:
-                    # Truncated but can try continuation
                     return [], [f"TRUNCATED: {integrity.errors[0]}"]
-                else:
-                    # Fail-closed: block the output
-                    return [], [f"BLOCKED: {integrity.errors[0]}"]
-
-        if fenced_blocks:
-            applied: list[dict] = []
-            errors: list[str] = []
-            fenced_validation_errors = self._validate_structured_files(
-                [{"path": path, "content": content} for path, content in fenced_blocks]
-            )
-            if fenced_validation_errors:
-                return [], fenced_validation_errors
-            protocol_remainder = _strip_fenced_file_blocks(response)
-            if _has_patch_or_delete_protocol(protocol_remainder):
-                protocol_snapshots = self._snapshot_files(self._protocol_paths(protocol_remainder))
-                report = apply_protocol_output(
-                    protocol_remainder,
-                    self.workspace,
-                    strict=True,
-                    allow_fuzzy_match=False,
-                )
-                errors.extend(f"{r.operation.path}: {r.error_message}" for r in report.results if not r.success)
-                if report.changed_files:
-                    protocol_applied = self.collect_workspace_files(
-                        report.changed_files, task_id=task_id, operation="modify"
-                    )
-                    structured_errors = self._validate_structured_files(protocol_applied)
-                    if structured_errors:
-                        self._restore_snapshots(protocol_snapshots)
-                        errors.extend(structured_errors)
-                    else:
-                        policy_errors = self._validate_applied_files_against_director_policy(
-                            protocol_applied,
-                            snapshots=protocol_snapshots,
-                            operation="file_apply_service.apply_response_operations",
-                            allowed_scope_paths=allowed_scope_paths,
-                        )
-                        if policy_errors:
-                            self._restore_snapshots(protocol_snapshots)
-                            errors.extend(policy_errors)
-                        else:
-                            applied.extend(protocol_applied)
-
-            applied.extend(
-                self.write_files(
-                    [{"path": path, "content": content} for path, content in fenced_blocks],
-                    task_id=task_id,
-                    allowed_scope_paths=allowed_scope_paths,
-                )
-            )
-            if self._last_write_errors:
-                errors.extend(self._last_write_errors)
-            if applied:
-                deduped: list[dict] = []
-                seen_paths: set[str] = set()
-                for item in applied:
-                    path = str(item.get("path") or "").strip()
-                    if path and path not in seen_paths:
-                        seen_paths.add(path)
-                        deduped.append(item)
-                return deduped, errors
-            return [], errors or ["no_changes"]
-
-        # Phase 2: Parse and apply (strict mode, no fallback)
-        operation_snapshots = self._snapshot_files(self._protocol_paths(normalized_response))
-        report = apply_protocol_output(
-            normalized_response,
-            self.workspace,
-            strict=True,  # 严格模式
-            allow_fuzzy_match=False,  # 禁用模糊匹配
-        )
-
-        if report.ops_failed > 0:
-            errors = [f"{r.operation.path}: {r.error_message}" for r in report.results if not r.success]
-            # 即使有失败，也返回已应用的文件
-            if report.changed_files:
-                changed_files = self.collect_workspace_files(report.changed_files, task_id=task_id, operation="modify")
-                structured_errors = self._validate_structured_files(changed_files)
-                if structured_errors:
-                    self._restore_snapshots(operation_snapshots)
-                    return [], [*errors, *structured_errors]
-                policy_errors = self._validate_applied_files_against_director_policy(
-                    changed_files,
-                    snapshots=operation_snapshots,
-                    operation="file_apply_service.apply_response_operations",
-                    allowed_scope_paths=allowed_scope_paths,
-                )
-                if policy_errors:
-                    self._restore_snapshots(operation_snapshots)
-                    return [], [*errors, *policy_errors]
-                return (
-                    changed_files,
-                    errors,
-                )
-
-            fenced_only_response = _fenced_file_blocks_to_protocol(response)
-            if fenced_only_response and fenced_only_response != normalized_response:
-                fenced_report = apply_protocol_output(
-                    fenced_only_response,
-                    self.workspace,
-                    strict=True,
-                    allow_fuzzy_match=False,
-                )
-                fenced_errors = [
-                    f"{r.operation.path}: {r.error_message}" for r in fenced_report.results if not r.success
-                ]
-                if fenced_report.changed_files:
-                    fenced_changed_files = self.collect_workspace_files(
-                        fenced_report.changed_files, task_id=task_id, operation="modify"
-                    )
-                    structured_errors = self._validate_structured_files(fenced_changed_files)
-                    if structured_errors:
-                        self._restore_snapshots(operation_snapshots)
-                        return [], [*errors, *fenced_errors, *structured_errors]
-                    policy_errors = self._validate_applied_files_against_director_policy(
-                        fenced_changed_files,
-                        snapshots=operation_snapshots,
-                        operation="file_apply_service.apply_response_operations",
-                        allowed_scope_paths=allowed_scope_paths,
-                    )
-                    if policy_errors:
-                        self._restore_snapshots(operation_snapshots)
-                        return [], [*errors, *fenced_errors, *policy_errors]
-                    return (
-                        fenced_changed_files,
-                        [*errors, *fenced_errors],
-                    )
-                errors.extend(fenced_errors)
-            return [], errors
-
-        if not report.changed_files:
+                return [], [f"BLOCKED: {integrity.errors[0]}"]
+        if not normalized_response.strip() and not fenced_blocks:
             return [], ["no_changes"]
-
-        changed_files = self.collect_workspace_files(report.changed_files, task_id=task_id, operation="modify")
-        structured_errors = self._validate_structured_files(changed_files)
-        if structured_errors:
-            self._restore_snapshots(operation_snapshots)
-            return [], structured_errors
-        policy_errors = self._validate_applied_files_against_director_policy(
-            changed_files,
-            snapshots=operation_snapshots,
-            operation="file_apply_service.apply_response_operations",
-            allowed_scope_paths=allowed_scope_paths,
-        )
-        if policy_errors:
-            self._restore_snapshots(operation_snapshots)
-            return [], policy_errors
-
-        return (
-            changed_files,
-            [],
-        )
+        return [], ["raw_text_file_apply_not_authoritative"]
 
     # === Diff Statistics ===
 

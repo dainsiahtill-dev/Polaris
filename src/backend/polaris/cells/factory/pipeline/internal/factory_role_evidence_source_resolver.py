@@ -313,8 +313,6 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
     def _validated_dynamic_event(
         self,
         record: Mapping[str, object],
-        *,
-        factory_run_id: str,
     ) -> tuple[EventEnvelope, dict[str, object], str]:
         try:
             encoded = json.dumps(
@@ -326,17 +324,46 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
             envelope = decode_strict_event_record(encoded.decode("utf-8"))
         except (TypeError, UnicodeError, ValueError) as exc:
             raise self._fail("factory_role_evidence_dynamic_record_invalid") from exc
-        if envelope.stream != "execution.control_plane" or envelope.event_type != "gate_evaluated":
+        if envelope.stream != "execution.control_plane":
             raise self._fail("factory_role_evidence_dynamic_envelope_invalid")
         payload = envelope.payload
         nested = payload.get("event")
         if (
             payload.get("schema_version") != "execution.control_plane.fact.v1"
             or type(payload.get("run_id")) is not str
+            or not str(payload.get("run_id") or "").strip()
             or not isinstance(nested, Mapping)
         ):
             raise self._fail("factory_role_evidence_dynamic_payload_invalid")
         event = dict(nested)
+        if event.get("event_type") != envelope.event_type:
+            raise self._fail("factory_role_evidence_dynamic_envelope_invalid")
+        nested_run_id = event.get("run_id")
+        if nested_run_id is not None and nested_run_id != payload.get("run_id"):
+            raise self._fail("factory_role_evidence_dynamic_binding_invalid")
+        try:
+            prepared = RunLedger(self._workspace, run_id=str(payload["run_id"])).prepare_idempotent_event(event)
+        except (TypeError, ValueError) as exc:
+            raise self._fail("factory_role_evidence_dynamic_content_identity_invalid") from exc
+        content_id = event.get("content_id")
+        if type(content_id) is not str or prepared.get("content_id") != content_id:
+            raise self._fail("factory_role_evidence_dynamic_content_identity_invalid")
+        digest = record.get("integrity_digest")
+        expected_digest = EventEnvelope.integrity_digest_for_record(record)
+        if type(digest) is not str or digest != expected_digest:
+            raise self._fail("factory_role_evidence_dynamic_digest_invalid")
+        return envelope, event, content_id
+
+    def _validate_dynamic_gate_binding(
+        self,
+        *,
+        envelope: EventEnvelope,
+        event: Mapping[str, object],
+        factory_run_id: str,
+    ) -> None:
+        if envelope.event_type != "gate_evaluated":
+            raise self._fail("factory_role_evidence_dynamic_envelope_invalid")
+        payload = envelope.payload
         job_token = event.get("job_token")
         if not isinstance(job_token, Mapping):
             raise self._fail("factory_role_evidence_dynamic_job_token_invalid")
@@ -353,18 +380,6 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
             or event_stage != job_stage
         ):
             raise self._fail("factory_role_evidence_dynamic_binding_invalid")
-        try:
-            prepared = RunLedger(self._workspace, run_id=str(payload["run_id"])).prepare_idempotent_event(event)
-        except (TypeError, ValueError) as exc:
-            raise self._fail("factory_role_evidence_dynamic_content_identity_invalid") from exc
-        content_id = event.get("content_id")
-        if type(content_id) is not str or prepared.get("content_id") != content_id:
-            raise self._fail("factory_role_evidence_dynamic_content_identity_invalid")
-        digest = record.get("integrity_digest")
-        expected_digest = EventEnvelope.integrity_digest_for_record(record)
-        if type(digest) is not str or digest != expected_digest:
-            raise self._fail("factory_role_evidence_dynamic_digest_invalid")
-        return envelope, event, content_id
 
     def _capture_dynamic_slots(
         self,
@@ -397,7 +412,8 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
             raise self._fail("factory_role_evidence_dynamic_record_limit_exceeded")
 
         encoded_bytes = 0
-        validated: list[tuple[EventEnvelope, dict[str, object], str, str]] = []
+        stream_validated: list[tuple[EventEnvelope, str]] = []
+        gate_validated: list[tuple[EventEnvelope, dict[str, object], str, str]] = []
         for expected_sequence, record in enumerate(result.events, start=1):
             try:
                 encoded_bytes += (
@@ -415,14 +431,21 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
                 raise self._fail("factory_role_evidence_dynamic_record_invalid") from exc
             if encoded_bytes > 8 * 1024 * 1024:
                 raise self._fail("factory_role_evidence_dynamic_byte_limit_exceeded")
-            envelope, event, content_id = self._validated_dynamic_event(record, factory_run_id=factory_run_id)
+            envelope, event, content_id = self._validated_dynamic_event(record)
             if envelope.seq != expected_sequence:
                 raise self._fail("factory_role_evidence_dynamic_sequence_invalid")
             digest = str(record["integrity_digest"])
-            validated.append((envelope, event, content_id, digest))
+            stream_validated.append((envelope, digest))
+            if envelope.event_type == "gate_evaluated":
+                self._validate_dynamic_gate_binding(
+                    envelope=envelope,
+                    event=event,
+                    factory_run_id=factory_run_id,
+                )
+                gate_validated.append((envelope, event, content_id, digest))
 
-        if validated:
-            final_envelope, _, _, final_digest = validated[-1]
+        if stream_validated:
+            final_envelope, final_digest = stream_validated[-1]
             head_id = final_envelope.event_id
             head_sequence = final_envelope.seq
             head_hash = final_digest
@@ -436,7 +459,7 @@ class CanonicalFactoryRoleEvidenceSourceAuthority:
             "workspace_quality": [],
             "verifier_receipts": [],
         }
-        for envelope, event, content_id, digest in validated:
+        for envelope, event, content_id, digest in gate_validated:
             gate = event.get("gate")
             predicates = {
                 "failure_feedback": isinstance(gate, Mapping) and gate.get("ok") is False,

@@ -19,9 +19,6 @@ from polaris.cells.director.tasking.internal.file_apply_service import (
 from polaris.cells.director.tasking.internal.patch_protocol import (
     ApplyIntegrity as ApplyIntegrity,
     ApplyResult as ApplyResult,
-    apply_all_operations as apply_all_operations,
-    apply_operation as apply_operation,
-    apply_operations_strict as apply_operations_strict,
     parse_all_operations as parse_all_operations,
     parse_delete_operations as parse_delete_operations,
     parse_full_file_blocks as parse_full_file_blocks,
@@ -66,9 +63,6 @@ __all__ = [
     "WorkerExecutor",
     "WorkerPoolConfig",
     "WorkerService",
-    "apply_all_operations",
-    "apply_operation",
-    "apply_operations_strict",
     # Bootstrap catalog
     "get_generic_bootstrap_files",
     "get_intelligent_bootstrap_files",

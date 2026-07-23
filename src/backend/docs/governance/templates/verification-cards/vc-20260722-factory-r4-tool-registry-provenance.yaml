@@ -1,0 +1,82 @@
+card_id: vc-20260722-factory-r4-tool-registry-provenance
+classification: execution_fact_chain
+severity: P0
+status: complete
+bench_status: closed_pending_pre_bench_refreeze
+symptom:
+  project_id: L1-04
+  factory_run_id: factory_434001b91ac2
+  director_run_id: director-9e88273c9be5
+  instance_id: factory-bench-l1-04-codex-r4-20260722-l1-04-run-4554a2b079f8-c8eeab3c7f6967bb
+  stage: director_dispatch
+  error_code: director.canonical_task_boundary_missing
+  nested_error: >-
+    TransactionKernel execution failed: LLM call failed:
+    tool_registry_source_mismatch
+  provider_requests:
+    pm: qualified
+    chief_engineer: qualified
+    director: 0
+  source_files_materialized: 0
+final_request_audit:
+  route_audit_passed: true
+  pm_identity_projection_proven: true
+  chief_engineer_identity_projection_proven: true
+  director:
+    context_snapshot_ref: f6e8e962d8daf00ba70c1fc9
+    role_identity_ok: true
+    provider: anthropic_compat-1782212251463
+    model: MiniMax-M3
+    offered_tools:
+      - write_file
+    context_quality_passed: true
+    final_request_evidence_coverage_passed: true
+    tool_registry:
+      registry_source: ""
+      aliases_present: false
+      arg_aliases_present: false
+      schema_hash: 3e3865f96c1ca366fb703fe4
+      missing_schema_tools: []
+    rejection_code: tool_registry_source_mismatch
+root_cause:
+  code: final_request_tool_registry_provenance_missing
+  evidence: >-
+    The context auditor copied tool_registry_source, tool_aliases and
+    tool_arg_aliases from optional caller context. No production producer set
+    those keys, so a valid ToolSpecRegistry-derived write_file schema was
+    audited with empty provenance. B3.5 correctly rejected it before physical
+    Provider transport. The later TaskBoundary and Run Ledger failures are
+    consequences, not independent defects.
+  repair: >-
+    Reconstruct registry provenance from the exact final Provider tool schema:
+    capture each effective ToolSpecRegistry spec, prove registry membership,
+    prove every registry argument-alias property remains in the offered schema,
+    hash that exact schema list, and refuse to claim provenance for unknown or
+    incomplete tools. Qualification continues to revalidate full schema shape,
+    scoped enums, hash, source and alias coverage fail-closed.
+repair_contract:
+  caller_supplied_registry_claims_authoritative: false
+  final_provider_tool_schema_authoritative: true
+  unknown_tool_provenance: fail_closed
+  schema_or_alias_drift: fail_closed
+  provider_transport_before_qualification: forbidden
+verification:
+  tdd_red: >-
+    Expected authoritative ToolSpecRegistry source and alias coverage; observed
+    registry_source empty with both alias flags false.
+  focused_registry_projection: "46 passed"
+  final_provider_qualification: "167 passed"
+  roles_kernel: "2724 passed, 1 warning"
+  roles_adapters: "1253 passed"
+  role_runtime_and_transaction: "626 passed"
+  factory_pipeline: "1216 passed, 2 warnings"
+  architecture: "1411 passed, 8 skipped"
+  ruff: pass
+  format: pass
+  mypy_strict: pass
+  compileall: pass
+  yaml: pass
+  target_project_edits: 0
+owner: Codex /root
+opened_at: "2026-07-22"
+closed_at: "2026-07-22"

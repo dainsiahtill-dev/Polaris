@@ -1,0 +1,44 @@
+card_id: vc-20260723-factory-r38-bench-timeout-budget-contract
+classification: internal_bench_launch_contract
+status: closed
+bench_status: authorization_consumed_by_r39
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  production_deadline_policy_changed: false
+defect:
+  project_id: L1-04
+  bench_run_id: cd224e7d6557
+  factory_run_id: factory_cf62591d2df4
+  exact_error: provider_stream_timeout:188s
+  factory_timeout_seconds: 540
+  requested_ce_timeout_seconds: 600
+  reserved_downstream_seconds: 310
+  allocated_ce_timeout_seconds: 188
+  root: repository_agent_standard_overrode_runner_safe_default_with_short_smoke_budget
+final_provider_request_audit:
+  pm_context_snapshot_ref: 1fd90a2e08c6fd9d9a8fe1c0
+  chief_engineer_context_snapshot_ref: 403e6d605c6946e235e24fe7
+  role_identity: pass
+  required_refs: pass
+  required_tools: pass_not_required
+  token_window: pass
+  pm_final_tokens: 2596
+  chief_engineer_final_tokens: 4889
+  context_window_tokens: 262144
+implementation:
+  agent_standard_timeout_seconds: 5400
+  outer_guard_timeout_seconds: 6000
+  files:
+    - AGENTS.md
+    - CLAUDE.md
+validation:
+  focused_deadline_tests: 4_passed
+  yaml_parse: pass
+  utf8_read: pass
+  diff_check: pass
+  synchronized_contract: pass
+deferred:
+  ce_provider_model_projection: open_separate_bucket
+  context_os_control_plane_isolation_false: open_separate_bucket
+next_action: audit_r39_before_any_further_bench_authorization

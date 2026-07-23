@@ -19,7 +19,7 @@ from polaris.kernelone.llm.providers import (
 )
 from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
-from polaris.kernelone.shared.text_utils import normalize_timeout_seconds, timeout_seconds_or_none
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 from .http_utils import join_url, normalize_base_url, validate_base_url_for_ssrf
 from .provider_helpers import (
@@ -27,8 +27,7 @@ from .provider_helpers import (
     _blocking_http_post,
     _blocking_sleep,
     get_circuit_breaker,
-    get_stream_session,
-    iter_data_line_payloads,
+    invoke_stream_with_retry,
 )
 
 if TYPE_CHECKING:
@@ -979,208 +978,85 @@ class MiniMaxProvider(BaseProvider):
 
         return Usage.estimate(prompt, output)
 
-    async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]) -> AsyncGenerator[str, None]:
-        """
-        Stream invoke the MiniMax LLM with true async streaming.
+    async def invoke_stream(
+        self,
+        prompt: str,
+        model: str,
+        config: dict[str, Any],
+    ) -> AsyncGenerator[str, None]:
+        """Stream MiniMax tokens from the governed structured-event route."""
 
-        Uses aiohttp for async HTTP requests and yields tokens as they arrive
-        from the MiniMax provider data-line stream.
-
-        Args:
-            prompt: The prompt to send
-            model: The model name (e.g., "MiniMax-M2.1")
-            config: Provider configuration including api_key, base_url, etc.
-
-        Yields:
-            Text tokens/chunks from the LLM response as they arrive
-        """
-        url = self._build_url(config)
-        timeout = _timeout_seconds(config, 60)
-
-        # If model not provided, use config default
-        if not model:
-            model = str(config.get("model") or "MiniMax-M2.1").strip()
-
-        api_key = config.get("api_key")
-        if not api_key:
+        if not config.get("api_key"):
             yield "Error: API key is required"
             return
 
-        payload = self._build_request_payload(
-            prompt,
-            model,
-            config,
-            stream=True,
-        )
+        think_parser = StreamThinkingParser()
+        has_seen_native_reasoning = False
+        cumulative_content = ""
 
-        headers = self._headers(config, api_key, streaming=True)
+        def _parse_content(content: Any) -> list[str]:
+            output: list[str] = []
+            for kind, text in think_parser.feed_sync(str(content or "")):
+                if not text:
+                    continue
+                if kind == "thinking":
+                    if not has_seen_native_reasoning:
+                        output.append(f"{THINKING_PREFIX}{text}")
+                elif kind == "tool_call":
+                    output.append(f"<tool_call>{text}</tool_call>")
+                else:
+                    output.append(text)
+            return output
 
         try:
-            session = await get_stream_session(
-                "minimax",
-                timeout_seconds=timeout,
-            )
-            async with session.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=timeout_seconds_or_none(timeout, default=60)),
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    yield f"Error: HTTP {response.status}: {error_text[:500]}"
-                    return
+            async for event in self.invoke_stream_events(prompt, model, config):
+                choices = event.get("choices", [])
+                if not isinstance(choices, list) or not choices:
+                    continue
+                choice = choices[0] if isinstance(choices[0], dict) else {}
 
-                # Process provider data-line stream
-                content_type = response.headers.get("Content-Type", "")
+                delta = choice.get("delta", {})
+                if isinstance(delta, dict) and delta:
+                    reasoning = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
+                    if reasoning and str(reasoning).strip():
+                        yield f"{THINKING_PREFIX}{reasoning}"
+                        has_seen_native_reasoning = True
+                    for token in _parse_content(delta.get("content")):
+                        yield token
+                    continue
 
-                # MiniMax may return JSON instead of data-line chunks in some cases
-                if "application/json" in content_type:
-                    # Non-streaming JSON response - yield all at once
-                    json_data = await response.json()
-                    choices = json_data.get("choices", [])
-                    if choices and len(choices) > 0:
-                        message = choices[0].get("message", {})
-                        content = message.get("content", "")
-                        if content:
-                            yield content
-                    return
+                message = choice.get("message", {})
+                if isinstance(message, dict) and message:
+                    reasoning = message.get("reasoning_content") or message.get("reasoning") or message.get("thinking")
+                    if reasoning and str(reasoning).strip():
+                        has_seen_native_reasoning = True
+                    content = str(message.get("content") or "")
+                    if content and content != cumulative_content:
+                        new_content = (
+                            content[len(cumulative_content) :] if content.startswith(cumulative_content) else content
+                        )
+                        for token in _parse_content(new_content):
+                            yield token
+                        cumulative_content = content
+                    continue
 
-                # Process provider data-line stream line by line
-                buffer = ""
-                # Instantiate parser for <think> tag fallback
-                think_parser = StreamThinkingParser()
-                # Track if we've seen native reasoning across all deltas
-                has_seen_native_reasoning = False
+                direct_text = str(choice.get("text") or "")
+                if direct_text:
+                    yield direct_text
 
-                async for line in response.content:
-                    line_str = line.decode("utf-8").strip()
-                    if not line_str:
-                        continue
-
-                    if line_str.startswith("data: "):
-                        data_str = line_str[6:]
-
-                        if data_str.strip() == "[DONE]":
-                            break
-
-                        try:
-                            chunk_data = json.loads(data_str)
-                            choices = chunk_data.get("choices", [])
-
-                            if choices:
-                                choice = choices[0]
-
-                                # Try delta format (OpenAI compatible)
-                                delta = choice.get("delta", {})
-                                if delta:
-                                    # 1) Dedicated reasoning field (优先使用原生 reasoning)
-                                    reasoning = (
-                                        delta.get("reasoning_content")
-                                        or delta.get("reasoning")
-                                        or delta.get("thinking")
-                                    )
-                                    if reasoning and str(reasoning).strip():
-                                        yield f"{THINKING_PREFIX}{reasoning}"
-                                        has_seen_native_reasoning = True
-
-                                    # 2) Content — parse for <think> tags
-                                    content = delta.get("content", "")
-                                    if content:
-                                        if has_seen_native_reasoning:
-                                            # 已检测到过原生 reasoning，使用 think parser 处理标签
-                                            # 丢弃 thinking 部分（已有原生 reasoning）
-                                            # 保留 content 和 answer 部分
-                                            for parsed_kind, parsed_text in think_parser.feed_sync(content):
-                                                if not parsed_text:
-                                                    continue
-                                                if parsed_kind in ("content", "answer"):
-                                                    yield parsed_text
-                                                elif parsed_kind == "tool_call":
-                                                    yield f"<tool_call>{parsed_text}</tool_call>"
-                                                # parsed_kind == "thinking" 被丢弃
-                                        else:
-                                            # 没有原生 reasoning 时，使用 think parser 解析
-                                            for kind, text in think_parser.feed_sync(content):
-                                                if kind == "thinking":
-                                                    yield f"{THINKING_PREFIX}{text}"
-                                                elif kind == "tool_call":
-                                                    yield f"<tool_call>{text}</tool_call>"
-                                                else:
-                                                    yield text
-                                    continue
-
-                                # Try message format (MiniMax specific)
-                                message = choice.get("message", {})
-                                if message:
-                                    content = message.get("content", "")
-                                    # 检查 message 中是否有原生 reasoning
-                                    msg_reasoning = (
-                                        message.get("reasoning_content")
-                                        or message.get("reasoning")
-                                        or message.get("thinking")
-                                    )
-                                    if msg_reasoning and str(msg_reasoning).strip():
-                                        has_seen_native_reasoning = True
-
-                                    if content and content != buffer:
-                                        # Only yield new content
-                                        new_content = content[len(buffer) :]
-                                        if new_content:
-                                            if has_seen_native_reasoning:
-                                                # 已检测到过原生 reasoning，使用 think parser 处理标签
-                                                # 丢弃 thinking 部分（已有原生 reasoning）
-                                                # 保留 content 和 answer 部分
-                                                for parsed_kind, parsed_text in think_parser.feed_sync(new_content):
-                                                    if not parsed_text:
-                                                        continue
-                                                    if parsed_kind in ("content", "answer"):
-                                                        yield parsed_text
-                                                    elif parsed_kind == "tool_call":
-                                                        yield f"<tool_call>{parsed_text}</tool_call>"
-                                                    # parsed_kind == "thinking" 被丢弃
-                                            else:
-                                                # 没有原生 reasoning 时，使用 think parser 解析
-                                                for kind, text in think_parser.feed_sync(new_content):
-                                                    if kind == "thinking":
-                                                        yield f"{THINKING_PREFIX}{text}"
-                                                    elif kind == "tool_call":
-                                                        yield f"<tool_call>{text}</tool_call>"
-                                                    else:
-                                                        yield text
-                                        buffer = content
-                                    continue
-
-                                # Try direct text format
-                                text = choice.get("text", "")
-                                if text:
-                                    yield text
-
-                        except json.JSONDecodeError:
-                            continue
-                        except (RuntimeError, ValueError):
-                            continue
-
-                # Flush any remaining buffered content
-                for kind, text in think_parser.flush():
-                    if not text:
-                        continue
-                    if kind == "thinking":
-                        # 如果已检测到过原生 reasoning，跳过 flush 中的 thinking
-                        if not has_seen_native_reasoning:
-                            yield f"{THINKING_PREFIX}{text}"
-                    elif kind == "answer":
-                        # answer 内容作为 content 输出
-                        yield text
-                    elif kind == "tool_call":
-                        yield f"<tool_call>{text}</tool_call>"
-                    else:
-                        # kind == "content" - 总是输出
-                        yield text
-
+            for kind, text in think_parser.flush():
+                if not text:
+                    continue
+                if kind == "thinking":
+                    if not has_seen_native_reasoning:
+                        yield f"{THINKING_PREFIX}{text}"
+                elif kind == "tool_call":
+                    yield f"<tool_call>{text}</tool_call>"
+                else:
+                    yield text
         except asyncio.TimeoutError:
             yield "Error: Request timeout"
-        except (RuntimeError, ValueError) as exc:
+        except (aiohttp.ClientError, RuntimeError, ValueError) as exc:
             yield f"Error: {exc!s}"
 
     async def invoke_stream_events(
@@ -1208,31 +1084,10 @@ class MiniMaxProvider(BaseProvider):
         )
         headers = self._headers(config, api_key, streaming=True)
 
-        session = await get_stream_session(
-            "minimax",
-            timeout_seconds=timeout,
-        )
-        async with session.post(
+        async for payload_obj in invoke_stream_with_retry(
             url,
-            headers=headers,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=timeout_seconds_or_none(timeout, default=60)),
-        ) as response:
-            response.raise_for_status()
-
-            content_type = response.headers.get("Content-Type", "")
-            if "application/json" in content_type:
-                payload_obj = await response.json()
-                if isinstance(payload_obj, dict):
-                    yield payload_obj
-                return
-
-            async for data_str in iter_data_line_payloads(response.content):
-                if data_str == "[DONE]":
-                    break
-                try:
-                    payload_obj = json.loads(data_str)
-                except (RuntimeError, ValueError):
-                    continue
-                if isinstance(payload_obj, dict):
-                    yield payload_obj
+            headers,
+            payload,
+            timeout,
+        ):
+            yield payload_obj

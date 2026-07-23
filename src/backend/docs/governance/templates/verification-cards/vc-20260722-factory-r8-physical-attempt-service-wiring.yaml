@@ -1,0 +1,51 @@
+schema_version: "verification-card/v1"
+id: "vc-20260722-factory-r8-physical-attempt-service-wiring"
+title: "FactoryRunService wires durable stage-claim revalidation into physical attempts"
+classification: "execution_fact_chain"
+severity: "P0"
+status: "complete"
+bench_status: "not_schedulable"
+scope:
+  files:
+    - "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py"
+    - "src/backend/polaris/delivery/tests/test_factory_audit_bundle.py"
+defect:
+  physical_error: >-
+    FactoryPhysicalAttemptLiveControlPort.__init__() missing 1 required
+    keyword-only argument: revalidate_active_stage_claim
+  affected_surface: "FactoryRunService.create_run"
+  observed_failures: 5
+root_cause: >-
+  The physical-attempt live port made durable stage-claim revalidation
+  mandatory, but FactoryRunService retained the former constructor call and
+  provided neither the callback nor its service-owned implementation.
+repair_contract:
+  callback_source: "FactoryRunService"
+  admission_authority: "FactoryWorkspaceRunAdmission.hold_active_stage_claim"
+  exact_fields:
+    - "factory_run_id"
+    - "workspace_fencing_token"
+    - "stage"
+    - "stage_claim_attempt"
+    - "stage_claim_nonce"
+  lease_renewal_during_revalidation: forbidden
+  missing_or_drifted_claim: fail_closed
+  recovered_admission_reopen: forbidden
+  target_project_edits: forbidden
+verification:
+  tdd_red: "5 failed at FactoryRunService.create_run"
+  focused_green: "8 passed"
+  factory_full: "1287 passed, 2 warnings"
+  delivery_full: "375 passed, 9 warnings"
+  ruff: "pass"
+  format: "pass on formatter-clean owned files; factory_run_service preserves pre-existing format debt"
+  mypy: "strict new tests pass; existing production typing debt unchanged"
+  compileall: "pass"
+  yaml_utf8: "pass"
+next_gate:
+  state: "not_schedulable"
+  action: >-
+    R9 replay fencing and R10 public import ownership are closed. Refreeze the
+    pre-bench source manifest, then authorize one fresh isolated L1-04 attempt.
+owner: "Codex /root"
+opened_at: "2026-07-22"

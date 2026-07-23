@@ -3,18 +3,29 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    QueryFactEventsV1,
+    bootstrap_fact_stream_workspace,
+    query_fact_events,
+)
 from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
-from polaris.cells.roles.kernel.internal.llm_caller import request_preparer as request_preparer_module
+from polaris.cells.roles.kernel.internal.llm_caller import (
+    helpers as llm_caller_helpers_module,
+    request_preparer as request_preparer_module,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     build_final_provider_request_snapshot,
     build_final_request_context_audit_for_request,
@@ -28,8 +39,22 @@ from polaris.cells.roles.kernel.internal.llm_caller.factory_role_evidence_bindin
     bind_factory_role_evidence,
     get_factory_role_evidence_binding,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_qualification import (
+    FINAL_PROVIDER_ATTEMPT_QUALIFICATION_REJECTION_SCHEMA,
+    FinalProviderAttemptQualificationError,
+    FinalProviderAttemptQualificationRejectionV1,
+    append_qualification_rejection,
+    bind_final_request_context_audit_to_frozen,
+    final_request_snapshot_evidence,
+    qualification_rejection_stream,
+    qualify_final_provider_request,
+    validate_exact_wire_before_reservation,
+)
+from polaris.cells.roles.kernel.internal.llm_caller.final_request_metrics import canonical_message_chars
+from polaris.cells.roles.kernel.internal.llm_caller.invoker import _invoke_executor_with_factory_dispatch
 from polaris.cells.roles.kernel.internal.llm_caller.request_facts import project_role_request_facts
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import pin_write_tool_file_param_to_targets
 from polaris.cells.roles.kernel.public import final_request_evidence_cutoff as cutoff_contract
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
@@ -40,6 +65,13 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     bind_factory_role_evidence_authority,
     get_factory_role_evidence_authority_binding,
 )
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+    FactoryPhysicalAttemptGrantViewV1,
+)
+from polaris.cells.roles.kernel.tests._physical_attempt_control_test_double import (
+    FactoryPhysicalAttemptTestControlPort as FactoryPhysicalAttemptLiveControlPort,
+)
 from polaris.kernelone.context.context_os.decision_log import build_context_result_id
 from polaris.kernelone.context.contracts import TurnEngineContextResult
 from polaris.kernelone.events.final_request_evidence import (
@@ -47,10 +79,15 @@ from polaris.kernelone.events.final_request_evidence import (
     RoleFinalRequestEvidenceSlotV1,
     RoleFinalRequestPolicyFactsV1,
     canonical_role_final_request_hash,
+    final_request_evidence_ref_for_requirement,
     render_role_final_request_policy_facts,
     role_final_request_policy,
 )
+from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
 from polaris.kernelone.llm.engine.contracts import AIRequest
+from polaris.kernelone.llm.engine.executor import AIExecutor
+from polaris.kernelone.llm.engine.provider_native_request import project_factory_provider_native_request
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 
 def _pm_contract_set() -> dict[str, Any]:
@@ -491,6 +528,39 @@ async def test_request_preparer_keeps_existing_correct_role_identity_once() -> N
     assert prepared.messages[0]["content"].count(marker) == 1
 
 
+@pytest.mark.asyncio
+async def test_request_preparer_reclamps_director_timeout_after_context_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now_values = iter((100.0, 110.0))
+    monkeypatch.setattr(llm_caller_helpers_module.time, "time", lambda: next(now_values))
+    context = SimpleNamespace(
+        message="Materialize the target.",
+        domain="code",
+        context_override={
+            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
+                {"role": "system", "content": "You are director."},
+                {"role": "user", "content": "Materialize the target."},
+            ],
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [],
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY: "none",
+            "factory_director_execution_deadline_epoch_seconds": 120.0,
+        },
+    )
+
+    prepared = await LLMRequestPreparer(workspace=".")._prepare_llm_request(
+        profile=_profile("director"),
+        system_prompt="You are director.",
+        context=context,
+        temperature=0.2,
+        max_tokens=4000,
+        stream=False,
+    )
+
+    assert prepared.request_options["timeout"] == 10
+    assert prepared.ai_request.options["timeout"] == 10
+
+
 @pytest.mark.parametrize("role", ["architect", "pm", "chief_engineer", "director", "qa"])
 @pytest.mark.asyncio
 async def test_prebuilt_messages_inject_exact_identity_for_each_core_role(role: str) -> None:
@@ -803,24 +873,48 @@ class _CancelledB32CutoffPort(_B32CutoffPort):
         raise asyncio.CancelledError
 
 
-def _b32_authority(port: _B32CutoffPort, *, role: str = "chief_engineer") -> FactoryRoleEvidenceAuthorityBindingV1:
+def _b32_authority(
+    port: _B32CutoffPort,
+    *,
+    role: str = "chief_engineer",
+    physical_attempt_control_port: object | None = None,
+    execution_authority_hash: str = "a" * 64,
+    attempt_budget: int = 3,
+) -> FactoryRoleEvidenceAuthorityBindingV1:
     return FactoryRoleEvidenceAuthorityBindingV1(
         schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
         verification_scope="factory",
         factory_run_id="factory-run-1",
         role=role,
         cutoff_port=port,
-        physical_attempt_control_port=port,
-        attempt_budget=3,
-        execution_authority_hash="a" * 64,
+        physical_attempt_control_port=physical_attempt_control_port or port,
+        attempt_budget=attempt_budget,
+        execution_authority_hash=execution_authority_hash,
     )
 
 
 async def _prepare_b33_factory_request(
     role: str,
+    *,
+    workspace: str = ".",
+    physical_attempt_control_port: object | None = None,
+    execution_authority_hash: str = "a" * 64,
+    attempt_budget: int = 3,
+    tool_definitions: list[dict[str, Any]] | None = None,
+    tool_choice: object = "none",
+    required_tools: list[str] | None = None,
+    temperature: float = 0.2,
+    max_tokens: int = 4000,
+    stream: bool = False,
 ) -> tuple[_B32CutoffPort, FactoryRoleEvidenceAuthorityBindingV1, SimpleNamespace, Any]:
     port = _B32CutoffPort()
-    authority = _b32_authority(port, role=role)
+    authority = _b32_authority(
+        port,
+        role=role,
+        physical_attempt_control_port=physical_attempt_control_port,
+        execution_authority_hash=execution_authority_hash,
+        attempt_budget=attempt_budget,
+    )
     context = SimpleNamespace(
         message="Review.",
         domain="code",
@@ -829,19 +923,20 @@ async def _prepare_b33_factory_request(
                 {"role": "system", "content": f"You are {role}."},
                 {"role": "user", "content": "Review."},
             ],
-            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [],
-            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY: "none",
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: list(tool_definitions or []),
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY: tool_choice,
             "capability_profile_ref": {"sha256": "f" * 64},
+            "required_tools": list(required_tools or []),
         },
     )
     with bind_factory_role_evidence_authority(authority):
-        prepared = await LLMRequestPreparer(workspace=".")._prepare_llm_request(
+        prepared = await LLMRequestPreparer(workspace=workspace)._prepare_llm_request(
             profile=_profile(role),
             system_prompt=f"You are {role}.",
             context=context,
-            temperature=0.2,
-            max_tokens=4000,
-            stream=False,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=stream,
             factory_semantic_identity=_semantic_identity(),
         )
     return port, authority, context, prepared
@@ -877,6 +972,12 @@ async def test_factory_binding_injects_one_exact_evidence_block_and_refreezes_al
     assert prepared.ai_request.context["context_result_id"] == build_context_result_id(prompt_digest)
     assert prepared.context_result.metadata["projection_id"] == prompt_digest
     assert prepared.context_result.metadata["context_result_id"] == build_context_result_id(prompt_digest)
+    assert prepared.context_os_audit["ok"] is True
+    assert prepared.context_os_audit["control_plane"] == {
+        "isolated": True,
+        "metadata_key_hits": [],
+        "content_hits": [],
+    }
     assert prepared.factory_semantic_request is not None
     assert type(prepared.factory_dispatch_port) is FactorySemanticDispatchPropagationPort
     assert prepared.factory_dispatch_port.frozen_semantic_request is prepared.factory_semantic_request
@@ -980,6 +1081,38 @@ async def test_factory_binding_injects_one_exact_evidence_block_and_refreezes_al
         second.factory_semantic_request.semantic_candidate_hash
         == prepared.factory_semantic_request.semantic_candidate_hash
     )
+
+
+@pytest.mark.asyncio
+async def test_factory_dispatch_rejects_prompt_evidence_not_equal_to_typed_binding() -> None:
+    _, authority, _, prepared = await _prepare_b33_factory_request("chief_engineer")
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    first_content = payload["messages"][0]["content"]
+    separator = "\n\npolaris.final_request_evidence.v1:begin\n"
+    candidate_system, evidence_tail = first_content.split(separator, 1)
+    policy_json, end_marker = evidence_tail.rsplit("\n", 1)
+    prompt_projection = json.loads(policy_json)
+    prompt_projection["slots"][0]["items"][0]["canonical_ref"] = "factory/evidence/forged-but-typed"
+    rendered = json.dumps(prompt_projection, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    payload["messages"][0]["content"] = f"{candidate_system}{separator}{rendered}\n{end_marker}"
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    tampered = replace(
+        frozen,
+        canonical_final_payload_json=canonical,
+        final_semantic_request_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    )
+    type(tampered).__post_init__(tampered)
+
+    with pytest.raises(RuntimeError, match="factory_dispatch_live_pairing_drift"):
+        FactorySemanticDispatchPropagationPort(
+            authority=authority,
+            binding=dispatch_port._binding,
+            frozen=tampered,
+            workspace=dispatch_port.workspace,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1426,3 +1559,955 @@ async def test_forged_context_cannot_create_factory_anchor_without_typed_binding
     assert "final_request_evidence_anchor" not in prepared.input_text
     assert "factory_run_id" not in prepared.ai_request.context
     assert "final_request_evidence_anchor" not in prepared.ai_request.context
+
+
+def _b35_audit(*, frozen: Any, context_snapshot_ref: str) -> dict[str, Any]:
+    payload = json.loads(frozen.canonical_final_payload_json)
+    message_chars = canonical_message_chars(payload["messages"])
+    tool_schema_chars = len(json.dumps(payload["tools"], ensure_ascii=False, separators=(",", ":")))
+    response_format_chars = (
+        0
+        if payload["response_format"] is None
+        else len(json.dumps(payload["response_format"], ensure_ascii=False, separators=(",", ":")))
+    )
+    message_tokens = message_chars // 4
+    tool_tokens = tool_schema_chars // 4
+    response_tokens = response_format_chars // 4
+    final_request_token_estimate = message_tokens + tool_tokens + response_tokens
+    context_window_tokens = 16_384
+    required_refs = [
+        final_request_evidence_ref_for_requirement(ref_kind) or ref_kind
+        for ref_kind in role_final_request_policy(payload["role"]).required_present_slots
+    ]
+    available_tools = [tool["function"]["name"] for tool in payload["tools"]]
+    audit = {
+        "schema_version": "llm.final_request_context_audit.v1",
+        "message_count": len(payload["messages"]),
+        "message_chars": message_chars,
+        "message_token_estimate": message_tokens,
+        "tool_schema_count": len(payload["tools"]),
+        "tool_schema_chars": tool_schema_chars,
+        "tool_schema_token_estimate": tool_tokens,
+        "response_format_chars": response_format_chars,
+        "response_format_token_estimate": response_tokens,
+        "final_request_token_estimate": final_request_token_estimate,
+        "context_window_tokens": context_window_tokens,
+        "context_window_utilization": round(final_request_token_estimate / context_window_tokens, 4),
+        "available_token_headroom": context_window_tokens - final_request_token_estimate,
+        "final_request_evidence_coverage": {
+            "schema_version": "polaris.final_request_evidence_coverage.v1",
+            "context_snapshot_ref": context_snapshot_ref,
+            "role_id": payload["role"],
+            "expected_role_id": payload["role"],
+            "role_identity_ok": True,
+            "required_refs": required_refs,
+            "included_refs": required_refs,
+            "missing_required_refs": [],
+            "required_tools": list(payload["required_tools"]),
+            "available_tools": available_tools,
+            "missing_required_tools": [tool for tool in payload["required_tools"] if tool not in available_tools],
+            "tool_schema_registry_coverage": {
+                "registry_source": "polaris.kernelone.tool_execution.ToolSpecRegistry",
+                "aliases_present": True,
+                "arg_aliases_present": True,
+                "schema_hash": (
+                    hashlib.sha256(
+                        json.dumps(
+                            payload["tools"],
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()[:24]
+                    if payload["tools"]
+                    else ""
+                ),
+                "missing_schema_tools": [],
+            },
+            "pass": True,
+        },
+    }
+    return bind_final_request_context_audit_to_frozen(audit=audit, frozen=frozen)
+
+
+@pytest.mark.parametrize("role", ["architect", "pm", "chief_engineer", "director", "qa"])
+@pytest.mark.asyncio
+async def test_factory_audit_replaces_observed_refs_with_authoritative_role_slots(
+    tmp_path: Path,
+    role: str,
+) -> None:
+    """Heuristic context signals must not impersonate Factory evidence slots."""
+
+    _, _, _, prepared = await _prepare_b33_factory_request(role, workspace=str(tmp_path))
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None
+    assert dispatch_port is not None
+
+    observed = build_final_request_context_audit_for_request(
+        ai_request=prepared.ai_request,
+        prepared=prepared,
+        profile=_profile(role),
+    )
+    observed_coverage = observed["final_request_evidence_coverage"]
+    assert "final_provider_request" in observed_coverage["included_refs"]
+
+    bound = dispatch_port.bind_final_request_context_audit(observed)
+    coverage = bound["final_request_evidence_coverage"]
+    expected_required = [
+        final_request_evidence_ref_for_requirement(ref_kind) or ref_kind
+        for ref_kind in role_final_request_policy(role).required_present_slots
+    ]
+    expected_present = [
+        final_request_evidence_ref_for_requirement(slot.ref_kind) or slot.ref_kind
+        for slot in dispatch_port._binding.policy_facts.slots
+        if slot.state == "present"
+    ]
+    assert coverage["required_refs"] == expected_required
+    assert coverage["included_refs"] == expected_present
+    assert coverage["missing_required_refs"] == []
+    assert coverage["coverage_ratio"] == 1.0
+    assert coverage["pass"] is True
+    assert "final_provider_request" in coverage["observed_included_refs"]
+    assert [source["ref_type"] for source in coverage["coverage_sources"]] == [
+        final_request_evidence_ref_for_requirement(slot.ref_kind) or slot.ref_kind
+        for slot in dispatch_port._binding.policy_facts.slots
+    ]
+    assert all(source["source"] == "factory_role_evidence_cutoff" for source in coverage["coverage_sources"])
+    assert [slot["present"] for slot in coverage["evidence_slots"]] == [
+        slot.state == "present" for slot in dispatch_port._binding.policy_facts.slots
+    ]
+    quality = bound["context_quality"]
+    assert quality["final_request_evidence_coverage_pass"] is True
+    assert quality["missing_required_refs"] == []
+    assert all(finding.get("code") != "missing_required_final_request_evidence" for finding in quality["findings"])
+
+    payload = json.loads(frozen.canonical_final_payload_json)
+    provider_request = {
+        "schema_version": "llm.provider_request_snapshot.v1",
+        "role": payload["role"],
+        "provider_id": payload["provider_id"],
+        "model": payload["model"],
+        "factory_final_request": final_request_snapshot_evidence(frozen),
+        "final_request_context_audit": bound,
+    }
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        provider_request,
+    )
+    coverage["context_snapshot_ref"] = context_snapshot_ref
+    qualified = qualify_final_provider_request(
+        workspace=str(tmp_path),
+        frozen=frozen,
+        binding=dispatch_port._binding,
+        final_request_context_audit=bound,
+        context_snapshot_ref=context_snapshot_ref,
+    )
+    assert qualified == bound
+
+
+def test_b35_message_accounting_covers_complete_provider_message_objects() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "name": "director",
+            "tool_call_id": "call-1",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path":"src/main.py"}'},
+                }
+            ],
+        }
+    ]
+    expected = len(json.dumps(messages, ensure_ascii=False, separators=(",", ":")))
+    assert canonical_message_chars(messages) == expected
+    assert canonical_message_chars(messages) > len(messages[0]["content"])
+
+
+def _b35_provider_request_snapshot(*, frozen: Any) -> dict[str, Any]:
+    payload = json.loads(frozen.canonical_final_payload_json)
+    snapshot_audit = _b35_audit(frozen=frozen, context_snapshot_ref="")
+    return {
+        "schema_version": "llm.provider_request_snapshot.v1",
+        "role": payload["role"],
+        "provider_id": payload["provider_id"],
+        "model": payload["model"],
+        "factory_final_request": final_request_snapshot_evidence(frozen),
+        "final_request_context_audit": snapshot_audit,
+    }
+
+
+def _b35_route_authority(*, frozen: Any) -> dict[str, Any]:
+    payload = json.loads(frozen.canonical_final_payload_json)
+    mode = "stream" if payload["stream"] else "invoke"
+    native = project_factory_provider_native_request(
+        provider_type="openai_compat",
+        mode=mode,
+        final_payload=payload,
+        provider_config={"base_url": "https://provider.test/v1"},
+    )
+    assert native is not None
+    return {
+        **native.authority(),
+        "schema_version": "llm.factory_physical_provider_route.v2",
+        "native_request_schema_version": native.schema_version,
+        "provider_id": payload["provider_id"],
+        "model": payload["model"],
+    }
+
+
+def _b35_wire(*, frozen: Any) -> dict[str, Any]:
+    route = _b35_route_authority(frozen=frozen)
+    return {
+        "endpoint": route["exact_endpoint"],
+        "headers": {},
+        "body": route["expected_body"],
+        "transport": {"kind": route["exact_transport_kind"], "timeout": 60},
+    }
+
+
+def _bind_b35_route(dispatch_port: FactorySemanticDispatchPropagationPort, *, frozen: Any) -> None:
+    payload = json.loads(frozen.canonical_final_payload_json)
+    dispatch_port.bind_provider_route_authority(
+        provider_id=payload["provider_id"],
+        provider_type="openai_compat",
+        model=payload["model"],
+        mode="stream" if payload["stream"] else "invoke",
+        provider_config={"base_url": "https://provider.test/v1"},
+    )
+
+
+@pytest.mark.parametrize("role", ["architect", "pm", "chief_engineer", "director", "qa"])
+@pytest.mark.asyncio
+async def test_b35_exact_snapshot_and_wire_qualify_before_reservation(
+    tmp_path: Any,
+    role: str,
+) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request(role)
+    frozen = prepared.factory_semantic_request
+    assert frozen is not None
+    dispatch_port = prepared.factory_dispatch_port
+    assert dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    provider_request = _b35_provider_request_snapshot(frozen=frozen)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        provider_request,
+    )
+    audit = _b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref)
+    coverage = audit["final_request_evidence_coverage"]
+    policy = role_final_request_policy(role)
+    assert coverage["required_refs"] == [
+        final_request_evidence_ref_for_requirement(ref_kind) or ref_kind for ref_kind in policy.required_present_slots
+    ]
+    assert coverage["included_refs"] == [
+        final_request_evidence_ref_for_requirement(slot.ref_kind) or slot.ref_kind
+        for slot in dispatch_port._binding.policy_facts.slots
+        if slot.state == "present"
+    ]
+    assert coverage["missing_required_refs"] == []
+    assert coverage["pass"] is True
+    qualified = qualify_final_provider_request(
+        workspace=str(tmp_path),
+        frozen=frozen,
+        binding=dispatch_port._binding,
+        final_request_context_audit=audit,
+        context_snapshot_ref=context_snapshot_ref,
+    )
+    assert qualified == audit
+    wire = _b35_wire(frozen=frozen)
+    route = _b35_route_authority(frozen=frozen)
+    validate_exact_wire_before_reservation(
+        frozen=frozen,
+        wire_request=wire,
+        physical_route_authority=route,
+    )
+    wire["body"]["tool_choice"] = "required"
+    with pytest.raises(FinalProviderAttemptQualificationError, match="physical_wire_tool_choice_drift"):
+        validate_exact_wire_before_reservation(
+            frozen=frozen,
+            wire_request=wire,
+            physical_route_authority=route,
+        )
+    wire["body"]["tool_choice"] = payload["tool_choice"]
+    wire["body"]["response_format"] = {"type": "json_object"}
+    with pytest.raises(FinalProviderAttemptQualificationError, match="physical_wire_response_format_drift"):
+        validate_exact_wire_before_reservation(
+            frozen=frozen,
+            wire_request=wire,
+            physical_route_authority=route,
+        )
+
+
+@pytest.mark.asyncio
+async def test_b35_required_tools_are_frozen_authority_not_audit_self_report(tmp_path: Path) -> None:
+    read_file_schema = ToolSpecRegistry.get_llm_schema(
+        "read_file",
+        include_arg_aliases=True,
+        deterministic=True,
+    )
+    _, _, _, prepared = await _prepare_b33_factory_request(
+        "director",
+        tool_definitions=[read_file_schema],
+        tool_choice="auto",
+        required_tools=["read_file"],
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    assert payload["required_tools"] == ["read_file"]
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        _b35_provider_request_snapshot(frozen=frozen),
+    )
+    audit = _b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref)
+    audit["final_request_evidence_coverage"]["required_tools"] = []
+    audit["final_request_evidence_coverage"]["missing_required_tools"] = []
+
+    with pytest.raises(
+        FinalProviderAttemptQualificationError,
+        match="final_request_required_tools_authority_drift",
+    ):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=audit,
+            context_snapshot_ref=context_snapshot_ref,
+        )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_code"),
+    [
+        ("model", "physical_wire_model_drift"),
+        ("endpoint", "physical_wire_endpoint_drift"),
+        ("transport", "physical_wire_transport_drift"),
+        ("provider", "physical_provider_route_authority_drift"),
+        ("mode", "physical_provider_route_authority_drift"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_b35_wire_and_route_authority_drift_rejects(
+    case: str,
+    expected_code: str,
+) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request("director")
+    frozen = prepared.factory_semantic_request
+    assert frozen is not None
+    wire = _b35_wire(frozen=frozen)
+    route = _b35_route_authority(frozen=frozen)
+    if case == "model":
+        wire["body"]["model"] = "other-model"
+    elif case == "endpoint":
+        wire["endpoint"] = "https://other-provider.test/v1/chat/completions"
+    elif case == "transport":
+        wire["transport"]["kind"] = "urllib.request"
+    elif case == "provider":
+        route["provider_id"] = "other-provider"
+    elif case == "mode":
+        route["mode"] = "stream"
+    with pytest.raises(FinalProviderAttemptQualificationError, match=expected_code):
+        validate_exact_wire_before_reservation(
+            frozen=frozen,
+            wire_request=wire,
+            physical_route_authority=route,
+        )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_code"),
+    [
+        ("messages_only_audit", "final_request_context_audit_schema_invalid"),
+        ("token_missing", "final_request_token_estimate_invalid"),
+        ("window_missing", "final_request_context_window_invalid"),
+        ("clipped", "final_request_context_clipped"),
+        ("evidence_slot_missing", "final_request_missing_refs_formula_mismatch"),
+        ("required_refs_extra", "final_request_role_required_refs_drift"),
+        ("included_refs_extra", "final_request_role_included_refs_drift"),
+        ("available_tools_drift", "final_request_available_tools_drift"),
+        ("self_reported_pass_drift", "final_request_evidence_coverage_failed"),
+        ("wrong_role", "final_request_role_identity_mismatch"),
+        ("snapshot_ref_drift", "context_snapshot_ref_audit_mismatch"),
+        ("message_count_drift", "final_request_message_count_mismatch"),
+        ("tool_count_drift", "final_request_tool_schema_count_mismatch"),
+        ("token_sum_drift", "final_request_token_estimate_inconsistent"),
+        ("headroom_drift", "final_request_token_headroom_mismatch"),
+        ("utilization_drift", "final_request_context_utilization_mismatch"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_b35_malformed_final_request_evidence_rejects(
+    tmp_path: Any,
+    case: str,
+    expected_code: str,
+) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request("director")
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        _b35_provider_request_snapshot(frozen=frozen),
+    )
+    audit = copy.deepcopy(_b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref))
+    coverage = audit["final_request_evidence_coverage"]
+    if case == "messages_only_audit":
+        audit.pop("schema_version")
+    elif case == "token_missing":
+        audit["final_request_token_estimate"] = 0
+    elif case == "window_missing":
+        audit["context_window_tokens"] = 0
+    elif case == "clipped":
+        audit["context_window_tokens"] = audit["final_request_token_estimate"] - 1
+        audit["context_window_utilization"] = 1.1
+        audit["available_token_headroom"] = 0
+    elif case == "evidence_slot_missing":
+        coverage["pass"] = False
+        coverage["missing_required_refs"] = ["chief_engineer_blueprint"]
+    elif case == "required_refs_extra":
+        coverage["required_refs"].append("self_reported_extra")
+    elif case == "included_refs_extra":
+        coverage["included_refs"].append("self_reported_extra")
+    elif case == "available_tools_drift":
+        coverage["available_tools"].append("forged_tool")
+    elif case == "self_reported_pass_drift":
+        coverage["pass"] = False
+    elif case == "wrong_role":
+        coverage["role_id"] = "pm"
+    elif case == "snapshot_ref_drift":
+        coverage["context_snapshot_ref"] = "d" * 24
+    elif case == "message_count_drift":
+        audit["message_count"] += 1
+    elif case == "tool_count_drift":
+        audit["tool_schema_count"] += 1
+    elif case == "token_sum_drift":
+        audit["final_request_token_estimate"] += 1
+    elif case == "headroom_drift":
+        audit["available_token_headroom"] -= 1
+    elif case == "utilization_drift":
+        audit["context_window_utilization"] = 0.5
+    with pytest.raises(FinalProviderAttemptQualificationError, match=expected_code):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=audit,
+            context_snapshot_ref=context_snapshot_ref,
+        )
+
+
+@pytest.mark.asyncio
+async def test_b35_context_snapshot_content_hash_tamper_rejects(tmp_path: Any) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request("qa")
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        _b35_provider_request_snapshot(frozen=frozen),
+    )
+    snapshot_path = Path(ContextSnapshotAuditPinRepository(workspace=str(tmp_path)).snapshot_path(context_snapshot_ref))
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    snapshot["messages"] = [{"role": "system", "content": "tampered"}]
+    snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(FinalProviderAttemptQualificationError, match="context_snapshot_hash_mismatch"):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=_b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref),
+            context_snapshot_ref=context_snapshot_ref,
+        )
+
+
+@pytest.mark.asyncio
+async def test_b35_toolspec_registry_alias_contract_is_exact(tmp_path: Any) -> None:
+    schema = ToolSpecRegistry.get_llm_schema(
+        "write_file",
+        include_arg_aliases=True,
+        deterministic=True,
+    )
+    assert isinstance(schema, dict)
+    scoped_schema = pin_write_tool_file_param_to_targets([schema], ("src/main.py",))[0]
+    _, _, _, prepared = await _prepare_b33_factory_request(
+        "director",
+        tool_definitions=[scoped_schema],
+        tool_choice="auto",
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    assert payload["tools"] == [scoped_schema]
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        _b35_provider_request_snapshot(frozen=frozen),
+    )
+    audit = _b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref)
+    registry = audit["final_request_evidence_coverage"]["tool_schema_registry_coverage"]
+    registry["schema_hash"] = hashlib.sha256(
+        json.dumps(payload["tools"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:24]
+    qualified = qualify_final_provider_request(
+        workspace=str(tmp_path),
+        frozen=frozen,
+        binding=dispatch_port._binding,
+        final_request_context_audit=audit,
+        context_snapshot_ref=context_snapshot_ref,
+    )
+    assert qualified["final_request_evidence_coverage"]["tool_schema_registry_coverage"]["schema_hash"]
+    drifted_audit = copy.deepcopy(audit)
+    drifted_audit["final_request_evidence_coverage"]["tool_schema_registry_coverage"]["schema_hash"] = "0" * 24
+    with pytest.raises(FinalProviderAttemptQualificationError, match="tool_registry_schema_hash_mismatch"):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=drifted_audit,
+            context_snapshot_ref=context_snapshot_ref,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        (lambda body: body.__setitem__("stream", True), "physical_wire_stream_drift"),
+        (lambda body: body.__setitem__("max_tokens", body["max_tokens"] - 1), "physical_wire_max_tokens_drift"),
+        (lambda body: body.__setitem__("top_p", 0.9), "physical_wire_body_drift"),
+        (lambda body: body.__setitem__("parallel_tool_calls", True), "physical_wire_body_drift"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_b35_native_body_is_closed_set_and_exact(
+    mutation: Any,
+    expected_code: str,
+) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request("director")
+    frozen = prepared.factory_semantic_request
+    assert frozen is not None
+    wire = _b35_wire(frozen=frozen)
+    route = _b35_route_authority(frozen=frozen)
+    mutation(wire["body"])
+
+    with pytest.raises(FinalProviderAttemptQualificationError, match=expected_code):
+        validate_exact_wire_before_reservation(
+            frozen=frozen,
+            wire_request=wire,
+            physical_route_authority=route,
+        )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_code"),
+    [
+        ("extra_argument", "tool_registry_arg_aliases_drift"),
+        ("function_description", "tool_registry_function_contract_drift"),
+        ("invalid_scoped_enum", "tool_registry_scoped_enum_invalid"),
+        ("unauthorized_scoped_enum", "tool_registry_scoped_enum_unauthorized"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_b35_toolspec_registry_contract_drift_rejects(
+    tmp_path: Any,
+    case: str,
+    expected_code: str,
+) -> None:
+    schema = ToolSpecRegistry.get_llm_schema(
+        "write_file",
+        include_arg_aliases=True,
+        deterministic=True,
+    )
+    assert isinstance(schema, dict)
+    drifted_schema = copy.deepcopy(schema)
+    function = drifted_schema["function"]
+    properties = function["parameters"]["properties"]
+    if case == "extra_argument":
+        properties["unregistered_optional_argument"] = {"description": "", "type": "string"}
+    elif case == "function_description":
+        function["description"] = "unregistered provider-visible contract"
+    elif case == "invalid_scoped_enum":
+        properties["file"]["enum"] = [7]
+    elif case == "unauthorized_scoped_enum":
+        properties["content"]["enum"] = ["forced content"]
+    _, _, _, prepared = await _prepare_b33_factory_request(
+        "director",
+        tool_definitions=[drifted_schema],
+        tool_choice="auto",
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        _b35_provider_request_snapshot(frozen=frozen),
+    )
+    with pytest.raises(FinalProviderAttemptQualificationError, match=expected_code):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=_b35_audit(
+                frozen=frozen,
+                context_snapshot_ref=context_snapshot_ref,
+            ),
+            context_snapshot_ref=context_snapshot_ref,
+        )
+
+
+@pytest.mark.asyncio
+async def test_b35_context_snapshot_symlink_cannot_cross_workspace(tmp_path: Any) -> None:
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    _, _, _, prepared = await _prepare_b33_factory_request("director", workspace=str(workspace_b))
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(workspace_a),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        _b35_provider_request_snapshot(frozen=frozen),
+    )
+    source_repository = ContextSnapshotAuditPinRepository(workspace=str(workspace_a))
+    target_repository = ContextSnapshotAuditPinRepository(workspace=str(workspace_b))
+    target_path = Path(target_repository.snapshot_path(context_snapshot_ref))
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.symlink_to(Path(source_repository.snapshot_path(context_snapshot_ref)))
+    with pytest.raises(FinalProviderAttemptQualificationError, match="context_snapshot_unreadable"):
+        qualify_final_provider_request(
+            workspace=str(workspace_b),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=_b35_audit(
+                frozen=frozen,
+                context_snapshot_ref=context_snapshot_ref,
+            ),
+            context_snapshot_ref=context_snapshot_ref,
+        )
+
+
+@pytest.mark.asyncio
+async def test_b35_context_snapshot_must_bind_exact_frozen_request(tmp_path: Any) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request("director")
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    provider_snapshot = _b35_provider_request_snapshot(frozen=frozen)
+    provider_snapshot["factory_final_request"]["request_identity"]["request_freeze_id"] = "forged-freeze"
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        provider_snapshot,
+    )
+    with pytest.raises(FinalProviderAttemptQualificationError, match="context_snapshot_frozen_request_mismatch"):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=_b35_audit(
+                frozen=frozen,
+                context_snapshot_ref=context_snapshot_ref,
+            ),
+            context_snapshot_ref=context_snapshot_ref,
+        )
+
+
+@pytest.mark.asyncio
+async def test_b35_unreadable_snapshot_rejects_before_physical_control(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port, _, _, prepared = await _prepare_b33_factory_request(
+        "director",
+        workspace=str(tmp_path),
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    context_snapshot_ref = "a" * 24
+    audit = _b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref)
+    reserve_calls = 0
+
+    def _unexpected_reserve(_command: object) -> object:
+        nonlocal reserve_calls
+        reserve_calls += 1
+        raise AssertionError("qualification must reject before reserve")
+
+    monkeypatch.setattr(port, "reserve", _unexpected_reserve)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="test_b35_unreadable_rejection",
+            streams=(qualification_rejection_stream("factory-run-1"),),
+        )
+    )
+    with pytest.raises(FinalProviderAttemptQualificationError, match="context_snapshot_unreadable"):
+        dispatch_port.qualify(
+            final_request_context_audit=audit,
+            context_snapshot_ref=context_snapshot_ref,
+        )
+    assert reserve_calls == 0
+    events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(tmp_path),
+            stream=qualification_rejection_stream("factory-run-1"),
+            limit=10,
+        )
+    )
+    assert events.total == 1
+    assert events.events[0]["payload"]["rejection_code"] == "context_snapshot_unreadable"
+
+
+@pytest.mark.asyncio
+async def test_b35_snapshot_removed_after_pass_is_rejected_before_reservation(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port, _, _, prepared = await _prepare_b33_factory_request(
+        "director",
+        workspace=str(tmp_path),
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="test_b35_snapshot_toctou",
+            streams=(qualification_rejection_stream("factory-run-1"),),
+        )
+    )
+    payload = json.loads(frozen.canonical_final_payload_json)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        _b35_provider_request_snapshot(frozen=frozen),
+    )
+    dispatch_port.qualify(
+        final_request_context_audit=_b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref),
+        context_snapshot_ref=context_snapshot_ref,
+    )
+    _bind_b35_route(dispatch_port, frozen=frozen)
+    reserve_calls = 0
+
+    def _unexpected_reserve(_command: object) -> object:
+        nonlocal reserve_calls
+        reserve_calls += 1
+        raise AssertionError("removed qualification snapshot must reject before reserve")
+
+    monkeypatch.setattr(port, "reserve", _unexpected_reserve)
+    snapshot_path = Path(ContextSnapshotAuditPinRepository(workspace=str(tmp_path)).snapshot_path(context_snapshot_ref))
+    snapshot_path.unlink()
+    wire = _b35_wire(frozen=frozen)
+    with pytest.raises(FinalProviderAttemptQualificationError, match="context_snapshot_unreadable"):
+        dispatch_port.dispatch_sync(wire_request=wire, send=lambda _request: "unexpected")
+    assert reserve_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_b35_invoker_arms_exact_sidecar_after_readable_snapshot(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request(
+        "chief_engineer",
+        workspace=str(tmp_path),
+    )
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="test_b35_invoker_qualification",
+            streams=(qualification_rejection_stream("factory-run-1"),),
+        )
+    )
+    seen_port: object | None = None
+
+    class _Executor:
+        async def invoke(self, _request: object, *, physical_dispatch_port: object) -> str:
+            nonlocal seen_port
+            seen_port = physical_dispatch_port
+            return "qualified"
+
+    from polaris.cells.roles.kernel.internal.llm_caller import (
+        context_audit as context_audit_module,
+        invoker as invoker_module,
+    )
+
+    def _qualified_audit(*, ai_request: Any, prepared: Any, profile: Any) -> dict[str, Any]:
+        del profile
+        frozen = prepared.factory_semantic_request
+        assert frozen is not None
+        request_context = getattr(ai_request, "context", None)
+        context_snapshot_ref = (
+            str(request_context.get("context_snapshot_ref") or "") if isinstance(request_context, dict) else ""
+        )
+        return _b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref)
+
+    monkeypatch.setattr(invoker_module, "build_final_request_context_audit_for_request", _qualified_audit)
+    monkeypatch.setattr(context_audit_module, "build_final_request_context_audit_for_request", _qualified_audit)
+
+    result = await _invoke_executor_with_factory_dispatch(
+        executor=_Executor(),
+        prepared=prepared,
+        request=prepared.ai_request,
+        profile=_profile("chief_engineer"),
+    )
+    assert result == "qualified"
+    assert seen_port is prepared.factory_dispatch_port
+    assert prepared.factory_dispatch_port is not None
+    assert prepared.factory_dispatch_port._qualified_audit is not None
+    assert len(prepared.factory_dispatch_port._qualified_context_snapshot_ref) == 24
+    first_ref = prepared.factory_dispatch_port._qualified_context_snapshot_ref
+    await _invoke_executor_with_factory_dispatch(
+        executor=_Executor(),
+        prepared=prepared,
+        request=prepared.ai_request,
+        profile=_profile("chief_engineer"),
+    )
+    assert prepared.factory_dispatch_port._qualified_context_snapshot_ref == first_ref
+
+
+@pytest.mark.asyncio
+async def test_b35_qualified_sidecar_conserves_one_real_physical_attempt(tmp_path: Any) -> None:
+    authority_hash = "f" * 64
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    control.register_grant(
+        FactoryPhysicalAttemptGrantViewV1(
+            schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+            verification_scope="factory",
+            factory_run_id="factory-run-1",
+            role="chief_engineer",
+            stage="chief_engineer_review",
+            workspace_fencing_token=1,
+            stage_claim_attempt=1,
+            stage_claim_nonce="b35-stage-nonce",
+            execution_authority_hash=authority_hash,
+            attempt_budget=3,
+        )
+    )
+    _, _, _, prepared = await _prepare_b33_factory_request(
+        "chief_engineer",
+        workspace=str(tmp_path),
+        physical_attempt_control_port=control,
+        execution_authority_hash=authority_hash,
+        attempt_budget=3,
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="test_b35_physical_dispatch",
+            streams=(
+                "task_runtime.execution",
+                qualification_rejection_stream("factory-run-1"),
+            ),
+        )
+    )
+    payload = json.loads(frozen.canonical_final_payload_json)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        _b35_provider_request_snapshot(frozen=frozen),
+    )
+    dispatch_port.qualify(
+        final_request_context_audit=_b35_audit(frozen=frozen, context_snapshot_ref=context_snapshot_ref),
+        context_snapshot_ref=context_snapshot_ref,
+    )
+    _bind_b35_route(dispatch_port, frozen=frozen)
+    sends: list[dict[str, Any]] = []
+    wire = _b35_wire(frozen=frozen)
+    result = dispatch_port.dispatch_sync(
+        wire_request=wire,
+        send=lambda request: sends.append(dict(request)) or "ok",
+    )
+    assert result == "ok"
+    assert len(sends) == 1
+    assert sends[0]["body"].get("tool_choice") == wire["body"].get("tool_choice")
+    assert len(sends[0]["body"]["messages"]) == len(wire["body"]["messages"])
+    budget = control.budget_state(authority_hash)
+    assert budget.committed_count == 1
+    assert budget.terminal_count == 1
+    assert budget.consumed_attempts == 1
+    assert budget.settled is True
+
+
+def test_b35_rejection_fact_has_no_physical_attempt_identity(tmp_path: Any) -> None:
+    rejection = FinalProviderAttemptQualificationRejectionV1(
+        schema_version=FINAL_PROVIDER_ATTEMPT_QUALIFICATION_REJECTION_SCHEMA,
+        verification_scope="factory",
+        scope_id="factory-run-qualification",
+        factory_run_id="factory-run-qualification",
+        run_id="role-run-qualification",
+        role="director",
+        turn_id="role-run-qualification:turn:0",
+        call_id="b" * 32,
+        request_freeze_id="c" * 32,
+        rejection_code="context_snapshot_unreadable",
+    )
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="test_b35_qualification_rejection",
+            streams=(qualification_rejection_stream(rejection.scope_id),),
+        )
+    )
+    append_qualification_rejection(workspace=str(tmp_path), rejection=rejection)
+    append_qualification_rejection(workspace=str(tmp_path), rejection=rejection)
+    events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(tmp_path),
+            stream=qualification_rejection_stream(rejection.scope_id),
+            limit=10,
+        )
+    )
+    assert events.total == 1
+    payload = events.events[0]["payload"]
+    assert payload["rejection_code"] == "context_snapshot_unreadable"
+    assert "provider_request_id" not in payload
+    assert "reservation" not in payload
+    assert "attempt_budget" not in payload

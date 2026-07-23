@@ -17,7 +17,10 @@ from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, ReplayPolicy
 from nats.js.errors import Error as JetStreamError
 from polaris.cells.control_plane.run_ledger.public import (
     FACTORY_SETTLEMENT_BARRIER_SCHEMA_V1,
+    AppendRunLedgerEventCommandV1,
     FactorySettlementBarrierResultV1,
+    RunLedgerAppendResultV1,
+    append_run_ledger_event,
     query_factory_settlement_barrier,
 )
 from polaris.cells.events.fact_stream.public import (
@@ -31,6 +34,11 @@ from polaris.cells.events.fact_stream.public import (
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
     query_fact_events,
+)
+from polaris.cells.runtime.task_runtime.public import (
+    DirectedEffectRecoverySweepResultV1,
+    ReconcileAmbiguousDirectedEffectsCommandV1,
+    reconcile_ambiguous_directed_effects,
 )
 from polaris.cells.storage.layout.public import (
     ResolveStorageLayoutQueryV1,
@@ -97,6 +105,11 @@ _FENCED_CODES: Final[frozenset[str]] = frozenset(
 FactQueryHandler = Callable[[QueryFactEventsV1], FactStreamQueryResultV1]
 FactAppendHandler = Callable[[AppendFactEventCommandV1], FactEventAppendedV1]
 BarrierQueryHandler = Callable[[str | Path, str], FactorySettlementBarrierResultV1]
+DirectedEffectRecoveryHandler = Callable[
+    [ReconcileAmbiguousDirectedEffectsCommandV1],
+    DirectedEffectRecoverySweepResultV1,
+]
+RunLedgerAppendHandler = Callable[[AppendRunLedgerEventCommandV1], RunLedgerAppendResultV1]
 LeaseReader = Callable[[], FactoryWorkspaceRunLeaseV1 | None]
 WakeCallback = Callable[[], Coroutine[Any, Any, SettlementReplayReport]]
 
@@ -1000,7 +1013,8 @@ async def _get_default_wake_client() -> SettlementWakeClient:
 
 def _wake_binding(workspace: str) -> tuple[str, str]:
     layout = resolve_storage_layout(ResolveStorageLayoutQueryV1(workspace=workspace))
-    workspace_key = str(layout.extras.get("workspace_key") or "").strip()
+    extras = layout.extras if isinstance(layout.extras, Mapping) else {}
+    workspace_key = str(extras.get("workspace_key") or "").strip()
     if not workspace_key:
         raise FactorySettlementRuntimeError(
             "Storage layout did not provide a workspace key",
@@ -1024,6 +1038,8 @@ async def create_factory_settlement_runtime(
     fact_query_handler: FactQueryHandler = query_fact_events,
     fact_append_handler: FactAppendHandler = append_fact_event,
     barrier_query_handler: BarrierQueryHandler = query_factory_settlement_barrier,
+    directed_effect_recovery_handler: DirectedEffectRecoveryHandler = reconcile_ambiguous_directed_effects,
+    run_ledger_append_handler: RunLedgerAppendHandler = append_run_ledger_event,
 ) -> FactorySettlementRuntime:
     """Assemble production settlement ports for one canonical workspace."""
 
@@ -1038,6 +1054,66 @@ async def create_factory_settlement_runtime(
             maintenance_reason="factory_settlement_runtime_startup",
         )
     )
+
+    recovery = directed_effect_recovery_handler(
+        ReconcileAmbiguousDirectedEffectsCommandV1(
+            workspace=canonical_workspace,
+            reason="factory settlement startup recovery",
+        )
+    )
+    if not recovery.ok:
+        raise FactorySettlementRuntimeError(
+            "Factory settlement directed-effect recovery failed",
+            code="factory_settlement_directed_effect_recovery_failed",
+            details={
+                "workspace": canonical_workspace,
+                "scanned_session_count": recovery.scanned_session_count,
+                "failures": tuple(dict(item) for item in recovery.failures),
+            },
+        )
+    for item in recovery.items:
+        if not item.factory_run_id:
+            raise FactorySettlementRuntimeError(
+                "Factory settlement recovery fact is missing Factory authority",
+                code="factory_settlement_directed_effect_recovery_projection_authority_missing",
+                details={
+                    "workspace": canonical_workspace,
+                    "task_id": item.task_id,
+                    "session_id": item.session_id,
+                    "operation_id": item.operation_id,
+                    "event_id": item.event_id,
+                },
+            )
+        try:
+            run_ledger_append_handler(
+                AppendRunLedgerEventCommandV1(
+                    workspace=canonical_workspace,
+                    run_id=item.factory_run_id,
+                    event={
+                        "schema_version": "factory.directed_effect_recovery_projection.v1",
+                        "event_type": "directed_effect_recovery",
+                        "stage": "director_mutation",
+                        "run_id": item.factory_run_id,
+                        "task_id": str(item.task_id),
+                        "operation_id": item.operation_id,
+                        "ok": False,
+                        "physical_evidence": {"effect_recovery": item.to_record()},
+                    },
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise FactorySettlementRuntimeError(
+                "Factory settlement recovery projection failed",
+                code="factory_settlement_directed_effect_recovery_projection_failed",
+                details={
+                    "workspace": canonical_workspace,
+                    "factory_run_id": item.factory_run_id,
+                    "task_id": item.task_id,
+                    "operation_id": item.operation_id,
+                    "event_id": item.event_id,
+                    "error": str(exc),
+                },
+            ) from exc
 
     fact_stream = FactStreamPublicServiceAdapter(
         query_handler=fact_query_handler,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -140,15 +141,35 @@ def _is_blocking_status(status: str) -> bool:
     return status in _TERMINAL_FAILURE or status in _TERMINAL_BLOCKED
 
 
-def _materialized_any_files(row: dict[str, Any] | None) -> bool:
-    """Whether a runtime row's adapter result landed at least one file on disk."""
+def _has_task_runtime_dependency_satisfaction(row: dict[str, Any] | None) -> bool:
+    """Whether TaskRuntime durably authorized failed-output consumption."""
+
     if not row:
         return False
-    adapter_result = _as_dict(_as_dict(row.get("metadata")).get("adapter_result"))
-    for key in ("new_files", "modified_files"):
-        if any(str(item).strip() for item in _as_list(adapter_result.get(key))):
-            return True
-    return False
+    evidence = _as_dict(_as_dict(row.get("metadata")).get("task_runtime_dependency_satisfaction"))
+    if (
+        evidence.get("schema_version") != "task-runtime.dependency-satisfaction/1"
+        or evidence.get("kind") != "failed_director_materialization"
+        or not _as_list(evidence.get("materialized_paths"))
+        or _safe_int(evidence.get("receipt_count")) <= 0
+        or any(
+            _safe_int(evidence.get(key)) != 0 for key in ("failed_receipt_count", "dead_letter_count", "aborted_count")
+        )
+    ):
+        return False
+    expected_hash = str(evidence.get("evidence_hash") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+        return False
+    hash_payload = dict(evidence)
+    hash_payload.pop("evidence_hash", None)
+    encoded = json.dumps(
+        hash_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest() == expected_hash
 
 
 def _blocking_identity_tokens(
@@ -160,17 +181,12 @@ def _blocking_identity_tokens(
     for index, status in enumerate(statuses):
         if index >= len(contract_rows) or not _is_blocking_status(status):
             continue
-        # A task that FAILED but still materialized its declared files must not
-        # cascade-block its dependents: the files exist on disk, so a downstream
-        # task (e.g. the entrypoint that imports them, or the test/README task)
-        # can still be created. Only a failure that produced NO artifact — or a
-        # genuinely blocked task — propagates a dependency block. Live defect: a
-        # single ``director_materialization_quality_failed`` task whose source
-        # files DID land was blocking the entrypoint + tests, so package.json's
-        # ``start`` script referenced a never-created ``src/index.js`` and the
-        # whole project was unrunnable despite most code already being on disk.
+        # Only TaskRuntime may authorize a failed task's committed capability as
+        # dependency-satisfying.  Raw adapter ``new_files`` is not authority:
+        # TaskRuntime binds declared regular files to a closed, all-success DEO
+        # receipt summary and stores the hash-protected evidence on the row.
         matched = matched_rows[index] if index < len(matched_rows) else None
-        if status in _TERMINAL_FAILURE and _materialized_any_files(matched):
+        if status in _TERMINAL_FAILURE and _has_task_runtime_dependency_satisfaction(matched):
             continue
         tokens.update(_identity_tokens(contract_rows[index]))
     return tokens

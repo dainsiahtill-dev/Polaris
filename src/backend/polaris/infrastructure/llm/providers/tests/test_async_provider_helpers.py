@@ -11,10 +11,12 @@ Verifies:
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -23,19 +25,16 @@ from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
 )
-from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
-    FactoryPhysicalAttemptLiveControlPort,
-)
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate import (
     FinalProviderAttemptGate,
+)
+from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_inflight import (
+    ProviderAttemptInFlightCoordinator,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle import (
     StrictProviderAttemptLifecycleStore,
 )
-from polaris.cells.roles.kernel.public.physical_attempt_control import (
-    FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
-    FactoryPhysicalAttemptGrantViewV1,
-)
+from polaris.cells.roles.kernel.tests import test_final_provider_attempt_gate as final_gate_test
 from polaris.infrastructure.llm.providers import async_provider_helpers
 from polaris.infrastructure.llm.providers.async_http_client import (
     AsyncCircuitBreaker,
@@ -53,7 +52,6 @@ from polaris.infrastructure.llm.providers.provider_helpers import (
     invoke_stream_with_retry,
     invoke_stream_with_retry_and_handler,
 )
-from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
 from polaris.kernelone.llm.engine.contracts import (
     bind_physical_provider_dispatch_port,
     get_physical_provider_dispatch_port,
@@ -236,49 +234,46 @@ def _bootstrap_provider_attempt_facts(workspace: Path) -> None:
 
 def _governed_async_port(
     workspace: Path,
+    *,
+    headers: Mapping[str, str] | None = None,
 ) -> tuple[FinalProviderAttemptGate, StrictProviderAttemptLifecycleStore]:
-    lifecycle = StrictProviderAttemptLifecycleStore.for_factory_run(
+    del headers
+    role_session_id = "async-provider-helper-session"
+    lifecycle = StrictProviderAttemptLifecycleStore.for_role_session(
         workspace=str(workspace),
-        factory_run_id="factory-run-async-1",
+        role_session_id=role_session_id,
     )
-    physical_attempt_control_port = FactoryPhysicalAttemptLiveControlPort(factory_run_id="factory-run-async-1")
-    physical_attempt_control_port.register_grant(
-        FactoryPhysicalAttemptGrantViewV1(
-            schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
-            verification_scope="factory",
-            factory_run_id="factory-run-async-1",
-            role="director",
-            stage="director_dispatch",
-            workspace_fencing_token=1,
-            stage_claim_attempt=1,
-            stage_claim_nonce="stage-nonce-async-1",
-            execution_authority_hash="f" * 64,
-            attempt_budget=32,
-        )
-    )
-    port = FinalProviderAttemptGate.for_factory_run(
+
+    class _MemorySnapshotStore:
+        @staticmethod
+        def persist_and_pin(attempt: Any) -> object:
+            return SimpleNamespace(
+                context_snapshot_ref=str(attempt.physical_wire_hash)[:24],
+                pin_hash=str(attempt.composite_request_hash),
+            )
+
+    gate = FinalProviderAttemptGate.for_role_session(
         workspace=str(workspace),
-        factory_run_id="factory-run-async-1",
-        run_id="run-async-1",
+        role_session_id=role_session_id,
+        run_id="run-async-provider-helper",
         role="director",
-        turn_id="turn-async-1",
-        call_id="call-async-1",
-        request_freeze_id="freeze-async-1",
+        turn_id="turn-async-provider-helper",
+        call_id="call-async-provider-helper",
+        request_freeze_id="freeze-async-provider-helper",
         provider="openai",
-        model="model-async-1",
+        model="model-1",
         semantic_request={
             "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
             "tools": [],
             "tool_choice": "auto",
             "response_format": None,
-            "semantic_options": {"temperature": 0.1},
+            "semantic_options": {"temperature": 0.1, "max_tokens": 128},
         },
         lifecycle=lifecycle,
-        physical_attempt_control_port=physical_attempt_control_port,
-        execution_authority_hash="f" * 64,
-        attempt_budget=32,
+        snapshot_store=_MemorySnapshotStore(),
+        drain_coordinator=ProviderAttemptInFlightCoordinator.for_role_session(role_session_id),
     )
-    return port, lifecycle
+    return gate, lifecycle
 
 
 def _terminal_statuses(lifecycle: StrictProviderAttemptLifecycleStore) -> list[str]:
@@ -482,7 +477,10 @@ class TestAsyncInvokeWithRetry:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _bootstrap_provider_attempt_facts(tmp_path)
-        port, lifecycle = _governed_async_port(tmp_path)
+        port, lifecycle = _governed_async_port(
+            tmp_path,
+            headers={"Authorization": "Bearer secret"},
+        )
         counts = {"post": 0, "parse": 0, "extract": 0, "finalize": 0, "usage": 0}
         mock_result = HttpResult(
             status_code=200,
@@ -556,12 +554,7 @@ class TestAsyncInvokeWithRetry:
             result = await async_invoke_with_retry(
                 url="https://example.test/v1/chat/completions",
                 headers={"Authorization": "Bearer secret"},
-                payload={
-                    "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                    "tools": [],
-                    "tool_choice": "auto",
-                    "temperature": 0.1,
-                },
+                payload=final_gate_test._wire_body(port),
                 timeout=30,
                 retries=0,
                 prompt="Hello",
@@ -580,12 +573,7 @@ class TestAsyncInvokeWithRetry:
         assert dispatched.args == (
             "https://example.test/v1/chat/completions",
             {"Authorization": "Bearer secret"},
-            {
-                "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                "tools": [],
-                "tool_choice": "auto",
-                "temperature": 0.1,
-            },
+            final_gate_test._wire_body(port),
         )
         assert dispatched.kwargs == {"timeout": 30.0}
         facts = lifecycle.query_strict()
@@ -594,8 +582,7 @@ class TestAsyncInvokeWithRetry:
         assert start_fact["event_type"] == "provider_attempt.started"
         context_ref = str(start_fact["payload"]["context_snapshot_ref"])
         assert len(context_ref) == 24
-        pins = ContextSnapshotAuditPinRepository(workspace=str(tmp_path)).query_snapshot_pins(context_ref)
-        assert len(pins) == 1
+        assert start_fact["payload"]["pin_hash"]
 
     @pytest.mark.asyncio
     async def test_governed_json_parse_retry_records_failed_then_completed_unique_attempts(
@@ -628,13 +615,7 @@ class TestAsyncInvokeWithRetry:
             result = await async_invoke_with_retry(
                 url="https://example.test/v1/chat/completions",
                 headers={},
-                payload={
-                    "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                    "tools": [],
-                    "tool_choice": "auto",
-                    "temperature": 0.1,
-                    "max_tokens": 128,
-                },
+                payload=final_gate_test._wire_body(port),
                 timeout=30,
                 retries=1,
                 prompt="prompt",
@@ -658,8 +639,7 @@ class TestAsyncInvokeWithRetry:
         request_ids = [item["payload"]["provider_request_id"] for item in starts]
         assert len(set(request_ids)) == 2
         assert request_ids == [item["payload"]["provider_request_id"] for item in terminals]
-        repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
-        assert all(repository.query_snapshot_pins(str(item["payload"]["context_snapshot_ref"])) for item in starts)
+        assert all(len(str(item["payload"]["context_snapshot_ref"])) == 24 for item in starts)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -722,12 +702,7 @@ class TestAsyncInvokeWithRetry:
             result = await async_invoke_with_retry(
                 url="https://example.test/v1/chat/completions",
                 headers={},
-                payload={
-                    "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                    "tools": [],
-                    "tool_choice": "auto",
-                    "temperature": 0.1,
-                },
+                payload=final_gate_test._wire_body(port),
                 timeout=30,
                 retries=0,
                 prompt="prompt",
@@ -770,12 +745,7 @@ class TestAsyncInvokeWithRetry:
             result = await async_invoke_with_retry(
                 url="https://example.test/v1/chat/completions",
                 headers={},
-                payload={
-                    "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                    "tools": [],
-                    "tool_choice": "auto",
-                    "temperature": 0.1,
-                },
+                payload=final_gate_test._wire_body(port),
                 timeout=30,
                 retries=3,
                 prompt="prompt",
@@ -825,12 +795,7 @@ class TestAsyncInvokeWithRetry:
             result = await async_invoke_with_retry(
                 url="https://example.test/v1/chat/completions",
                 headers={},
-                payload={
-                    "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                    "tools": [],
-                    "tool_choice": "auto",
-                    "temperature": 0.1,
-                },
+                payload=final_gate_test._wire_body(port),
                 timeout=30,
                 retries=0,
                 prompt="prompt",
@@ -852,14 +817,11 @@ class TestAsyncInvokeWithRetry:
     ) -> None:
         _bootstrap_provider_attempt_facts(tmp_path)
         port, lifecycle = _governed_async_port(tmp_path)
-        original_verify = ContextSnapshotAuditPinRepository._fsync_and_verify
-
-        def _fail_pin_verify(self: ContextSnapshotAuditPinRepository, path: str, expected: bytes) -> None:
-            if "/pins/" in path.replace("\\", "/"):
-                raise OSError("pin fsync failed")
-            original_verify(self, path, expected)
-
-        monkeypatch.setattr(ContextSnapshotAuditPinRepository, "_fsync_and_verify", _fail_pin_verify)
+        monkeypatch.setattr(
+            port._snapshot_store,
+            "persist_and_pin",
+            lambda _attempt: (_ for _ in ()).throw(OSError("pin fsync failed")),
+        )
         with patch(
             "polaris.infrastructure.llm.providers.async_provider_helpers.AsyncProviderHttpClient"
         ) as mock_client_cls:
@@ -873,12 +835,7 @@ class TestAsyncInvokeWithRetry:
                 await async_invoke_with_retry(
                     url="https://example.test/v1/chat/completions",
                     headers={},
-                    payload={
-                        "messages": [{"role": "system", "content": "polaris.role_identity.v1:director"}],
-                        "tools": [],
-                        "tool_choice": "auto",
-                        "temperature": 0.1,
-                    },
+                    payload=final_gate_test._wire_body(port),
                     timeout=30,
                     retries=0,
                     prompt="prompt",
@@ -1126,6 +1083,410 @@ async def test_governed_stream_success_crosses_post_context_and_closes_session(
     assert result == [{"kind": "delta"}]
     assert len(port.wire_requests) == 1
     assert len(session.posts) == 1
+    assert events == ["post_enter", "response_exit", "session_close"]
+
+
+@pytest.mark.asyncio
+async def test_bound_factory_port_auto_governs_stream_without_provider_specific_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    session = _FakeSession(
+        _FakeResponse(chunks=(b'data: {"kind":"delta"}\n\n', b"data: [DONE]\n\n")),
+        events,
+    )
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(return_value=session),
+    )
+    port = _PassthroughPhysicalStreamPort()
+
+    with bind_physical_provider_dispatch_port(port):
+        result = [
+            item
+            async for item in invoke_stream_with_retry(
+                "https://example.test/stream",
+                {},
+                {"messages": [], "stream": True},
+                5,
+                max_attempts=1,
+            )
+        ]
+
+    assert result == [{"kind": "delta"}]
+    assert len(port.wire_requests) == len(session.posts) == 1
+    assert events == ["post_enter", "response_exit", "session_close"]
+
+
+@pytest.mark.asyncio
+async def test_governed_stream_timeout_covers_full_response_consumption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    response = _FakeResponse()
+
+    async def _stall_forever() -> AsyncIterator[bytes]:
+        await asyncio.Event().wait()
+        yield b""  # pragma: no cover - cancellation must occur first
+
+    response.content = _stall_forever()  # type: ignore[assignment]
+    session = _FakeSession(response, events)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(return_value=session),
+    )
+    port = _PassthroughPhysicalStreamPort()
+
+    async def _collect() -> list[dict[str, Any]]:
+        return [
+            item
+            async for item in invoke_stream_with_retry(
+                "https://example.test/stream",
+                {},
+                {"messages": [], "stream": True},
+                0.05,
+                max_attempts=3,
+                governance_mode="governed_required",
+                physical_dispatch_port=port,
+            )
+        ]
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(_collect(), timeout=0.5)
+
+    assert asyncio.get_running_loop().time() - started < 0.25
+    assert len(port.wire_requests) == 1
+    assert events == ["post_enter", "response_exit", "session_close"]
+
+
+@pytest.mark.asyncio
+async def test_governed_custom_handler_timeout_covers_full_response_consumption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    session = _FakeSession(_FakeResponse(), events)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(return_value=session),
+    )
+    port = _PassthroughPhysicalStreamPort()
+
+    async def _stall_handler(_response: _FakeResponse) -> AsyncGenerator[dict[str, Any], None]:
+        await asyncio.Event().wait()
+        yield {}  # pragma: no cover - cancellation must occur first
+
+    async def _collect() -> list[dict[str, Any]]:
+        return [
+            item
+            async for item in invoke_stream_with_retry_and_handler(
+                "https://example.test/stream",
+                {},
+                {"messages": [], "stream": True},
+                0.05,
+                _stall_handler,
+                max_attempts=3,
+                governance_mode="governed_required",
+                physical_dispatch_port=port,
+            )
+        ]
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(_collect(), timeout=0.5)
+
+    assert asyncio.get_running_loop().time() - started < 0.25
+    assert len(port.wire_requests) == 1
+    assert events == ["post_enter", "response_exit", "session_close"]
+
+
+@pytest.mark.asyncio
+async def test_governed_stream_retries_share_one_absolute_timeout_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    sessions = [
+        _FakeSession(_FakeResponse(status=503), events),
+        _FakeSession(_FakeResponse(json_body={"unexpected": "second attempt"}), events),
+    ]
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(side_effect=sessions),
+    )
+    port = _PassthroughPhysicalStreamPort()
+
+    async def _collect() -> list[dict[str, Any]]:
+        return [
+            item
+            async for item in invoke_stream_with_retry(
+                "https://example.test/stream",
+                {},
+                {"messages": [], "stream": True},
+                0.05,
+                max_attempts=2,
+                retry_delay_seconds=0.1,
+                governance_mode="governed_required",
+                physical_dispatch_port=port,
+            )
+        ]
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(_collect(), timeout=0.5)
+
+    assert len(port.wire_requests) == 1
+    assert sessions[0].closed is True
+    assert sessions[1].closed is False
+
+
+@pytest.mark.asyncio
+async def test_governed_stream_timeout_terminalizes_physical_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bootstrap_provider_attempt_facts(tmp_path)
+    events: list[str] = []
+    response = _FakeResponse()
+
+    async def _stall_forever() -> AsyncIterator[bytes]:
+        await asyncio.Event().wait()
+        yield b""  # pragma: no cover - cancellation must occur first
+
+    response.content = _stall_forever()  # type: ignore[assignment]
+    session = _FakeSession(response, events)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(return_value=session),
+    )
+    port, lifecycle = _governed_async_port(tmp_path)
+
+    async def _collect() -> list[dict[str, Any]]:
+        return [
+            item
+            async for item in invoke_stream_with_retry(
+                "https://example.test/stream",
+                {},
+                final_gate_test._wire_body(port),
+                0.05,
+                max_attempts=3,
+                governance_mode="governed_required",
+                physical_dispatch_port=port,
+            )
+        ]
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(_collect(), timeout=0.5)
+
+    # A provider response deadline is a physical transport failure, not an
+    # external cancellation of the role consumer.
+    assert _terminal_statuses(lifecycle) == ["failed"]
+    assert events == ["post_enter", "response_exit", "session_close"]
+
+
+@pytest.mark.asyncio
+async def test_factory_governed_stream_timeout_terminalizes_and_releases_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Factory-scoped timeout must not strand its physical-attempt lease."""
+    events: list[str] = []
+    response = _FakeResponse()
+
+    async def _stall_forever() -> AsyncIterator[bytes]:
+        await asyncio.Event().wait()
+        yield b""  # pragma: no cover - cancellation must occur first
+
+    response.content = _stall_forever()  # type: ignore[assignment]
+    session = _FakeSession(response, events)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(return_value=session),
+    )
+    final_gate_test._bootstrap(tmp_path)
+
+    def _one_second_wire(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "endpoint": "https://example.test/v1/chat/completions",
+            "headers": {},
+            "body": body,
+            "transport": {"kind": "aiohttp.ClientSession.post", "timeout_seconds": 1},
+        }
+
+    gate, lifecycle = final_gate_test._gate(
+        tmp_path,
+        semantic_options={"temperature": 0.1, "max_tokens": 128},
+        stream=True,
+        wire_factory=_one_second_wire,
+    )
+    qualified_wire = final_gate_test._wire_request(gate)
+
+    async def _collect() -> list[dict[str, Any]]:
+        return [
+            item
+            async for item in invoke_stream_with_retry(
+                str(qualified_wire["endpoint"]),
+                dict(qualified_wire["headers"]),
+                dict(qualified_wire["body"]),
+                0.05,
+                max_attempts=3,
+                governance_mode="governed_required",
+                physical_dispatch_port=gate,
+            )
+        ]
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(_collect(), timeout=0.5)
+
+    # The Factory gate records the physical timeout as failed and releases the
+    # reservation; only caller-initiated cancellation is terminal=cancelled.
+    assert _terminal_statuses(lifecycle) == ["failed"]
+    assert gate._physical_attempt_control_port.budget_state("f" * 64).inflight_count == 0
+    assert events == ["post_enter", "response_exit", "session_close"]
+
+
+@pytest.mark.asyncio
+async def test_factory_governed_stream_cleanup_timeout_is_terminal_and_not_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A half-closed session must fail once instead of stranding the Factory run."""
+
+    events: list[str] = []
+    response = _FakeResponse(chunks=(b"data: [DONE]\n\n",))
+    close_cancelled = asyncio.Event()
+
+    class _StalledCloseSession(_FakeSession):
+        async def close(self) -> None:
+            events.append("session_close_enter")
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                close_cancelled.set()
+                events.append("session_close_cancelled")
+                raise
+
+    session = _StalledCloseSession(response, events)
+    create_session = AsyncMock(return_value=session)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        create_session,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate."
+        "_STREAM_CONTEXT_CLEANUP_TIMEOUT_SECONDS",
+        0.05,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate."
+        "_STREAM_CONTEXT_CLEANUP_CANCEL_GRACE_SECONDS",
+        0.05,
+    )
+    final_gate_test._bootstrap(tmp_path)
+
+    def _one_second_wire(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "endpoint": "https://example.test/v1/chat/completions",
+            "headers": {},
+            "body": body,
+            "transport": {"kind": "aiohttp.ClientSession.post", "timeout_seconds": 1},
+        }
+
+    gate, lifecycle = final_gate_test._gate(
+        tmp_path,
+        semantic_options={"temperature": 0.1, "max_tokens": 128},
+        stream=True,
+        wire_factory=_one_second_wire,
+    )
+    qualified_wire = final_gate_test._wire_request(gate)
+    escaped: list[dict[str, Any]] = []
+
+    with pytest.raises(RuntimeError, match="provider_stream_cleanup_timeout"):
+        async for item in invoke_stream_with_retry(
+            str(qualified_wire["endpoint"]),
+            dict(qualified_wire["headers"]),
+            dict(qualified_wire["body"]),
+            1,
+            max_attempts=3,
+            retry_delay_seconds=0,
+            governance_mode="governed_required",
+            physical_dispatch_port=gate,
+        ):
+            escaped.append(item)
+
+    assert escaped == []
+    assert create_session.await_count == 1
+    assert close_cancelled.is_set()
+    assert _terminal_statuses(lifecycle) == ["failed"]
+    assert gate._physical_attempt_control_port.budget_state("f" * 64).inflight_count == 0
+    assert events == [
+        "post_enter",
+        "response_exit",
+        "session_close_enter",
+        "session_close_cancelled",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_factory_governed_stream_deadline_does_not_cancel_terminal_replay_backpressure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider deadline ends with the physical body, not downstream replay."""
+    events: list[str] = []
+    response = _FakeResponse(
+        chunks=(
+            b'data: {"kind":"delta","value":"first"}\n\n',
+            b'data: {"kind":"delta","value":"second"}\n\n',
+            b"data: [DONE]\n\n",
+        )
+    )
+    session = _FakeSession(response, events)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(return_value=session),
+    )
+    final_gate_test._bootstrap(tmp_path)
+
+    def _one_second_wire(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "endpoint": "https://example.test/v1/chat/completions",
+            "headers": {},
+            "body": body,
+            "transport": {"kind": "aiohttp.ClientSession.post", "timeout_seconds": 1},
+        }
+
+    gate, lifecycle = final_gate_test._gate(
+        tmp_path,
+        semantic_options={"temperature": 0.1, "max_tokens": 128},
+        stream=True,
+        wire_factory=_one_second_wire,
+    )
+    qualified_wire = final_gate_test._wire_request(gate)
+
+    async def _consume_with_slow_downstream() -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        async for item in invoke_stream_with_retry(
+            str(qualified_wire["endpoint"]),
+            dict(qualified_wire["headers"]),
+            dict(qualified_wire["body"]),
+            0.05,
+            max_attempts=1,
+            governance_mode="governed_required",
+            physical_dispatch_port=gate,
+        ):
+            items.append(item)
+            if len(items) == 1:
+                await asyncio.sleep(0.08)
+        return items
+
+    task = asyncio.create_task(_consume_with_slow_downstream())
+    items = await asyncio.wait_for(task, timeout=0.5)
+
+    assert items == [
+        {"kind": "delta", "value": "first"},
+        {"kind": "delta", "value": "second"},
+    ]
+    assert _terminal_statuses(lifecycle) == ["completed"]
+    assert gate._physical_attempt_control_port.budget_state("f" * 64).inflight_count == 0
     assert events == ["post_enter", "response_exit", "session_close"]
 
 

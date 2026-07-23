@@ -45,8 +45,7 @@ from polaris.kernelone.fs.materialization import materialized_file_paths
 # ``scan_workspace_artifact_quality`` MUST stay a name on THIS module: the test
 # suite monkeypatches ``execute_method.scan_workspace_artifact_quality`` and the
 # moved quality/repair callers resolve it through this module namespace (``_em``)
-# at call time, so the patch still takes effect. ``DirectorToolExecutor`` is kept
-# for the original public surface.
+# at call time, so the patch still takes effect.
 from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence as scan_workspace_artifact_quality_evidence,
@@ -54,9 +53,6 @@ from polaris.kernelone.quality import (
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 from .contract_verify import resolve_contract_step_verify_command
-from .execution_tools import (
-    DirectorToolExecutor as DirectorToolExecutor,
-)
 from .helpers import (
     _DEFAULT_TASK_LEASE_TTL_SECONDS,
     _TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS,
@@ -82,6 +78,7 @@ def _run_materialization_quality_public_boundary(
     artifact_quality_errors: list[str],
     artifact_quality_issues: tuple[dict[str, Any], ...] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute materialization-quality repair via the typed roles public boundary."""
 
@@ -92,6 +89,7 @@ def _run_materialization_quality_public_boundary(
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=artifact_quality_issues,
         convergence_verifier=convergence_verifier,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -928,7 +926,9 @@ def _finalize_claimed_execution(
             "error": str(exc),
             "outcome": outcome,
         }
-    task_runtime_verdict = verdict.task_runtime_verdict.to_record() if verdict.task_runtime_verdict is not None else None
+    task_runtime_verdict = (
+        verdict.task_runtime_verdict.to_record() if verdict.task_runtime_verdict is not None else None
+    )
     result = {
         "success": verdict.success,
         "code": verdict.code,
@@ -960,6 +960,22 @@ def _execution_attempt_authority_from_context(
     if isinstance(authority, TaskRuntimeExecutionAttemptAuthorityV1):
         return authority
     return None
+
+
+def _execution_attempt_identity_from_context(
+    context: dict[str, Any],
+) -> TaskRuntimeExecutionAttemptIdentityV1 | None:
+    """Snapshot the exact live TaskRuntime attempt for deferred repair planning."""
+
+    authority = _execution_attempt_authority_from_context(context)
+    if authority is None:
+        return None
+    snapshot = authority.snapshot(lock_timeout_seconds=5.0)
+    if snapshot.success is not True or snapshot.closed:
+        return None
+    if type(snapshot.identity) is not TaskRuntimeExecutionAttemptIdentityV1:
+        return None
+    return snapshot.identity
 
 
 def _task_runtime_finalization_failed_result(
@@ -1118,7 +1134,9 @@ async def _suspend_claimed_execution_for_cancellation(
             lock_timeout_seconds=5.0,
             metadata={"adapter_phase": "pending"},
         )
-        task_runtime_verdict = verdict.task_runtime_verdict.to_record() if verdict.task_runtime_verdict is not None else None
+        task_runtime_verdict = (
+            verdict.task_runtime_verdict.to_record() if verdict.task_runtime_verdict is not None else None
+        )
         suspend_result = {
             "success": verdict.success,
             "code": verdict.code,
@@ -1146,9 +1164,7 @@ async def _suspend_claimed_execution_for_cancellation(
     detail = str(result.get("error") or result.get("detail") or reason).strip()
     suspension_identity = result.get("identity")
     suspension_session_id = (
-        str(suspension_identity.get("session_id") or "")
-        if isinstance(suspension_identity, dict)
-        else ""
+        str(suspension_identity.get("session_id") or "") if isinstance(suspension_identity, dict) else ""
     )
     try:
         await adapter._emit_task_trace_event(
@@ -2788,10 +2804,34 @@ def _phase_existing_scope_preflight(
         requires_fresh_materialization=requires_fresh_materialization,
         write_tool_evidence=False,
     )
+    preflight_quality_errors: list[str] = []
+    if preflight_can_accept_existing_scope:
+        preflight_quality_errors = _collect_materialization_quality_errors(
+            adapter,
+            task=task,
+            all_affected_files=list(preflight_existing_contract_evidence.get("existing_paths") or []),
+            workspace_name=workspace_name,
+            context=context,
+            task_boundary=True,
+        )
+        if preflight_quality_errors:
+            decision_signals.append(
+                {
+                    "code": "director.existing_workspace_scope_preflight_quality_failed",
+                    "severity": "warning",
+                    "detail": (
+                        "Declared scope exists but failed materialization quality checks; "
+                        "execution must continue through the authorized repair path."
+                    ),
+                    "error_count": len(preflight_quality_errors),
+                    "errors": preflight_quality_errors[:20],
+                }
+            )
     if (
         not all_affected_files
         and _director_existing_scope_preflight_enabled(context)
         and preflight_can_accept_existing_scope
+        and not preflight_quality_errors
     ):
         completion_metadata: dict[str, Any] = {
             "adapter_result": {
@@ -3286,6 +3326,7 @@ def _phase_pre_materialization_quality(
                 task=task,
                 task_id=target_task_id,
                 artifact_quality_errors=pre_materialization_quality_errors,
+                execution_attempt=_execution_attempt_identity_from_context(context),
                 convergence_verifier=_build_post_execution_repair_convergence_verifier(
                     adapter,
                     task_id=target_task_id,
@@ -3345,6 +3386,7 @@ def _phase_pre_materialization_quality(
             task_id=target_task_id,
             resident_agi_repair_advisory_overlay=resident_agi_repair_advisory_overlay,
             convergence_verifier=convergence_verifier,
+            execution_attempt=_execution_attempt_identity_from_context(context),
         )
         if post_execution_tool_results and post_execution_repair_summary is not None:
             tool_results.extend(post_execution_tool_results)
@@ -3430,12 +3472,15 @@ async def _phase_quality_repair_loop(
         context=context,
         task_boundary=True,
     )
-    artifact_quality_errors += _collect_step_verify_errors(
+    step_verify_errors, step_verify_tool_results = _collect_step_verify_errors(
         adapter,
         context,
+        task_id=target_task_id,
         task=task,
         workspace_name=workspace_name,
     )
+    artifact_quality_errors += step_verify_errors
+    tool_results.extend(step_verify_tool_results)
     # Live factory-bench L1-01 (2026-06-17, after the symbol-coherence fix):
     # py_compile + scan_workspace_artifact_quality pass for a calculator.py
     # whose __main__ block raises at call time. The deterministic ladder
@@ -3444,11 +3489,14 @@ async def _phase_quality_repair_loop(
         adapter,
         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
     )
-    artifact_quality_errors += run_python_runtime_smoke(
+    runtime_smoke_errors, runtime_smoke_tool_results = run_python_runtime_smoke(
         adapter,
         task_id=target_task_id,
         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+        context=context,
     )
+    artifact_quality_errors += runtime_smoke_errors
+    tool_results.extend(runtime_smoke_tool_results)
     artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
         artifact_quality_errors,
         _adapter_workspace,
@@ -3485,6 +3533,7 @@ async def _phase_quality_repair_loop(
                 task=task,
                 task_id=target_task_id,
                 artifact_quality_errors=artifact_quality_errors,
+                execution_attempt=_execution_attempt_identity_from_context(context),
                 convergence_verifier=_build_post_execution_repair_convergence_verifier(
                     adapter,
                     task_id=target_task_id,
@@ -3525,21 +3574,27 @@ async def _phase_quality_repair_loop(
                 context=context,
                 task_boundary=True,
             )
-            artifact_quality_errors += _collect_step_verify_errors(
+            step_verify_errors, step_verify_tool_results = _collect_step_verify_errors(
                 adapter,
                 context,
+                task_id=target_task_id,
                 task=task,
                 workspace_name=workspace_name,
             )
+            artifact_quality_errors += step_verify_errors
+            tool_results.extend(step_verify_tool_results)
             artifact_quality_errors += run_python_static_smoke(
                 adapter,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
             )
-            artifact_quality_errors += run_python_runtime_smoke(
+            runtime_smoke_errors, runtime_smoke_tool_results = run_python_runtime_smoke(
                 adapter,
                 task_id=target_task_id,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                context=context,
             )
+            artifact_quality_errors += runtime_smoke_errors
+            tool_results.extend(runtime_smoke_tool_results)
             artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
                 artifact_quality_errors,
                 _adapter_workspace,
@@ -3584,21 +3639,27 @@ async def _phase_quality_repair_loop(
                 context=context,
                 task_boundary=True,
             )
-            artifact_quality_errors += _collect_step_verify_errors(
+            step_verify_errors, step_verify_tool_results = _collect_step_verify_errors(
                 adapter,
                 context,
+                task_id=target_task_id,
                 task=task,
                 workspace_name=workspace_name,
             )
+            artifact_quality_errors += step_verify_errors
+            tool_results.extend(step_verify_tool_results)
             artifact_quality_errors += run_python_static_smoke(
                 adapter,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
             )
-            artifact_quality_errors += run_python_runtime_smoke(
+            runtime_smoke_errors, runtime_smoke_tool_results = run_python_runtime_smoke(
                 adapter,
                 task_id=target_task_id,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                context=context,
             )
+            artifact_quality_errors += runtime_smoke_errors
+            tool_results.extend(runtime_smoke_tool_results)
             artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
                 artifact_quality_errors,
                 _adapter_workspace,
@@ -3611,6 +3672,7 @@ async def _phase_quality_repair_loop(
                         task=task,
                         task_id=target_task_id,
                         artifact_quality_errors=artifact_quality_errors,
+                        execution_attempt=_execution_attempt_identity_from_context(context),
                         convergence_verifier=_build_post_execution_repair_convergence_verifier(
                             adapter,
                             task_id=target_task_id,
@@ -3650,21 +3712,27 @@ async def _phase_quality_repair_loop(
                         context=context,
                         task_boundary=True,
                     )
-                    artifact_quality_errors += _collect_step_verify_errors(
+                    step_verify_errors, step_verify_tool_results = _collect_step_verify_errors(
                         adapter,
                         context,
+                        task_id=target_task_id,
                         task=task,
                         workspace_name=workspace_name,
                     )
+                    artifact_quality_errors += step_verify_errors
+                    tool_results.extend(step_verify_tool_results)
                     artifact_quality_errors += run_python_static_smoke(
                         adapter,
                         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
                     )
-                    artifact_quality_errors += run_python_runtime_smoke(
+                    runtime_smoke_errors, runtime_smoke_tool_results = run_python_runtime_smoke(
                         adapter,
                         task_id=target_task_id,
                         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                        context=context,
                     )
+                    artifact_quality_errors += runtime_smoke_errors
+                    tool_results.extend(runtime_smoke_tool_results)
                     artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
                         artifact_quality_errors,
                         _adapter_workspace,
@@ -3835,21 +3903,27 @@ async def _phase_semantic_quality_repair_loop(
             context=context,
             task_boundary=True,
         )
-        artifact_quality_errors += _collect_step_verify_errors(
+        step_verify_errors, step_verify_tool_results = _collect_step_verify_errors(
             adapter,
             context,
+            task_id=target_task_id,
             task=task,
             workspace_name=workspace_name,
         )
+        artifact_quality_errors += step_verify_errors
+        tool_results.extend(step_verify_tool_results)
         artifact_quality_errors += run_python_static_smoke(
             adapter,
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
         )
-        artifact_quality_errors += run_python_runtime_smoke(
+        runtime_smoke_errors, runtime_smoke_tool_results = run_python_runtime_smoke(
             adapter,
             task_id=target_task_id,
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            context=context,
         )
+        artifact_quality_errors += runtime_smoke_errors
+        tool_results.extend(runtime_smoke_tool_results)
         artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
             artifact_quality_errors,
             str(getattr(adapter, "workspace", "") or ""),
@@ -4638,18 +4712,24 @@ async def _phase_cross_artifact_unplannable_llm_escalation(
             context=context,
             task_boundary=True,
         )
-        artifact_quality_errors += _collect_step_verify_errors(
+        step_verify_errors, step_verify_tool_results = _collect_step_verify_errors(
             adapter,
             context,
+            task_id=target_task_id,
             task=task,
             workspace_name=workspace_name,
         )
+        artifact_quality_errors += step_verify_errors
+        tool_results.extend(step_verify_tool_results)
         artifact_quality_errors += run_python_static_smoke(adapter, all_affected_files=scan_paths)
-        artifact_quality_errors += run_python_runtime_smoke(
+        runtime_smoke_errors, runtime_smoke_tool_results = run_python_runtime_smoke(
             adapter,
             task_id=target_task_id,
             all_affected_files=scan_paths,
+            context=context,
         )
+        artifact_quality_errors += runtime_smoke_errors
+        tool_results.extend(runtime_smoke_tool_results)
         artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
             artifact_quality_errors,
             str(getattr(adapter, "workspace", "") or ""),
@@ -4964,7 +5044,6 @@ from .quality_gate import (  # noqa: E402  (deferred for circular-import safety)
     _evaluate_acceptance_verify_exists as _evaluate_acceptance_verify_exists,
     _extract_successful_write_paths as _extract_successful_write_paths,
     _filter_materialization_quality_errors_for_repair_targets as _filter_materialization_quality_errors_for_repair_targets,
-    _first_failing_verify_clause as _first_failing_verify_clause,
     _is_node_runtime_source_path as _is_node_runtime_source_path,
     _is_recoverable_no_write_mutation_contract_error_text as _is_recoverable_no_write_mutation_contract_error_text,
     _is_recoverable_no_write_mutation_contract_exception as _is_recoverable_no_write_mutation_contract_exception,

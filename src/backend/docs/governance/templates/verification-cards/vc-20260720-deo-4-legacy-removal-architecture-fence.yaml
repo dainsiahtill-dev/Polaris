@@ -1,0 +1,70 @@
+card_id: vc-20260720-deo-4-legacy-removal-architecture-fence
+bug_summary: >-
+  The original 38 physical executor surfaces are converged, but the remaining
+  DirectorToolExecutor constructor is still callable without explicit DEO
+  authority and could recreate a production mutation bypass.
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_path:
+  files:
+    - polaris/cells/roles/adapters/internal/director/execution_tools.py
+    - polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py
+    - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
+  symptom: >-
+    Direct DirectorToolExecutor construction is not runtime fail-closed even
+    though current production AST inventory has only one reviewed caller.
+assumptions:
+  - id: A1
+    statement: A process-local constructor authority plus repository AST fence can close this architecture seam.
+    status: verified_true
+  - id: A2
+    statement: The canonical mutation port remains the sole physical executor consumer.
+    status: verified_true
+  - id: A3
+    statement: Exact process-local instance identity cannot be recreated by copying object fields.
+    status: verified_true
+pre_mortem:
+  failure_point: >-
+    A compatibility test or new production module directly constructs the
+    executor and bypasses claim, policy revalidation, fence consume, or receipt.
+  risk_zone:
+    - constructor and factory import surface
+    - serialization/copy transport
+    - test-only helpers migrating into production
+    - architecture allowlist drift
+verification_plan:
+  unit_tests:
+    - direct constructor typed denial
+    - private factory success
+    - manual clone, serialization, copy, and deepcopy denial
+    - factory-construction exception enters durable recovery after fence consume
+    - execution exception enters durable recovery and replay remains denied
+    - canonical mutation port physical execution and receipt
+  static_gates:
+    - exact constructor/factory/execute production inventory
+    - zero unbound mutation surfaces
+    - module alias, taint, wildcard, getattr, vars, __dict__, importlib, and re-export fence
+    - executor self-factory and internal authority-registry freeze
+    - TaskRuntime-only terminal fact writers
+    - Ruff, format, mypy, compileall, YAML, catalog, and diff
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  evidence:
+    provider_requests: 0
+    bench_runs: 0
+    target_project_effects: 0
+    focused_tests_passed: 100
+    roles_adapters_passed: 1250
+    task_runtime_and_run_ledger_passed: 720
+    roles_kernel_passed: 2716
+    guarded_fs_and_factstream_passed: 283
+    architecture_passed: 1411
+    architecture_skipped: 8
+    architecture_wall_clock_seconds: 1351.24
+    independent_reviews: CLEAR/CLEAR
+    critical_findings: 0
+    important_findings: 0
+    minor_findings: 0
+  next_gate: pre-bench

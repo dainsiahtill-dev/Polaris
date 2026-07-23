@@ -456,10 +456,22 @@ def _build_failure(run: FactoryRun, phase: RunPhase) -> FailureInfo | None:
     if not isinstance(raw_failure, dict):
         return None
 
-    recoverable = bool(raw_failure.get("recoverable"))
+    stage = str(raw_failure.get("stage") or run.metadata.get("last_failed_stage") or "").strip()
+    stage_results = run.metadata.get("stage_results")
+    stage_result = stage_results.get(stage) if isinstance(stage_results, dict) and stage else None
+    stage_result_metadata = stage_result.get("metadata") if isinstance(stage_result, dict) else None
+    structured = stage_result_metadata if isinstance(stage_result_metadata, dict) else {}
+    structured_recoverable = structured.get("recoverable")
+    recoverable = (
+        structured_recoverable if isinstance(structured_recoverable, bool) else bool(raw_failure.get("recoverable"))
+    )
     failure_type = FailureType.TRANSIENT if recoverable else FailureType.DETERMINISTIC
     timestamp = raw_failure.get("timestamp")
     detail = str(raw_failure.get("detail") or "").strip() or "Factory run failed"
+
+    def _stable_field(name: str) -> str | None:
+        value = str(raw_failure.get(name) or structured.get(name) or "").strip()
+        return value or None
 
     return FailureInfo(
         failure_type=failure_type,
@@ -470,6 +482,11 @@ def _build_failure(run: FactoryRun, phase: RunPhase) -> FailureInfo | None:
         recoverable=recoverable,
         suggested_action=str(raw_failure.get("suggested_action") or "").strip() or None,
         hops=[],
+        stage=stage or None,
+        error_code=_stable_field("error_code"),
+        failure_class=_stable_field("failure_class"),
+        responsible_layer=_stable_field("responsible_layer"),
+        root_cause_hint=_stable_field("root_cause_hint"),
     )
 
 

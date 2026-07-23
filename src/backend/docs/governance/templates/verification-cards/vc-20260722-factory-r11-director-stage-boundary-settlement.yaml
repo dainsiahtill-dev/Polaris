@@ -1,0 +1,80 @@
+card_id: vc-20260722-factory-r11-director-stage-boundary-settlement
+classification: control_plane
+status: complete
+bench_status: closed
+bug_summary: >-
+  Fresh isolated L1-04 acceptance run 7 reached Director but Factory consumed
+  only the five-second settlement reserve after an early inflight lifecycle
+  result. Factory then returned from director_dispatch and closed the live
+  role-evidence authority while the TaskRuntime child was still active. The
+  child consequently failed before Provider transport with
+  factory_role_evidence_authority_closed.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+required_invariants:
+  - unused admitted Director execution budget is consumed before settlement reserve
+  - no new Director round starts while a previous child remains active
+  - Factory stage authority is not closed while an admitted child is still executing
+  - terminal TaskRuntime or cancellation settlement is required before stage return
+  - no detached authority or background child may cross the Factory stage boundary
+evidence:
+  factory_run_id: factory_8d34eb3d21b1
+  director_run_id: director-674a0ae69435
+  exact_error: factory_role_evidence_authority_closed
+  director_llm_calls: 0
+  inflight_run_continues: true
+  barrier_max_total_seconds: 5.0
+  execution_timeout_seconds: 157
+  settlement_timeout_seconds: 5
+  director_provider_request_reached: false
+  target_project_effects: 0
+  final_request_context_audit:
+    pm:
+      physical_context_snapshot_ref: b259f55ed1e1a4ed69652216
+      role_identity: pass
+      pm_contract_intent: pass
+      final_request_tokens: 2596
+    chief_engineer:
+      physical_context_snapshot_ref: b19bb85f19dea19afe24a12c
+      role_identity: pass
+      pm_contract: present
+      target_files: present
+      final_request_tokens: 4873
+    director:
+      semantic_context_snapshot_ref: 1268a69bf6c6820439b5421c
+      physical_context_snapshot_ref: 419584070e7abd507010e963
+      role_identity: pass
+      pm_contract: present
+      ce_blueprint: present
+      target_files: present
+      required_write_file_tool: present
+      tool_registry_provenance_and_aliases: pass
+      final_request_tokens: 16102
+      stale_physical_timeout_seconds: 157
+    qa:
+      status: not_reached
+      reason: director_stage_boundary_closed_before_qa
+fix:
+  - propagate one absolute Factory Director execution deadline into the admitted task metadata
+  - clamp Director timeout at execution start and again at the role-dialogue boundary
+  - recompute the final request timeout after ContextOS projection and before AIRequest freeze
+  - reject sub-second or expired deadline remainder before any physical Provider request
+  - wait the unused execution lease plus settlement reserve before closing stage authority
+verification:
+  focused_factory_characterization: "249 passed"
+  focused_director_adapter: "476 passed, 2 warnings"
+  focused_roles_kernel: "205 passed"
+  factory_pipeline_full: "1219 passed, 2 warnings"
+  roles_adapters_full: "1258 passed, 2 warnings"
+  roles_kernel_full: "2731 passed, 1 warning"
+  ruff: pass
+  mypy_strict_new_roles_kernel_helper: pass
+  compileall: pass
+  target_project_effects: 0
+sign_off:
+  owner: Codex /root
+  closed_at: "2026-07-22"
+next_action: refreeze_pre_bench_source_snapshot_then_authorize_exactly_one_fresh_isolated_run

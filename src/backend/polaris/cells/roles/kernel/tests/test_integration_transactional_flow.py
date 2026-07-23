@@ -33,6 +33,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 from polaris.cells.roles.kernel.public.turn_events import ErrorEvent, TurnPhaseEvent
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 
 def _native_tool_call(
@@ -86,6 +87,31 @@ def context():
 def tool_defs():
     """Tool definitions"""
     return [{"name": "read_file", "description": "Read a file"}, {"name": "write_file", "description": "Write a file"}]
+
+
+@pytest.fixture
+def registered_async_pull_request_tool():
+    """Install a context-local authoritative async ToolSpec for handoff tests."""
+
+    token = ToolSpecRegistry._state_var.set(ToolSpecRegistry._get_state())
+    ToolSpecRegistry.register(
+        "create_pull_request",
+        {
+            "category": "async",
+            "description": "Create a pull request asynchronously.",
+            "aliases": [],
+            "parameters": {
+                "type": "object",
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
+            },
+        },
+        strict=True,
+    )
+    try:
+        yield
+    finally:
+        ToolSpecRegistry._state_var.reset(token)
 
 
 # ============ Test Full Turn Execution ============
@@ -350,7 +376,14 @@ class TestWorkflowHandoffIntegration:
     """测试workflow移交集成"""
 
     @pytest.mark.asyncio
-    async def test_async_tool_triggers_handoff(self, mock_llm, mock_tool_executor, context, tool_defs) -> None:
+    async def test_async_tool_triggers_handoff(
+        self,
+        mock_llm,
+        mock_tool_executor,
+        context,
+        tool_defs,
+        registered_async_pull_request_tool,
+    ) -> None:
         """异步工具触发handoff"""
         mock_llm.return_value = {
             "content": "提交 PR。",
@@ -363,14 +396,26 @@ class TestWorkflowHandoffIntegration:
             llm_provider=mock_llm, tool_runtime=mock_tool_executor, config=TransactionConfig(domain="document")
         )
 
-        result = await controller.execute(turn_id="turn_handoff", context=context, tool_definitions=tool_defs)
+        result = await controller.execute(
+            turn_id="turn_handoff",
+            context=context,
+            tool_definitions=[
+                *tool_defs,
+                {"name": "create_pull_request", "description": "Create a pull request"},
+            ],
+        )
 
         assert result["kind"] == "handoff_workflow"
         assert result["workflow_context"] is not None
 
     @pytest.mark.asyncio
     async def test_handoff_runtime_receives_context_handoff_pack(
-        self, mock_llm, mock_tool_executor, context, tool_defs
+        self,
+        mock_llm,
+        mock_tool_executor,
+        context,
+        tool_defs,
+        registered_async_pull_request_tool,
     ) -> None:
         """Workflow runtime should receive a canonical ContextHandoffPack before execution."""
 
@@ -404,7 +449,14 @@ class TestWorkflowHandoffIntegration:
             workflow_runtime=runtime,
         )
 
-        result = await controller.execute(turn_id="turn_context_handoff", context=context, tool_definitions=tool_defs)
+        result = await controller.execute(
+            turn_id="turn_context_handoff",
+            context=context,
+            tool_definitions=[
+                *tool_defs,
+                {"name": "create_pull_request", "description": "Create a pull request"},
+            ],
+        )
 
         assert runtime.decision is not None
         handoff_payload = runtime.decision["metadata"]["context_handoff_pack"]

@@ -109,7 +109,7 @@ def _extract(data: dict[str, Any]) -> str:
 def test_explicit_sync_dispatch_port_wins_over_context_binding(monkeypatch) -> None:
     bound = _RecordingSyncDispatchPort()
     explicit = _RecordingSyncDispatchPort()
-    monkeypatch.setattr(provider_helpers, "_blocking_http_post", lambda *_args, **_kwargs: _Http200Response())
+    monkeypatch.setattr(provider_helpers, "_raw_blocking_http_post", lambda *_args, **_kwargs: _Http200Response())
 
     with bind_physical_provider_dispatch_port(bound):
         result = invoke_with_retry(
@@ -140,7 +140,7 @@ def test_bound_sync_dispatch_port_wraps_each_physical_retry(monkeypatch) -> None
         assert isinstance(response, _Http200Response)
         return response
 
-    monkeypatch.setattr(provider_helpers, "_blocking_http_post", _post)
+    monkeypatch.setattr(provider_helpers, "_raw_blocking_http_post", _post)
 
     with bind_physical_provider_dispatch_port(port):
         result = invoke_with_retry(

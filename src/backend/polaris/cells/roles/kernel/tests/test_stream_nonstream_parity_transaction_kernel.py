@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,6 +17,35 @@ from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKe
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
 from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecision, TurnDecisionKind, TurnId
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ErrorEvent
+
+
+@contextmanager
+def _registered_async_tool() -> Iterator[str]:
+    """Expose one real async ToolSpec without leaking registry state across tests."""
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    token = ToolSpecRegistry._state_var.set(ToolSpecRegistry._get_state())
+    name = "enqueue_background_job"
+    try:
+        ToolSpecRegistry.register(
+            name,
+            {
+                "description": "Enqueue an asynchronous background job",
+                "category": "async",
+                "arguments": [{"name": "title", "type": "string", "required": True}],
+                "arg_aliases": {"title": "title"},
+            },
+            strict=True,
+        )
+        yield name
+    finally:
+        ToolSpecRegistry._state_var.reset(token)
+
+
+@pytest.fixture
+def async_tool_name() -> Iterator[str]:
+    with _registered_async_tool() as name:
+        yield name
 
 
 async def _collect_stream(
@@ -161,7 +192,7 @@ class TestStreamNonStreamParity:
         assert stream_summary["batch_receipt"]["results"][0]["tool_name"] == "read_file"
 
     @pytest.mark.asyncio
-    async def test_handoff_workflow_parity(self) -> None:
+    async def test_handoff_workflow_parity(self, async_tool_name: str) -> None:
         llm = AsyncMock(
             return_value={
                 "content": "Create PR.",
@@ -169,7 +200,7 @@ class TestStreamNonStreamParity:
                     {
                         "id": "call_1",
                         "type": "function",
-                        "function": {"name": "create_pull_request", "arguments": '{"title": "PR"}'},
+                        "function": {"name": async_tool_name, "arguments": '{"title": "job"}'},
                     }
                 ],
                 "model": "test-model",
@@ -183,8 +214,8 @@ class TestStreamNonStreamParity:
             config=TransactionConfig(domain="document"),
         )
 
-        context = [{"role": "user", "content": "create pr"}]
-        tools = [{"name": "create_pull_request", "description": "Create PR"}]
+        context = [{"role": "user", "content": "queue background job"}]
+        tools = [{"name": async_tool_name, "description": "Queue background job"}]
 
         run_result = await kernel.execute("turn_4", context, tools)
         stream_summary = await _collect_stream(kernel, "turn_4", context, tools)
@@ -195,7 +226,7 @@ class TestStreamNonStreamParity:
         assert run_result["metrics"]["tool_calls"] == stream_summary["tool_calls"] == 0
 
     @pytest.mark.asyncio
-    async def test_stream_handoff_fails_closed_when_workflow_runtime_fails(self) -> None:
+    async def test_stream_handoff_fails_closed_when_workflow_runtime_fails(self, async_tool_name: str) -> None:
         llm = AsyncMock(
             return_value={
                 "content": "Create PR.",
@@ -203,7 +234,7 @@ class TestStreamNonStreamParity:
                     {
                         "id": "call_1",
                         "type": "function",
-                        "function": {"name": "create_pull_request", "arguments": '{"title": "PR"}'},
+                        "function": {"name": async_tool_name, "arguments": '{"title": "job"}'},
                     }
                 ],
                 "model": "test-model",
@@ -227,8 +258,8 @@ class TestStreamNonStreamParity:
         events: list[Any] = []
         async for event in kernel.execute_stream(
             "turn_stream_workflow_fail",
-            [{"role": "user", "content": "create pr"}],
-            [{"name": "create_pull_request", "description": "Create PR"}],
+            [{"role": "user", "content": "queue background job"}],
+            [{"name": async_tool_name, "description": "Queue background job"}],
         ):
             events.append(event)
 
@@ -241,7 +272,10 @@ class TestStreamNonStreamParity:
         assert errors[0].error_type == "workflow_stream_error"
 
     @pytest.mark.asyncio
-    async def test_stream_handoff_fails_closed_when_workflow_runtime_returns_failed_completion(self) -> None:
+    async def test_stream_handoff_fails_closed_when_workflow_runtime_returns_failed_completion(
+        self,
+        async_tool_name: str,
+    ) -> None:
         llm = AsyncMock(
             return_value={
                 "content": "Create PR.",
@@ -249,7 +283,7 @@ class TestStreamNonStreamParity:
                     {
                         "id": "call_1",
                         "type": "function",
-                        "function": {"name": "create_pull_request", "arguments": '{"title": "PR"}'},
+                        "function": {"name": async_tool_name, "arguments": '{"title": "job"}'},
                     }
                 ],
                 "model": "test-model",
@@ -275,8 +309,8 @@ class TestStreamNonStreamParity:
         events: list[Any] = []
         async for event in kernel.execute_stream(
             "turn_stream_workflow_failed_status",
-            [{"role": "user", "content": "create pr"}],
-            [{"name": "create_pull_request", "description": "Create PR"}],
+            [{"role": "user", "content": "queue background job"}],
+            [{"name": async_tool_name, "description": "Queue background job"}],
         ):
             events.append(event)
 

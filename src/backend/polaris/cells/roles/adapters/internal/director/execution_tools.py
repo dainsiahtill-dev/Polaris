@@ -8,9 +8,12 @@ from __future__ import annotations
 import logging
 import re
 import shlex
+from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Never, SupportsIndex
+from weakref import WeakSet
 
+from polaris.cells.director.runtime.public import DirectorRepairEffectV1
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.events.file_event_broadcaster import (
     broadcast_file_written,
@@ -18,6 +21,13 @@ from polaris.kernelone.events.file_event_broadcaster import (
     write_file_with_broadcast,
 )
 from polaris.kernelone.exceptions import PathSecurityError
+from polaris.kernelone.fs import (
+    GuardedRegularFileSnapshotV1,
+    guarded_compare_and_create_regular_file,
+    guarded_compare_and_remove_regular_file,
+    guarded_compare_and_replace_regular_file,
+    read_guarded_regular_file_snapshot,
+)
 from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
     _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO,
@@ -39,6 +49,51 @@ from .security import (
 )
 
 logger = logging.getLogger(__name__)
+
+_MAX_GUARDED_REPAIR_BYTES = 64 * 1024 * 1024
+_DIRECTED_EFFECT_PHYSICAL_EXECUTOR_AUTHORITY = object()
+
+
+class DirectorToolExecutionAuthorityError(RuntimeError):
+    """Fail-closed denial for unscoped physical executor construction/transport."""
+
+    __slots__ = ("code",)
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _guarded_repair_snapshot(
+    *,
+    workspace: Path,
+    effect: DirectorRepairEffectV1,
+) -> GuardedRegularFileSnapshotV1 | None:
+    """Capture and verify exact pre-state for one repair effect."""
+
+    if not effect.exists_before:
+        return None
+    snapshot = read_guarded_regular_file_snapshot(
+        workspace,
+        effect.target_path,
+        _MAX_GUARDED_REPAIR_BYTES,
+    )
+    if sha256(snapshot.content).hexdigest() != effect.expected_before_hash:
+        raise RuntimeError("deo_target_state_drift")
+    return snapshot
+
+
+def _validate_repair_effect_call(
+    effect: DirectorRepairEffectV1 | None,
+    *,
+    tool_name: str,
+    args: dict[str, Any],
+) -> DirectorRepairEffectV1 | None:
+    if effect is None:
+        return None
+    if type(effect) is not DirectorRepairEffectV1 or effect.tool_name != tool_name or dict(effect.arguments) != args:
+        raise RuntimeError("deo_operation_hash_mismatch")
+    return effect
 
 
 def _coerce_policy_scope_list(value: Any) -> list[str]:
@@ -266,10 +321,28 @@ class DirectorToolExecutor:
         *,
         message_bus: Any | None = None,
         worker_id: str = "director",
+        _physical_execution_authority: object | None = None,
     ) -> None:
+        if _physical_execution_authority is not _DIRECTED_EFFECT_PHYSICAL_EXECUTOR_AUTHORITY:
+            raise DirectorToolExecutionAuthorityError("directed_effect_physical_executor_authority_required")
         self.workspace = workspace
         self._message_bus = message_bus
         self._worker_id = worker_id
+
+    def _assert_physical_execution_authority(self) -> None:
+        if type(self) is not DirectorToolExecutor or self not in _DIRECTED_EFFECT_PHYSICAL_EXECUTOR_INSTANCES:
+            raise DirectorToolExecutionAuthorityError("directed_effect_physical_executor_authority_required")
+
+    def __copy__(self) -> DirectorToolExecutor:
+        raise DirectorToolExecutionAuthorityError("directed_effect_physical_executor_transport_forbidden")
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> DirectorToolExecutor:
+        del memo
+        raise DirectorToolExecutionAuthorityError("directed_effect_physical_executor_transport_forbidden")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> Never:
+        del protocol
+        raise DirectorToolExecutionAuthorityError("directed_effect_physical_executor_transport_forbidden")
 
     def set_message_bus(self, message_bus: Any | None) -> None:
         self._message_bus = message_bus
@@ -318,18 +391,43 @@ class DirectorToolExecutor:
         args: dict[str, Any],
         *,
         task_id: str = "",
+        repair_effect: DirectorRepairEffectV1 | None = None,
     ) -> dict[str, Any]:
         """执行指定工具"""
+        self._assert_physical_execution_authority()
         workspace_path = Path(self.workspace).resolve()
+        try:
+            repair_effect = _validate_repair_effect_call(
+                repair_effect,
+                tool_name=tool_name,
+                args=args,
+            )
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc), "error_type": "directed_effect_cas_denied"}
 
         if tool_name == "write_file":
-            return self._tool_write_file(args, workspace_path, task_id=task_id)
+            return self._tool_write_file(
+                args,
+                workspace_path,
+                task_id=task_id,
+                repair_effect=repair_effect,
+            )
         elif tool_name == "read_file":
             return self._tool_read_file(args, workspace_path)
         elif tool_name == "edit_file":
-            return self._tool_edit_file(args, workspace_path, task_id=task_id)
+            return self._tool_edit_file(
+                args,
+                workspace_path,
+                task_id=task_id,
+                repair_effect=repair_effect,
+            )
         elif tool_name == "delete_file":
-            return self._tool_delete_file(args, workspace_path, task_id=task_id)
+            return self._tool_delete_file(
+                args,
+                workspace_path,
+                task_id=task_id,
+                repair_effect=repair_effect,
+            )
         elif tool_name in {"run_command", "execute_command"}:
             return self._tool_run_command(args, workspace_path)
         elif tool_name == "search_code":
@@ -347,6 +445,7 @@ class DirectorToolExecutor:
         workspace: Path,
         *,
         task_id: str = "",
+        repair_effect: DirectorRepairEffectV1 | None = None,
     ) -> dict[str, Any]:
         """写入文件工具"""
         raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
@@ -391,7 +490,14 @@ class DirectorToolExecutor:
 
         try:
             existing_content: str | None = None
-            if target.exists():
+            guarded_snapshot = (
+                _guarded_repair_snapshot(workspace=workspace, effect=repair_effect)
+                if repair_effect is not None
+                else None
+            )
+            if guarded_snapshot is not None:
+                existing_content = guarded_snapshot.content.decode("utf-8")
+            elif repair_effect is None and target.exists():
                 try:
                     existing_content = target.read_text(encoding="utf-8")
                 except (OSError, UnicodeError):
@@ -407,7 +513,7 @@ class DirectorToolExecutor:
                     old_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
                     and new_lines <= old_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
                 ):
-                    return _destructive_shrink_error(
+                    destructive_error: dict[str, Any] = _destructive_shrink_error(
                         file_path,
                         old_lines,
                         new_lines,
@@ -418,6 +524,7 @@ class DirectorToolExecutor:
                             "body comparable in size to the original."
                         ),
                     )
+                    return destructive_error
             normalized = normalize_patch_like_write_content(
                 rel_path,
                 content,
@@ -445,24 +552,66 @@ class DirectorToolExecutor:
             if not policy_result.get("ok"):
                 return policy_result
 
-            write_result = write_file_with_broadcast(
-                workspace=str(workspace),
-                file_path=rel_path,
-                content=text,
-                message_bus=self._message_bus,
-                worker_id=self._worker_id,
-                task_id=task_id,
-            )
+            if repair_effect is not None:
+                if not repair_effect.exists_after or sha256(text.encode("utf-8")).hexdigest() != (
+                    repair_effect.expected_after_hash
+                ):
+                    return {
+                        "ok": False,
+                        "error": "deo_target_state_drift",
+                        "error_type": "directed_effect_cas_denied",
+                    }
+                if guarded_snapshot is None:
+                    guarded_compare_and_create_regular_file(
+                        workspace,
+                        rel_path,
+                        text.encode("utf-8"),
+                        max_bytes=_MAX_GUARDED_REPAIR_BYTES,
+                    )
+                    operation = "create"
+                else:
+                    guarded_compare_and_replace_regular_file(
+                        workspace,
+                        guarded_snapshot,
+                        text.encode("utf-8"),
+                        max_bytes=_MAX_GUARDED_REPAIR_BYTES,
+                    )
+                    operation = "modify"
+                write_result = {
+                    "ok": True,
+                    "bytes": len(text.encode("utf-8")),
+                    "operation": operation,
+                    "broadcast_ok": broadcast_file_written(
+                        file_path=rel_path,
+                        operation=operation,
+                        content_size=len(text.encode("utf-8")),
+                        task_id=task_id,
+                        patch="",
+                        message_bus=self._message_bus,
+                        worker_id=self._worker_id,
+                        event_log_workspace=str(workspace),
+                    ),
+                }
+            else:
+                write_result = write_file_with_broadcast(
+                    workspace=str(workspace),
+                    file_path=rel_path,
+                    content=text,
+                    message_bus=self._message_bus,
+                    worker_id=self._worker_id,
+                    task_id=task_id,
+                )
             if not bool(write_result.get("ok")):
                 return {
                     "ok": False,
                     "error": str(write_result.get("error") or "write_file failed"),
                     "file": rel_path,
                 }
+            raw_bytes_written = write_result.get("bytes")
             result = {
                 "ok": True,
                 "file": rel_path,
-                "bytes_written": int(write_result.get("bytes") or len(text.encode("utf-8"))),
+                "bytes_written": (raw_bytes_written if type(raw_bytes_written) is int else len(text.encode("utf-8"))),
                 "operation": str(write_result.get("operation") or "modify"),
                 "broadcast_ok": bool(write_result.get("broadcast_ok")),
                 "director_policy": policy_result.get("director_policy"),
@@ -472,7 +621,7 @@ class DirectorToolExecutor:
             if json_config_result.get("repaired"):
                 result["json_config_repaired"] = True
             return result
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
 
     def _tool_read_file(
@@ -501,6 +650,7 @@ class DirectorToolExecutor:
         workspace: Path,
         *,
         task_id: str = "",
+        repair_effect: DirectorRepairEffectV1 | None = None,
     ) -> dict[str, Any]:
         """编辑文件工具（搜索替换）"""
         raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
@@ -519,12 +669,23 @@ class DirectorToolExecutor:
             target = (workspace / file_path).resolve()
             if workspace not in target.parents and target != workspace:
                 return {"ok": False, "error": f"Unsafe file path outside workspace: {file_path}"}
-            if not target.exists():
+            guarded_snapshot = (
+                _guarded_repair_snapshot(workspace=workspace, effect=repair_effect)
+                if repair_effect is not None
+                else None
+            )
+            if repair_effect is not None and guarded_snapshot is None:
+                return {"ok": False, "error": "deo_target_state_drift"}
+            if repair_effect is None and not target.exists():
                 return {"ok": False, "error": f"File not found: {file_path}"}
             if not target.is_file():
                 return {"ok": False, "error": f"Path is not a file: {file_path}"}
 
-            content = target.read_text(encoding="utf-8")
+            content = (
+                guarded_snapshot.content.decode("utf-8")
+                if guarded_snapshot is not None
+                else target.read_text(encoding="utf-8")
+            )
             if search not in content:
                 return {"ok": False, "error": f"Search text not found in file: {search[:50]}..."}
 
@@ -547,7 +708,38 @@ class DirectorToolExecutor:
             if not policy_result.get("ok"):
                 return policy_result
 
-            if json_config_result.get("repaired"):
+            if repair_effect is not None:
+                if (
+                    not repair_effect.exists_after
+                    or guarded_snapshot is None
+                    or sha256(final_content.encode("utf-8")).hexdigest() != repair_effect.expected_after_hash
+                ):
+                    return {
+                        "ok": False,
+                        "error": "deo_target_state_drift",
+                        "error_type": "directed_effect_cas_denied",
+                    }
+                guarded_compare_and_replace_regular_file(
+                    workspace,
+                    guarded_snapshot,
+                    final_content.encode("utf-8"),
+                    max_bytes=_MAX_GUARDED_REPAIR_BYTES,
+                )
+                replace_result = {
+                    "ok": True,
+                    "replacements": 1,
+                    "broadcast_ok": broadcast_file_written(
+                        file_path=rel_path,
+                        operation="modify",
+                        content_size=len(final_content.encode("utf-8")),
+                        task_id=task_id,
+                        patch="",
+                        message_bus=self._message_bus,
+                        worker_id=self._worker_id,
+                        event_log_workspace=str(workspace),
+                    ),
+                }
+            elif json_config_result.get("repaired"):
                 replace_result = write_file_with_broadcast(
                     workspace=str(workspace),
                     file_path=rel_path,
@@ -592,6 +784,7 @@ class DirectorToolExecutor:
         workspace: Path,
         *,
         task_id: str = "",
+        repair_effect: DirectorRepairEffectV1 | None = None,
     ) -> dict[str, Any]:
         """Delete a single workspace file through Director policy gates."""
         raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
@@ -610,6 +803,18 @@ class DirectorToolExecutor:
             fs = KernelFileSystem(str(workspace.resolve()), LocalFileSystemAdapter())
             rel_path = fs.to_workspace_relative_path(file_path)
 
+            guarded_snapshot = (
+                _guarded_repair_snapshot(workspace=workspace, effect=repair_effect)
+                if repair_effect is not None
+                else None
+            )
+            if repair_effect is not None and (guarded_snapshot is None or repair_effect.exists_after):
+                return {
+                    "ok": False,
+                    "error": "deo_target_state_drift",
+                    "error_type": "directed_effect_cas_denied",
+                }
+
             if rel_path == ".":
                 return {"ok": False, "error": f"Path is not a file: {file_path}", "file": rel_path}
             if not fs.workspace_exists(rel_path):
@@ -622,7 +827,7 @@ class DirectorToolExecutor:
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
                 rel_path=rel_path,
-                old_content="",
+                old_content=(guarded_snapshot.content.decode("utf-8") if guarded_snapshot is not None else ""),
                 new_content="",
                 operation="delete_file",
                 tool_kwargs=args,
@@ -630,7 +835,15 @@ class DirectorToolExecutor:
             if not policy_result.get("ok"):
                 return policy_result
 
-            deleted = fs.workspace_remove(rel_path, missing_ok=False)
+            if guarded_snapshot is not None:
+                guarded_compare_and_remove_regular_file(
+                    workspace,
+                    guarded_snapshot,
+                    max_bytes=_MAX_GUARDED_REPAIR_BYTES,
+                )
+                deleted = True
+            else:
+                deleted = fs.workspace_remove(rel_path, missing_ok=False)
             if not deleted:
                 return {"ok": False, "error": f"Failed to delete file: {file_path}", "file": rel_path}
 
@@ -654,7 +867,7 @@ class DirectorToolExecutor:
                 "broadcast_ok": bool(broadcast_ok),
                 "director_policy": policy_result.get("director_policy"),
             }
-        except (OSError, PathSecurityError, RuntimeError, TypeError, ValueError) as exc:
+        except (OSError, PathSecurityError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
 
     # -------------------------------------------------------------------------
@@ -806,3 +1019,24 @@ class DirectorToolExecutor:
             return {"ok": True, "query": query, "results": "", "count": 0, "note": "rg not installed"}
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
+
+
+_DIRECTED_EFFECT_PHYSICAL_EXECUTOR_INSTANCES: WeakSet[DirectorToolExecutor] = WeakSet()
+
+
+def _create_director_tool_executor(
+    workspace: str,
+    *,
+    message_bus: Any | None = None,
+    worker_id: str = "director",
+) -> DirectorToolExecutor:
+    """Create the private physical executor for the canonical DEO mutation port."""
+
+    executor = DirectorToolExecutor(
+        workspace,
+        message_bus=message_bus,
+        worker_id=worker_id,
+        _physical_execution_authority=_DIRECTED_EFFECT_PHYSICAL_EXECUTOR_AUTHORITY,
+    )
+    _DIRECTED_EFFECT_PHYSICAL_EXECUTOR_INSTANCES.add(executor)
+    return executor

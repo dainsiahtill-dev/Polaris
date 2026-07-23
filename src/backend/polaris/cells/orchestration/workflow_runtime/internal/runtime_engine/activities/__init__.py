@@ -14,7 +14,13 @@ from .director_activities import (
     get_ready_tasks,
 )
 from .pm_activities import generate_pm_tasks, run_chief_engineer_blueprint, validate_task_contract
-from .qa_activities import collect_evidence, record_qa_cognitive_receipt, run_integration_qa, run_unit_qa
+from .qa_activities import (
+    collect_evidence,
+    record_qa_blocked,
+    record_qa_cognitive_receipt,
+    run_integration_qa,
+    run_unit_qa,
+)
 
 __all__ = [
     "ActivityExecutionContext",
@@ -27,6 +33,7 @@ __all__ = [
     "get_ready_tasks",
     "get_registered_activity",
     "list_registered_activities",
+    "record_qa_blocked",
     "record_qa_cognitive_receipt",
     "register_activity",
     "run_chief_engineer_blueprint",

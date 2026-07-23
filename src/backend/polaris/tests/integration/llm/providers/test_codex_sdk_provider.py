@@ -8,13 +8,29 @@ Covers:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from polaris.infrastructure.llm.providers.codex_sdk_provider import CodexSDKProvider
 from polaris.infrastructure.llm.sdk import SDKUnavailableError
+from polaris.kernelone.llm.engine.contracts import bind_physical_provider_dispatch_port
 from polaris.kernelone.llm.types import InvokeResult
+
+
+class _RecordingSyncDispatchPort:
+    def __init__(self) -> None:
+        self.wire_requests: list[Mapping[str, Any]] = []
+
+    def dispatch_sync(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        send: Callable[[Mapping[str, Any]], Any],
+    ) -> Any:
+        self.wire_requests.append(wire_request)
+        return send(wire_request)
 
 
 class TestCodexSDKProviderHappyPath:
@@ -88,6 +104,94 @@ class TestCodexSDKProviderHappyPath:
         assert result.ok is True
         assert "<thinking>" in result.output
         assert "The answer is 42." in result.output
+
+    def test_factory_bound_invoke_locks_sdk_version_disables_sdk_retries_and_crosses_gate(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_sdk_config: dict[str, Any],
+    ) -> None:
+        sdk_configs: list[Any] = []
+        sdk_invocations: list[dict[str, Any]] = []
+        port = _RecordingSyncDispatchPort()
+
+        class _SDK:
+            def __init__(self, sdk_config: Any) -> None:
+                sdk_configs.append(sdk_config)
+
+            def invoke(self, *, messages: list[Any], model: str, **kwargs: Any) -> Any:
+                sdk_invocations.append({"messages": messages, "model": model, "kwargs": kwargs})
+                response = MagicMock()
+                response.content = "ok"
+                response.thinking = None
+                response.usage = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                response.metadata = {}
+                return response
+
+        monkeypatch.setattr("polaris.infrastructure.llm.providers.codex_sdk_provider.CodexSDK", _SDK)
+        config = {**codex_sdk_config, "max_retries": 9, "sdk_params": {}}
+
+        with bind_physical_provider_dispatch_port(port):
+            result = CodexSDKProvider().invoke("hello", "gpt-4-codex", config)
+
+        assert result.ok is True
+        assert len(port.wire_requests) == len(sdk_invocations) == len(sdk_configs) == 1
+        assert sdk_configs[0].max_retries == 0
+        assert port.wire_requests[0]["transport"] == {
+            "kind": "openai-python-sdk",
+            "sdk_version": "2.41.0",
+            "max_retries": 0,
+        }
+        assert port.wire_requests[0]["body"]["model"] == "gpt-4-codex"
+
+    def test_factory_bound_invoke_rejects_unlocked_sdk_before_client_or_gate(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_sdk_config: dict[str, Any],
+    ) -> None:
+        port = _RecordingSyncDispatchPort()
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.codex_sdk_provider._installed_openai_sdk_version",
+            lambda: "2.40.0",
+        )
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.codex_sdk_provider.CodexSDK",
+            lambda _config: (_ for _ in ()).throw(AssertionError("SDK client must not be constructed")),
+        )
+
+        with bind_physical_provider_dispatch_port(port):
+            result = CodexSDKProvider().invoke("hello", "gpt-4-codex", codex_sdk_config)
+
+        assert result.ok is False
+        assert result.error == "factory_codex_sdk_version_mismatch:expected=2.41.0:actual=2.40.0"
+        assert port.wire_requests == []
+
+    @pytest.mark.parametrize(
+        "sdk_params",
+        [
+            {"custom_transport": "opaque"},
+            "non-empty-custom",
+            ["custom"],
+        ],
+    )
+    def test_factory_bound_invoke_rejects_sdk_params_before_client_or_gate(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_sdk_config: dict[str, Any],
+        sdk_params: object,
+    ) -> None:
+        port = _RecordingSyncDispatchPort()
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.codex_sdk_provider.CodexSDK",
+            lambda _config: (_ for _ in ()).throw(AssertionError("SDK client must not be constructed")),
+        )
+        config = {**codex_sdk_config, "sdk_params": sdk_params}
+
+        with bind_physical_provider_dispatch_port(port):
+            result = CodexSDKProvider().invoke("hello", "gpt-4-codex", config)
+
+        assert result.ok is False
+        assert result.error == "factory_codex_sdk_params_unsupported"
+        assert port.wire_requests == []
 
     def test_health_success(
         self,

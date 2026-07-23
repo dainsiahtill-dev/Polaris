@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.events.fact_stream.public import (
     AppendSegmentedFactEventCommandV1,
@@ -26,8 +26,8 @@ from polaris.cells.roles.kernel.public.physical_attempt_control import (
     ProviderAttemptTerminalReceiptV1,
 )
 from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1
+from polaris.kernelone.llm.engine.internal.context_hash import validate_context_hash
 
-_CONTEXT_REF_RE = re.compile(r"^[0-9a-f]{24}$")
 _PIN_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
@@ -83,7 +83,8 @@ class StrictProviderAttemptLifecycleStore:
         if self.verification_scope == "factory":
             if type(start_permit) is not FactoryPhysicalAttemptStartPermitV1:
                 raise TypeError("factory_physical_attempt_start_permit_exact_type_required")
-            FactoryPhysicalAttemptStartPermitV1.__post_init__(start_permit)
+            start_permit = cast(FactoryPhysicalAttemptStartPermitV1, start_permit)
+            start_permit.__post_init__()
             self._validate_start_permit_identity(attempt, start_permit)
         elif start_permit is not None:
             raise TypeError("role_session_start_permit_forbidden")
@@ -148,7 +149,8 @@ class StrictProviderAttemptLifecycleStore:
         if self.verification_scope == "factory":
             if type(lease) is not FactoryPhysicalAttemptLeaseV1:
                 raise TypeError("factory_physical_attempt_lease_exact_type_required")
-            FactoryPhysicalAttemptLeaseV1.__post_init__(lease)
+            lease = cast(FactoryPhysicalAttemptLeaseV1, lease)
+            lease.__post_init__()
             self._validate_lease_identity(attempt, lease)
         elif lease is not None:
             raise TypeError("role_session_physical_attempt_lease_forbidden")
@@ -333,6 +335,7 @@ class StrictProviderAttemptLifecycleStore:
             "attempt_number": attempt.attempt_number,
             "verification_scope": attempt.verification_scope,
             "context_snapshot_ref": context_snapshot_ref,
+            "semantic_candidate_hash": attempt.semantic_candidate_hash,
             "semantic_request_hash": attempt.semantic_request_hash,
             "physical_wire_hash": attempt.physical_wire_hash,
             "composite_request_hash": attempt.composite_request_hash,
@@ -439,7 +442,10 @@ class StrictProviderAttemptLifecycleStore:
 
     @staticmethod
     def _validate_evidence(*, context_snapshot_ref: str, pin_hash: str) -> None:
-        if not _CONTEXT_REF_RE.fullmatch(str(context_snapshot_ref or "")):
-            raise ValueError("context_snapshot_ref must be exactly 24 lowercase hex")
+        try:
+            validate_context_hash(str(context_snapshot_ref or ""))
+        except ValueError as exc:
+            raise ValueError("context_snapshot_ref must be exactly 24 lowercase hex") from exc
+
         if not _PIN_HASH_RE.fullmatch(str(pin_hash or "")):
             raise ValueError("pin_hash must be exactly 64 lowercase hex")

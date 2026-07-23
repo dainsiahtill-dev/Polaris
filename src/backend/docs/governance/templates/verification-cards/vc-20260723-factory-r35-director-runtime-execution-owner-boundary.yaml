@@ -1,0 +1,30 @@
+card_id: vc-20260723-factory-r35-director-runtime-execution-owner-boundary
+classification: structural
+status: closed
+bench_status: delegated_to_pre_bench
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+defect:
+  code: director_runtime_execution_projection_owner_violation
+  owner: runtime.task_runtime
+  offender: roles.adapters.internal.director
+  evidence: >-
+    test_runtime_execution_metadata_writes_stay_in_task_runtime_owner reported
+    adapter.py writing and popping metadata.runtime_execution.
+required_fix: >-
+  Read the TaskRuntime projection only for parent-identity validation, omit it
+  from child role metadata, and preserve parent authority solely through
+  director.role_subinvocation.v1 evidence.
+gates:
+  focused_identity_tests: "5 passed"
+  taskruntime_owner_architecture_fence: "1 passed"
+  roles_adapters_full: "1302 passed"
+  architecture_full: "1411 passed, 8 skipped"
+  ruff: pass
+  mypy_strict_taskruntime_service: pass
+  compileall: pass
+scheduling:
+  bench_schedulable: false
+  authorization_scope: delegated_to_pre_bench
+  next_action: consume_only_the_pre_bench_one_shot_authorization

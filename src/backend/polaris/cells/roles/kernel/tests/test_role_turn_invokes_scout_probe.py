@@ -38,6 +38,11 @@ from typing import Any
 
 import polaris.cells.roles.scout.public.service as scout_service
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.tool_runtime_executor import execute_single_tool
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
@@ -50,6 +55,19 @@ from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1, Scout
 
 # The three roles the audit targets.
 ROLES_UNDER_AUDIT: tuple[str, ...] = ("pm", "chief_engineer", "director")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_fact_stream_workspace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="role_turn_scout_probe_test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
+
 
 # Runtime SSOT consumed by load_core_roles().
 # This file: cells/roles/kernel/tests/ -> parents[2] = cells/roles.

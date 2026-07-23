@@ -526,6 +526,7 @@ def test_semantic_candidate_is_canonical_deep_copy_with_authoritative_capability
         "capability_profile_id",
         "messages",
         "tools",
+        "required_tools",
         "tool_choice",
         "response_format",
         "temperature",

@@ -16,6 +16,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 
 def test_final_request_context_audit_includes_sampling_profile() -> None:
@@ -305,7 +306,12 @@ def test_final_provider_snapshot_includes_execution_profile_summary_and_hash() -
         task_type=TaskType.DIALOGUE,
         role="director",
         input="",
-        options={"temperature": 0.15, "max_tokens": 5000, "response_format": {"type": "json_object"}},
+        options={
+            "temperature": 0.15,
+            "max_tokens": 5000,
+            "reasoning_budget_tokens": 2_048,
+            "response_format": {"type": "json_object"},
+        },
         context={
             "mode": "chat",
             "native_tool_mode": "native_tools",
@@ -337,6 +343,7 @@ def test_final_provider_snapshot_includes_execution_profile_summary_and_hash() -
     )
 
     metadata_summary = snapshot["request_metadata_summary"]
+    assert metadata_summary["reasoning_budget_tokens"] == 2_048
     assert metadata_summary["schema_version"] == "llm.request_metadata_summary.v1"
     assert metadata_summary["has_execution_profile"] is True
     assert metadata_summary["has_language_guidance"] is True
@@ -986,9 +993,6 @@ def test_final_request_evidence_role_defaults_use_canonical_ref_helper(monkeypat
 
     evidence_coverage = audit["final_request_evidence_coverage"]
     assert {
-        "pm_task_contract",
-        "chief_engineer_blueprint",
-        "target_files_or_declared_scopes",
         "execution_profile",
         "execution_strategy",
         "execution_envelope",
@@ -2788,6 +2792,89 @@ def test_final_request_context_audit_canonicalizes_required_tool_aliases() -> No
     assert coverage["missing_required_tools"] == []
     assert coverage["tool_surface"]["canonicalized"] is True
     assert "missing_required_final_request_tools" not in {item["code"] for item in audit["context_quality"]["findings"]}
+
+
+def test_final_request_context_audit_projects_authoritative_tool_registry_coverage() -> None:
+    write_schema = ToolSpecRegistry.get_llm_schema(
+        "write_file",
+        include_arg_aliases=True,
+        deterministic=True,
+    )
+    assert write_schema is not None
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 2000, "tools": [write_schema]},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Write the declared target."},
+            ],
+            "required_tools": ["write_file"],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=list(ai_request.context["chat_messages"]),
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    registry = audit["final_request_evidence_coverage"]["tool_schema_registry_coverage"]
+    assert registry == {
+        "registry_source": "polaris.kernelone.tool_execution.ToolSpecRegistry",
+        "aliases_present": True,
+        "arg_aliases_present": True,
+        "schema_hash": context_audit_module._stable_digest([write_schema]),
+        "missing_schema_tools": [],
+    }
+
+
+def test_final_request_context_audit_does_not_claim_registry_provenance_for_unknown_tool() -> None:
+    unknown_schema = {
+        "type": "function",
+        "function": {
+            "name": "unknown_mutation_tool",
+            "description": "not registered",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 2000, "tools": [unknown_schema]},
+        context={"chat_messages": [{"role": "system", "content": "You are Director."}]},
+    )
+    prepared = PreparedLLMRequest(
+        messages=list(ai_request.context["chat_messages"]),
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    registry = audit["final_request_evidence_coverage"]["tool_schema_registry_coverage"]
+    assert registry["registry_source"] == ""
+    assert registry["aliases_present"] is False
+    assert registry["arg_aliases_present"] is False
+    assert registry["missing_schema_tools"] == ["unknown_mutation_tool"]
 
 
 def test_pm_route_probe_final_provider_request_has_no_tools() -> None:

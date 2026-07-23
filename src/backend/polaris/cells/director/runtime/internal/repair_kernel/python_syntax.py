@@ -9,6 +9,7 @@ from pathlib import PurePosixPath
 from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 
 PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL = "deterministic_python_package_child_reexport_repair"
+PYTHON_MISSING_MODULE_ALIAS_SOURCE_TOOL = "deterministic_python_missing_module_alias_repair"
 PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL = "deterministic_python_package_shadow_bridge_repair"
 PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL = "deterministic_python_readme_required_token_repair"
 PYTHON_UNITTEST_MISSING_TARGET_SOURCE_TOOL = "deterministic_python_unittest_missing_target_repair"
@@ -19,6 +20,10 @@ _PYTHON_IMPORT_NAME_FROM_INIT_ERROR_RE = re.compile(
     r"ImportError:\s+cannot\s+import\s+name\s+['\"](?P<symbol>[A-Za-z_][A-Za-z0-9_]*)['\"]\s+"
     r"from\s+['\"](?P<module>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)['\"]\s+"
     r"\((?P<path>[^)]*[/\\]__init__\.py)\)"
+)
+_PYTHON_MODULE_NOT_FOUND_RE = re.compile(
+    r"ModuleNotFoundError:\s+No\s+module\s+named\s+['\"](?P<module>[A-Za-z_][A-Za-z0-9_]*)['\"]",
+    re.IGNORECASE,
 )
 _PYTHON_RUNTIME_TEST_FAILURE_RE = re.compile(
     r"python runtime smoke (?:crashed|timed out|could not launch) for "
@@ -243,6 +248,99 @@ def build_python_package_shadow_bridge_plan(
         rule_id="python.package_shadow_bridge",
         bridge_kind="shadow_bridge",
     )
+
+
+def build_python_missing_module_alias_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Create a source-root compatibility module for one unambiguous nested module.
+
+    A generated project may place ``weather.py`` at ``src/models/weather.py``
+    while its tests import ``weather`` with ``src`` on ``PYTHONPATH``.  The
+    runtime kernel may bridge that topology only when exactly one existing
+    nested module matches the missing top-level name.  Ambiguity, unsafe names,
+    and an existing target all fail closed.
+    """
+
+    normalized_base = _normalize_base_files(base_files)
+    operations: list[RepairOperation] = []
+    matched: list[RepairDiagnostic] = []
+    seen_targets: set[str] = set()
+    for diagnostic in diagnostics:
+        module_name = _python_missing_top_level_module_name(diagnostic)
+        if not module_name:
+            continue
+        target = f"src/{module_name}.py"
+        if target in normalized_base or target in seen_targets:
+            continue
+        candidates = _python_nested_module_alias_candidates(normalized_base, module_name)
+        if len(candidates) != 1:
+            continue
+        source = candidates[0]
+        import_path = source.removeprefix("src/").removesuffix(".py").replace("/", ".")
+        relative_import_path = "." + import_path
+        content = (
+            '"""Compatibility bridge generated from an unambiguous module topology."""\n\n'
+            "if __package__:\n"
+            f"    from {relative_import_path} import *  # noqa: F401,F403\n"
+            "else:\n"
+            f"    from {import_path} import *  # noqa: F401,F403\n"
+        )
+        operations.append(
+            RepairOperation(
+                kind="write_file",
+                path=target,
+                content=content,
+                metadata={
+                    "repair_kind": "python_missing_module_alias",
+                    "source_module": source,
+                    "missing_module": module_name,
+                    "write_file_reason": "new_python_source_root_module_alias",
+                    "diagnostic_id": diagnostic.diagnostic_id,
+                },
+            )
+        )
+        seen_targets.add(target)
+        matched.append(diagnostic)
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="python.missing_module_alias",
+        source_tool=PYTHON_MISSING_MODULE_ALIAS_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(_dedupe_diagnostics(matched)),
+        mode=mode,
+        risk_level="medium",
+        priority=1,
+        metadata={
+            "runtime_plan_scope": "missing_module_alias",
+            "unsafe_cases_fail_closed": True,
+            "requires_unique_nested_module_candidate": True,
+        },
+    )
+
+
+def _python_missing_top_level_module_name(diagnostic: RepairDiagnostic) -> str:
+    raw = str(diagnostic.raw or diagnostic.message or "")
+    match = _PYTHON_MODULE_NOT_FOUND_RE.search(raw)
+    return str(match.group("module") or "").strip() if match is not None else ""
+
+
+def _python_nested_module_alias_candidates(base_files: Mapping[str, str], module_name: str) -> tuple[str, ...]:
+    suffix = f"/{module_name}.py"
+    candidates = sorted(
+        path
+        for path in base_files
+        if path.startswith("src/")
+        and path.endswith(suffix)
+        and path != f"src/{module_name}.py"
+        and all(_PYTHON_IDENTIFIER_RE.match(part) for part in PurePosixPath(path.removesuffix(".py")).parts)
+        and not any(part in {"tests", "test", "__pycache__"} for part in PurePosixPath(path).parts)
+    )
+    return tuple(candidates)
 
 
 def build_python_unresolved_import_symbol_plan(
@@ -763,12 +861,14 @@ def _dedupe_diagnostics(diagnostics: Sequence[RepairDiagnostic]) -> tuple[Repair
 
 
 __all__ = [
+    "PYTHON_MISSING_MODULE_ALIAS_SOURCE_TOOL",
     "PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL",
     "PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL",
     "PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL",
     "PYTHON_UNITTEST_MISSING_TARGET_SOURCE_TOOL",
     "PYTHON_UNITTEST_RUNTIME_FAILURE_SOURCE_TOOL",
     "PYTHON_UNRESOLVED_IMPORT_SYMBOL_SOURCE_TOOL",
+    "build_python_missing_module_alias_plan",
     "build_python_package_child_reexport_plan",
     "build_python_package_shadow_bridge_plan",
     "build_python_readme_required_token_plan",

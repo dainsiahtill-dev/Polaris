@@ -55,6 +55,7 @@ def _attempt(
         execution_authority_hash="f" * 64 if verification_scope == "factory" else "",
         attempt_budget=32 if verification_scope == "factory" else 0,
         authority_attempt_ordinal=1 if verification_scope == "factory" else 0,
+        semantic_candidate_hash="d" * 64 if verification_scope == "factory" else "",
         semantic_request_hash="a" * 64,
         physical_wire_hash="b" * 64,
         composite_request_hash="c" * 64,

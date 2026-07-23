@@ -875,12 +875,15 @@ class StreamOrchestrator:
                     native_tool_calls = supersede_partial_tool_calls(native_tool_calls)
                     raw_usage = event.get("usage")
                     response_usage = dict(raw_usage) if isinstance(raw_usage, Mapping) else {}
+                    raw_metadata = event.get("metadata")
+                    response_metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
                     response = RawLLMResponse(
                         content=visible_content,
                         thinking=thinking,
                         native_tool_calls=native_tool_calls,
                         model=str(event.get("model") or "unknown"),
                         usage=response_usage,
+                        metadata=response_metadata,
                     )
                     yield cast(
                         TurnEvent,
@@ -896,6 +899,7 @@ class StreamOrchestrator:
                     native_tool_calls=supersede_partial_tool_calls(list(stream_native_tool_calls)),
                     model="unknown",
                     usage={},
+                    metadata={},
                 )
                 yield cast(
                     TurnEvent,
@@ -1078,6 +1082,7 @@ class StreamOrchestrator:
             if call_llm_for_decision_stream is not None
             else self._call_llm_for_decision_stream_impl
         )
+        provider_error_emitted = False
         async for event in _call_llm_stream(
             context,
             tool_definitions,
@@ -1088,9 +1093,16 @@ class StreamOrchestrator:
             if isinstance(event, dict) and event.get("type") == "_internal_materialize":
                 llm_response = event.get("response")
                 continue
+            if isinstance(event, ErrorEvent):
+                provider_error_emitted = True
             yield event
 
         if llm_response is None:
+            if provider_error_emitted:
+                # The upstream provider error is already the authoritative
+                # first cause.  Do not append a generic materialization error
+                # that can overwrite it at the RoleRuntime projection.
+                return
             yield ErrorEvent(
                 turn_id=turn_id,
                 error_type="stream_error",
@@ -1150,16 +1162,16 @@ class StreamOrchestrator:
             raw_response_usage = llm_response.get("usage", {})
             response_usage = raw_response_usage if isinstance(raw_response_usage, dict) else {}
             response_context_os_audit = response_usage.get("context_os_audit")
+            raw_response_metadata = llm_response.get("metadata", {})
+            response_metadata = dict(raw_response_metadata) if isinstance(raw_response_metadata, Mapping) else {}
+            if isinstance(response_context_os_audit, dict):
+                response_metadata.setdefault("context_os_audit", dict(response_context_os_audit))
             ledger.record_llm_call(
                 phase="decision",
                 model=llm_response.get("model", "unknown"),
                 tokens_in=response_usage.get("prompt_tokens", 0),
                 tokens_out=response_usage.get("completion_tokens", 0),
-                metadata=(
-                    {"context_os_audit": dict(response_context_os_audit)}
-                    if isinstance(response_context_os_audit, dict)
-                    else None
-                ),
+                metadata=response_metadata or None,
             )
 
         if (
@@ -1302,7 +1314,12 @@ class StreamOrchestrator:
                 return
         else:
             if decision_kind == TurnDecisionKind.FINAL_ANSWER:
-                result = await self.handle_final_answer(decision, state_machine, ledger)
+                result = await self.handle_final_answer(
+                    decision,
+                    state_machine,
+                    ledger,
+                    emit_completion=False,
+                )
             elif decision_kind == TurnDecisionKind.HANDOFF_WORKFLOW:
                 async for event in self.handoff_handler.handle_handoff_stream(decision, state_machine, ledger):
                     yield event
@@ -1438,10 +1455,16 @@ class StreamOrchestrator:
             )
 
         _kind = result.get("kind", "")
-        completion_status: Literal["success", "failed", "handoff", "suspended"] = (
-            "handoff" if _kind == "handoff_workflow" else "suspended" if _kind == "ask_user" else "success"
-        )
         _finalization = result.get("finalization") or {}
+        completion_status: Literal["success", "failed", "handoff", "suspended"] = (
+            "failed"
+            if _kind in {"mutation_bypass_blocked", "inline_patch_escape_blocked", "recon_bypass_blocked"}
+            else "handoff"
+            if _kind == "handoff_workflow"
+            else "suspended"
+            if _kind == "ask_user"
+            else "success"
+        )
         monitoring: dict[str, Any] = dict(self.extract_monitoring_metrics(result.get("metrics", {})))
         context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
         if context_os_audit_summary:
@@ -1452,6 +1475,7 @@ class StreamOrchestrator:
         project_completion_audit_evidence_to_metadata(
             monitoring,
             decision_metadata,
+            llm_response.get("metadata"),
             result.get("llm_response_metadata"),
             llm_response.get("usage"),
             overwrite_native_facts=True,
@@ -1466,5 +1490,9 @@ class StreamOrchestrator:
             visible_content=visible_content,
             turn_kind=_kind,
             batch_receipt=batch_receipt or {},
-            error=_finalization.get("suspended_reason") or _finalization.get("error") if _kind == "ask_user" else None,
+            error=(
+                _finalization.get("suspended_reason") or _finalization.get("error")
+                if completion_status in {"failed", "suspended"}
+                else None
+            ),
         )

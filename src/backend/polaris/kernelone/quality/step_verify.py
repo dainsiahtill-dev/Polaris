@@ -10,7 +10,7 @@ Diagnosis discipline (adversarial-review hardened, live I3-r12):
 the full command stays the pass/fail ground truth; clause-level work only
 sharpens teaching. Clauses are re-run individually in fresh shells, so
 diagnosis is abandoned whenever that could name a wrong clause — quoted text
-cut by the ``" && "`` split (sh -n guard), top-level ``||`` regrouping, or
+or nesting that the bounded scanner cannot balance, top-level ``||`` regrouping, or
 state-carrying clauses (cd/export/VAR=…) whose effects do not reach their
 successors in a fresh shell. A wrong teaching is worse than none.
 
@@ -188,9 +188,7 @@ def assess_legacy_step_verify_command_safety(command: str) -> StepVerifyCommandS
             clauses=(),
         )
 
-    clauses, blocked_shell_tokens, blocked_shell_clauses = _parse_legacy_step_verify_safety_clauses(
-        normalized_command
-    )
+    clauses, blocked_shell_tokens, blocked_shell_clauses = _parse_legacy_step_verify_safety_clauses(normalized_command)
     if blocked_shell_tokens:
         return StepVerifyCommandSafetyAssessment(
             allowed=False,
@@ -429,11 +427,7 @@ def _is_allowed_legacy_wc_line_count_substitution(substitution: str) -> bool:
         tokens = shlex.split(substitution, posix=True)
     except ValueError:
         return False
-    return (
-        len(tokens) == 4
-        and tokens[:3] == ["wc", "-l", "<"]
-        and _is_safe_legacy_wc_path_token(tokens[3])
-    )
+    return len(tokens) == 4 and tokens[:3] == ["wc", "-l", "<"] and _is_safe_legacy_wc_path_token(tokens[3])
 
 
 def _is_safe_legacy_wc_path_token(token: str) -> bool:
@@ -896,8 +890,92 @@ def normalize_step_verify(raw_verify: Any) -> str:
     return _normalize_literal_grep_clauses(normalized)
 
 
+def _split_top_level_shell_operator(command: str, operator: str) -> tuple[list[str], bool]:
+    """Split a shell command only at unquoted, unnested operators.
+
+    This is deliberately a small fail-closed scanner, not a shell parser.  An
+    unbalanced quote/group returns the original command so callers never turn
+    one stateful command into several independently executed effects.
+    """
+
+    parts: list[str] = []
+    start = 0
+    quote = ""
+    escaped = False
+    paren_depth = 0
+    brace_depth = 0
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            index += 1
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            index += 1
+            continue
+        if char == "(":
+            paren_depth += 1
+        elif char == ")":
+            if paren_depth == 0:
+                return [command.strip()] if command.strip() else [], False
+            paren_depth -= 1
+        elif char == "{":
+            brace_depth += 1
+        elif char == "}":
+            if brace_depth == 0:
+                return [command.strip()] if command.strip() else [], False
+            brace_depth -= 1
+        elif paren_depth == 0 and brace_depth == 0 and command.startswith(operator, index):
+            part = command[start:index].strip()
+            if not part:
+                return [command.strip()] if command.strip() else [], False
+            parts.append(part)
+            index += len(operator)
+            start = index
+            continue
+        index += 1
+
+    if quote or escaped or paren_depth or brace_depth:
+        return [command.strip()] if command.strip() else [], False
+    tail = command[start:].strip()
+    if not tail:
+        return [command.strip()] if command.strip() else [], False
+    parts.append(tail)
+    return parts, len(parts) > 1
+
+
 def split_verify_clauses(verify: str) -> list[str]:
-    return [part.strip() for part in verify.split(" && ") if part.strip()]
+    clauses, _split = _split_top_level_shell_operator(str(verify or ""), "&&")
+    return clauses
+
+
+def split_verify_directed_effect_commands(verify: str) -> list[str]:
+    """Return command effects that are safe to execute in independent shells.
+
+    Top-level OR chains and state-carrying clauses must remain one physical
+    command.  Independent AND clauses may be separately receipted, which gives
+    precise failure evidence without changing shell semantics.
+    """
+
+    command = str(verify or "").strip()
+    if not command:
+        return []
+    clauses = split_verify_clauses(command)
+    _or_parts, has_top_level_or = _split_top_level_shell_operator(command, "||")
+    if has_top_level_or or any(_STATE_CARRYING_CLAUSE_RE.match(clause) for clause in clauses):
+        return [command]
+    return clauses
 
 
 # A grep clause that searches for a DECLARED signature/interface token proves
@@ -1173,6 +1251,7 @@ __all__ = [
     "normalize_step_verify",
     "run_step_verify",
     "split_verify_clauses",
+    "split_verify_directed_effect_commands",
     "verify_has_structural_clause",
     "verify_is_all_hollow",
 ]

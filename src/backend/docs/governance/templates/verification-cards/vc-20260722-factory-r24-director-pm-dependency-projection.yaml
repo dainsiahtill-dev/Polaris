@@ -1,0 +1,102 @@
+card_id: vc-20260722-factory-r24-director-pm-dependency-projection
+classification: execution_fact_chain
+status: closed
+bench_status: unblocked
+bug_summary: >-
+  The twentieth authorized fresh isolated L1-04 run proved R23 in a physical
+  Chief Engineer schema-repair request: malformed prior bytes were absent,
+  bounded failure evidence was present, and the independently claimed repair
+  produced an accepted blueprint portfolio. Director was then rejected before
+  Provider transport. The public signal claimed that the Factory deadline was
+  exhausted, but the typed admission still had 1210 seconds remaining for a
+  1155-second request. Its real blocker was
+  unknown_active_task_ids:CE-PORTFOLIO-factory_faa2894ebe27. Factory had mixed
+  the suspended internal CE primary-attempt TaskRuntime row into the PM-owned
+  Director dependency graph.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  run_id: 884a62d5528b
+  factory_run_id: factory_faa2894ebe27
+  instance_id: >-
+    factory-bench-l1-04-codex-r24-l1-04-run-884a62d5528b-9f353c7758c40d50
+  stage: director_dispatch
+  public_rejection_code: director.dispatch_deadline_blocker
+  authoritative_rejection_reason: invalid_pm_task_dependency_schedule
+  authoritative_blocker: unknown_active_task_ids:CE-PORTFOLIO-factory_faa2894ebe27
+  requested_timeout_seconds: 1155
+  remaining_seconds: 1210
+  wall_clock_seconds: 2244.7
+  backend_fresh: true
+  plan_materialized: true
+  blueprint_materialized: true
+  chief_engineer_schema_repair_accepted: true
+  director_reached: true
+  director_provider_request_reached: false
+  qa_reached: false
+  target_project_effects: 0
+  pm_physical_context_snapshot_ref: 07a731ee3b4ca45ef01790e1
+  primary_ce_physical_context_snapshot_ref: ca204b31bcc66c641021a8f0
+  repair_ce_physical_context_snapshot_ref: dd4a55ba7bd3f84c6dcfd467
+  primary_ce_completion_tokens: 11380
+  repair_ce_completion_tokens: 7094
+  final_request_audit:
+    pm_role_identity: pass
+    primary_ce_role_identity: pass
+    repair_ce_role_identity: pass
+    pm_contract_coverage: pass
+    target_file_coverage: pass
+    repair_failure_feedback_coverage: pass
+    corrupt_prior_output_excluded: pass
+    repair_max_tokens_8192: pass
+    shared_ce_stage_authority: pass
+    distinct_attempt_and_request_identities: pass
+root_cause:
+  code: director_pm_dependency_projection_includes_internal_ce_task
+  summary: >-
+    _director_dependency_schedule projected every unresolved authoritative
+    TaskRuntime row for the Factory run as a PM active task. A failed primary
+    CE portfolio attempt intentionally remains suspended and resumable while a
+    separately claimed schema-repair attempt completes. That internal CE row
+    is valid execution evidence but is not a PM dependency vertex, so the
+    schedule builder correctly rejected it as unknown. The rejection projector
+    then incorrectly rendered every non-executable admission as deadline
+    exhaustion, hiding the real cause.
+  fix: >-
+    Exclude only rows whose provenance proves the same Factory run, the
+    chief_engineer_review stage, the chief_engineer role, matching external and
+    source task identities, and runtime.task_runtime materialization. Preserve
+    all untrusted or unrelated unknown rows so they still invalidate the PM
+    schedule fail-closed. Project invalid dependency schedules with a dedicated
+    director.dispatch_dependency_schedule_blocker code and the exact blockers;
+    preserve the existing deadline signal for genuine budget rejection.
+required_gates:
+  trusted_internal_ce_row_excluded_from_pm_schedule: pass
+  unknown_untrusted_row_still_fail_closed: pass
+  dependency_failure_not_mislabeled_as_deadline: pass
+  focused_regression: "8 passed"
+  factory_characterization: "255 passed"
+  factory_pipeline_full: "1225 passed, 2 warnings"
+  ruff: pass
+  ruff_format_check: pass
+  mypy_source: pass
+  compileall: pass
+  git_diff_check: pass
+  codegraph_pre_edit_review: pass
+  codegraph_post_edit_review: pass
+scheduling:
+  bench_schedulable: false
+  authorization_scope: consumed_by_r25
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  next_action: close_r25_factory_role_evidence_dynamic_envelope_invalid
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-22"
+  closed_at: "2026-07-22"
+  r24_instance_stopped: true
+  authorization_consumed_by_r25: true

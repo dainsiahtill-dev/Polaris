@@ -259,6 +259,100 @@ def normalize_tool_name(tool_name: str) -> str:
     return snapshot.canonical_tool_name if snapshot.registered else str(tool_name or "").strip().lower()
 
 
+def _snapshot_argument_namespace(spec: Mapping[str, object]) -> set[str]:
+    namespace: set[str] = set()
+    arguments = spec.get("arguments")
+    if isinstance(arguments, list):
+        for argument in arguments:
+            if isinstance(argument, Mapping):
+                name = str(argument.get("name") or "").strip()
+                if name:
+                    namespace.add(name)
+    aliases = spec.get("arg_aliases")
+    if isinstance(aliases, Mapping):
+        for alias, canonical in aliases.items():
+            alias_name = str(alias or "").strip()
+            canonical_name = str(canonical or "").strip()
+            if alias_name:
+                namespace.add(alias_name)
+            if canonical_name:
+                namespace.add(canonical_name)
+    return namespace
+
+
+def _snapshot_alias_owner(alias_bindings: Mapping[str, object], raw_name: str) -> str:
+    raw = str(raw_name or "").strip()
+    if not raw:
+        return ""
+    for candidate in dict.fromkeys((raw, raw.lower(), raw.replace("-", "_").lower())):
+        owner = alias_bindings.get(candidate)
+        if isinstance(owner, str) and owner:
+            return owner
+    return ""
+
+
+def _unwrap_arguments_from_snapshot(
+    *,
+    canonical_tool_name: str,
+    spec: Mapping[str, object],
+    alias_bindings: Mapping[str, object],
+    arguments: Mapping[str, object],
+) -> dict[str, object]:
+    """Unwrap provider envelopes without consulting the mutable registry."""
+
+    namespace = _snapshot_argument_namespace(spec)
+
+    def _decode(value: object) -> dict[str, object] | None:
+        if isinstance(value, Mapping):
+            return {str(key): item for key, item in value.items()}
+        if isinstance(value, str):
+            parsed = _parse_json_object(value)
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _walk(payload: Mapping[str, object], depth: int = 0) -> dict[str, object]:
+        normalized = {str(key): value for key, value in payload.items()}
+        if depth >= 4:
+            return normalized
+
+        envelope_name = next(
+            (
+                value.strip()
+                for key in _TOOL_ENVELOPE_NAME_KEYS
+                if isinstance((value := normalized.get(key)), str) and value.strip()
+            ),
+            "",
+        )
+        if envelope_name:
+            if _snapshot_alias_owner(alias_bindings, envelope_name) != canonical_tool_name:
+                return normalized
+            for key in _JSON_ARGUMENT_WRAPPER_KEYS:
+                inner = _decode(normalized.get(key)) if key in normalized else None
+                if inner is None:
+                    continue
+                if namespace and set(inner).issubset(namespace):
+                    return inner
+                nested = _walk(inner, depth + 1)
+                if nested != inner:
+                    return nested
+                return normalized
+
+        if len(normalized) == 1:
+            key, value = next(iter(normalized.items()))
+            if key in _JSON_ARGUMENT_WRAPPER_KEYS:
+                inner = _decode(value)
+                if inner is not None:
+                    if namespace and set(inner).issubset(namespace):
+                        return inner
+                    nested = _walk(inner, depth + 1)
+                    if nested != inner:
+                        return nested
+        return normalized
+
+    return _walk(arguments)
+
+
 def normalize_tool_arguments_from_snapshot(
     snapshot: object,
     arguments: Mapping[str, object],
@@ -286,10 +380,19 @@ def normalize_tool_arguments_from_snapshot(
     spec = frozen_node_to_value(validated.canonical_effective_spec)
     if not isinstance(spec, dict):
         raise ValueError("snapshot effective spec must be a mapping")
+    alias_bindings = frozen_node_to_value(validated.alias_binding_view)
+    if not isinstance(alias_bindings, dict):
+        raise ValueError("snapshot alias binding view must be a mapping")
     from .schema_driven_normalizer import SchemaDrivenNormalizer
 
+    unwrapped = _unwrap_arguments_from_snapshot(
+        canonical_tool_name=validated.canonical_tool_name,
+        spec=spec,
+        alias_bindings=alias_bindings,
+        arguments=arguments,
+    )
     normalized: dict[str, Any] = SchemaDrivenNormalizer({validated.canonical_tool_name: spec}).normalize(
-        validated.canonical_tool_name, dict(arguments)
+        validated.canonical_tool_name, unwrapped
     )
     normalizer = TOOL_NORMALIZERS.get(validated.canonical_tool_name)
     if normalizer is not None:

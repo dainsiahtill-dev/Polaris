@@ -13,12 +13,13 @@ from polaris.infrastructure.llm.provider_bootstrap import (
 from polaris.infrastructure.llm.providers.provider_registry import (
     ProviderManager as InfrastructureProviderManager,
 )
+from polaris.kernelone.llm.engine.contracts import bind_physical_provider_dispatch_port
 from polaris.kernelone.llm.providers import (
     BaseProvider,
     ProviderConfigValidationResult,
     ProviderInfo,
 )
-from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
+from polaris.kernelone.llm.toolkit.contracts import AIRequest, ServiceLocator, TaskType
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
 
 
@@ -106,6 +107,122 @@ def test_inject_kernelone_provider_runtime_syncs_registry_and_service_locator() 
         assert provider_class is _BootstrapTestProvider
     finally:
         ServiceLocator._provider = previous_provider  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_provider_adapter_blocks_opaque_factory_route_before_instance_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from polaris.kernelone.llm import config_store as llm_config
+
+    manager = InfrastructureProviderManager()
+    instance_lookups: list[str] = []
+    monkeypatch.setattr(
+        manager,
+        "get_provider_instance",
+        lambda provider_type: instance_lookups.append(provider_type),
+    )
+    monkeypatch.setattr(
+        llm_config,
+        "resolve_workspace_cache_root_for_workspace",
+        lambda _workspace: tmp_path / "cache",
+    )
+    monkeypatch.setattr(
+        llm_config,
+        "load_llm_config",
+        lambda *_args, **_kwargs: {
+            "providers": {
+                "opaque-provider": {
+                    "type": "codex_cli",
+                }
+            }
+        },
+    )
+    adapter = ProviderAdapter(manager)
+    request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        provider_id="opaque-provider",
+        model="gpt-codex",
+        input="must-not-reach-sdk",
+        context={"workspace": str(tmp_path)},
+    )
+
+    with (
+        bind_physical_provider_dispatch_port(object()),  # type: ignore[arg-type]
+        pytest.raises(
+            RuntimeError,
+            match="factory_provider_route_disabled_opaque:codex_cli:invoke",
+        ),
+    ):
+        await adapter.generate(request)
+
+    assert instance_lookups == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_provider_adapter_rejects_same_name_replacement_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stream: bool,
+) -> None:
+    from polaris.kernelone.llm import config_store as llm_config
+
+    manager = InfrastructureProviderManager()
+    constructor_calls: list[str] = []
+    monkeypatch.setattr(
+        _BootstrapTestProvider,
+        "__init__",
+        lambda _self: constructor_calls.append("constructed"),
+    )
+    manager.register_provider("openai_compat", _BootstrapTestProvider)
+    monkeypatch.setattr(
+        _BootstrapTestProvider,
+        "invoke",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("replacement must not be invoked")),
+    )
+    monkeypatch.setattr(
+        llm_config,
+        "resolve_workspace_cache_root_for_workspace",
+        lambda _workspace: tmp_path / "cache",
+    )
+    monkeypatch.setattr(
+        llm_config,
+        "load_llm_config",
+        lambda *_args, **_kwargs: {
+            "providers": {
+                "replacement-provider": {
+                    "type": "openai_compat",
+                }
+            }
+        },
+    )
+    adapter = ProviderAdapter(manager)
+    request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        provider_id="replacement-provider",
+        model="replacement-model",
+        input="must-not-reach-replacement",
+        context={"workspace": str(tmp_path)},
+    )
+
+    with (
+        bind_physical_provider_dispatch_port(object()),  # type: ignore[arg-type]
+        pytest.raises(
+            RuntimeError,
+            match=f"factory_provider_route_implementation_untrusted:openai_compat:{'stream' if stream else 'invoke'}",
+        ),
+    ):
+        if stream:
+            async for _chunk in adapter.generate_stream(request):
+                pass
+        else:
+            await adapter.generate(request)
+
+    assert constructor_calls == []
 
 
 def test_assemble_core_services_injects_provider_runtime(monkeypatch: pytest.MonkeyPatch) -> None:

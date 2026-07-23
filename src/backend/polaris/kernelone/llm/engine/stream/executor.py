@@ -48,10 +48,15 @@ from ..contracts import (
     StreamEventType,
     Usage,
     bind_physical_provider_dispatch_port,
+    get_physical_provider_dispatch_port,
 )
 from ..model_catalog import ModelCatalog
 from ..normalizer import ResponseNormalizer
 from ..prompt_budget import TokenBudgetManager, compress_chat_messages_to_budget
+from ..provider_route_inventory import (
+    factory_provider_implementation_policy_error,
+    factory_provider_route_policy_error,
+)
 from .config import DEFAULT_MAX_COLLECTED_STREAM_CHARS, StreamConfig
 from .result_tracker import _StreamResultTracker
 from .tool_accumulator import (
@@ -67,6 +72,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _STREAM_OUTPUT_TOKEN_CHAR_MULTIPLIER = 16
+_FACTORY_REPLAY_TEXT_BATCH_CHARS = 1_024
 
 
 def _append_bounded_stream_text(current: str, addition: str, *, limit_chars: int, label: str) -> str:
@@ -626,8 +632,34 @@ class StreamExecutor:
         if provider_policy_error:
             yield AIStreamEvent.error_event(provider_policy_error)
             return
+        physical_dispatch_port = get_physical_provider_dispatch_port()
+        route_policy_error = factory_provider_route_policy_error(
+            provider_type,
+            mode="stream",
+            physical_dispatch_port=physical_dispatch_port,
+        )
+        if route_policy_error:
+            yield AIStreamEvent.error_event(route_policy_error)
+            return
 
-        provider_instance = _providers_module.get_provider_manager().get_provider_instance(provider_type)
+        provider_manager = _providers_module.get_provider_manager()
+        provider_instance = (
+            provider_manager.get_provider_instance(provider_type)
+            if physical_dispatch_port is None
+            else provider_manager.get_factory_default_provider_instance(provider_type)
+        )
+        implementation_policy_error = factory_provider_implementation_policy_error(
+            provider_type,
+            mode="stream",
+            physical_dispatch_port=physical_dispatch_port,
+            implementation_trusted=(
+                physical_dispatch_port is None
+                or provider_manager.is_factory_default_provider_implementation(provider_type, provider_instance)
+            ),
+        )
+        if implementation_policy_error:
+            yield AIStreamEvent.error_event(implementation_policy_error)
+            return
         if provider_instance is None:
             yield AIStreamEvent.error_event(f"Provider not found: {provider_type}")
             return
@@ -688,6 +720,20 @@ class StreamExecutor:
             overhead_tokens=payload_overhead,
             logger_prefix="[stream-executor]",
         )
+        if physical_dispatch_port is not None:
+            route_binder = getattr(physical_dispatch_port, "bind_provider_route_authority", None)
+            if callable(route_binder):
+                try:
+                    route_binder(
+                        provider_id=str(provider_id),
+                        provider_type=provider_type,
+                        model=str(model),
+                        mode="stream",
+                        provider_config=invoke_cfg,
+                    )
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    yield AIStreamEvent.error_event(f"factory_provider_route_authority_invalid:{exc}")
+                    return
         stream_collection_limit = self._stream_collection_limit(self._coerce_int(invoke_cfg.get("max_tokens")))
         try:
             self._record_final_request_receipt(
@@ -716,8 +762,22 @@ class StreamExecutor:
 
         stream_overall_timeout = self._config.timeout_sec
         stream_start_time = time.time()
+        factory_governed_stream = physical_dispatch_port is not None and all(
+            callable(getattr(physical_dispatch_port, capability, None))
+            for capability in ("dispatch_stream_async", "bind_provider_route_authority")
+        )
+        legacy_overall_timeout_enabled = not factory_governed_stream
 
         def _check_overall_timeout() -> None:
+            # Factory-governed streams already carry one qualified physical
+            # deadline through the dispatch port/provider helper.  The gate
+            # consumes and durably terminalizes the complete physical response
+            # before replaying buffered events here.  Applying this legacy wall
+            # clock to that replay can reject an already-completed Provider
+            # attempt and make the role layer issue a second physical request.
+            # Ungoverned streams retain the historical executor timeout.
+            if not legacy_overall_timeout_enabled:
+                return
             elapsed = time.time() - stream_start_time
             if elapsed > stream_overall_timeout:
                 raise asyncio.TimeoutError(f"Stream overall timeout after {stream_overall_timeout}s")
@@ -740,6 +800,7 @@ class StreamExecutor:
                     model=model,
                     invoke_cfg=invoke_cfg,
                     trace_id=trace_id,
+                    coalesce_replayed_text=factory_governed_stream,
                 )
                 async for event in upstream_stream:
                     _check_overall_timeout()
@@ -838,16 +899,21 @@ class StreamExecutor:
                     yield event
 
         except asyncio.TimeoutError as exc:
+            timeout_error = str(exc).strip()
+            if not timeout_error:
+                request_timeout = self._coerce_int(invoke_cfg.get("timeout"))
+                effective_timeout = request_timeout if request_timeout > 0 else int(stream_overall_timeout)
+                timeout_error = f"provider_stream_timeout:{effective_timeout}s"
             if self.telemetry:
                 try:
-                    self.telemetry.record_error(trace_id, str(exc), ErrorCategory.TIMEOUT)
+                    self.telemetry.record_error(trace_id, timeout_error, ErrorCategory.TIMEOUT)
                 except (AttributeError, TypeError, RuntimeError) as telemetry_exc:
                     logger.warning("[stream-executor] telemetry record_error (timeout) failed: %s", telemetry_exc)
                 except (ConnectionError, TimeoutError, RuntimeError) as telemetry_exc:  # noqa: B025
                     logger.warning(
                         "[stream-executor] telemetry record_error (timeout) failed (unexpected): %s", telemetry_exc
                     )
-            yield AIStreamEvent.error_event(str(exc))
+            yield AIStreamEvent.error_event(timeout_error)
             return
         except (AttributeError, TypeError, RuntimeError) as exc:
             logger.exception("[stream-executor] stream error")
@@ -1027,6 +1093,7 @@ class StreamExecutor:
         model: str,
         invoke_cfg: dict[str, Any],
         trace_id: str,
+        coalesce_replayed_text: bool = False,
     ) -> AIStreamGenerator:
         """Preferred path for providers that expose raw structured stream deltas."""
         adapter = get_adapter(provider_type)
@@ -1036,6 +1103,51 @@ class StreamExecutor:
         raw_tool_delta_ordinal = 0
         stream_timeout = max(1, float(invoke_cfg.get("timeout", 300)))
         stream_usage_payload: dict[str, Any] | None = None
+        pending_text_kind = ""
+        pending_text = ""
+
+        def _text_event(kind: str, text: str) -> AIStreamEvent:
+            meta = {"provider": provider_type, "trace_id": trace_id}
+            if kind == "reasoning":
+                return AIStreamEvent.reasoning_event(text, meta=meta)
+            return AIStreamEvent.chunk_event(text, meta=meta)
+
+        def _queue_text(kind: str, text: str) -> list[AIStreamEvent]:
+            """Coalesce only Factory post-terminal replay text.
+
+            The physical-attempt gate has already buffered and terminalized the
+            complete response before these decoded events become visible. Tiny
+            Provider deltas therefore provide no live-stream latency benefit,
+            but projecting each one can amplify a completed response into tens
+            of minutes of audit/runtime backpressure.
+            """
+
+            nonlocal pending_text_kind, pending_text
+            if not text:
+                return []
+            if not coalesce_replayed_text:
+                return [_text_event(kind, text)]
+
+            events: list[AIStreamEvent] = []
+            if pending_text and pending_text_kind != kind:
+                events.append(_text_event(pending_text_kind, pending_text))
+                pending_text = ""
+            pending_text_kind = kind
+            pending_text += text
+            while len(pending_text) >= _FACTORY_REPLAY_TEXT_BATCH_CHARS:
+                batch = pending_text[:_FACTORY_REPLAY_TEXT_BATCH_CHARS]
+                pending_text = pending_text[_FACTORY_REPLAY_TEXT_BATCH_CHARS:]
+                events.append(_text_event(kind, batch))
+            return events
+
+        def _flush_text() -> list[AIStreamEvent]:
+            nonlocal pending_text_kind, pending_text
+            if not pending_text:
+                return []
+            event = _text_event(pending_text_kind, pending_text)
+            pending_text_kind = ""
+            pending_text = ""
+            return [event]
 
         async def stream_generator() -> Any:
             async for raw_event in provider_instance.invoke_stream_events(prompt_input, model, invoke_cfg):
@@ -1057,6 +1169,8 @@ class StreamExecutor:
                     continue
                 decoded_error = getattr(decoded, "error", None)
                 if decoded_error:
+                    for pending_event in _flush_text():
+                        yield pending_event
                     yield AIStreamEvent.error_event(str(decoded_error))
                     return
                 decoded_usage = getattr(decoded, "usage", None)
@@ -1067,17 +1181,16 @@ class StreamExecutor:
                     item_type = type(item).__name__
                     if item_type == "ReasoningSummary":
                         text = str(getattr(item, "content", "") or "")
-                        if text:
-                            yield AIStreamEvent.reasoning_event(
-                                text, meta={"provider": provider_type, "trace_id": trace_id}
-                            )
+                        for pending_event in _queue_text("reasoning", text):
+                            yield pending_event
                     elif item_type == "AssistantMessage":
                         text = str(getattr(item, "content", "") or "")
-                        if text:
-                            yield AIStreamEvent.chunk_event(
-                                text, meta={"provider": provider_type, "trace_id": trace_id}
-                            )
+                        for pending_event in _queue_text("chunk", text):
+                            yield pending_event
 
+                if decoded.tool_calls:
+                    for pending_event in _flush_text():
+                        yield pending_event
                 for tool_call in decoded.tool_calls:
                     if not isinstance(tool_call, dict):
                         continue
@@ -1132,6 +1245,9 @@ class StreamExecutor:
                 except (AttributeError, TypeError, RuntimeError, StopAsyncIteration) as exc:
                     # StopAsyncIteration is normal when generator is already closed
                     logger.debug("[stream-executor] structured stream aclose() result: %s", exc)
+
+        for pending_event in _flush_text():
+            yield pending_event
 
         for key, pending in pending_tool_calls.items():
             emitted = self._finalize_stream_tool_call(pending)

@@ -1,0 +1,67 @@
+card_id: vc-20260723-factory-r39-director-pm-task-claim-boundary
+classification: factory_execution_control_plane
+status: closed
+bench_status: not_schedulable
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  handoff_validation_weakened: false
+defect:
+  project_id: L1-04
+  bench_attempt: R39
+  factory_run_id: factory_0fed651bd294
+  exact_error: 'Director run requires valid Chief Engineer blueprint/handoff evidence: missing Chief Engineer blueprint id'
+  selected_internal_task: CE-PORTFOLIO-factory_0fed651bd294
+  roots:
+    - director_round_claim_selector_did_not_exclude_trusted_internal_chief_engineer_taskruntime_rows
+    - taskruntime_failed_materialized_parent_lacked_auditable_dependency_satisfaction
+evidence:
+  pm_tasks:
+    - TASK-1
+    - TASK-2
+    - TASK-3
+  ce_blueprints_persisted: 3
+  ce_blueprints_handoff_ready: 3
+  director_files_written: 5
+  director_effect_receipts: 5
+  director_failed_receipts: 0
+  director_dead_letters: 0
+  materialized_declared_files: 4
+  downstream_task_2_status: blocked_by_task_1
+  go_compile: pass
+implementation:
+  owners:
+    - factory.pipeline
+    - runtime.task_runtime
+  targets:
+    - OrchestrationStageExecutor._read_claimable_director_task_ids
+    - TaskRuntimeService._failed_materialization_dependency_satisfaction
+    - TaskRuntimeService._project_settled_execution_attempt_locked
+    - workflow_runtime.director_result_artifacts
+  reuse:
+    - OrchestrationStageExecutor._is_internal_chief_engineer_task_row
+    - directed_effect_terminal_settlement_proof
+  strict_provenance_required: true
+  failed_task_remains_failed: true
+  factory_sibling_task_mutation: forbidden
+validation:
+  focused_regression: pass
+  focused_evidence:
+    taskruntime_materialization: 9_passed
+    director_result_projection: 8_passed
+    ruff: pass
+  factory_stage_characterization: 256_passed
+  task_runtime_focused_directory: 418_passed
+  task_runtime_full_cell: 904_passed_10_warnings
+  workflow_runtime_full: 215_passed
+  static_gates: pass
+  architecture: 1411_passed_8_skipped
+  broader_factory: 1232_passed_2_warnings
+closure:
+  failed_parent_terminal_state_preserved: true
+  dependency_satisfaction_receipt_hash_bound: true
+  raw_orchestration_file_lists_are_not_authority: true
+  trusted_internal_ce_rows_excluded_from_director_claims: true
+  provider_requests: 0
+  bench_runs: 0
+next_action: requalify_pre_bench_source_snapshot_before_exactly_one_r40

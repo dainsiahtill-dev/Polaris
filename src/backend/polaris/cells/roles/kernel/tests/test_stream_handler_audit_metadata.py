@@ -53,3 +53,39 @@ async def test_process_stream_materializes_context_metadata_audit(tmp_path: Path
     assert materialized["model"] == "test-stream-model"
     assert usage["prompt_tokens"] == 11
     assert usage["context_os_audit"]["prompt_digest"] == "stream123"
+
+
+@pytest.mark.asyncio
+async def test_process_stream_preserves_terminal_provider_request_metadata(tmp_path: Path) -> None:
+    final_request_audit = {
+        "schema_version": "llm.final_request_context_audit.v1",
+        "final_request_token_estimate": 321,
+    }
+    context_snapshot_ref = "abcdef123456abcdef123456"
+
+    async def _raw_stream() -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "chunk", "content": "Blueprint ready."}
+        yield {
+            "type": "complete",
+            "content": "Blueprint ready.",
+            "metadata": {
+                "final_request_context_audit": final_request_audit,
+                "context_snapshot_ref": context_snapshot_ref,
+            },
+        }
+
+    handler = StreamEventHandler(workspace=str(tmp_path))
+    events = [
+        event
+        async for event in handler.process_stream(
+            _raw_stream(),
+            round_index=0,
+            start_time=0.0,
+            profile=SimpleNamespace(),
+        )
+    ]
+
+    materialized = events[-1]
+    assert materialized["type"] == "_internal_materialize"
+    assert materialized["metadata"]["final_request_context_audit"] == final_request_audit
+    assert materialized["metadata"]["context_snapshot_ref"] == context_snapshot_ref

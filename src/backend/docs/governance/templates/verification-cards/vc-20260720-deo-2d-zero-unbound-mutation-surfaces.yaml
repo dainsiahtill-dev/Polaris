@@ -1,0 +1,75 @@
+card_id: vc-20260720-deo-2d-zero-unbound-mutation-surfaces
+bug_summary: >-
+  Seven direct repair mutation surfaces remain outside the canonical
+  TaskRuntime claim, kernel fence, policy revalidation, and mutation-port path.
+classification: structural
+status: closed
+bench_status: not_schedulable
+bug_path:
+  files:
+    - polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge.py
+    - polaris/cells/roles/adapters/internal/director/quality_gate.py
+    - polaris/cells/roles/adapters/internal/director/execution.py
+    - polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py
+  symptom: >-
+    Direct constructors, callback writers, and unreachable private patch
+    applicators can perform a project mutation without consuming one exact
+    TaskRuntime claim grant.
+assumptions:
+  - id: A1
+    statement: All live deterministic repair branches can project through director.runtime.
+    status: verified_true
+  - id: A2
+    statement: Raw model bodies and textual patch protocols are non-authoritative.
+    status: verified_true
+  - id: A3
+    statement: One mutation-port composition root is sufficient for all physical repair effects.
+    status: verified_true
+pre_mortem:
+  failure_point: >-
+    Removing textual constructors without scanning callbacks and private patch
+    helpers could leave hidden unbound writes, while broad allowlists could
+    silently weaken the canonical claim boundary.
+  risk_zone:
+    - post-execution legacy writers
+    - quality-repair raw and deterministic fallbacks
+    - private PATCH_FILE applicators
+    - Director Runtime requirements coverage
+verification_plan:
+  unit_tests:
+    - coverage-first requirements manifest repair
+    - post-execution typed deferred request projection
+    - raw body and text patch fail-closed evidence
+    - exact attempt and second-round denial
+  static_gates:
+    - exact AST singleton constructor and execute call
+    - zero writer/editor/deleter callback repair seams
+    - zero private physical patch applicators
+    - Ruff, format, mypy, compileall, YAML, catalog, and diff
+sign_off:
+  owner: Codex /root
+  started_at: "2026-07-20"
+  evidence:
+    provider_requests: 0
+    bench_runs: 0
+    target_project_effects: 0
+    baseline_direct_constructors: 7
+    baseline_direct_execute_calls: 7
+    final_unbound_mutation_surfaces: 0
+    physical_executor_composition_roots: 1
+    physical_execute_calls: 1
+    roles_kernel_passed: 2716
+    roles_adapters_passed: 1238
+    director_runtime_and_task_runtime_passed: 1597
+    kernelone_guarded_fs_and_command_passed: 282
+    tasking_passed: 47
+    qa_passed: 82
+    traversal_focused_passed: 20
+    catalog_issue_count: 0
+    catalog_mismatch_count: 0
+    independent_reviews: PASS/PASS
+    critical_findings: 0
+    important_findings: 0
+    durable_receipt_or_parent_close: false
+  closed_at: "2026-07-20"
+  next_bucket: DEO-3

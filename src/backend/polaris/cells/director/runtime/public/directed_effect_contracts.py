@@ -68,6 +68,7 @@ DirectedEffectErrorCodeV1: TypeAlias = Literal[
     "deo_public_policy_evidence_drift",
     "deo_capability_scope_drift",
     "deo_job_token_evidence_drift",
+    "deo_current_policy_evidence_unavailable",
 ]
 
 DirectedEffectApplicabilityV1: TypeAlias = Literal["mutation_capable", "read_only"]

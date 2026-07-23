@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -833,6 +834,17 @@ class PMAdapter(
             or metadata.get("pm_task_id")
             or ""
         ).strip()
+        turn_request_id = str(context.get("turn_request_id") or metadata.get("turn_request_id") or "").strip()
+        if not turn_request_id:
+            identity_material = "\n".join(
+                (
+                    "pm.route_audit_probe.v1",
+                    run_id,
+                    session_id,
+                    normalized_task_id,
+                )
+            ).encode("utf-8")
+            turn_request_id = f"pm-route-probe-{hashlib.sha256(identity_material).hexdigest()[:24]}"
 
         probe_context: dict[str, Any] = {
             "mode": "pm_task_contract_route_probe",
@@ -840,6 +852,11 @@ class PMAdapter(
             "route_audit_probe": True,
             "task_id": normalized_task_id,
             "pm_task_id": normalized_task_id,
+            # A route probe is a real physical Provider attempt even though
+            # its output is advisory.  Bind it to an explicit stable turn
+            # identity so TransactionKernel can audit/retry it without the
+            # forbidden run/task/session fallback.
+            "turn_request_id": turn_request_id,
             "disable_internal_tool_rounds": True,
             "tool_contract_require_no_tool_calls": True,
             "require_no_tool_calls": True,

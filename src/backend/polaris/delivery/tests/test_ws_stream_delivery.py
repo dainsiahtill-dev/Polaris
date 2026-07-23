@@ -199,6 +199,44 @@ def test_runtime_websocket_entrypoint_exposes_only_runtime_v2_loop_kwargs(monkey
     assert forbidden_kwargs.isdisjoint(kwargs)
 
 
+def test_runtime_websocket_rejects_foreign_workspace_before_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _run() -> tuple[list[dict[str, Any]], bool]:
+        from polaris.delivery.ws.endpoints import websocket_core, websocket_loop
+
+        main_loop_called = False
+
+        async def _noop_async(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        async def _unexpected_main_loop(**_kwargs: Any) -> tuple[int | None, str]:
+            nonlocal main_loop_called
+            main_loop_called = True
+            return None, "unexpected"
+
+        def _resolve_context(*, configured_workspace: str, **_kwargs: Any) -> Any:
+            normalized = configured_workspace.replace("\\", "/")
+            return SimpleNamespace(
+                workspace=normalized,
+                workspace_key=normalized.rsplit("/", 1)[-1],
+                runtime_root=f"{normalized}/runtime",
+                runtime_base=f"{normalized}/runtime-base",
+                source="settings",
+            )
+
+        monkeypatch.setattr(websocket_core, "resolve_workspace_runtime_context", _resolve_context)
+        monkeypatch.setattr(websocket_core, "_log_connection_event", _noop_async)
+        monkeypatch.setattr(websocket_loop, "run_main_loop", _unexpected_main_loop)
+
+        ws = FakeRuntimeWebSocket()
+        await websocket_core.runtime_websocket(cast(Any, ws), workspace="C:/stale-instance")
+        return ws.messages, main_loop_called
+
+    messages, main_loop_called = asyncio.run(_run())
+
+    assert main_loop_called is False
+    assert {"type": "closed", "code": 1008} in messages
+
+
 def test_handle_client_message_rejects_non_object_json_without_closing() -> None:
     async def _run() -> dict[str, Any]:
         websocket = FakeWebSocket()

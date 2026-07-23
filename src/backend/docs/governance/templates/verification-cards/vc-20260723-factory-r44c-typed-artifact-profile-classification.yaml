@@ -1,0 +1,46 @@
+schema_version: verification-card.v1
+card_id: vc-20260723-factory-r44c-typed-artifact-profile-classification
+title: Factory R44C typed artifact profile classification
+status: closed
+bench_status: not_schedulable
+bench_schedulable: false
+owner: main_agent
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  active_bucket: none
+symptom:
+  run: R43
+  project: L1-04
+  primary_language: go
+  project_type: cli_game
+  expected_artifact: cli
+  actual_artifact: html5_canvas
+root_cause:
+  category: prompt_profile_artifact_precedence
+  detail: >-
+    whole-message Canvas boilerplate was evaluated before explicit CLI intent,
+    while typed project_type was ignored as artifact evidence
+required_invariants:
+  explicit_artifact_priority_preserved: pass
+  recognized_project_type_normalized: pass
+  unknown_project_type_not_invented: pass
+  cli_terminal_precedes_incidental_canvas: pass
+  true_canvas_preserved: pass
+  audit_projection_preserved: pass
+required_gates:
+  tdd_red: pass
+  focused: 19_passed
+  roles_kernel: 4171_passed
+  ruff: pass
+  format: pass
+  mypy: pass
+  compileall: pass
+  diff_audit: pass
+authorization:
+  provider_requests: 0
+  bench_runs: 0
+  next_fresh_bench: forbidden_until_prebench_gate_passes
+evidence:
+  blueprint: src/backend/docs/blueprints/FACTORY_R44C_TYPED_ARTIFACT_PROFILE_CLASSIFICATION_BLUEPRINT_20260723.md
+  r43_audit: /tmp/factory-bench-l1-04-r43/factory_audits.json

@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, NoReturn, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
@@ -23,6 +23,19 @@ from polaris.cells.control_plane.run_ledger.public import (
     build_tool_batch_lifecycle_receipt_from_sources,
     build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt,
     effect_receipts_from_batch_receipts,
+)
+from polaris.cells.director.runtime.public import DirectedEffectImmutableItemsV1
+from polaris.cells.roles.kernel.internal.deferred_repair_effects import (
+    DeferredRepairEffectSynthesizer,
+    DeferredRequestReplayFence,
+)
+from polaris.cells.roles.kernel.internal.directed_effect_lifecycle import (
+    DirectedEffectLifecycleCandidateV1,
+    DirectedEffectLifecycleService,
+)
+from polaris.cells.roles.kernel.internal.directed_effect_policy_guard import (
+    DirectedEffectAuthoritativePolicyGuardRequestV1,
+    DirectedEffectPolicyGuardResultV1,
 )
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
@@ -41,6 +54,10 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     receipts_have_stale_edit_failure,
     resolve_mutation_target_guard_violation,
     tool_batch_has_authoritative_write_invocation,
+)
+from polaris.cells.roles.kernel.internal.transaction.deferred_repair_followup import (
+    DeferredCommandEffectSynthesizer,
+    build_deferred_repair_followup,
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     BlockedReason,
@@ -77,20 +94,50 @@ from polaris.cells.roles.kernel.internal.transaction.tool_failure_circuit_breake
     ToolFailureCircuitBreaker,
 )
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
+from polaris.cells.roles.kernel.public.directed_effect_contracts import (
+    DeferredDirectorRepairEffectBindingV1,
+    DirectedEffectRuntimeDependenciesV1,
+    PreparedDirectedEffectBatchV1,
+)
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
     ToolBatch,
     ToolEffectType,
     ToolExecutionMode,
+    ToolInvocation,
     TurnDecision,
     TurnId,
     _infer_effect_type,
 )
 from polaris.cells.roles.kernel.public.turn_events import ErrorEvent, TurnEvent, TurnPhaseEvent
+from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
 from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedDirectedEffectDispatchV1:
+    """Whole mutation batch plus exact gateway-owned JobToken restrictions."""
+
+    batch: PreparedDirectedEffectBatchV1
+    restrictions_by_call_id: tuple[tuple[str, DirectedEffectImmutableItemsV1], ...]
+
+
+def _is_mutation_for_speculative_routing(
+    invocation: ToolInvocation,
+    *,
+    directed_effect_required: bool,
+) -> bool:
+    """Keep required DEO mutation routing independent of legacy name tables."""
+
+    if directed_effect_required:
+        return invocation.effect_type is not ToolEffectType.READ
+    return WriteToolPhases.is_write_tool(str(invocation.tool_name))
 
 
 # ---------------------------------------------------------------------------
@@ -1077,7 +1124,7 @@ def _append_tool_batch_receipts_to_run_ledger(
         token["execution_envelope_hash"] = envelope_hash
     stage = str(token.get("stage") or "tool_batch").strip() or "tool_batch"
     lifecycle = build_tool_batch_lifecycle_receipt_from_sources(
-        run_id=str(run_id or turn_id or ""),
+        run_id=str(run_id or ""),
         task_id=task_id,
         turn_id=turn_id,
         role=role_id,
@@ -1087,7 +1134,11 @@ def _append_tool_batch_receipts_to_run_ledger(
         receipts=receipts,
         missing_receipt_reason="decoded_tool_batch_produced_no_authoritative_batch_receipt",
     )
-    resolved_lifecycle_run_id = str(run_id or lifecycle.run_id or turn_id or "").strip()
+    # Run Ledger identity must come from transaction authority. A turn id is
+    # not a run id and must never be promoted into one merely to force a
+    # projection write; legacy/unit callers without bound run authority stay
+    # in-memory instead of polluting the process cwd's platform ledger.
+    resolved_lifecycle_run_id = str(run_id or lifecycle.run_id or "").strip()
     if resolved_lifecycle_run_id:
         job_token = None
         if token:
@@ -1119,7 +1170,7 @@ def _append_tool_batch_receipts_to_run_ledger(
     if not token:
         return
 
-    resolved_run_id = str(token.get("run_id") or run_id or turn_id or "").strip()
+    resolved_run_id = str(token.get("run_id") or run_id or "").strip()
     if not resolved_run_id:
         return
     append_run_ledger_event(
@@ -1173,6 +1224,10 @@ class ToolBatchExecutor:
         requires_mutation_intent: Callable[[str], bool] | None = None,
         tool_failure_circuit_breaker: ToolFailureCircuitBreaker | None = None,
         effect_policy: CompiledEffectPolicy | None = None,
+        directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
+        directed_effect_required: bool = False,
+        directed_effect_execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
+        directed_effect_execution_attempt_authority: TaskRuntimeExecutionAttemptAuthorityV1 | None = None,
     ) -> None:
         self.tool_runtime = tool_runtime
         self.config = config
@@ -1183,6 +1238,43 @@ class ToolBatchExecutor:
         self.requires_mutation_intent = requires_mutation_intent or _default_requires_mutation_intent
         self._tool_failure_circuit_breaker = tool_failure_circuit_breaker or ToolFailureCircuitBreaker()
         self._effect_policy = effect_policy
+        if (
+            directed_effect_runtime is not None
+            and type(directed_effect_runtime) is not DirectedEffectRuntimeDependenciesV1
+        ):
+            raise TypeError("directed_effect_runtime must be exactly DirectedEffectRuntimeDependenciesV1")
+        if directed_effect_execution_attempt is not None:
+            if type(directed_effect_execution_attempt) is not TaskRuntimeExecutionAttemptIdentityV1:
+                raise TypeError(
+                    "directed_effect_execution_attempt must be exactly TaskRuntimeExecutionAttemptIdentityV1"
+                )
+            canonical_attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(
+                directed_effect_execution_attempt.to_record()
+            )
+            if canonical_attempt != directed_effect_execution_attempt:
+                raise ValueError("directed_effect_execution_attempt must be canonical")
+        if directed_effect_execution_attempt_authority is not None and not isinstance(
+            directed_effect_execution_attempt_authority,
+            TaskRuntimeExecutionAttemptAuthorityV1,
+        ):
+            raise TypeError("directed_effect_execution_attempt_authority must be exact")
+        if directed_effect_required and (
+            directed_effect_runtime is None
+            or directed_effect_execution_attempt is None
+            or directed_effect_execution_attempt_authority is None
+        ):
+            raise ValueError("required directed-effect execution needs runtime dependencies and attempt identity")
+        self.directed_effect_runtime = directed_effect_runtime
+        self.directed_effect_required = bool(directed_effect_required)
+        self.directed_effect_execution_attempt = directed_effect_execution_attempt
+        self.directed_effect_execution_attempt_authority = directed_effect_execution_attempt_authority
+        deferred_request_fence = DeferredRequestReplayFence()
+        self._deferred_repair_synthesizer = DeferredRepairEffectSynthesizer(
+            _replay_fence=deferred_request_fence
+        )
+        self._deferred_command_synthesizer = DeferredCommandEffectSynthesizer(
+            _replay_fence=deferred_request_fence
+        )
         # FIX-20250422: Track files already read in this session to block redundant reads
         self._session_read_files: set[str] = set()
 
@@ -1265,6 +1357,125 @@ class ToolBatchExecutor:
                     verdict.reason,
                 )
 
+    @staticmethod
+    def _canonicalize_directed_effect_invocations(
+        invocations: list[Any],
+    ) -> list[ToolInvocation]:
+        """Classify every final invocation once from its captured raw tool name."""
+
+        canonical: list[ToolInvocation] = []
+        for invocation in invocations:
+            raw_tool_name = str(invocation.get("raw_tool_name") or invocation.get("tool_name") or "")
+            arguments = invocation.get("arguments", {})
+            if not isinstance(arguments, dict):
+                raise RuntimeError("directed_effect_invalid_tool_arguments")
+            canonical.append(
+                ToolInvocation.model_validate(
+                    {
+                        "call_id": str(invocation.get("call_id") or ""),
+                        "raw_tool_name": raw_tool_name,
+                        "tool_name": raw_tool_name,
+                        "arguments": dict(arguments),
+                    }
+                )
+            )
+        return canonical
+
+    async def _prepare_directed_effect_dispatch(
+        self,
+        *,
+        invocations: list[Any],
+        workspace: str,
+        turn_id: str,
+        batch_id: str,
+    ) -> tuple[list[ToolInvocation], _PreparedDirectedEffectDispatchV1 | None]:
+        """Authorize and seal every mutation before any member of the batch executes."""
+
+        try:
+            canonical = self._canonicalize_directed_effect_invocations(invocations)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError("directed_effect_batch_classification_failed") from exc
+        mutations = [invocation for invocation in canonical if invocation.effect_type is not ToolEffectType.READ]
+        if not mutations:
+            return canonical, None
+        if not self.directed_effect_required:
+            return canonical, None
+        runtime = self.directed_effect_runtime
+        execution_attempt = self.directed_effect_execution_attempt
+        execution_authority = self.directed_effect_execution_attempt_authority
+        if runtime is None or execution_attempt is None or execution_authority is None:
+            raise RuntimeError("directed_effect_runtime_authority_unavailable")
+        if str(getattr(self.config, "mutation_guard_mode", "")) != "strict":
+            raise RuntimeError("directed_effect_mutation_guard_not_strict")
+        normalized_turn_id = str(turn_id).strip()
+        normalized_batch_id = str(batch_id).strip()
+        if not normalized_turn_id or not normalized_batch_id:
+            raise RuntimeError("directed_effect_batch_identity_unavailable")
+        guard_factory = getattr(self.tool_runtime, "directed_effect_policy_guard", None)
+        if not callable(guard_factory):
+            raise RuntimeError("directed_effect_gateway_authority_unavailable")
+        try:
+            guard = guard_factory(runtime.policy_snapshot_port)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            raise RuntimeError("directed_effect_gateway_authority_unavailable") from exc
+
+        candidates: list[DirectedEffectLifecycleCandidateV1] = []
+        restrictions: list[tuple[str, DirectedEffectImmutableItemsV1]] = []
+        for ordinal, invocation in enumerate(mutations):
+            try:
+                verdict = await guard.evaluate_authoritative(
+                    DirectedEffectAuthoritativePolicyGuardRequestV1(
+                        invocation=invocation,
+                        workspace=workspace,
+                        inventory_ordinal=ordinal,
+                        execution_attempt=execution_attempt,
+                        turn_id=normalized_turn_id,
+                        batch_id=normalized_batch_id,
+                    )
+                )
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                raise RuntimeError("directed_effect_policy_guard_failed") from exc
+            if (
+                type(verdict) is not DirectedEffectPolicyGuardResultV1
+                or verdict.status != "authorized"
+                or verdict.preflight is None
+                or verdict.snapshot is None
+                or verdict.authorization_binding is None
+                or verdict.current_job_token_restriction_evidence is None
+            ):
+                error_code = getattr(verdict, "error_code", None)
+                raise RuntimeError(str(error_code or "directed_effect_policy_denied"))
+            candidates.append(
+                DirectedEffectLifecycleCandidateV1(
+                    preflight=verdict.preflight,
+                    snapshot=verdict.snapshot,
+                    authorization_binding=verdict.authorization_binding,
+                )
+            )
+            restrictions.append(
+                (
+                    str(invocation.call_id),
+                    verdict.current_job_token_restriction_evidence,
+                )
+            )
+
+        lifecycle = DirectedEffectLifecycleService(
+            policy_snapshot_port=runtime.policy_snapshot_port,
+        )
+        prepared = lifecycle.prepare_batch(
+            execution_attempt=execution_attempt,
+            execution_attempt_authority=execution_authority,
+            turn_id=normalized_turn_id,
+            batch_id=normalized_batch_id,
+            candidates=tuple(candidates),
+        )
+        if prepared.status != "ready" or prepared.prepared_batch is None:
+            raise RuntimeError(str(prepared.error_code or "directed_effect_batch_prepare_denied"))
+        return canonical, _PreparedDirectedEffectDispatchV1(
+            batch=prepared.prepared_batch,
+            restrictions_by_call_id=tuple(restrictions),
+        )
+
     def _build_tool_batch_runtime(
         self,
         workspace: str = ".",
@@ -1273,6 +1484,11 @@ class ToolBatchExecutor:
         side_effect_class: str = "readonly",
         turn_id: str = "",
         cancel_token: CancelToken | None = None,
+        prepared_directed_effect: _PreparedDirectedEffectDispatchV1 | None = None,
+        directed_effect_dispatch_call_ids: tuple[str, ...] | None = None,
+        directed_effect_abort_call_ids: tuple[str, ...] = (),
+        directed_effect_repair_bindings_by_call_id: tuple[tuple[str, DeferredDirectorRepairEffectBindingV1], ...] = (),
+        directed_effect_rollback_activation_by_call_id: tuple[tuple[str, str], ...] = (),
     ) -> ToolBatchRuntime:
         return ToolBatchRuntime(
             executor=self.tool_runtime,
@@ -1284,6 +1500,20 @@ class ToolBatchExecutor:
                 batch_idempotency_key=batch_idempotency_key,
                 side_effect_class=side_effect_class,  # type: ignore[arg-type]
             ),
+            directed_effect_runtime=self.directed_effect_runtime,
+            directed_effect_required=self.directed_effect_required,
+            directed_effect_execution_attempt=self.directed_effect_execution_attempt,
+            directed_effect_execution_attempt_authority=self.directed_effect_execution_attempt_authority,
+            prepared_directed_effect_batch=(
+                prepared_directed_effect.batch if prepared_directed_effect is not None else None
+            ),
+            directed_effect_restrictions_by_call_id=(
+                prepared_directed_effect.restrictions_by_call_id if prepared_directed_effect is not None else ()
+            ),
+            directed_effect_dispatch_call_ids=directed_effect_dispatch_call_ids,
+            directed_effect_abort_call_ids=directed_effect_abort_call_ids,
+            directed_effect_repair_bindings_by_call_id=directed_effect_repair_bindings_by_call_id,
+            directed_effect_rollback_activation_by_call_id=(directed_effect_rollback_activation_by_call_id),
         )
 
     async def _reset_tool_runtime_turn_boundary(self, turn_id: str) -> None:
@@ -1414,6 +1644,75 @@ class ToolBatchExecutor:
                 "[tool_batch][audit] audit failed for %r; keeping speculative result", tool_name, exc_info=True
             )
             return speculative_payload
+
+    async def _execute_deferred_repair_followup(
+        self,
+        *,
+        receipts_as_dicts: list[dict[str, Any]],
+        primary_batch_id: str,
+        workspace: str,
+        turn_id: str,
+        ledger: TurnLedger,
+        cancel_token: CancelToken,
+    ) -> list[dict[str, Any]]:
+        """Execute at most one visible, non-recursive deferred repair batch."""
+
+        execution_attempt = self.directed_effect_execution_attempt
+        followup = build_deferred_repair_followup(
+            receipts_as_dicts,
+            primary_batch_id=primary_batch_id,
+            turn_id=turn_id,
+            expected_workspace=workspace,
+            expected_task_id=(execution_attempt.external_task_id if execution_attempt is not None else ""),
+            expected_execution_attempt=execution_attempt,
+            synthesizer=self._deferred_repair_synthesizer,
+            command_synthesizer=getattr(self, "_deferred_command_synthesizer", None),
+        )
+        if followup is None:
+            return []
+        inventory_invocations, followup_prepared = await self._prepare_directed_effect_dispatch(
+            invocations=list(followup.inventory_invocations),
+            workspace=workspace,
+            turn_id=turn_id,
+            batch_id=followup.batch_id,
+        )
+        if followup_prepared is None:
+            raise RuntimeError("deo_deferred_repair_followup_not_prepared")
+        self._check_effect_policy(inventory_invocations, turn_id)
+        ledger.tool_batch_count += 1
+        ledger.state_history.append(("DEFERRED_REPAIR_FOLLOWUP_SCHEDULED", int(time.time() * 1000)))
+        self.emit_event(
+            TurnPhaseEvent.create(
+                turn_id,
+                "tool_batch_started",
+                {
+                    "event_kind": "deferred_repair_followup_scheduled",
+                    "batch_id": followup.batch_id,
+                    "forward_count": len(followup.forward_call_ids),
+                    "rollback_contingency_count": len(followup.rollback_call_ids),
+                    "request_ids": list(followup.request_ids),
+                    "visible_tool_batch_count": ledger.tool_batch_count,
+                },
+            )
+        )
+        followup_receipts = await self._build_tool_batch_runtime(
+            workspace,
+            turn_id=turn_id,
+            cancel_token=cancel_token,
+            prepared_directed_effect=followup_prepared,
+            directed_effect_dispatch_call_ids=followup.forward_call_ids,
+            directed_effect_abort_call_ids=followup.rollback_call_ids,
+            directed_effect_repair_bindings_by_call_id=followup.effect_bindings_by_call_id,
+            directed_effect_rollback_activation_by_call_id=(followup.rollback_activation_by_call_id),
+        ).execute_batch(
+            followup.dispatch_batch,
+            TurnId(turn_id),
+        )
+        normalized_followup_receipts = normalize_batch_receipts(followup_receipts)
+        for receipt in normalized_followup_receipts:
+            receipt["deferred_repair_followup_batch_id"] = followup.batch_id
+            receipt["deferred_repair_request_ids"] = list(followup.request_ids)
+        return normalized_followup_receipts
 
     async def execute_tool_batch(
         self,
@@ -1770,6 +2069,7 @@ class ToolBatchExecutor:
                 },
             )
 
+        phase_blocked_invocations: list[Any] = []
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
             # FIX-20250421: Hard block when ALL tools are broad exploration — raise exception
             # This triggers retry orchestrator (is_mutation_contract_violation check with
@@ -1783,21 +2083,15 @@ class ToolBatchExecutor:
                     "in implementing phase, broad exploration tools (glob/repo_tree/repo_rg) "
                     "are not allowed. Use write_file/edit_file to materialize changes."
                 )
-            # Partial block: replace blocked tools with error receipts, keep valid tools
-            modified_invocations = []
-            for inv in invocations:
-                tname = extract_invocation_tool_name(inv)
-                if tname in _broad_exploration_tools:
-                    modified_invocations.append(
-                        {
-                            **inv,
-                            "_implementing_phase_blocked": True,
-                            "_blocked_reason": f"Tool '{tname}' blocked in implementing phase. Use write tools.",
-                        }
-                    )
-                else:
-                    modified_invocations.append(inv)
-            invocations = modified_invocations
+            # Partial block: blocked exploration calls must never reach the
+            # physical runtime. Keep them as explicit failed receipts while
+            # executing the remaining allowed calls. Annotating a strict
+            # ToolInvocation with ad-hoc fields is insufficient: model
+            # canonicalization may discard those fields and dispatch the tool.
+            phase_blocked_invocations = [
+                inv for inv in invocations if extract_invocation_tool_name(inv) in _broad_exploration_tools
+            ]
+            invocations = filtered_invocations
             ledger._implementing_phase_block_triggered = True
 
         # FIX-20250421: Verifying Phase Hard Constraint — verification REQUIRED, write not enough
@@ -1973,6 +2267,15 @@ class ToolBatchExecutor:
             turn_id,
         )
 
+        # Classify every final invocation and prepare the complete mutation
+        # inventory before any read, speculative adoption, or physical effect.
+        invocations, prepared_directed_effect = await self._prepare_directed_effect_dispatch(
+            invocations=invocations,
+            workspace=workspace,
+            turn_id=turn_id,
+            batch_id=str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+        )
+
         # Effect policy enforcement gate
         self._check_effect_policy(invocations, turn_id)
 
@@ -1984,6 +2287,37 @@ class ToolBatchExecutor:
 
         # Speculative Execution Kernel v2 integration
         receipts_as_dicts: list[dict] = []
+        if phase_blocked_invocations:
+            blocked_results: list[dict[str, Any]] = []
+            for invocation in phase_blocked_invocations:
+                tool_name = extract_invocation_tool_name(invocation)
+                reason = f"Tool '{tool_name}' blocked in implementing phase. Use write tools."
+                blocked_results.append(
+                    {
+                        "call_id": str(invocation.get("call_id") or ""),
+                        "tool_name": tool_name,
+                        "status": "error",
+                        "result": {
+                            "ok": False,
+                            "error": reason,
+                            "error_type": "implementing_phase_tool_blocked",
+                        },
+                        "error": reason,
+                        "effect_receipt": None,
+                    }
+                )
+            receipts_as_dicts.append(
+                {
+                    "batch_id": str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+                    "turn_id": turn_id,
+                    "results": blocked_results,
+                    "raw_results": [dict(item) for item in blocked_results],
+                    "success_count": 0,
+                    "failure_count": len(blocked_results),
+                    "pending_async_count": 0,
+                    "has_pending_async": False,
+                }
+            )
         replay_invocations: list[Any] = []
         batch_cancel_token = CancelToken()
 
@@ -2019,7 +2353,14 @@ class ToolBatchExecutor:
                         continue
                     resolution = {"action": "replay", "result": None, "error": str(exc)}
                 action = str(resolution.get("action", "replay"))
-                is_write_tool = WriteToolPhases.is_write_tool(tool_name)
+                # Task9 classification is authoritative for the production
+                # branch.  Unknown/default-write and ASYNC calls may not be
+                # adopted as speculative READs merely because the legacy
+                # write-name table does not recognize their spelling.
+                is_write_tool = _is_mutation_for_speculative_routing(
+                    invocation,
+                    directed_effect_required=self.directed_effect_required,
+                )
                 if stream and is_write_tool and action == "block":
                     # A missing/blocked speculative prepare-shadow is a benign optimization
                     # miss: recovered/post-hoc write tool calls (e.g. from non-function-calling
@@ -2119,11 +2460,31 @@ class ToolBatchExecutor:
                 workspace,
                 turn_id=turn_id,
                 cancel_token=batch_cancel_token,
+                prepared_directed_effect=prepared_directed_effect,
             ).execute_batch(
                 replay_batch,
                 TurnId(turn_id),
             )
             receipts_as_dicts.extend(normalize_batch_receipts(receipts))
+
+        # DEO-2C: adapter repair planning may return one typed deferred request
+        # only after the active ToolBatch has completed and released its JIT
+        # fence. Strip those process-local request objects before any result can
+        # reach finalization/provider context, then schedule one visible,
+        # non-recursive follow-up batch through the normal DEO preparation and
+        # ToolBatchRuntime boundaries. Forward and rollback contingencies enter
+        # the same sealed inventory; only forwards dispatch, and unused rollback
+        # members are durably aborted by ToolBatchRuntime.
+        receipts_as_dicts.extend(
+            await self._execute_deferred_repair_followup(
+                receipts_as_dicts=receipts_as_dicts,
+                primary_batch_id=str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+                workspace=workspace,
+                turn_id=turn_id,
+                ledger=ledger,
+                cancel_token=batch_cancel_token,
+            )
+        )
 
         if invocations and _batch_result_count(receipts_as_dicts) <= 0:
             decoded_tool_calls = [
@@ -2366,7 +2727,7 @@ class ToolBatchExecutor:
         breaker_snapshot = self._tool_failure_circuit_breaker.evaluate_batch(
             turn_id=turn_id,
             receipts=receipts_as_dicts,
-            invocations=invocations,
+            invocations=[invocation.to_dict() for invocation in invocations],
         )
         if breaker_snapshot.triggered:
             batch_cancel_token.cancel("tool_failure_circuit_breaker_triggered")

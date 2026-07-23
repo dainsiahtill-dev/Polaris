@@ -6,7 +6,7 @@ import hashlib
 import inspect
 import json
 from dataclasses import fields, is_dataclass, replace
-from typing import get_type_hints
+from typing import Any, Literal, get_args, get_type_hints
 
 import polaris.cells.director.runtime.public as director_public
 import polaris.cells.director.runtime.public.directed_effect_contracts as director_contracts
@@ -35,7 +35,7 @@ def _target_state_evidence(
     target_path: str = "src/a.py",
     exists: bool = True,
     before_content_hash: str = _HASH,
-    minimal_content_evidence: tuple[tuple[str, object], ...] = (("prefix", "content"),),
+    minimal_content_evidence: director_contracts.DirectedEffectImmutableItemsV1 = (("prefix", "content"),),
     agents_policy_hash: str = _HASH,
     is_no_file_state: bool = False,
 ) -> policy.DirectorEffectTargetStateEvidenceV1:
@@ -138,21 +138,20 @@ def _bound_snapshot(
     member_binding_hash: str | None = None,
 ) -> policy.DirectorEffectPolicyBoundSnapshotV1:
     snapshot = _snapshot()
-    authorization_evidence_hash = (
-        authorization_evidence_hash
-        or _authorization_evidence(
-            _claim_grant(member),
-            snapshot,
-        ).authorization_hash
-    )
+    authorization = _authorization_evidence(_claim_grant(member), snapshot)
+    authorization_binding = _authorization_binding(authorization)
+    authorization_evidence_hash = authorization_evidence_hash or authorization.authorization_hash
     return policy.DirectorEffectPolicyBoundSnapshotV1(
         snapshot=snapshot,
         authorization_evidence_hash=authorization_evidence_hash,
+        authorization_binding=authorization_binding,
+        authorization_binding_hash=authorization_binding.authorization_binding_hash,
         member=member,
         member_binding_hash=member_binding_hash
         or policy.hash_directed_effect_policy_member_binding(
             snapshot.evidence_hash,
             authorization_evidence_hash,
+            authorization_binding.authorization_binding_hash,
             member,
         ),
     )
@@ -263,7 +262,7 @@ def _authorization_evidence(
     arguments_hash: str = _ARGUMENTS_HASH,
 ) -> director_contracts.DirectorEffectAuthorizationEvidenceV1:
     snapshot = snapshot or _snapshot()
-    values = {
+    values: dict[str, Any] = {
         "workspace": grant.execution_attempt.workspace,
         "execution_attempt_id": grant.parent_binding.registry_identity.execution_attempt_id,
         "turn_id": grant.parent_binding.correlation.turn_id,
@@ -292,6 +291,69 @@ def _authorization_evidence(
         **values,
         authorization_hash=director_contracts.hash_director_effect_authorization_evidence(**values),
     )
+
+
+def _authorization_binding(
+    evidence: director_contracts.DirectorEffectAuthorizationEvidenceV1,
+) -> director_contracts.DirectorEffectAuthorizationBindingV1:
+    classification = director_contracts.DirectorEffectClassificationEvidenceV1(
+        raw_tool_name="write_file",
+        canonical_tool_name="write_file",
+        effect_type="write",
+        execution_mode="write_serial",
+        normalized_arguments=_ARGUMENTS,
+        arguments_hash=evidence.arguments_hash,
+        tool_spec_hash=evidence.tool_spec_hash,
+        tool_spec_snapshot_hash=_HASH,
+        alias_binding_hash=_HASH,
+    )
+    return director_contracts.DirectorEffectAuthorizationBindingV1(
+        authorization_evidence=evidence,
+        classification_evidence=classification,
+        tool_spec_hash=evidence.tool_spec_hash,
+        tool_spec_snapshot_hash=_HASH,
+        alias_binding_hash=_HASH,
+    )
+
+
+def _current_policy_evidence(
+    member: DirectedEffectInventoryMemberV1 | None = None,
+) -> policy.DirectorEffectCurrentPolicyEvidenceV1:
+    member = member or _member()
+    grant = _claim_grant(member)
+    bound = _bound_snapshot(member)
+    public_policy = director_contracts.project_director_effect_public_policy_evidence(bound.authorization_binding)
+    return policy.DirectorEffectCurrentPolicyEvidenceV1(
+        baseline_authorization_binding_hash=bound.authorization_binding_hash,
+        baseline_public_policy_evidence_hash=public_policy.public_policy_evidence_hash,
+        bound_member_hash=bound.member_binding_hash,
+        claim_grant_hash=grant.grant_hash,
+        policy_target_version="policy-target-v1",
+        policy_target_hash=_HASH,
+        operation_version="2",
+        operation_hash=_HASH,
+        capability_scope_version="capability-scope-v1",
+        capability_scope_hash=_HASH,
+        job_token_id="job-1",
+        job_token_version="job-token-v1",
+        job_token_evidence_hash=_HASH,
+        tool_spec_snapshot_hash=_HASH,
+        alias_binding_hash=_HASH,
+        execution_envelope_version="execution-envelope-v1",
+        execution_envelope_hash=_HASH,
+        allowed_commands_version="allowed-commands-v1",
+        allowed_commands_hash=_HASH,
+    )
+
+
+def _forged_authorization_binding(
+    binding: director_contracts.DirectorEffectAuthorizationBindingV1,
+    **changes: object,
+) -> director_contracts.DirectorEffectAuthorizationBindingV1:
+    forged = object.__new__(director_contracts.DirectorEffectAuthorizationBindingV1)
+    for field in fields(binding):
+        object.__setattr__(forged, field.name, changes.get(field.name, getattr(binding, field.name)))
+    return forged
 
 
 def _forged_authorization_evidence(
@@ -341,7 +403,7 @@ def test_policy_contracts_are_frozen_and_reject_mutable_payloads() -> None:
             tool_call_id="call-1",
             inventory_ordinal=1,
             normalized_tool_name="write_file",
-            normalized_arguments={"path": "src/a.py"},
+            normalized_arguments={"path": "src/a.py"},  # type: ignore[arg-type]
             effect_type="write",
             execution_mode="write_serial",
             prospective_operation_hash=_HASH,
@@ -354,7 +416,7 @@ def test_policy_contracts_are_frozen_and_reject_mutable_payloads() -> None:
             tool_call_id="call-1",
             inventory_ordinal=1,
             normalized_tool_name="write_file",
-            normalized_arguments=(("options", ({"overwrite": True},)),),
+            normalized_arguments=(("options", ({"overwrite": True},)),),  # type: ignore[arg-type]
             effect_type="write",
             execution_mode="write_serial",
             prospective_operation_hash=_HASH,
@@ -478,13 +540,19 @@ def test_operation_subject_accepts_zero_ordinal_and_rejects_negative() -> None:
 
 def test_policy_protocol_has_only_typed_contract_returns() -> None:
     """The inversion port exposes typed results, never generic mappings."""
-    methods = ("snapshot", "bind_member", "revalidate")
+    methods = (
+        "snapshot",
+        "bind_member",
+        "capture_current_policy_evidence",
+        "revalidate",
+    )
     for method_name in methods:
         method = getattr(policy.DirectorEffectPolicySnapshotPortV1, method_name)
         annotation = get_type_hints(method)["return"]
         assert "Mapping" not in str(annotation)
     assert inspect.iscoroutinefunction(policy.DirectorEffectPolicySnapshotPortV1.snapshot)
     assert not inspect.iscoroutinefunction(policy.DirectorEffectPolicySnapshotPortV1.bind_member)
+    assert inspect.iscoroutinefunction(policy.DirectorEffectPolicySnapshotPortV1.capture_current_policy_evidence)
     assert inspect.iscoroutinefunction(policy.DirectorEffectPolicySnapshotPortV1.revalidate)
     assert _subject().inventory_ordinal == 1
     assert director_public.hash_directed_effect_policy_member_binding is (
@@ -492,6 +560,67 @@ def test_policy_protocol_has_only_typed_contract_returns() -> None:
     )
     assert director_public.hash_directed_effect_policy_revalidation_evidence is (
         policy.hash_directed_effect_policy_revalidation_evidence
+    )
+
+
+def test_current_policy_evidence_hash_is_computed_and_binds_every_field() -> None:
+    """Callers cannot supply a digest and each current-source field is committed."""
+    evidence = _current_policy_evidence()
+
+    assert evidence.evidence_hash == policy.hash_director_effect_current_policy_evidence(
+        baseline_authorization_binding_hash=evidence.baseline_authorization_binding_hash,
+        baseline_public_policy_evidence_hash=evidence.baseline_public_policy_evidence_hash,
+        bound_member_hash=evidence.bound_member_hash,
+        claim_grant_hash=evidence.claim_grant_hash,
+        policy_target_version=evidence.policy_target_version,
+        policy_target_hash=evidence.policy_target_hash,
+        operation_version=evidence.operation_version,
+        operation_hash=evidence.operation_hash,
+        capability_scope_version=evidence.capability_scope_version,
+        capability_scope_hash=evidence.capability_scope_hash,
+        job_token_id=evidence.job_token_id,
+        job_token_version=evidence.job_token_version,
+        job_token_evidence_hash=evidence.job_token_evidence_hash,
+        tool_spec_snapshot_hash=evidence.tool_spec_snapshot_hash,
+        alias_binding_hash=evidence.alias_binding_hash,
+        execution_envelope_version=evidence.execution_envelope_version,
+        execution_envelope_hash=evidence.execution_envelope_hash,
+        allowed_commands_version=evidence.allowed_commands_version,
+        allowed_commands_hash=evidence.allowed_commands_hash,
+    )
+    assert replace(evidence, policy_target_version="policy-target-v2").evidence_hash != evidence.evidence_hash
+    with pytest.raises(TypeError, match="evidence_hash"):
+        policy.DirectorEffectCurrentPolicyEvidenceV1(
+            **{field.name: getattr(evidence, field.name) for field in fields(evidence)}
+        )
+
+
+@pytest.mark.parametrize(
+    ("status", "evidence", "error_code"),
+    (
+        ("captured", None, None),
+        ("captured", _current_policy_evidence(), "deo_current_policy_evidence_unavailable"),
+        ("denied", _current_policy_evidence(), "deo_current_policy_evidence_unavailable"),
+        ("denied", None, None),
+    ),
+)
+def test_current_policy_capture_result_rejects_ambiguous_states(
+    status: Literal["captured", "denied"],
+    evidence: policy.DirectorEffectCurrentPolicyEvidenceV1 | None,
+    error_code: policy.DirectorEffectCurrentPolicyEvidenceCaptureErrorCodeV1 | None,
+) -> None:
+    """Capture is exactly evidence or the one closed denial, never both/neither."""
+    with pytest.raises(ValueError):
+        policy.DirectorEffectCurrentPolicyEvidenceCaptureResultV1(
+            status=status,
+            evidence=evidence,
+            error_code=error_code,
+        )
+
+
+def test_current_policy_capture_error_vocabulary_is_closed() -> None:
+    assert get_args(policy.DirectorEffectCurrentPolicyEvidenceCaptureErrorCodeV1) == (
+        "deo_current_policy_evidence_unavailable",
     )
 
 
@@ -514,9 +643,11 @@ def test_policy_contracts_instantiate_snapshot_binding_and_revalidation() -> Non
     member = _member()
     snapshot = _snapshot()
     authorization = _authorization_evidence(_claim_grant(member), snapshot)
+    authorization_binding = _authorization_binding(authorization)
     binding_request = policy.DirectorEffectPolicyMemberBindingRequestV1(
         snapshot=snapshot,
         authorization_evidence=authorization,
+        authorization_binding=authorization_binding,
         member=member,
     )
     bound = _bound_snapshot(member)
@@ -526,6 +657,7 @@ def test_policy_contracts_instantiate_snapshot_binding_and_revalidation() -> Non
         member=member,
         member_binding_hash=bound.member_binding_hash,
         bound_snapshot=bound,
+        authorization_binding_hash=bound.authorization_binding_hash,
     )
     revalidation_request = policy.DirectorEffectPolicyRevalidationRequestV1(
         bound_snapshot=bound,
@@ -571,6 +703,7 @@ def test_allowed_member_binding_rejects_member_identity_drift() -> None:
             member=drifted,
             member_binding_hash=_HASH,
             bound_snapshot=_bound_snapshot(member),
+            authorization_binding_hash=_HASH,
         )
 
 
@@ -585,6 +718,7 @@ def test_allowed_member_binding_rejects_binding_hash_drift() -> None:
             member=member,
             member_binding_hash=_OTHER_HASH,
             bound_snapshot=_bound_snapshot(member),
+            authorization_binding_hash=_bound_snapshot(member).authorization_binding_hash,
         )
 
 
@@ -593,9 +727,11 @@ def test_bound_snapshot_constructor_binds_complete_member_identity() -> None:
     member = _member()
     snapshot = _snapshot()
     authorization_hash = _authorization_evidence(_claim_grant(member), snapshot).authorization_hash
+    authorization_binding = _authorization_binding(_authorization_evidence(_claim_grant(member), snapshot))
     binding_hash = policy.hash_directed_effect_policy_member_binding(
         snapshot.evidence_hash,
         authorization_hash,
+        authorization_binding.authorization_binding_hash,
         member,
     )
 
@@ -603,6 +739,8 @@ def test_bound_snapshot_constructor_binds_complete_member_identity() -> None:
         policy.DirectorEffectPolicyBoundSnapshotV1(
             snapshot=snapshot,
             authorization_evidence_hash=authorization_hash,
+            authorization_binding=authorization_binding,
+            authorization_binding_hash=authorization_binding.authorization_binding_hash,
             member=member,
             member_binding_hash=binding_hash,
         ).member_binding_hash
@@ -612,6 +750,8 @@ def test_bound_snapshot_constructor_binds_complete_member_identity() -> None:
         policy.DirectorEffectPolicyBoundSnapshotV1(
             snapshot=snapshot,
             authorization_evidence_hash=authorization_hash,
+            authorization_binding=authorization_binding,
+            authorization_binding_hash=authorization_binding.authorization_binding_hash,
             member=member,
             member_binding_hash=_OTHER_HASH,
         )
@@ -619,15 +759,43 @@ def test_bound_snapshot_constructor_binds_complete_member_identity() -> None:
         policy.DirectorEffectPolicyBoundSnapshotV1(
             snapshot=snapshot,
             authorization_evidence_hash=authorization_hash,
+            authorization_binding=authorization_binding,
+            authorization_binding_hash=authorization_binding.authorization_binding_hash,
             member=replace(member, effect_id="effect-substituted"),
             member_binding_hash=binding_hash,
         )
-    with pytest.raises(ValueError, match="member_binding_hash"):
+    with pytest.raises(ValueError, match="authorization binding"):
         policy.DirectorEffectPolicyBoundSnapshotV1(
             snapshot=snapshot,
             authorization_evidence_hash=_OTHER_HASH,
+            authorization_binding=authorization_binding,
+            authorization_binding_hash=authorization_binding.authorization_binding_hash,
             member=member,
             member_binding_hash=binding_hash,
+        )
+
+
+def test_bound_snapshot_rejects_forged_authorization_binding_wrapper() -> None:
+    member = _member()
+    bound = _bound_snapshot(member)
+    forged_binding = _forged_authorization_binding(
+        bound.authorization_binding,
+        authorization_binding_hash=_OTHER_HASH,
+    )
+
+    with pytest.raises(ValueError, match="authorization_binding must be canonical"):
+        policy.DirectorEffectPolicyBoundSnapshotV1(
+            snapshot=bound.snapshot,
+            authorization_evidence_hash=bound.authorization_evidence_hash,
+            authorization_binding=forged_binding,
+            authorization_binding_hash=_OTHER_HASH,
+            member=member,
+            member_binding_hash=policy.hash_directed_effect_policy_member_binding(
+                bound.snapshot.evidence_hash,
+                bound.authorization_evidence_hash,
+                _OTHER_HASH,
+                member,
+            ),
         )
 
 
@@ -658,6 +826,8 @@ def test_bound_snapshot_constructor_rejects_each_member_field_substitution(
         policy.DirectorEffectPolicyBoundSnapshotV1(
             snapshot=bound.snapshot,
             authorization_evidence_hash=bound.authorization_evidence_hash,
+            authorization_binding=bound.authorization_binding,
+            authorization_binding_hash=bound.authorization_binding_hash,
             member=_forged_member(member, **{field_name: forged_value}),
             member_binding_hash=bound.member_binding_hash,
         )
@@ -780,8 +950,8 @@ def test_operation_subject_reuses_task_runtime_effect_mode_authority(
             inventory_ordinal=1,
             normalized_tool_name="write_file",
             normalized_arguments=(("path", "src/a.py"),),
-            effect_type=effect_type,
-            execution_mode=execution_mode,
+            effect_type=effect_type,  # type: ignore[arg-type]
+            execution_mode=execution_mode,  # type: ignore[arg-type]
             prospective_operation_hash=_HASH,
         )
 
@@ -807,7 +977,7 @@ def test_policy_revalidation_rejects_outer_and_nested_identity_drift(
     bound = _bound_snapshot(member)
     grant = _claim_grant(member)
     evidence = _authorization_evidence(grant)
-    values: dict[str, object] = {
+    values: dict[str, Any] = {
         "bound_snapshot": bound,
         "workspace": "/workspace",
         "actual_normalized_tool_name": "write_file",
@@ -850,7 +1020,7 @@ def test_policy_tokens_and_integer_fields_reject_implicit_coercion() -> None:
     """Policy contracts reject non-string tokens and bool integer impostors."""
     with pytest.raises(TypeError, match="workspace"):
         policy.DirectorEffectPolicyOperationSubjectV1(
-            workspace=7,
+            workspace=7,  # type: ignore[arg-type]
             turn_id="turn-1",
             batch_id="batch-1",
             tool_call_id="call-1",
@@ -910,7 +1080,7 @@ def test_canonical_arguments_hash_rejects_duplicate_keys() -> None:
 @pytest.mark.parametrize("invalid_bool", (0, 1, "true"))
 def test_policy_bool_fields_require_exact_bool(invalid_bool: object) -> None:
     """Every policy bool field rejects numeric and textual substitutes."""
-    target_values: dict[str, object] = {
+    target_values: dict[str, Any] = {
         "target_path": "src/a.py",
         "exists": True,
         "before_content_hash": _HASH,
@@ -928,7 +1098,7 @@ def test_policy_bool_fields_require_exact_bool(invalid_bool: object) -> None:
     with pytest.raises(TypeError, match="allowed"):
         policy.DirectorEffectPolicySnapshotResultV1(
             status="allowed",
-            allowed=invalid_bool,
+            allowed=invalid_bool,  # type: ignore[arg-type]
             error_code=None,
             policy_version="v1",
             policy_hash=_HASH,
@@ -942,7 +1112,7 @@ def test_policy_bool_fields_require_exact_bool(invalid_bool: object) -> None:
     with pytest.raises(TypeError, match="allowed"):
         policy.DirectorEffectPolicyRevalidationResultV1(
             status="allowed",
-            allowed=invalid_bool,
+            allowed=invalid_bool,  # type: ignore[arg-type]
             error_code=None,
             current_policy_version="v1",
             current_policy_hash=_HASH,
@@ -963,6 +1133,6 @@ def test_policy_bool_fields_require_exact_bool(invalid_bool: object) -> None:
             current_target_state_evidence=_target_state_evidence(),
             current_target_state_hash=_target_state_evidence().target_state_hash,
             current_normalized_operation_hash=_HASH,
-            target_observation_performed=invalid_bool,
+            target_observation_performed=invalid_bool,  # type: ignore[arg-type]
             current_evidence_hash=_HASH,
         )

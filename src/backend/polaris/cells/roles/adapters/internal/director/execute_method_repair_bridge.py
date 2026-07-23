@@ -8,17 +8,22 @@ only as non-repair smoke checks until they move to a verifier cell.
 
 from __future__ import annotations
 
-import contextlib
-import os
 import re
-import subprocess
+import shlex
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, cast
 
-from .execution_tools import DirectorToolExecutor
+from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthorityV1,
+    TaskRuntimeExecutionAttemptIdentityV1,
+)
+
 from .repair_profile_projection import project_repair_kernel_summary
-from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
+from .runtime_repair_tool_adapter import (
+    defer_director_command_with_director_tools,
+    run_runtime_repair_with_director_tools,
+)
 from .task_scope_paths import _extract_task_path_candidates, _normalize_declared_task_path
 
 _RUNTIME_REPAIR_SCAN_EXCLUDED_DIRS = frozenset(
@@ -260,7 +265,6 @@ def _runtime_repair_tool_results(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool=source_tool,
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=allowed_paths,
@@ -368,7 +372,6 @@ def run_patch_residue_cleanup(
         workspace_path=workspace_path,
         task_id=task_id,
         source_tool="deterministic_patch_residue_cleanup",
-        executor_factory=DirectorToolExecutor,
         base_files=base_files,
     )
 
@@ -510,27 +513,34 @@ def run_python_static_smoke(
         if not candidate.is_file():
             continue
         try:
-            proc = subprocess.run(
-                [sys.executable, "-m", "py_compile", str(candidate)],
-                cwd=str(workspace_path),
-                capture_output=True,
-                text=True,
-                timeout=10.0,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            source = candidate.read_text(encoding="utf-8")
+            compile(source, str(candidate), "exec", dont_inherit=True)
+        except (OSError, UnicodeError) as exc:
             errors.append(
                 f"Artifact quality scan failed: python static smoke could not "
                 f"check {rel!r}: {type(exc).__name__}: {exc}"
             )
             continue
-        if proc.returncode != 0:
-            stderr = (proc.stderr or proc.stdout or "").strip()
-            tail = "\n".join(line for line in stderr.splitlines()[-6:] if line)
+        except (SyntaxError, ValueError, TypeError) as exc:
             errors.append(
-                f"Artifact quality scan failed: python static smoke found syntax error in {rel!r}; tail:\n{tail}"
+                f"Artifact quality scan failed: python static smoke found syntax error in {rel!r}; "
+                f"{type(exc).__name__}: {exc}"
             )
     return errors
+
+
+def _execution_attempt_from_context(
+    context: Mapping[str, Any] | None,
+) -> TaskRuntimeExecutionAttemptIdentityV1 | None:
+    if not isinstance(context, Mapping):
+        return None
+    authority = context.get("task_runtime_execution_attempt_authority")
+    if type(authority) is not TaskRuntimeExecutionAttemptAuthorityV1:
+        return None
+    snapshot = cast(TaskRuntimeExecutionAttemptAuthorityV1, authority).snapshot(lock_timeout_seconds=5.0)
+    if snapshot.success is not True or snapshot.closed:
+        return None
+    return snapshot.identity if type(snapshot.identity) is TaskRuntimeExecutionAttemptIdentityV1 else None
 
 
 def run_python_runtime_smoke(
@@ -538,15 +548,17 @@ def run_python_runtime_smoke(
     *,
     task_id: str,
     all_affected_files: list[str],
+    context: Mapping[str, Any] | None = None,
     timeout_seconds: float | None = None,
-) -> list[str]:
-    del task_id
+) -> tuple[list[str], list[dict[str, Any]]]:
     bounded_timeout = _PYTHON_RUNTIME_SMOKE_TIMEOUT_SECONDS if timeout_seconds is None else float(timeout_seconds)
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
+        return [], []
 
     errors: list[str] = []
+    tool_results: list[dict[str, Any]] = []
+    execution_attempt = _execution_attempt_from_context(context)
     for rel in all_affected_files:
         if not isinstance(rel, str) or not rel.endswith(".py"):
             continue
@@ -563,80 +575,55 @@ def run_python_runtime_smoke(
             continue
         if not _PYTHON_MAIN_BLOCK_RE.search(text):
             continue
-        env = os.environ.copy()
-        current_pythonpath = str(env.get("PYTHONPATH") or "").strip()
-        env["PYTHONPATH"] = (
-            str(workspace_path)
-            if not current_pythonpath
-            else os.pathsep.join([str(workspace_path), current_pythonpath])
+        result = defer_director_command_with_director_tools(
+            workspace_path=workspace_path,
+            task_id=task_id,
+            execution_attempt=execution_attempt,
+            command=shlex.join((sys.executable, rel)),
+            timeout_seconds=max(1, min(int(bounded_timeout), 300)),
+            purpose=f"20_python_runtime_smoke_{len(tool_results):03d}",
         )
-        proc = subprocess.Popen(
-            [sys.executable, str(candidate)],
-            cwd=str(workspace_path),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-        )
-        try:
-            stdout, stderr = proc.communicate(timeout=max(0.5, bounded_timeout))
-            returncode = proc.returncode
-        except subprocess.TimeoutExpired:
-            if proc.poll() is None:
-                try:
-                    proc.kill()
-                finally:
-                    with contextlib.suppress(OSError):
-                        proc.wait(timeout=2.0)
-                continue
-            stdout = proc.stdout.read() if proc.stdout else ""
-            stderr = proc.stderr.read() if proc.stderr else ""
-            tail = "\n".join(line for line in (stderr or "").strip().splitlines()[-8:] if line)
-            errors.append(
-                f"Artifact quality scan failed: python runtime smoke timed out for {rel!r} "
-                f"after {bounded_timeout}s; tail:\n{tail}"
-            )
-            continue
-        except (OSError, ValueError) as exc:
-            errors.append(
-                f"Artifact quality scan failed: python runtime smoke could not launch "
-                f"{rel!r}: {type(exc).__name__}: {exc}"
-            )
-            continue
-
-        if returncode == 0:
-            continue
-        stderr_tail = (stderr or stdout or "").strip().splitlines()
-        tail = "\n".join(line for line in stderr_tail[-8:] if line)
-        if returncode < 0:
-            errors.append(
-                f"Artifact quality scan failed: python runtime smoke was killed for {rel!r} "
-                f"(returncode={returncode}, signal={-returncode}); tail:\n{tail}"
-            )
+        if result.get("success") is True:
+            tool_results.append(result)
         else:
+            raw_payload = result.get("result")
+            payload = raw_payload if isinstance(raw_payload, dict) else {}
             errors.append(
-                f"Artifact quality scan failed: python runtime smoke crashed for {rel!r} "
-                f"(returncode={returncode}); tail:\n{tail}"
+                "Artifact quality scan failed: python runtime smoke could not be admitted to "
+                f"directed-effect authority for {rel!r}: "
+                f"{payload.get('error_code') or 'deo_deferred_command_request_failed'}"
             )
-    errors.extend(
-        _run_python_unittest_discover_smoke(
-            adapter,
-            all_affected_files=all_affected_files,
-            timeout_seconds=bounded_timeout,
-        )
+    unittest_result = _defer_python_unittest_discover_smoke(
+        adapter,
+        task_id=task_id,
+        context=context,
+        all_affected_files=all_affected_files,
+        timeout_seconds=bounded_timeout,
     )
-    return errors
+    if unittest_result is not None:
+        if unittest_result.get("success") is True:
+            tool_results.append(unittest_result)
+        else:
+            raw_payload = unittest_result.get("result")
+            payload = raw_payload if isinstance(raw_payload, dict) else {}
+            errors.append(
+                "Artifact quality scan failed: unittest discovery could not be admitted to "
+                f"directed-effect authority: {payload.get('error_code') or 'deo_deferred_command_request_failed'}"
+            )
+    return errors, tool_results
 
 
-def _run_python_unittest_discover_smoke(
+def _defer_python_unittest_discover_smoke(
     adapter: Any,
     *,
+    task_id: str,
+    context: Mapping[str, Any] | None,
     all_affected_files: list[str],
     timeout_seconds: float,
-) -> list[str]:
+) -> dict[str, Any] | None:
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
+        return None
 
     touched_test_files = [
         _normalize_declared_task_path(str(item or ""))
@@ -644,57 +631,26 @@ def _run_python_unittest_discover_smoke(
         if _looks_like_python_unittest_test_path(str(item or ""))
     ]
     if not touched_test_files:
-        return []
+        return None
     tests_dir = workspace_path / "tests"
     if not tests_dir.is_dir():
-        return []
+        return None
     try:
         has_discoverable_tests = any(path.is_file() for path in tests_dir.rglob("test_*.py"))
     except (OSError, RuntimeError):
-        return []
+        return None
     if not has_discoverable_tests:
-        return []
+        return None
 
-    env = os.environ.copy()
-    current_pythonpath = str(env.get("PYTHONPATH") or "").strip()
-    env["PYTHONPATH"] = (
-        str(workspace_path) if not current_pythonpath else os.pathsep.join([str(workspace_path), current_pythonpath])
+    command = shlex.join((sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"))
+    return defer_director_command_with_director_tools(
+        workspace_path=workspace_path,
+        task_id=task_id,
+        execution_attempt=_execution_attempt_from_context(context),
+        command=command,
+        timeout_seconds=max(1, min(int(timeout_seconds), 300)),
+        purpose="30_python_unittest_discover",
     )
-    command = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"]
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=str(workspace_path),
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=max(1.0, float(timeout_seconds)),
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        output = "\n".join(str(part or "").strip() for part in (exc.stdout, exc.stderr) if part)
-        tail = "\n".join(line for line in output.splitlines()[-40:] if line)
-        return [
-            "Artifact quality scan failed: workspace validation command timed out "
-            "(python -m unittest discover -s tests -p test_*.py -v); "
-            f"touched_tests={touched_test_files[:6]}; tail:\n{tail}"
-        ]
-    except (OSError, ValueError) as exc:
-        return [
-            "Artifact quality scan failed: workspace validation command could not launch "
-            "(python -m unittest discover -s tests -p test_*.py -v): "
-            f"{type(exc).__name__}: {exc}"
-        ]
-
-    output = (completed.stderr or completed.stdout or "").strip()
-    if completed.returncode == 0 or _unittest_discover_only_found_no_tests(output):
-        return []
-    tail = "\n".join(line for line in output.splitlines()[-80:] if line)
-    return [
-        "Artifact quality scan failed: workspace validation command failed "
-        "(python -m unittest discover -s tests -p test_*.py -v); "
-        f"touched_tests={touched_test_files[:6]}; tail:\n{tail}"
-    ]
 
 
 def _looks_like_python_unittest_test_path(rel_path: str) -> bool:

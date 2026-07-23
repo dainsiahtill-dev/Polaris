@@ -12,6 +12,11 @@ from polaris.cells.control_plane.run_ledger.public import (
     read_run_ledger_projection,
     task_boundary_tool_dispatch_from_lifecycle_metadata,
 )
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.kernel.internal.kernel import transaction_turn_completion as completion
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest
@@ -30,6 +35,17 @@ class _Profile:
     role_id: str = "director"
     model: str = "test-model"
     provider_id: str = "test-provider"
+
+
+@pytest.fixture(autouse=True)
+def _bootstrap_test_fact_stream(tmp_path: Any) -> None:
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="transaction_turn_completion_test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
 
 
 def test_completion_owner_commits_projection_and_boundary(monkeypatch: pytest.MonkeyPatch) -> None:

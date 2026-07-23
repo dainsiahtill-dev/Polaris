@@ -17,6 +17,7 @@ from polaris.infrastructure.llm.providers.anthropic_provider import (
     _convert_tool_choice_to_anthropic,
     _convert_tools_to_anthropic,
 )
+from polaris.kernelone.llm.engine.provider_native_request import project_factory_provider_native_request
 from polaris.kernelone.llm.providers import THINKING_PREFIX
 from polaris.kernelone.llm.types import InvokeResult
 
@@ -65,6 +66,79 @@ class TestAnthropicProviderHappyPath:
         assert result.error is None
         assert result.usage.prompt_tokens == 10
         assert result.usage.completion_tokens == 8
+
+    def test_factory_chat_messages_match_exact_anthropic_native_projection(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["url"] = url
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+        messages = [
+            {"role": "system", "content": "You are the Chief Engineer."},
+            {"role": "user", "content": "Inspect the target files."},
+        ]
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read one file",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ]
+        config = {
+            **anthropic_compat_config,
+            "chat_messages": messages,
+            "temperature": 0.0,
+            "max_tokens": 512,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+        semantic_payload = {
+            "model": "claude-3-5-sonnet",
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "response_format": None,
+            "temperature": 0.0,
+            # Frozen caller request before the Engine applies the provider/model
+            # output ceiling.  ``config`` is the final Engine invoke authority.
+            "max_tokens": 128_000,
+            "stream": False,
+        }
+
+        result = AnthropicProvider().invoke("flattened prompt", "claude-3-5-sonnet", config)
+        projection = project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="invoke",
+            final_payload=semantic_payload,
+            provider_config=config,
+        )
+
+        assert result.ok is True
+        assert projection is not None
+        assert captured["url"] == projection.exact_endpoint
+        assert captured["payload"] == projection.expected_body()
+        assert captured["payload"]["max_tokens"] == 512
+        assert captured["payload"]["system"] == "You are the Chief Engineer."
+        assert all(message["role"] != "system" for message in captured["payload"]["messages"])
 
     def test_health_success(
         self,
@@ -404,6 +478,40 @@ class TestAnthropicProviderToolConversion:
 
         assert result.ok is True
         assert captured["payload"]["thinking"] == {"type": "enabled"}
+
+    def test_invoke_applies_call_scoped_reasoning_budget_for_kimi_coding_endpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://api.kimi.com/coding",
+            "provider_id": "kimi",
+            "max_tokens": 8_192,
+            "reasoning_budget_tokens": 2_048,
+        }
+        result = AnthropicProvider().invoke("Hello", "kimi-for-coding", config)
+
+        assert result.ok is True
+        assert captured["payload"]["thinking"] == {"type": "enabled", "budget_tokens": 2_048}
 
     def test_invoke_omits_disabled_thinking_for_standard_endpoint(
         self,

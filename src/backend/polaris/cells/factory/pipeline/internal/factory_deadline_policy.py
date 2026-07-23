@@ -165,6 +165,7 @@ class FactoryDeadlineBudgetPolicyV1:
     director_first_task_min_seconds: int
     director_followup_task_min_seconds: int
     quality_gate_reserved_seconds: int
+    quality_gate_min_start_reserved_seconds: int
     safety_seconds: int
     director_settlement_barrier_seconds: int = 5
     schema_version: str = "factory.deadline_budget_policy.v1"
@@ -175,10 +176,13 @@ class FactoryDeadlineBudgetPolicyV1:
             "director_first_task_min_seconds",
             "director_followup_task_min_seconds",
             "quality_gate_reserved_seconds",
+            "quality_gate_min_start_reserved_seconds",
             "safety_seconds",
             "director_settlement_barrier_seconds",
         ):
             object.__setattr__(self, name, _required_seconds(name, getattr(self, name)))
+        if self.quality_gate_min_start_reserved_seconds > self.quality_gate_reserved_seconds:
+            raise ValueError("quality_gate_min_start_reserved_seconds must not exceed full reserve")
 
 
 @dataclass(frozen=True)
@@ -713,11 +717,20 @@ def _director_wave_units(
 
 def _qa_and_safety_units(
     policy: FactoryDeadlineBudgetPolicyV1,
+    *,
+    quality_gate_reserved_seconds: int | None = None,
 ) -> tuple[BudgetUnitV1, BudgetUnitV1]:
+    selected_quality_reserve = (
+        policy.quality_gate_reserved_seconds
+        if quality_gate_reserved_seconds is None
+        else _required_seconds("quality_gate_reserved_seconds", quality_gate_reserved_seconds)
+    )
+    if selected_quality_reserve > policy.quality_gate_reserved_seconds:
+        raise ValueError("selected quality gate reserve must not exceed full reserve")
     return (
         BudgetUnitV1(
             name="qa_finalization",
-            seconds=policy.quality_gate_reserved_seconds,
+            seconds=selected_quality_reserve,
         ),
         BudgetUnitV1(name="safety", seconds=policy.safety_seconds),
     )
@@ -846,6 +859,7 @@ def resolve_director_dispatch_admission(
     requested_timeout_seconds: int,
     dependency_schedule: TaskDependencyScheduleV1,
     first_materialization_pending: bool,
+    materialization_pending: bool,
     policy: FactoryDeadlineBudgetPolicyV1,
 ) -> FactoryDeadlineAdmissionV1:
     """Admit one Director wave while conserving all future run budget.
@@ -905,12 +919,25 @@ def resolve_director_dispatch_admission(
         )
         for index, wave in enumerate(dependency_schedule.waves[1:], start=2)
     )
-    downstream_units = (*future_wave_units, *_qa_and_safety_units(policy))
+    minimum_qa_reserve_active = materialization_pending and len(dependency_schedule.waves) > 1
+    selected_qa_reserve = (
+        policy.quality_gate_min_start_reserved_seconds
+        if minimum_qa_reserve_active
+        else policy.quality_gate_reserved_seconds
+    )
+    downstream_units = (
+        *future_wave_units,
+        *_qa_and_safety_units(
+            policy,
+            quality_gate_reserved_seconds=selected_qa_reserve,
+        ),
+    )
     reserved_downstream = sum(unit.seconds for unit in downstream_units)
     available_for_stage = None if horizon is None else horizon - reserved_downstream
     breakdown = {
         "future_director_waves": sum(unit.seconds for unit in future_wave_units),
-        "qa_finalization": policy.quality_gate_reserved_seconds,
+        "qa_finalization": selected_qa_reserve,
+        "qa_finalization_minimum_reserve_active": int(minimum_qa_reserve_active),
         "safety": policy.safety_seconds,
         "minimum_execution": minimum_start,
         "minimum_stage_lease": minimum_stage_lease,

@@ -1,0 +1,104 @@
+card_id: vc-20260722-factory-r29-director-verify-authority
+classification: execution_fact_chain
+status: closed
+bench_status: authorization_consumed_by_r30
+bug_summary: >-
+  The single authorized R29 isolated L1-04 run proved PM and Chief Engineer
+  final requests, reached Director, materialized five Go project files, and
+  passed a real Go compile gate. Director then failed the first PM task because
+  the deterministic step verify could not construct a deferred command request:
+  the adapter supplied TaskRuntime's private row id "1" while the exact
+  execution-attempt authority binds external_task_id "TASK-1". The public
+  DeferredDirectorCommandRequestV1 correctly rejects that mixed identity as
+  deo_deferred_command_request_invalid. The failed first task then blocked the
+  remaining entrypoint/test/documentation tasks, so QA never ran and the run
+  could not reach COMPLETED_VERIFIED.
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  provider_requests_before_close: 0
+  bench_runs_before_close: 0
+observed_failure:
+  project_id: L1-04
+  bench_run_id: codex-r29
+  factory_run_id: factory_84c8691284d9
+  director_run_id: director-f77ed9d872f8
+  wall_clock_seconds: 784.8
+  terminal_stage: director_dispatch
+  terminal_error_code: director.canonical_task_boundary_missing
+  direct_materialization_error: director_materialization_quality_failed
+  direct_authority_error: deo_deferred_command_request_invalid
+  internal_task_id: "1"
+  external_task_id: TASK-1
+  files_materialized: 5
+  go_source_files: 4
+  production_lines: 341
+  go_compile: pass
+  qa_reached: false
+  completed_verified: false
+final_request_audit:
+  pm_role_identity: pass
+  chief_engineer_role_identity: pass
+  director_role_identity: pass
+  qa_request_absent_because_upstream_failed: true
+  pm_final_physical_snapshot_readable: pass
+  chief_engineer_final_physical_snapshot_readable: pass
+  director_final_physical_snapshot_readable: pass
+  director_tool_surface:
+    tool_schema_count: 1
+    tools:
+      - write_file
+    tool_choice: write_file
+  director_context_coverage:
+    pm_contract: true
+    chief_engineer_blueprint: true
+    target_files: true
+    workspace_quality_evidence: true
+primary_root_cause:
+  code: deferred_command_internal_external_task_identity_mismatch
+  owner: roles.adapters.director_runtime_repair_tool_adapter
+  exact_boundary: create_deferred_director_command_request
+  current_behavior: private_row_id_is_passed_as_external_task_id
+  required_behavior: >-
+    Accept either the exact bound external_task_id or the exact decimal private
+    TaskRuntime row id and normalize only the latter to external_task_id. Reject
+    every other caller value fail-closed; never infer from run/session text.
+queued_next_root:
+  code: settlement_waiting_barrier_idempotency_payload_drift
+  owner: factory.pipeline.settlement_consumer
+  evidence:
+    wake_replay_failures: 609
+    idempotency_conflict_occurrences: 1828
+    event_key: >-
+      factory-settlement:40588cb1856fd801546c4b91993dd4e0958ae4165274796c0c5b5cb8a31fa5d9:pending:waiting_barrier
+    symptom: >-
+      The same pending waiting_barrier key was replayed with an evolving source
+      snapshot payload, creating a hot idempotency-conflict loop and high CPU.
+  scheduling: closed_before_r30
+resolution:
+  primary_root: >-
+    The deferred command adapter now accepts only the execution attempt's
+    exact external task id or exact decimal private TaskRuntime row id. The
+    latter is normalized to the bound external id before the typed request is
+    created; every other caller value remains fail-closed.
+  settlement_root: >-
+    Every wake still re-queries the live Run Ledger barrier. While the barrier
+    remains open, an existing waiting_barrier journal fact is reused instead
+    of appending evolving payload under a stable idempotency key. Retryable
+    apply outcomes now use claim-scoped idempotency identities, while fencing,
+    barrier-release, and true payload-drift checks remain fail-closed.
+required_gates:
+  red_reproduction_internal_external_identity: pass
+  exact_identity_normalization_test: pass
+  genuine_identity_drift_rejected: pass
+  focused_roles_adapter_tests: "33 passed; deferred kernel follow-up 20 passed"
+  roles_adapter_cell_full_tests: "1263 passed"
+  settlement_consumer_and_runtime_tests: "82 passed"
+  factory_pipeline_full_tests: "1229 passed, 2 warnings"
+  static_gates: "ruff, ruff-format, mypy, compileall, diff-check pass"
+  independent_diff_review: pass_codegraph_no_concrete_defect
+scheduling:
+  bench_schedulable: true
+  authorized_acceptance_bench_runs: 1
+  authorization_scope: one_fresh_isolated_l1_04_r30_only
+  next_action: run_exactly_one_r30_then_freeze_and_audit_all_final_provider_requests

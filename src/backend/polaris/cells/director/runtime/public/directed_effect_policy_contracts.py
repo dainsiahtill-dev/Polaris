@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Protocol, cast, runtime_checkable
 
 from polaris.cells.runtime.task_runtime.public import (
@@ -17,16 +17,21 @@ from .directed_effect_contracts import (
     DirectedEffectErrorCodeV1,
     DirectedEffectImmutableItemsV1,
     DirectedEffectImmutableMapV1,
+    DirectorEffectAuthorizationBindingV1,
     DirectorEffectAuthorizationEvidenceV1,
+    DirectorEffectPublicPolicyEvidenceV1,
     hash_directed_effect_arguments,
     require_directed_effect_bool,
     require_directed_effect_hash as _require_hash,
     require_directed_effect_immutable_items,
     validate_directed_effect_error_code,
     validate_directed_effect_identity_binding,
+    validate_director_effect_authorization_binding,
+    validate_director_effect_public_policy_evidence,
 )
 
 DirectorEffectPolicySnapshotStatusV1 = Literal["allowed", "denied"]
+DirectorEffectCurrentPolicyEvidenceCaptureErrorCodeV1 = Literal["deo_current_policy_evidence_unavailable"]
 
 
 def _require_token(name: str, value: str) -> str:
@@ -119,6 +124,31 @@ def _operation_subject_items(
         ("tool_call_id", subject.tool_call_id),
         ("turn_id", subject.turn_id),
         ("workspace", subject.workspace),
+    )
+
+
+def hash_director_effect_policy_operation_subject(
+    subject: DirectorEffectPolicyOperationSubjectV1,
+) -> str:
+    """Hash one prospective operation without trusting its supplied digest."""
+
+    if type(subject) is not DirectorEffectPolicyOperationSubjectV1:
+        raise TypeError("subject must be exactly DirectorEffectPolicyOperationSubjectV1")
+    return hash_directed_effect_arguments(
+        (
+            ("batch_id", subject.batch_id),
+            ("effect_type", subject.effect_type),
+            ("execution_mode", subject.execution_mode),
+            ("inventory_ordinal", subject.inventory_ordinal),
+            (
+                "normalized_arguments",
+                DirectedEffectImmutableMapV1(items=subject.normalized_arguments),
+            ),
+            ("normalized_tool_name", subject.normalized_tool_name),
+            ("tool_call_id", subject.tool_call_id),
+            ("turn_id", subject.turn_id),
+            ("workspace", subject.workspace),
+        )
     )
 
 
@@ -269,6 +299,62 @@ class DirectorEffectPolicySnapshotRequestV1:
 
 
 @dataclass(frozen=True, slots=True)
+class DirectorEffectPolicyBaselineCaptureRequestV1:
+    """Adapter-owned target capture request without caller-supplied file state."""
+
+    subject: DirectorEffectPolicyOperationSubjectV1
+    workspace: str
+    normalized_tool_name: str
+    normalized_arguments: DirectedEffectImmutableItemsV1
+    job_token_restriction_evidence: DirectedEffectImmutableItemsV1
+    expected_policy_version: str
+    canonical_command: str
+    path_scope_evidence: DirectedEffectImmutableItemsV1
+    command_scope_evidence: DirectedEffectImmutableItemsV1
+
+    def __post_init__(self) -> None:
+        if type(self.subject) is not DirectorEffectPolicyOperationSubjectV1:
+            raise TypeError("subject must be exactly DirectorEffectPolicyOperationSubjectV1")
+        object.__setattr__(self, "workspace", _require_token("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "normalized_tool_name",
+            _require_token("normalized_tool_name", self.normalized_tool_name),
+        )
+        object.__setattr__(
+            self,
+            "expected_policy_version",
+            _require_token("expected_policy_version", self.expected_policy_version),
+        )
+        object.__setattr__(
+            self,
+            "canonical_command",
+            _require_string("canonical_command", self.canonical_command),
+        )
+        for field_name in (
+            "normalized_arguments",
+            "job_token_restriction_evidence",
+            "path_scope_evidence",
+            "command_scope_evidence",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                require_directed_effect_immutable_items(
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if (
+            self.workspace != self.subject.workspace
+            or self.normalized_tool_name != self.subject.normalized_tool_name
+            or self.normalized_arguments != self.subject.normalized_arguments
+            or self.subject.prospective_operation_hash != hash_director_effect_policy_operation_subject(self.subject)
+        ):
+            raise ValueError("baseline capture request identity mismatch")
+
+
+@dataclass(frozen=True, slots=True)
 class DirectorEffectPolicySnapshotResultV1:
     """Frozen no-effect policy verdict with no executable capability."""
 
@@ -332,6 +418,57 @@ class DirectorEffectPolicySnapshotResultV1:
             raise ValueError("evidence_hash must bind complete baseline policy evidence")
 
 
+def validate_director_effect_policy_snapshot_result(
+    snapshot: DirectorEffectPolicySnapshotResultV1,
+) -> DirectorEffectPolicySnapshotResultV1:
+    """Reconstruct a policy snapshot and every nested hash-bearing value."""
+
+    if type(snapshot) is not DirectorEffectPolicySnapshotResultV1:
+        raise TypeError("snapshot must be exactly DirectorEffectPolicySnapshotResultV1")
+    target = snapshot.baseline_target_state_evidence
+    if type(target) is not DirectorEffectTargetStateEvidenceV1:
+        raise TypeError("baseline_target_state_evidence must be exactly DirectorEffectTargetStateEvidenceV1")
+    canonical_target = DirectorEffectTargetStateEvidenceV1(
+        target_path=target.target_path,
+        exists=target.exists,
+        before_content_hash=target.before_content_hash,
+        minimal_content_evidence=target.minimal_content_evidence,
+        agents_policy_hash=target.agents_policy_hash,
+        target_state_hash=target.target_state_hash,
+        is_no_file_state=target.is_no_file_state,
+    )
+    subject = snapshot.subject
+    if type(subject) is not DirectorEffectPolicyOperationSubjectV1:
+        raise TypeError("subject must be exactly DirectorEffectPolicyOperationSubjectV1")
+    canonical_subject = DirectorEffectPolicyOperationSubjectV1(
+        workspace=subject.workspace,
+        turn_id=subject.turn_id,
+        batch_id=subject.batch_id,
+        tool_call_id=subject.tool_call_id,
+        inventory_ordinal=subject.inventory_ordinal,
+        normalized_tool_name=subject.normalized_tool_name,
+        normalized_arguments=subject.normalized_arguments,
+        effect_type=subject.effect_type,
+        execution_mode=subject.execution_mode,
+        prospective_operation_hash=subject.prospective_operation_hash,
+    )
+    canonical = DirectorEffectPolicySnapshotResultV1(
+        status=snapshot.status,
+        allowed=snapshot.allowed,
+        error_code=snapshot.error_code,
+        policy_version=snapshot.policy_version,
+        policy_hash=snapshot.policy_hash,
+        subject=canonical_subject,
+        baseline_target_state_evidence=canonical_target,
+        target_state_hash=snapshot.target_state_hash,
+        normalized_operation_hash=snapshot.normalized_operation_hash,
+        evidence_hash=snapshot.evidence_hash,
+    )
+    if canonical != snapshot:
+        raise ValueError("policy snapshot canonical reconstruction mismatch")
+    return canonical
+
+
 def hash_directed_effect_policy_snapshot_evidence(
     *,
     status: DirectorEffectPolicySnapshotStatusV1,
@@ -372,13 +509,18 @@ def hash_directed_effect_policy_snapshot_evidence(
 def hash_directed_effect_policy_member_binding(
     snapshot_evidence_hash: str,
     authorization_evidence_hash: str,
+    authorization_binding_hash: str,
     member: DirectedEffectInventoryMemberV1,
 ) -> str:
-    """Bind snapshot, authorization, and complete sealed member identity."""
+    """Bind snapshot, legacy authorization, additive binding, and member."""
     snapshot_evidence_hash = _require_hash("snapshot_evidence_hash", snapshot_evidence_hash)
     authorization_evidence_hash = _require_hash(
         "authorization_evidence_hash",
         authorization_evidence_hash,
+    )
+    authorization_binding_hash = _require_hash(
+        "authorization_binding_hash",
+        authorization_binding_hash,
     )
     if not isinstance(member, DirectedEffectInventoryMemberV1):
         raise TypeError("member must be DirectedEffectInventoryMemberV1")
@@ -389,6 +531,7 @@ def hash_directed_effect_policy_member_binding(
     )
     return hash_directed_effect_arguments(
         (
+            ("authorization_binding_hash", authorization_binding_hash),
             ("authorization_evidence_hash", authorization_evidence_hash),
             ("domain", "director_effect_policy_member_binding_v1"),
             ("member", DirectedEffectImmutableMapV1(items=member_items)),
@@ -403,6 +546,8 @@ class DirectorEffectPolicyBoundSnapshotV1:
 
     snapshot: DirectorEffectPolicySnapshotResultV1
     authorization_evidence_hash: str
+    authorization_binding: DirectorEffectAuthorizationBindingV1
+    authorization_binding_hash: str
     member: DirectedEffectInventoryMemberV1
     member_binding_hash: str
 
@@ -416,10 +561,29 @@ class DirectorEffectPolicyBoundSnapshotV1:
             "authorization_evidence_hash",
             _require_hash("authorization_evidence_hash", self.authorization_evidence_hash),
         )
+        if not isinstance(self.authorization_binding, DirectorEffectAuthorizationBindingV1):
+            raise TypeError("authorization_binding must be DirectorEffectAuthorizationBindingV1")
+        try:
+            canonical_authorization_binding = validate_director_effect_authorization_binding(self.authorization_binding)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("authorization_binding must be canonical") from exc
+        if canonical_authorization_binding != self.authorization_binding:
+            raise ValueError("authorization_binding must be canonical")
+        object.__setattr__(
+            self,
+            "authorization_binding_hash",
+            _require_hash("authorization_binding_hash", self.authorization_binding_hash),
+        )
+        if (
+            self.authorization_binding.authorization_evidence.authorization_hash != self.authorization_evidence_hash
+            or self.authorization_binding.authorization_binding_hash != self.authorization_binding_hash
+        ):
+            raise ValueError("authorization binding must retain the exact legacy authorization anchor")
         object.__setattr__(self, "member_binding_hash", _require_hash("member_binding_hash", self.member_binding_hash))
         if self.member_binding_hash != hash_directed_effect_policy_member_binding(
             self.snapshot.evidence_hash,
             self.authorization_evidence_hash,
+            self.authorization_binding_hash,
             self.member,
         ):
             raise ValueError(
@@ -433,6 +597,7 @@ class DirectorEffectPolicyMemberBindingRequestV1:
 
     snapshot: DirectorEffectPolicySnapshotResultV1
     authorization_evidence: DirectorEffectAuthorizationEvidenceV1
+    authorization_binding: DirectorEffectAuthorizationBindingV1
     member: DirectedEffectInventoryMemberV1
 
     def __post_init__(self) -> None:
@@ -440,6 +605,10 @@ class DirectorEffectPolicyMemberBindingRequestV1:
             raise ValueError("member binding requires a successful policy snapshot")
         if not isinstance(self.authorization_evidence, DirectorEffectAuthorizationEvidenceV1):
             raise TypeError("authorization_evidence must be DirectorEffectAuthorizationEvidenceV1")
+        if not isinstance(self.authorization_binding, DirectorEffectAuthorizationBindingV1):
+            raise TypeError("authorization_binding must be DirectorEffectAuthorizationBindingV1")
+        if self.authorization_binding.authorization_evidence != self.authorization_evidence:
+            raise ValueError("authorization_binding must retain authorization_evidence")
         if not isinstance(self.member, DirectedEffectInventoryMemberV1):
             raise TypeError("member must be DirectedEffectInventoryMemberV1")
 
@@ -453,6 +622,7 @@ class DirectorEffectPolicyMemberBindingResultV1:
     member: DirectedEffectInventoryMemberV1 | None
     member_binding_hash: str | None
     bound_snapshot: DirectorEffectPolicyBoundSnapshotV1 | None
+    authorization_binding_hash: str | None = None
 
     def __post_init__(self) -> None:
         if self.status not in {"allowed", "denied"}:
@@ -462,11 +632,17 @@ class DirectorEffectPolicyMemberBindingResultV1:
             if (
                 not isinstance(self.member, DirectedEffectInventoryMemberV1)
                 or self.member_binding_hash is None
+                or self.authorization_binding_hash is None
                 or self.bound_snapshot is None
             ):
                 raise ValueError("allowed member binding requires member and bound snapshot")
             object.__setattr__(
                 self, "member_binding_hash", _require_hash("member_binding_hash", self.member_binding_hash)
+            )
+            object.__setattr__(
+                self,
+                "authorization_binding_hash",
+                _require_hash("authorization_binding_hash", self.authorization_binding_hash),
             )
             if not isinstance(self.bound_snapshot, DirectorEffectPolicyBoundSnapshotV1):
                 raise TypeError("bound_snapshot must be DirectorEffectPolicyBoundSnapshotV1")
@@ -476,8 +652,73 @@ class DirectorEffectPolicyMemberBindingResultV1:
                 raise ValueError("allowed member binding member identity must match bound snapshot")
             if self.member_binding_hash != self.bound_snapshot.member_binding_hash:
                 raise ValueError("allowed member_binding_hash must match bound snapshot")
-        elif any((self.member, self.member_binding_hash, self.bound_snapshot)) or self.error_code is None:
+            if self.authorization_binding_hash != self.bound_snapshot.authorization_binding_hash:
+                raise ValueError("allowed authorization_binding_hash must match bound snapshot")
+        elif (
+            any(
+                (
+                    self.member,
+                    self.member_binding_hash,
+                    self.authorization_binding_hash,
+                    self.bound_snapshot,
+                )
+            )
+            or self.error_code is None
+        ):
             raise ValueError("denied member binding cannot retain capability")
+
+
+def validate_director_effect_policy_bound_snapshot(
+    bound_snapshot: DirectorEffectPolicyBoundSnapshotV1,
+) -> DirectorEffectPolicyBoundSnapshotV1:
+    """Reconstruct a bound snapshot and reject forged nested policy evidence."""
+
+    if type(bound_snapshot) is not DirectorEffectPolicyBoundSnapshotV1:
+        raise TypeError("bound_snapshot must be exactly DirectorEffectPolicyBoundSnapshotV1")
+    canonical_snapshot = validate_director_effect_policy_snapshot_result(bound_snapshot.snapshot)
+    canonical_authorization_binding = validate_director_effect_authorization_binding(
+        bound_snapshot.authorization_binding
+    )
+    canonical_member = DirectedEffectInventoryMemberV1.from_record(bound_snapshot.member.to_record())
+    canonical = DirectorEffectPolicyBoundSnapshotV1(
+        snapshot=canonical_snapshot,
+        authorization_evidence_hash=bound_snapshot.authorization_evidence_hash,
+        authorization_binding=canonical_authorization_binding,
+        authorization_binding_hash=bound_snapshot.authorization_binding_hash,
+        member=canonical_member,
+        member_binding_hash=bound_snapshot.member_binding_hash,
+    )
+    if canonical != bound_snapshot:
+        raise ValueError("bound snapshot canonical reconstruction mismatch")
+    return canonical
+
+
+def validate_director_effect_policy_member_binding_result(
+    result: DirectorEffectPolicyMemberBindingResultV1,
+) -> DirectorEffectPolicyMemberBindingResultV1:
+    """Reconstruct one binding result before it can become a prepared capability."""
+
+    if type(result) is not DirectorEffectPolicyMemberBindingResultV1:
+        raise TypeError("result must be exactly DirectorEffectPolicyMemberBindingResultV1")
+    canonical_bound = (
+        validate_director_effect_policy_bound_snapshot(result.bound_snapshot)
+        if result.bound_snapshot is not None
+        else None
+    )
+    canonical_member = (
+        DirectedEffectInventoryMemberV1.from_record(result.member.to_record()) if result.member is not None else None
+    )
+    canonical = DirectorEffectPolicyMemberBindingResultV1(
+        status=result.status,
+        error_code=result.error_code,
+        member=canonical_member,
+        member_binding_hash=result.member_binding_hash,
+        bound_snapshot=canonical_bound,
+        authorization_binding_hash=result.authorization_binding_hash,
+    )
+    if canonical != result:
+        raise ValueError("policy member binding result canonical reconstruction mismatch")
+    return canonical
 
 
 @dataclass(frozen=True, slots=True)
@@ -682,9 +923,294 @@ def hash_directed_effect_policy_revalidation_evidence(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class DirectorEffectCurrentPolicyEvidenceCaptureRequestV1:
+    """Post-claim request accepted only by the adapter-owned evidence producer."""
+
+    baseline_authorization_binding: DirectorEffectAuthorizationBindingV1
+    baseline_public_policy_evidence: DirectorEffectPublicPolicyEvidenceV1
+    bound_snapshot: DirectorEffectPolicyBoundSnapshotV1
+    claimed_member: DirectedEffectInventoryMemberV1
+    claim_grant: DirectedEffectClaimGrantV1
+    normalized_tool: str
+    normalized_arguments_hash: str
+    current_job_token_restriction_evidence: DirectedEffectImmutableItemsV1
+
+    def __post_init__(self) -> None:
+        binding = validate_director_effect_authorization_binding(self.baseline_authorization_binding)
+        public_policy = validate_director_effect_public_policy_evidence(self.baseline_public_policy_evidence)
+        bound_snapshot = validate_director_effect_policy_bound_snapshot(self.bound_snapshot)
+        object.__setattr__(
+            self,
+            "normalized_tool",
+            _require_token("normalized_tool", self.normalized_tool),
+        )
+        object.__setattr__(
+            self,
+            "normalized_arguments_hash",
+            _require_hash(
+                "normalized_arguments_hash",
+                self.normalized_arguments_hash,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "current_job_token_restriction_evidence",
+            require_directed_effect_immutable_items(
+                "current_job_token_restriction_evidence",
+                self.current_job_token_restriction_evidence,
+            ),
+        )
+        if type(self.claimed_member) is not DirectedEffectInventoryMemberV1:
+            raise TypeError("claimed_member must be exactly DirectedEffectInventoryMemberV1")
+        if type(self.claim_grant) is not DirectedEffectClaimGrantV1:
+            raise TypeError("claim_grant must be exactly DirectedEffectClaimGrantV1")
+        authorization = binding.authorization_evidence
+        if (
+            binding != self.baseline_authorization_binding
+            or public_policy.source_authorization_binding_hash != binding.authorization_binding_hash
+            or bound_snapshot != self.bound_snapshot
+            or bound_snapshot.authorization_binding != binding
+            or bound_snapshot.member != self.claimed_member
+            or self.claim_grant.member != self.claimed_member
+            or self.claim_grant.operation.operation_id != self.claimed_member.operation_id
+            or authorization.normalized_tool_name != self.normalized_tool
+            or authorization.arguments_hash != self.normalized_arguments_hash
+        ):
+            raise ValueError("current policy capture request identity mismatch")
+
+
+def hash_director_effect_current_policy_evidence(
+    *,
+    baseline_authorization_binding_hash: str,
+    baseline_public_policy_evidence_hash: str,
+    bound_member_hash: str,
+    claim_grant_hash: str,
+    policy_target_version: str,
+    policy_target_hash: str,
+    operation_version: str,
+    operation_hash: str,
+    capability_scope_version: str,
+    capability_scope_hash: str,
+    job_token_id: str,
+    job_token_version: str,
+    job_token_evidence_hash: str,
+    tool_spec_snapshot_hash: str,
+    alias_binding_hash: str,
+    execution_envelope_version: str,
+    execution_envelope_hash: str,
+    allowed_commands_version: str,
+    allowed_commands_hash: str,
+) -> str:
+    """Bind every post-claim current-source observation in one hash domain."""
+
+    return hash_directed_effect_arguments(
+        (
+            (
+                "baseline_authorization_binding_hash",
+                _require_hash(
+                    "baseline_authorization_binding_hash",
+                    baseline_authorization_binding_hash,
+                ),
+            ),
+            (
+                "baseline_public_policy_evidence_hash",
+                _require_hash(
+                    "baseline_public_policy_evidence_hash",
+                    baseline_public_policy_evidence_hash,
+                ),
+            ),
+            ("bound_member_hash", _require_hash("bound_member_hash", bound_member_hash)),
+            ("claim_grant_hash", _require_hash("claim_grant_hash", claim_grant_hash)),
+            ("policy_target_version", _require_token("policy_target_version", policy_target_version)),
+            ("policy_target_hash", _require_hash("policy_target_hash", policy_target_hash)),
+            ("operation_version", _require_token("operation_version", operation_version)),
+            ("operation_hash", _require_hash("operation_hash", operation_hash)),
+            (
+                "capability_scope_version",
+                _require_token("capability_scope_version", capability_scope_version),
+            ),
+            (
+                "capability_scope_hash",
+                _require_hash("capability_scope_hash", capability_scope_hash),
+            ),
+            ("job_token_id", _require_token("job_token_id", job_token_id)),
+            ("job_token_version", _require_token("job_token_version", job_token_version)),
+            (
+                "job_token_evidence_hash",
+                _require_hash("job_token_evidence_hash", job_token_evidence_hash),
+            ),
+            (
+                "tool_spec_snapshot_hash",
+                _require_hash("tool_spec_snapshot_hash", tool_spec_snapshot_hash),
+            ),
+            ("alias_binding_hash", _require_hash("alias_binding_hash", alias_binding_hash)),
+            (
+                "execution_envelope_version",
+                _require_token("execution_envelope_version", execution_envelope_version),
+            ),
+            (
+                "execution_envelope_hash",
+                _require_hash("execution_envelope_hash", execution_envelope_hash),
+            ),
+            (
+                "allowed_commands_version",
+                _require_token("allowed_commands_version", allowed_commands_version),
+            ),
+            (
+                "allowed_commands_hash",
+                _require_hash("allowed_commands_hash", allowed_commands_hash),
+            ),
+            ("domain", "director_effect_current_policy_evidence_v1"),
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DirectorEffectCurrentPolicyEvidenceV1:
+    """Versioned post-claim evidence; only the policy port may produce it."""
+
+    baseline_authorization_binding_hash: str
+    baseline_public_policy_evidence_hash: str
+    bound_member_hash: str
+    claim_grant_hash: str
+    policy_target_version: str
+    policy_target_hash: str
+    operation_version: str
+    operation_hash: str
+    capability_scope_version: str
+    capability_scope_hash: str
+    job_token_id: str
+    job_token_version: str
+    job_token_evidence_hash: str
+    tool_spec_snapshot_hash: str
+    alias_binding_hash: str
+    execution_envelope_version: str
+    execution_envelope_hash: str
+    allowed_commands_version: str
+    allowed_commands_hash: str
+    evidence_hash: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        computed = hash_director_effect_current_policy_evidence(
+            baseline_authorization_binding_hash=self.baseline_authorization_binding_hash,
+            baseline_public_policy_evidence_hash=self.baseline_public_policy_evidence_hash,
+            bound_member_hash=self.bound_member_hash,
+            claim_grant_hash=self.claim_grant_hash,
+            policy_target_version=self.policy_target_version,
+            policy_target_hash=self.policy_target_hash,
+            operation_version=self.operation_version,
+            operation_hash=self.operation_hash,
+            capability_scope_version=self.capability_scope_version,
+            capability_scope_hash=self.capability_scope_hash,
+            job_token_id=self.job_token_id,
+            job_token_version=self.job_token_version,
+            job_token_evidence_hash=self.job_token_evidence_hash,
+            tool_spec_snapshot_hash=self.tool_spec_snapshot_hash,
+            alias_binding_hash=self.alias_binding_hash,
+            execution_envelope_version=self.execution_envelope_version,
+            execution_envelope_hash=self.execution_envelope_hash,
+            allowed_commands_version=self.allowed_commands_version,
+            allowed_commands_hash=self.allowed_commands_hash,
+        )
+        object.__setattr__(self, "evidence_hash", computed)
+
+
+def validate_director_effect_current_policy_evidence(
+    evidence: DirectorEffectCurrentPolicyEvidenceV1,
+) -> DirectorEffectCurrentPolicyEvidenceV1:
+    """Canonical-reconstruct current evidence before execution may consume it."""
+
+    if type(evidence) is not DirectorEffectCurrentPolicyEvidenceV1:
+        raise TypeError("evidence must be exactly DirectorEffectCurrentPolicyEvidenceV1")
+    canonical = DirectorEffectCurrentPolicyEvidenceV1(
+        baseline_authorization_binding_hash=evidence.baseline_authorization_binding_hash,
+        baseline_public_policy_evidence_hash=evidence.baseline_public_policy_evidence_hash,
+        bound_member_hash=evidence.bound_member_hash,
+        claim_grant_hash=evidence.claim_grant_hash,
+        policy_target_version=evidence.policy_target_version,
+        policy_target_hash=evidence.policy_target_hash,
+        operation_version=evidence.operation_version,
+        operation_hash=evidence.operation_hash,
+        capability_scope_version=evidence.capability_scope_version,
+        capability_scope_hash=evidence.capability_scope_hash,
+        job_token_id=evidence.job_token_id,
+        job_token_version=evidence.job_token_version,
+        job_token_evidence_hash=evidence.job_token_evidence_hash,
+        tool_spec_snapshot_hash=evidence.tool_spec_snapshot_hash,
+        alias_binding_hash=evidence.alias_binding_hash,
+        execution_envelope_version=evidence.execution_envelope_version,
+        execution_envelope_hash=evidence.execution_envelope_hash,
+        allowed_commands_version=evidence.allowed_commands_version,
+        allowed_commands_hash=evidence.allowed_commands_hash,
+    )
+    if canonical != evidence:
+        raise ValueError("current policy evidence canonical reconstruction mismatch")
+    return canonical
+
+
+def validate_director_effect_current_policy_capture_result(
+    result: DirectorEffectCurrentPolicyEvidenceCaptureResultV1,
+) -> DirectorEffectCurrentPolicyEvidenceCaptureResultV1:
+    """Canonical-reconstruct the closed producer result and nested evidence."""
+
+    if type(result) is not DirectorEffectCurrentPolicyEvidenceCaptureResultV1:
+        raise TypeError("result must be exactly DirectorEffectCurrentPolicyEvidenceCaptureResultV1")
+    canonical_evidence = (
+        validate_director_effect_current_policy_evidence(result.evidence) if result.evidence is not None else None
+    )
+    canonical = DirectorEffectCurrentPolicyEvidenceCaptureResultV1(
+        status=result.status,
+        evidence=canonical_evidence,
+        error_code=result.error_code,
+    )
+    if canonical != result:
+        raise ValueError("current policy capture result canonical reconstruction mismatch")
+    return canonical
+
+
+@dataclass(frozen=True, slots=True)
+class DirectorEffectCurrentPolicyEvidenceCaptureResultV1:
+    """Closed capture result with no third or malformed state."""
+
+    status: Literal["captured", "denied"]
+    evidence: DirectorEffectCurrentPolicyEvidenceV1 | None
+    error_code: DirectorEffectCurrentPolicyEvidenceCaptureErrorCodeV1 | None
+
+    def __post_init__(self) -> None:
+        if self.status == "captured":
+            if type(self.evidence) is not DirectorEffectCurrentPolicyEvidenceV1 or self.error_code is not None:
+                raise ValueError("captured requires evidence and no error")
+        elif self.status == "denied":
+            if self.evidence is not None or self.error_code != "deo_current_policy_evidence_unavailable":
+                raise ValueError("denied requires no evidence and the closed error")
+        else:
+            raise ValueError("unsupported capture status")
+
+
 @runtime_checkable
-class DirectorEffectPolicySnapshotPortV1(Protocol):
+class DirectorEffectCurrentPolicyEvidenceCapturePortV1(Protocol):
+    """Sole post-claim current-evidence producer boundary."""
+
+    async def capture_current_policy_evidence(
+        self,
+        request: DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
+    ) -> DirectorEffectCurrentPolicyEvidenceCaptureResultV1:
+        """Capture versioned evidence or return the one closed denial."""
+
+
+@runtime_checkable
+class DirectorEffectPolicySnapshotPortV1(
+    DirectorEffectCurrentPolicyEvidenceCapturePortV1,
+    Protocol,
+):
     """Adapter-owned policy boundary consumed without adapter imports."""
+
+    async def capture_baseline_snapshot(
+        self,
+        request: DirectorEffectPolicyBaselineCaptureRequestV1,
+    ) -> DirectorEffectPolicySnapshotResultV1:
+        """Read target state and capture the baseline through the sole adapter."""
 
     async def snapshot(self, request: DirectorEffectPolicySnapshotRequestV1) -> DirectorEffectPolicySnapshotResultV1:
         """Capture a no-effect policy snapshot for a prospective mutation."""

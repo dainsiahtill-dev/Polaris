@@ -22,6 +22,8 @@ __all__ = [
     "default_platform_lock_root",
     "format_workspace_tree",
     "get_default_adapter",
+    "guarded_compare_and_create_regular_file",
+    "guarded_compare_and_remove_regular_file",
     "guarded_compare_and_replace_regular_file",
     "read_guarded_regular_file_snapshot",
     "set_default_adapter",
@@ -32,12 +34,16 @@ def __getattr__(name: str) -> Any:
     if name in {
         "GuardedRegularFileSnapshotError",
         "GuardedRegularFileSnapshotV1",
+        "guarded_compare_and_create_regular_file",
+        "guarded_compare_and_remove_regular_file",
         "guarded_compare_and_replace_regular_file",
         "read_guarded_regular_file_snapshot",
     }:
         from polaris.kernelone.fs.guarded_regular_file_snapshot import (
             GuardedRegularFileSnapshotError,
             GuardedRegularFileSnapshotV1,
+            guarded_compare_and_create_regular_file,
+            guarded_compare_and_remove_regular_file,
             guarded_compare_and_replace_regular_file,
             read_guarded_regular_file_snapshot,
         )
@@ -45,6 +51,8 @@ def __getattr__(name: str) -> Any:
         return {
             "GuardedRegularFileSnapshotError": GuardedRegularFileSnapshotError,
             "GuardedRegularFileSnapshotV1": GuardedRegularFileSnapshotV1,
+            "guarded_compare_and_create_regular_file": guarded_compare_and_create_regular_file,
+            "guarded_compare_and_remove_regular_file": guarded_compare_and_remove_regular_file,
             "guarded_compare_and_replace_regular_file": guarded_compare_and_replace_regular_file,
             "read_guarded_regular_file_snapshot": read_guarded_regular_file_snapshot,
         }[name]
