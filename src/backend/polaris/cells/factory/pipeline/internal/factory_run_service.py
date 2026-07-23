@@ -1441,7 +1441,12 @@ class FactoryRunService:
         heartbeat_task: asyncio.Task[None] | None = None
         if heartbeat_interval > 0:
             heartbeat_task = asyncio.create_task(
-                self._run_stage_heartbeat(run_id, stage, heartbeat_interval),
+                self._run_stage_heartbeat(
+                    run_id,
+                    stage,
+                    heartbeat_interval,
+                    fencing_token=claimed_lease.fencing_token,
+                ),
                 name=f"factory_stage_heartbeat:{run_id}:{stage}",
             )
 
@@ -1534,10 +1539,30 @@ class FactoryRunService:
         run_id: str,
         stage: str,
         interval_seconds: float,
+        *,
+        fencing_token: int,
     ) -> None:
         while True:
             await asyncio.sleep(interval_seconds)
-            await self._emit_stage_heartbeat(run_id, stage)
+            # Workspace ownership is security-critical and must not depend on
+            # the observability projection below. A transient Factory Run
+            # Store/Event lock failure previously terminated this sole
+            # coroutine, silently stopped lease renewal, and let a live
+            # Director stage expire its workspace authority.
+            self._admission.renew(run_id, fencing_token=fencing_token)
+            try:
+                await self._emit_stage_heartbeat(run_id, stage)
+            except (
+                OSError,
+                asyncio.TimeoutError,
+            ) as projection_exc:
+                logger.warning(
+                    "Factory stage heartbeat projection failed after durable lease renewal "
+                    "for run %s stage %s: %s",
+                    run_id,
+                    stage,
+                    projection_exc,
+                )
 
     async def _emit_stage_heartbeat(self, run_id: str, stage: str) -> None:
         run_lock = self._get_run_lock(run_id)
@@ -1550,7 +1575,6 @@ class FactoryRunService:
             if current_stage != stage:
                 return
 
-            self._renew_workspace_lease(run, require_active=False)
             timestamp = self._now()
             run.updated_at = timestamp
             run.metadata["last_stage_heartbeat_at"] = timestamp

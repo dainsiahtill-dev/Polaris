@@ -1,0 +1,40 @@
+schema_version: verification-card.v1
+card_id: vc-20260723-factory-r48-fresh-isolated-acceptance
+title: Factory R48 fresh isolated acceptance
+status: approved_once
+bench_status: schedulable_once
+bench_schedulable: true
+owner: main_agent
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  project_id: L1-04
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  reserved_main_backend_port: 49977
+  reserved_main_frontend_port: 5173
+closed_prebench_defects:
+  r46_stage_lease_liveness: prebench_verified
+  r47_native_go_verifier_contract: prebench_verified
+required_gates:
+  factory_pipeline: 1240_passed
+  task_runtime: 418_passed
+  workflow_runtime: 215_passed
+  kernelone_release: 415_passed_1_skipped_ok_true
+  architecture: 1411_passed_8_skipped
+  static: ruff_mypy_compileall_diff_check_pass
+authorization:
+  scope: factory_r48_l104_fresh_isolated_once
+  provider_requests: bench_natural_only
+  bench_runs_remaining: 1
+  consume_on_any_result: true
+  source_fingerprint_must_match: aab54ea3611e77cd
+  completed_verified_requires_full_physical_fact_chain: true
+evidence:
+  r46_blueprint: src/backend/docs/blueprints/FACTORY_R46_STAGE_LEASE_LIVENESS_BLUEPRINT_20260723.md
+  r47_blueprint: src/backend/docs/blueprints/FACTORY_R47_NATIVE_VERIFIER_CONTRACT_BLUEPRINT_20260723.md
+  acceptance_blueprint: src/backend/docs/blueprints/FACTORY_R48_FRESH_ISOLATED_ACCEPTANCE_BLUEPRINT_20260723.md
+  factory_gate_log: /tmp/polaris-r47-factory-full.log
+  kernelone_release_report: /tmp/polaris-r47-kernelone-release.json
+  source_head: a286f729ea15dcdad0c388ee15fadb42cab73b07
+  source_fingerprint: aab54ea3611e77cd

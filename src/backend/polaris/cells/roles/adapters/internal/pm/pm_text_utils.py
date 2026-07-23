@@ -566,7 +566,11 @@ def _pm_target_files_include_tests(target_files: list[str]) -> bool:
         if lowered.startswith("tests/") or "/tests/" in lowered:
             return True
         filename = lowered.rsplit("/", 1)[-1]
-        if filename.startswith("test_") or ".test." in filename or filename.endswith("_test.py"):
+        if (
+            filename.startswith("test_")
+            or ".test." in filename
+            or filename.endswith(("_test.py", "_test.go", "_spec.rb"))
+        ):
             return True
     return False
 
@@ -610,7 +614,7 @@ def _pm_infer_test_target_file_for_contract(
     explicit_hint_text = "\n".join([title, goal, description, phase])
     phase_token = str(phase or "").strip().lower()
     if phase_token not in {"verification", "validation", "verify", "qa", "test", "testing"} and not (
-        _PM_TEST_CONTRACT_HINT_RE.search(explicit_hint_text)
+        _PM_TEST_AUTHORING_HINT_RE.search(explicit_hint_text)
     ):
         return ""
 

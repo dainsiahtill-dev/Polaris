@@ -1381,7 +1381,6 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         ]
         verification_targets = [
             "main_test.go",
-            "tests/test_product.py",
             "README.md",
         ]
         delivery_depth_contract = _delivery_depth_contract(
@@ -1457,25 +1456,24 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 },
                 {
                     "id": "TASK-3",
-                    "title": f"实现 {domain_label} Go 测试、外部验收与 README",
+                    "title": f"实现 {domain_label} Go 测试与 README",
                     "goal": f"固化 {domain_label} 的 Go 编译、单元测试、入口 smoke 和交付说明。",
                     "description": (
-                        "创建 main_test.go、tests/test_product.py 与 README，验证 **/*.go 覆盖、go_compile、"
+                        "创建 main_test.go 与 README，使用 Go 原生工具链验证 **/*.go 覆盖、go_compile、"
                         f"真实入口和核心领域规则：{check_summary}。"
                     ),
-                    "scope": [*model_targets, *engine_targets, *verification_targets],
-                    "target_files": [*model_targets, *engine_targets, *verification_targets],
+                    "scope": verification_targets,
+                    "target_files": verification_targets,
+                    "context_files": [*model_targets, *engine_targets],
                     "steps": [
                         "实现 main_test.go，使用 Go testing 包覆盖 capsule、museum、riddle、unlock 核心规则",
-                        "实现 tests/test_product.py，使用 Python unittest 检查至少多个 .go 源文件、go.mod、go test 和 go run 入口",
-                        "README 记录依赖要求、`go test ./...`、`go run .` 和验收脚本执行方式",
+                        "README 记录依赖要求、`go test ./...`、`go run .` 和原生验收步骤",
                         f"验证脚本覆盖确定性检查：{check_summary}",
                     ],
                     "acceptance": [
-                        "`main_test.go` 与 `tests/test_product.py` 存在且可执行",
+                        "`main_test.go` 存在且由 Go testing 包执行真实领域用例",
                         "`go test ./...` 返回成功",
                         "`go run .` 返回成功",
-                        "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
                         "`README.md` 包含编译、测试和启动步骤",
                         f"确定性检查进入任务验收：{check_summary}",
                     ],

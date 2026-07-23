@@ -1,0 +1,56 @@
+schema_version: verification-card.v1
+card_id: vc-20260723-factory-r45-fresh-isolated-acceptance
+title: Factory R45 fresh isolated acceptance
+status: consumed_failed
+bench_status: not_schedulable
+bench_schedulable: false
+owner: main_agent
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  project_id: L1-04
+  launcher_instance_mode: isolated
+  bench_session_reporting: false
+  reserved_main_backend_port: 49977
+  reserved_main_frontend_port: 5173
+closed_defects:
+  r44a_director_materialization_budget: pass
+  r44b_director_first_turn_tool_contract: pass
+  r44c_typed_artifact_profile_classification: pass
+required_gates:
+  factory_pipeline: 1240_passed
+  task_runtime: 904_passed
+  workflow_runtime: 215_passed
+  kernelone_release: 415_passed_1_skipped_ok_true
+  architecture: 1411_passed_8_skipped
+  static: pass
+authorization:
+  scope: none_r45_consumed
+  provider_requests: bench_natural_only
+  bench_runs_remaining: 0
+  consume_on_any_result: true
+  completed_verified_requires_full_physical_fact_chain: true
+evidence:
+  blueprint: src/backend/docs/blueprints/FACTORY_R45_FRESH_ISOLATED_ACCEPTANCE_BLUEPRINT_20260723.md
+  kernelone_release_report: /tmp/polaris-r44-kernelone-release.json
+  source_head: a286f729ea15dcdad0c388ee15fadb42cab73b07
+consumed_run:
+  factory_run_id: factory_112a9f2420cb
+  result: failed
+  wall_clock_seconds: 1091.0
+  exit_class: event_wait_timeout
+  director_tasks:
+    total: 3
+    successes: 2
+    failures: 1
+    blocked: 0
+  source_files: 8
+  test_files: 1
+  implementation_depth: pass
+  llm_route_audit: pass
+  canonical_execution: incomplete_materialization
+  real_run_gate: skipped_non_terminal
+  new_defects:
+    - factory_run_non_terminal_before_project_deadline
+    - workspace_run_lease_conflict_on_timeout_control
+    - go_compile_failed

@@ -511,6 +511,61 @@ class TestFactoryRunService:
         assert heartbeat_events
 
     @pytest.mark.asyncio
+    async def test_stage_heartbeat_keeps_lease_alive_when_projection_repeatedly_fails(
+        self,
+        temp_workspace: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        run = await service.create_run(FactoryConfig(name="projection-failure"))
+        started = await service.start_run(run.id)
+        lease = service._admission.current()
+        assert lease is not None
+        assert lease.run_id == started.id
+
+        renewed_tokens: list[int] = []
+        projection_attempts = 0
+        original_renew = service._admission.renew
+
+        def capture_renew(
+            run_id: str,
+            *,
+            fencing_token: int,
+            lease_ttl_seconds: float | None = None,
+        ) -> Any:
+            renewed_tokens.append(fencing_token)
+            return original_renew(
+                run_id,
+                fencing_token=fencing_token,
+                lease_ttl_seconds=lease_ttl_seconds,
+            )
+
+        async def fail_projection(_run_id: str, _stage: str) -> None:
+            nonlocal projection_attempts
+            projection_attempts += 1
+            raise OSError("injected Factory Run Store projection lock timeout")
+
+        monkeypatch.setattr(service._admission, "renew", capture_renew)
+        monkeypatch.setattr(service, "_emit_stage_heartbeat", fail_projection)
+
+        heartbeat = asyncio.create_task(
+            service._run_stage_heartbeat(
+                run.id,
+                "director_dispatch",
+                0.01,
+                fencing_token=lease.fencing_token,
+            )
+        )
+        await asyncio.sleep(0.055)
+        heartbeat.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await heartbeat
+
+        assert projection_attempts >= 3
+        assert len(renewed_tokens) >= 3
+        assert set(renewed_tokens) == {lease.fencing_token}
+
+    @pytest.mark.asyncio
     async def test_execute_stage_not_found(self, temp_workspace):
         service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
 

@@ -842,7 +842,7 @@ class TestFrontendTestRepairContracts:
         assert "engine/riddle.go" in targets
         assert "engine/unlock.go" in targets
         assert "main_test.go" in targets
-        assert "tests/test_product.py" in targets
+        assert "tests/test_product.py" not in targets
         assert "README.md" in targets
         assert "index.html" not in targets
         assert "styles.css" not in targets
@@ -850,6 +850,10 @@ class TestFrontendTestRepairContracts:
         assert "source_target_coverage:**/*.go" in serialized
         assert "go test ./..." in serialized
         assert "go run ." in serialized
+        assert "python -m unittest" not in serialized
+        assert contracts[2]["target_files"] == ["main_test.go", "README.md"]
+        assert "engine/unlock.go" in contracts[2]["context_files"]
+        assert "models/capsule.go" in contracts[2]["context_files"]
         assert "capsule" in serialized
         assert "museum" in serialized
         assert "riddle" in serialized
