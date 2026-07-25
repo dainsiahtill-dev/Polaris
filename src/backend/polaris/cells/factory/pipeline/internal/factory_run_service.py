@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import os  # re-exported for lossless surface + test monkeypatch of ``os.name``
 import re  # re-exported for lossless surface compatibility
@@ -806,10 +805,10 @@ class FactoryRunService:
         expected_token = (
             self._expected_lifecycle_fencing_token(run) if expected_fencing_token is None else expected_fencing_token
         )
-        replay_fence = (
-            run.id not in self._physical_attempt_coordinators
-            and operation in {"recover_run", "recover_stale_workspace_owner"}
-        )
+        replay_fence = run.id not in self._physical_attempt_coordinators and operation in {
+            "recover_run",
+            "recover_stale_workspace_owner",
+        }
         lease = self._admission.claim_lifecycle_operation(
             run.id,
             operation=operation,
@@ -1460,15 +1459,12 @@ class FactoryRunService:
                 # cancellation.  Claim settlement/release remains a separate
                 # durable lifecycle decision below.
                 cutoff_port.close_authority()
-        except (
-            AttributeError,
-            OSError,
-            RuntimeError,
-            TypeError,
-            ValueError,
-            json.JSONDecodeError,
-            asyncio.TimeoutError,
-        ) as exc:
+        except Exception as exc:
+            # Fail-closed for provider/network errors (e.g. aiohttp.ClientResponseError
+            # on HTTP 403 quota). A narrow typed list previously let those escape
+            # without marking the stage finished, abandoning the stage claim and
+            # freezing updated_at while the API still reported RUNNING.
+            # asyncio.CancelledError is BaseException and is not caught here.
             result = StageResult(
                 stage=stage,
                 status="failed",
@@ -1480,6 +1476,7 @@ class FactoryRunService:
                     "child_sessions_settled": False,
                     "inflight_run_continues": True,
                     "settlement_source": "factory_stage_wrapper_exception",
+                    "exception_type": type(exc).__name__,
                 },
             )
             async with run_lock:
@@ -1557,8 +1554,7 @@ class FactoryRunService:
                 asyncio.TimeoutError,
             ) as projection_exc:
                 logger.warning(
-                    "Factory stage heartbeat projection failed after durable lease renewal "
-                    "for run %s stage %s: %s",
+                    "Factory stage heartbeat projection failed after durable lease renewal for run %s stage %s: %s",
                     run_id,
                     stage,
                     projection_exc,
@@ -2026,6 +2022,12 @@ class FactoryRunService:
         the HTTP control surface. Verified delivery authority belongs to the
         canonical Run Ledger / QA projection and is intentionally not inferred
         from the caller-provided ``success`` flag.
+
+        Stage failure paths may set ``status=FAILED`` before this method runs
+        (via ``_apply_stage_result_to_run``). This close-out must still stamp
+        ``completed_at`` / ``completion_authority`` and drive terminal drain
+        settlement — skipping when already terminal left R50-class runs with
+        ``completed_at=null`` and leases stuck in ``draining``.
         """
         run_lock = self._get_run_lock(run_id)
         async with run_lock:
@@ -2034,68 +2036,86 @@ class FactoryRunService:
                 raise ValueError(f"Run {run_id} not found")
             run = await self.assert_mutation_allowed(run_id, current_run=run)
 
-            if run.status not in TERMINAL_RUN_STATUSES:
-                operation = "complete_run"
-                nonce = f"lifecycle_{uuid.uuid4().hex}"
-                claimed = False
-                try:
-                    if run.status != FactoryRunStatus.PENDING:
-                        self._claim_lifecycle_operation(
-                            run,
-                            operation=operation,
-                            nonce=nonce,
-                            acquire_if_available=False,
+            # Preserve CANCELLED: do not upgrade or emit a completion event.
+            if run.status != FactoryRunStatus.CANCELLED:
+                missing_completion_authority = not str(run.metadata.get("completion_authority") or "").strip()
+                needs_lifecycle_closeout = (
+                    run.status not in TERMINAL_RUN_STATUSES
+                    or run.completed_at is None
+                    or missing_completion_authority
+                )
+                if needs_lifecycle_closeout:
+                    operation = "complete_run"
+                    nonce = f"lifecycle_{uuid.uuid4().hex}"
+                    claimed = False
+                    try:
+                        if run.status != FactoryRunStatus.PENDING:
+                            self._claim_lifecycle_operation(
+                                run,
+                                operation=operation,
+                                nonce=nonce,
+                                acquire_if_available=False,
+                            )
+                            claimed = True
+                            await self._begin_terminal_drain(
+                                run,
+                                reason="factory_run_completed" if success else "factory_run_failed",
+                                operation_nonce=nonce,
+                            )
+                        timestamp = self._now()
+                        if run.status not in TERMINAL_RUN_STATUSES:
+                            run.status = FactoryRunStatus.COMPLETED if success else FactoryRunStatus.FAILED
+                        elif run.status == FactoryRunStatus.FAILED and success:
+                            # Stage already failed; do not upgrade to COMPLETED.
+                            run.status = FactoryRunStatus.FAILED
+                        if run.completed_at is None:
+                            run.completed_at = timestamp
+                        run.updated_at = timestamp
+                        run.metadata["completion_authority"] = "orchestration_session_lifecycle"
+                        run.metadata["verified"] = False
+                        run.metadata["verification_authority"] = "execution_ledger_projection"
+                        await self.store.save_run(run)
+                        event_success = run.status == FactoryRunStatus.COMPLETED
+                        await self._append_event(
+                            run_id,
+                            {
+                                "type": "completed" if event_success else "failed",
+                                "message": "Run completed" if event_success else "Run failed",
+                                "timestamp": timestamp,
+                                "success": event_success,
+                                "authoritative": False,
+                                "verified": False,
+                                "authority_scope": "orchestration_session_lifecycle",
+                            },
                         )
-                        claimed = True
-                        await self._begin_terminal_drain(
-                            run,
-                            reason="factory_run_completed" if success else "factory_run_failed",
-                            operation_nonce=nonce,
+                        if claimed:
+                            await self._release_lifecycle_operation(
+                                run,
+                                operation=operation,
+                                nonce=nonce,
+                            )
+                            claimed = False
+                        logger.info(
+                            "Factory orchestration session %s closed with success=%s status=%s",
+                            run_id,
+                            success,
+                            run.status.value,
                         )
-                    timestamp = self._now()
-                    run.status = FactoryRunStatus.COMPLETED if success else FactoryRunStatus.FAILED
-                    run.completed_at = timestamp
-                    run.updated_at = timestamp
-                    run.metadata["completion_authority"] = "orchestration_session_lifecycle"
-                    run.metadata["verified"] = False
-                    run.metadata["verification_authority"] = "execution_ledger_projection"
-                    await self.store.save_run(run)
-                    await self._append_event(
-                        run_id,
-                        {
-                            "type": "completed" if success else "failed",
-                            "message": "Run completed" if success else "Run failed",
-                            "timestamp": timestamp,
-                            "success": success,
-                            "authoritative": False,
-                            "verified": False,
-                            "authority_scope": "orchestration_session_lifecycle",
-                        },
-                    )
-                    if claimed:
-                        await self._release_lifecycle_operation(
-                            run,
-                            operation=operation,
-                            nonce=nonce,
-                        )
-                        claimed = False
-                    logger.info(
-                        "Factory orchestration session %s closed with success=%s",
-                        run_id,
-                        success,
-                    )
-                except Exception:
-                    if claimed:
-                        await self._rollback_lifecycle_operation(
-                            run,
-                            operation=operation,
-                            nonce=nonce,
-                            reason="complete_run_failed",
-                        )
-                    raise
+                    except Exception:
+                        if claimed:
+                            await self._rollback_lifecycle_operation(
+                                run,
+                                operation=operation,
+                                nonce=nonce,
+                                reason="complete_run_failed",
+                            )
+                        raise
 
         run = await self.settle_terminal_run(run_id)
-        self._trigger_archive(run_id, "completed" if success else "failed")
+        archive_reason = "completed" if run.status == FactoryRunStatus.COMPLETED else "failed"
+        if run.status == FactoryRunStatus.CANCELLED:
+            archive_reason = "cancelled"
+        self._trigger_archive(run_id, archive_reason)
         return run
 
     async def settle_terminal_run(

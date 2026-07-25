@@ -138,6 +138,20 @@ class SlowStageExecutor:
         )
 
 
+class ProviderHttpErrorStageExecutor:
+    """Raises a provider-shaped HTTP error (mirrors aiohttp.ClientResponseError)."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    async def execute(self, stage: str, run: FactoryRun, context: dict) -> StageResult:
+        del stage, run, context
+        # Do not import aiohttp here: the production path must catch any Exception
+        # subclass, not only aiohttp's type. A plain Exception with the real
+        # production message is the regression fixture for the R49 hang.
+        raise Exception(self.message)
+
+
 @pytest.fixture
 def temp_workspace():
     """Create a temporary workspace"""
@@ -465,6 +479,99 @@ class TestFactoryRunService:
         assert "docs_generation" in updated_run.stages_completed
         assert updated_run.recovery_point == "docs_generation"
         assert updated_run.metadata["last_successful_stage"] == "docs_generation"
+
+    @pytest.mark.asyncio
+    async def test_execute_stage_provider_http_error_marks_stage_finished_then_reraises(
+        self,
+        temp_workspace: Path,
+    ) -> None:
+        """Provider 403-class exceptions must not leave a forever-RUNNING stage claim.
+
+        R49 hang class: aiohttp.ClientResponseError escaped a narrow except list,
+        so the stage never finished, updated_at froze, and the API still reported
+        chief_engineer_review as running. This drives the real execute_stage entry.
+        """
+        provider_detail = (
+            "403, message='Forbidden', url='https://api.kimi.com/coding/v1/messages' "
+            "You've reached your usage limit for this billing cycle."
+        )
+        service = FactoryRunService(
+            temp_workspace,
+            executor=ProviderHttpErrorStageExecutor(provider_detail),
+        )
+        run = await service.create_run(FactoryConfig(name="provider-403-run"))
+        await service.start_run(run.id)
+
+        with pytest.raises(Exception, match="usage limit") as raised:
+            await service.execute_stage(
+                run.id,
+                "chief_engineer_review",
+                context={"heartbeat_interval_seconds": 0},
+            )
+
+        assert "403" in str(raised.value) or "usage limit" in str(raised.value).lower()
+
+        updated = await service.get_run(run.id)
+        assert updated is not None
+        # Stage finished as failed (not abandoned mid-claim with only started metadata).
+        assert "chief_engineer_review" in updated.stages_failed
+        assert "chief_engineer_review" not in updated.stages_completed
+        assert updated.metadata.get("last_failed_stage") == "chief_engineer_review"
+        # Durable failure path must have advanced updated_at past create/start freeze.
+        assert updated.updated_at is not None
+        assert updated.metadata.get("current_stage") in {
+            "chief_engineer_review",
+            None,
+            "",
+        } or updated.metadata.get("last_failed_stage") == "chief_engineer_review"
+
+    @pytest.mark.asyncio
+    async def test_provider_stage_exception_then_complete_run_stamps_lifecycle_closeout(
+        self,
+        temp_workspace: Path,
+    ) -> None:
+        """Honest integration: real execute_stage provider Exception → FAILED → complete_run.
+
+        Skeptic gap: stage failure sets status=FAILED before re-raise; complete_run
+        used to skip close-out when already terminal, leaving completed_at=null and
+        leases stuck draining (R50 factory_run_final.json). This drives both real
+        entry points without mocking execute_stage.
+        """
+        provider_detail = (
+            "403, message='Forbidden', url='https://api.kimi.com/coding/v1/messages' "
+            "You've reached your usage limit for this billing cycle."
+        )
+        service = FactoryRunService(
+            temp_workspace,
+            executor=ProviderHttpErrorStageExecutor(provider_detail),
+        )
+        created = await service.create_run(FactoryConfig(name="provider-403-closeout"))
+        await service.start_run(created.id)
+
+        with pytest.raises(Exception, match="usage limit"):
+            await service.execute_stage(
+                created.id,
+                "chief_engineer_review",
+                context={"heartbeat_interval_seconds": 0},
+            )
+
+        mid = await service.get_run(created.id)
+        assert mid is not None
+        assert mid.status == FactoryRunStatus.FAILED
+        assert mid.completed_at is None  # stage path does not own lifecycle close-out
+        assert not str(mid.metadata.get("completion_authority") or "").strip()
+
+        closed = await service.complete_run(created.id, success=False)
+        assert closed.status == FactoryRunStatus.FAILED
+        assert closed.completed_at is not None
+        assert closed.metadata.get("completion_authority") == "orchestration_session_lifecycle"
+        assert closed.metadata.get("verified") is False
+
+        lease = closed.metadata.get("factory_workspace_run_lease")
+        assert isinstance(lease, dict)
+        # R50 bug: lease stuck state=draining with released_at=null after incomplete close-out.
+        assert lease.get("state") == "released"
+        assert lease.get("released_at") is not None
 
     @pytest.mark.asyncio
     async def test_execute_stage_cancellation_is_preserved(self, temp_workspace):
