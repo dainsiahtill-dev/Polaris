@@ -391,6 +391,99 @@ def test_failed_task_run_is_closed_but_cannot_pass(tmp_path: Path) -> None:
     assert "lifecycle_failed" in result.blocking_reasons
 
 
+def test_removed_task_runtime_tombstone_is_terminal_for_release(tmp_path: Path) -> None:
+    """TaskRuntime reset emits status=removed; barrier must treat it as closed."""
+    factory_run_id = "factory-removed-tombstone"
+    run_id = "run-removed-tombstone"
+    task_id = "task-removed-tombstone"
+    _append_task_fact(
+        tmp_path,
+        factory_run_id=factory_run_id,
+        run_id=run_id,
+        task_id=task_id,
+        event_type="created",
+        status="pending",
+    )
+    _append_task_fact(
+        tmp_path,
+        factory_run_id=factory_run_id,
+        run_id=run_id,
+        task_id=task_id,
+        event_type="runtime_reset_removed",
+        status="removed",
+    )
+
+    result = query_factory_settlement_barrier(tmp_path, factory_run_id)
+
+    assert result.open_lifecycle_count == 0
+    assert result.closed is True
+    assert result.release_allowed is True
+    assert result.passed is False
+
+
+def test_factory_scoped_pending_tasks_without_director_run_id_are_in_scope(
+    tmp_path: Path,
+) -> None:
+    """PM-bound open rows may only carry factory_run_id (no director run_id)."""
+    factory_run_id = "factory-pm-only"
+    task_id = "task-pm-only"
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(tmp_path),
+            stream="task_runtime.execution",
+            event_type="factory_run_bound",
+            source="factory_settlement_barrier_test",
+            task_id=task_id,
+            payload={
+                "event_type": "factory_run_bound",
+                "factory_run_id": factory_run_id,
+                "task_id": task_id,
+                "status": "pending",
+                "execution_state": "pending",
+                "task_row_snapshot": {
+                    "id": task_id,
+                    "status": "pending",
+                    "metadata": {"factory_run_id": factory_run_id},
+                },
+            },
+        )
+    )
+
+    open_result = query_factory_settlement_barrier(tmp_path, factory_run_id)
+    assert open_result.open_lifecycle_count == 1
+    assert "lifecycle_open" in open_result.blocking_reasons
+    assert "factory_run_not_found" not in open_result.blocking_reasons
+    assert open_result.release_allowed is False
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(tmp_path),
+            stream="task_runtime.execution",
+            event_type="cancelled",
+            source="factory_settlement_barrier_test",
+            task_id=task_id,
+            payload={
+                "event_type": "cancelled",
+                "factory_run_id": factory_run_id,
+                "task_id": task_id,
+                "status": "cancelled",
+                "execution_state": "cancelled",
+                "task_row_snapshot": {
+                    "id": task_id,
+                    "status": "cancelled",
+                    "metadata": {"factory_run_id": factory_run_id},
+                },
+            },
+        )
+    )
+
+    closed = query_factory_settlement_barrier(tmp_path, factory_run_id)
+    assert closed.open_lifecycle_count == 0
+    assert closed.closed is True
+    assert closed.release_allowed is True
+    assert "factory_run_not_found" not in closed.blocking_reasons
+
+
 def test_barrier_hash_is_idempotent_for_unchanged_facts(tmp_path: Path) -> None:
     _append_terminal_run(
         tmp_path,

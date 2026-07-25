@@ -1258,6 +1258,27 @@ class FactoryRunService:
         }
         if task_count > 0:
             barrier = self._settlement_barrier_query(self.workspace, target_run.id)
+            # R51: CE/provider early abort after PM materializes open task rows
+            # leaves lifecycle_open on the Run Ledger barrier while child
+            # sessions are already settled. Terminalize those open (never
+            # dispatched) rows so release_allowed can become true; do not force
+            # cancel active Director sessions or ignore open effect receipts.
+            if (
+                not barrier.release_allowed
+                and target_run.status in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}
+                and settlement.get("settled") is True
+            ):
+                blocking = {str(reason).strip() for reason in barrier.blocking_reasons if str(reason).strip()}
+                non_abortable = blocking - {"lifecycle_open", "lifecycle_failed"}
+                if not non_abortable and "lifecycle_open" in blocking:
+                    abort_summary = TaskRuntimeService(str(self.workspace)).terminalize_open_tasks_for_factory_abort(
+                        factory_run_id=target_run.id,
+                        reason=f"factory_{target_run.status.value}",
+                        source="factory_terminal_drain",
+                    )
+                    target_run.metadata["factory_task_runtime_abort"] = abort_summary
+                    await self.store.save_run(target_run)
+                    barrier = self._settlement_barrier_query(self.workspace, target_run.id)
             barrier_evidence.update(
                 {
                     "schema_version": barrier.schema_version,
@@ -1473,8 +1494,8 @@ class FactoryRunService:
                 started_at=started_at,
                 completed_at=self._now(),
                 metadata={
-                    "child_sessions_settled": False,
-                    "inflight_run_continues": True,
+                    "child_sessions_settled": True,
+                    "inflight_run_continues": False,
                     "settlement_source": "factory_stage_wrapper_exception",
                     "exception_type": type(exc).__name__,
                 },
@@ -1482,7 +1503,32 @@ class FactoryRunService:
             async with run_lock:
                 self._renew_workspace_lease(run, require_active=False)
                 await self._mark_stage_finished(run, result, error=exc)
+                # Failed stages normally keep the claim until reconcile. Wrapper
+                # exceptions never started a continuing child session — release
+                # here so settle_terminal_run can drain the workspace lease.
+                try:
+                    await self._release_stage_execution(
+                        run,
+                        stage=stage,
+                        nonce=stage_claim_nonce,
+                    )
+                except Exception as release_exc:  # noqa: BLE001 — best-effort release
+                    logger.warning(
+                        "Factory stage claim release after wrapper exception failed for run %s stage %s: %s",
+                        run_id,
+                        stage,
+                        release_exc,
+                    )
             logger.error("Stage %s failed for run %s: %s", stage, run_id, exc)
+            try:
+                await self.settle_terminal_run(run_id)
+            except Exception as settle_exc:  # noqa: BLE001 — best-effort; complete_run retries
+                logger.warning(
+                    "Factory post-exception settle failed for run %s stage %s: %s",
+                    run_id,
+                    stage,
+                    settle_exc,
+                )
             raise
         finally:
             _unregister_factory_cancel_event(self.workspace, run_id, cancel_event)
@@ -1527,8 +1573,21 @@ class FactoryRunService:
                 and current_lease.run_id == run_id
                 and current_lease.state.value in {"active", "draining"}
             )
+        # Failed / cancelled StageResults intentionally retain the stage claim
+        # until explicit reconcile (see test_failed_settled_stage_retains_exact_claim_*).
+        # Only settle here when the stage result itself authorizes claim release —
+        # otherwise complete_run / reconcile_stage_execution_for_reentry owns drain.
+        # Wrapper Exception path above already releases the claim and settles.
         if terminal_after_stage and self._stage_result_releases_execution_claim(result):
-            await self.settle_terminal_run(run_id)
+            try:
+                await self.settle_terminal_run(run_id)
+            except Exception as settle_exc:  # noqa: BLE001 — best-effort settle
+                logger.warning(
+                    "Factory post-stage settle failed for run %s stage %s: %s",
+                    run_id,
+                    stage,
+                    settle_exc,
+                )
         return result
 
     async def _run_stage_heartbeat(
@@ -2040,34 +2099,19 @@ class FactoryRunService:
             if run.status != FactoryRunStatus.CANCELLED:
                 missing_completion_authority = not str(run.metadata.get("completion_authority") or "").strip()
                 needs_lifecycle_closeout = (
-                    run.status not in TERMINAL_RUN_STATUSES
-                    or run.completed_at is None
-                    or missing_completion_authority
+                    run.status not in TERMINAL_RUN_STATUSES or run.completed_at is None or missing_completion_authority
                 )
                 if needs_lifecycle_closeout:
-                    operation = "complete_run"
-                    nonce = f"lifecycle_{uuid.uuid4().hex}"
-                    claimed = False
-                    try:
-                        if run.status != FactoryRunStatus.PENDING:
-                            self._claim_lifecycle_operation(
-                                run,
-                                operation=operation,
-                                nonce=nonce,
-                                acquire_if_available=False,
-                            )
-                            claimed = True
-                            await self._begin_terminal_drain(
-                                run,
-                                reason="factory_run_completed" if success else "factory_run_failed",
-                                operation_nonce=nonce,
-                            )
+                    current_lease = self._admission.current()
+                    lease_already_released = (
+                        current_lease is None
+                        or current_lease.run_id != run.id
+                        or str(current_lease.state.value) == "released"
+                    )
+                    # Stage wrapper may have already settled/released the lease
+                    # before re-raising. Still stamp completed_at / completion_authority.
+                    if lease_already_released and run.status in TERMINAL_RUN_STATUSES:
                         timestamp = self._now()
-                        if run.status not in TERMINAL_RUN_STATUSES:
-                            run.status = FactoryRunStatus.COMPLETED if success else FactoryRunStatus.FAILED
-                        elif run.status == FactoryRunStatus.FAILED and success:
-                            # Stage already failed; do not upgrade to COMPLETED.
-                            run.status = FactoryRunStatus.FAILED
                         if run.completed_at is None:
                             run.completed_at = timestamp
                         run.updated_at = timestamp
@@ -2088,28 +2132,77 @@ class FactoryRunService:
                                 "authority_scope": "orchestration_session_lifecycle",
                             },
                         )
-                        if claimed:
-                            await self._release_lifecycle_operation(
-                                run,
-                                operation=operation,
-                                nonce=nonce,
-                            )
-                            claimed = False
                         logger.info(
-                            "Factory orchestration session %s closed with success=%s status=%s",
+                            "Factory orchestration session %s soft-closed after prior lease release status=%s",
                             run_id,
-                            success,
                             run.status.value,
                         )
-                    except Exception:
-                        if claimed:
-                            await self._rollback_lifecycle_operation(
-                                run,
-                                operation=operation,
-                                nonce=nonce,
-                                reason="complete_run_failed",
+                    else:
+                        operation = "complete_run"
+                        nonce = f"lifecycle_{uuid.uuid4().hex}"
+                        claimed = False
+                        try:
+                            if run.status != FactoryRunStatus.PENDING:
+                                self._claim_lifecycle_operation(
+                                    run,
+                                    operation=operation,
+                                    nonce=nonce,
+                                    acquire_if_available=False,
+                                )
+                                claimed = True
+                                await self._begin_terminal_drain(
+                                    run,
+                                    reason="factory_run_completed" if success else "factory_run_failed",
+                                    operation_nonce=nonce,
+                                )
+                            timestamp = self._now()
+                            if run.status not in TERMINAL_RUN_STATUSES:
+                                run.status = FactoryRunStatus.COMPLETED if success else FactoryRunStatus.FAILED
+                            elif run.status == FactoryRunStatus.FAILED and success:
+                                # Stage already failed; do not upgrade to COMPLETED.
+                                run.status = FactoryRunStatus.FAILED
+                            if run.completed_at is None:
+                                run.completed_at = timestamp
+                            run.updated_at = timestamp
+                            run.metadata["completion_authority"] = "orchestration_session_lifecycle"
+                            run.metadata["verified"] = False
+                            run.metadata["verification_authority"] = "execution_ledger_projection"
+                            await self.store.save_run(run)
+                            event_success = run.status == FactoryRunStatus.COMPLETED
+                            await self._append_event(
+                                run_id,
+                                {
+                                    "type": "completed" if event_success else "failed",
+                                    "message": "Run completed" if event_success else "Run failed",
+                                    "timestamp": timestamp,
+                                    "success": event_success,
+                                    "authoritative": False,
+                                    "verified": False,
+                                    "authority_scope": "orchestration_session_lifecycle",
+                                },
                             )
-                        raise
+                            if claimed:
+                                await self._release_lifecycle_operation(
+                                    run,
+                                    operation=operation,
+                                    nonce=nonce,
+                                )
+                                claimed = False
+                            logger.info(
+                                "Factory orchestration session %s closed with success=%s status=%s",
+                                run_id,
+                                success,
+                                run.status.value,
+                            )
+                        except Exception:
+                            if claimed:
+                                await self._rollback_lifecycle_operation(
+                                    run,
+                                    operation=operation,
+                                    nonce=nonce,
+                                    reason="complete_run_failed",
+                                )
+                            raise
 
         run = await self.settle_terminal_run(run_id)
         archive_reason = "completed" if run.status == FactoryRunStatus.COMPLETED else "failed"

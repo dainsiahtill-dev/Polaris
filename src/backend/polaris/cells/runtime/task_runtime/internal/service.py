@@ -3449,6 +3449,193 @@ class TaskRuntimeService:
             execution_events=(cancelled_event,) if cancelled_event is not None else (),
         )
 
+    def cancel_task_row_for_factory_abort(
+        self,
+        task_id: Any,
+        *,
+        factory_run_id: str,
+        reason: str = "factory_run_failed",
+        metadata: dict[str, Any] | None = None,
+        source: str = "factory_terminal_drain",
+    ) -> dict[str, Any] | None:
+        """Cancel one open task because its Factory orchestration run aborted.
+
+        Early Factory failures (provider quota at CE, stage fail-closed before
+        Director) leave PM-created rows open. Settlement barrier treats those
+        open lifecycles as ``lifecycle_open`` and refuses workspace lease
+        release. This owner-cell transition appends a first-class ``cancelled``
+        execution fact so the barrier can close while preserving failure
+        evidence. Active non-expired sessions are refused so live Director
+        children keep their settle-first contract.
+
+        Complexity:
+            O(1) task-row/session work for the target row.
+        """
+
+        authority = str(factory_run_id or "").strip()
+        if not authority:
+            raise ValueError("factory_run_id must be a non-empty string")
+
+        normalized, task = self._task_entity_for_owner_terminal_transition(task_id)
+        if normalized is None or task is None:
+            return None
+        existing_status = task.status.value if isinstance(task.status, TaskStatus) else task.status
+        if is_terminal_task_row_status(existing_status):
+            return {
+                "ok": True,
+                "already_terminal": True,
+                "task_id": str(normalized),
+                "status": str(existing_status or "").strip().lower(),
+            }
+
+        cancel_reason = sanitize_summary(reason or "factory_run_failed")
+        with (
+            self._get_session_lock(normalized),
+            self._board._file_lock(self._session_file_lock_path(normalized)),
+        ):
+            session = self._read_session_locked(normalized)
+            if session is not None and session.status == "active" and not session.is_expired(now=utc_now()):
+                return {
+                    "ok": False,
+                    "code": "factory_abort_active_session",
+                    "task_id": str(normalized),
+                    "session_id": session.session_id,
+                    "reason": "active execution session must settle before factory abort cancel",
+                }
+            if session is not None:
+                pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
+                if not pre_barrier.allowed:
+                    return self._directed_effect_inactive_block_record(
+                        normalized,
+                        pre_barrier,
+                    )
+            if session is not None and not is_terminal_session_status(session.status):
+                session.mark_suspended(reason=cancel_reason, resumable=False)
+                self._write_session_locked(
+                    session,
+                    allow_terminal_downgrade=True,
+                )
+
+        merged_metadata = {
+            "factory_abort_reason": cancel_reason,
+            "factory_abort_source": sanitize_summary(source or "factory_terminal_drain"),
+            "factory_run_id": authority,
+        }
+        merged_metadata.update(dict(metadata or {}))
+        if session is not None:
+            merged_metadata = self._build_runtime_metadata(
+                session=session,
+                effective_status="cancelled",
+                resume_state="",
+                extra_metadata=merged_metadata,
+            )
+
+        updated = self._board.update(
+            normalized,
+            status=TaskStatus.CANCELLED,
+            metadata=merged_metadata,
+            allow_terminal_status=True,
+        )
+        if updated is None:
+            return None
+
+        row = self._augment_task_row(updated.to_dict())
+        cancelled_event = self._append_execution_event(
+            "cancelled",
+            task_row=row,
+            session=session,
+            details={
+                "reason": cancel_reason,
+                "source": sanitize_summary(source or "factory_terminal_drain"),
+                "factory_run_id": authority,
+                "factory_abort": True,
+            },
+        )
+        return project_task_row_execution_event(
+            row,
+            cancelled_event,
+            execution_events=(cancelled_event,) if cancelled_event is not None else (),
+        )
+
+    def terminalize_open_tasks_for_factory_abort(
+        self,
+        *,
+        factory_run_id: str,
+        reason: str = "factory_run_failed",
+        source: str = "factory_terminal_drain",
+    ) -> dict[str, object]:
+        """Cancel all open TaskRuntime rows owned by a terminal Factory run.
+
+        Used by Factory terminal drain when the Run Ledger settlement barrier
+        is blocked solely by open (never-dispatched) task lifecycles after the
+        orchestration session has already failed or been cancelled. Active
+        sessions are not force-cancelled; they remain settlement conflicts.
+
+        Complexity:
+            O(n) over observable rows for the factory_run_id.
+        """
+
+        authority = str(factory_run_id or "").strip()
+        if not authority:
+            raise ValueError("factory_run_id must be a non-empty string")
+        reason_text = sanitize_summary(reason or "factory_run_failed")
+        source_text = sanitize_summary(source or "factory_terminal_drain")
+
+        projection = self.query_observable_task_rows_projection()
+        rows = projection.rows_for_factory_run(authority)
+        terminalized: list[str] = []
+        already_terminal: list[str] = []
+        blocked_active: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for row_source in rows:
+            row = dict(row_source)
+            task_id = self.normalize_task_id(row.get("id"))
+            if task_id is None:
+                continue
+            status_token = str(row.get("status") or row.get("execution_state") or "").strip().lower()
+            if is_terminal_task_row_status(status_token):
+                already_terminal.append(str(task_id))
+                continue
+            result = self.cancel_task_row_for_factory_abort(
+                task_id,
+                factory_run_id=authority,
+                reason=reason_text,
+                source=source_text,
+            )
+            if result is None:
+                failed.append({"task_id": str(task_id), "code": "task_row_missing_or_update_failed"})
+                continue
+            if result.get("already_terminal") is True:
+                already_terminal.append(str(task_id))
+                continue
+            if result.get("ok") is False:
+                # Active session, directed-effect pre-barrier, or other owner block.
+                blocked_active.append(dict(result))
+                continue
+            terminalized.append(str(task_id))
+
+        return {
+            "ok": not blocked_active and not failed,
+            "code": (
+                "factory_task_runtime_abort_completed"
+                if not blocked_active and not failed
+                else "factory_task_runtime_abort_incomplete"
+            ),
+            "factory_run_id": authority,
+            "reason": reason_text,
+            "source": source_text,
+            "terminalized_task_ids": terminalized,
+            "terminalized_count": len(terminalized),
+            "already_terminal_task_ids": already_terminal,
+            "already_terminal_count": len(already_terminal),
+            "blocked_active": blocked_active,
+            "blocked_active_count": len(blocked_active),
+            "failed": failed,
+            "failed_count": len(failed),
+            "observable_row_count": len(rows),
+        }
+
     def fail_task_row_from_role_adapter(
         self,
         task_id: Any,

@@ -21,12 +21,15 @@ _TERMINAL_TASK_STATES = frozenset(
         "cancelled",
         "completed",
         "failed",
+        "removed",
         "success",
         "succeeded",
         "timed_out",
         "timeout",
     }
 )
+# "removed" is TaskRuntime reset tombstone (factory terminal drain cleanup).
+# It is terminal for barrier closure but not a failed lifecycle verdict.
 _FAILED_TASK_STATES = frozenset({"cancelled", "failed", "timed_out", "timeout"})
 _ACTIVE_LIFECYCLE_STATES = frozenset(
     {
@@ -145,10 +148,7 @@ def _task_identity(fact: Mapping[str, Any]) -> str:
 def _task_state(fact: Mapping[str, Any]) -> str:
     snapshot = _mapping(fact.get("task_row_snapshot"))
     return _clean_string(
-        fact.get("execution_state")
-        or fact.get("status")
-        or snapshot.get("status")
-        or fact.get("event_type")
+        fact.get("execution_state") or fact.get("status") or snapshot.get("status") or fact.get("event_type")
     ).lower()
 
 
@@ -216,19 +216,13 @@ def _evidence_references(
     task_runtime_facts: Sequence[Mapping[str, Any]],
     ledger_facts: Sequence[Mapping[str, Any]],
 ) -> tuple[str, ...]:
-    refs = {
-        reference
-        for fact in (*task_runtime_facts, *ledger_facts)
-        if (reference := _fact_reference(fact))
-    }
+    refs = {reference for fact in (*task_runtime_facts, *ledger_facts) if (reference := _fact_reference(fact))}
     gates = run_projection.get("gates")
     if isinstance(gates, Sequence) and not isinstance(gates, (str, bytes, bytearray)):
         for raw_gate in gates:
             gate = _mapping(raw_gate)
             refs.update(
-                value
-                for key in ("append_id", "content_id", "job_token_id")
-                if (value := _clean_string(gate.get(key)))
+                value for key in ("append_id", "content_id", "job_token_id") if (value := _clean_string(gate.get(key)))
             )
     lifecycle = _mapping(run_projection.get("tool_lifecycle"))
     events = lifecycle.get("events")
@@ -247,7 +241,7 @@ def _evidence_references(
                 for raw_ref in raw_refs:
                     if isinstance(raw_ref, Mapping):
                         refs.add(f"{field_name}:{stable_hash(dict(raw_ref))}")
-                    elif (reference := _clean_string(raw_ref)):
+                    elif reference := _clean_string(raw_ref):
                         refs.add(reference)
     return tuple(sorted(refs))
 
@@ -313,9 +307,7 @@ def project_factory_settlement_barrier(
     failed_required_modalities = _string_tuple(policy.get("failed_required_modalities"))
     failed_set = set(failed_required_modalities)
     missing_required_modalities = tuple(
-        modality
-        for modality in _string_tuple(policy.get("missing_required_modalities"))
-        if modality not in failed_set
+        modality for modality in _string_tuple(policy.get("missing_required_modalities")) if modality not in failed_set
     )
     counts = _lifecycle_counts(run_projection, task_runtime_facts)
     gate_count = _non_negative_int(run_projection.get("gate_count"))
@@ -327,7 +319,12 @@ def project_factory_settlement_barrier(
     )
     normalized_run_ids = _string_tuple(consumed_run_ids)
     evidence_refs = _evidence_references(run_projection, task_runtime_facts, ledger_facts)
-    scope_found = bool(task_runtime_facts and normalized_run_ids)
+    # Factory-scoped settlement: matching task_runtime.execution facts under
+    # factory_run_id prove the run was observed. Director/workflow run_ids are
+    # optional until dispatch — early CE/provider abort after PM creates rows
+    # often has factory_run_id on facts but empty run_id (R51 lifecycle_open +
+    # factory_run_not_found false positive that pinned workspace leases).
+    scope_found = bool(task_runtime_facts)
     blocking_reasons = _blocking_reasons(
         scope_found=scope_found,
         gate_count=gate_count,
@@ -338,10 +335,7 @@ def project_factory_settlement_barrier(
         run_projection=run_projection,
     )
     closed = bool(
-        scope_found
-        and counts.open_count == 0
-        and counts.open_effect_count == 0
-        and not missing_required_modalities
+        scope_found and counts.open_count == 0 and counts.open_effect_count == 0 and not missing_required_modalities
     )
     passed = bool(closed and bool(run_projection.get("ok")) and counts.failed_count == 0)
     hash_payload = {

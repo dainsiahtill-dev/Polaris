@@ -5467,15 +5467,22 @@ class OrchestrationStageExecutor:
                                     deadline_decision=deadline_decision,
                                 )
                                 llm_call_count = 2
-                except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 — contain provider/http failures as stage signals
+                    # Provider/network failures (e.g. aiohttp.ClientResponseError on
+                    # HTTP 403 quota) must become stage signals, not uncaught escapes
+                    # that strand the Factory run before execute_stage can finish.
                     stage_signals.append(
                         {
                             "code": "chief_engineer.llm_review_failed",
                             "severity": "error",
                             "detail": f"{type(exc).__name__}: {exc}",
                             "task_id": portfolio_task_id,
+                            "exception_type": type(exc).__name__,
                         }
                     )
+                    ce_result = None
 
         ce_llm_blueprint: dict[str, Any] = {}
         if ce_result is not None:

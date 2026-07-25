@@ -38,6 +38,7 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     get_factory_role_evidence_authority_binding,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
+    BindRuntimeTaskToFactoryRunCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
@@ -519,11 +520,15 @@ class TestFactoryRunService:
         assert updated.metadata.get("last_failed_stage") == "chief_engineer_review"
         # Durable failure path must have advanced updated_at past create/start freeze.
         assert updated.updated_at is not None
-        assert updated.metadata.get("current_stage") in {
-            "chief_engineer_review",
-            None,
-            "",
-        } or updated.metadata.get("last_failed_stage") == "chief_engineer_review"
+        assert (
+            updated.metadata.get("current_stage")
+            in {
+                "chief_engineer_review",
+                None,
+                "",
+            }
+            or updated.metadata.get("last_failed_stage") == "chief_engineer_review"
+        )
 
     @pytest.mark.asyncio
     async def test_provider_stage_exception_then_complete_run_stamps_lifecycle_closeout(
@@ -572,6 +577,97 @@ class TestFactoryRunService:
         # R50 bug: lease stuck state=draining with released_at=null after incomplete close-out.
         assert lease.get("state") == "released"
         assert lease.get("released_at") is not None
+
+    @pytest.mark.asyncio
+    async def test_failed_stage_result_then_complete_run_stamps_closeout(
+        self,
+        temp_workspace: Path,
+    ) -> None:
+        """StageResult(status=failed) without exception must still get full close-out."""
+        service = FactoryRunService(
+            temp_workspace,
+            executor=FakeStageExecutor(fail_stages={"chief_engineer_review"}),
+        )
+        created = await service.create_run(FactoryConfig(name="stage-result-failed"))
+        await service.start_run(created.id)
+
+        result = await service.execute_stage(
+            created.id,
+            "chief_engineer_review",
+            context={"heartbeat_interval_seconds": 0},
+        )
+        assert result.status == "failed"
+
+        mid = await service.get_run(created.id)
+        assert mid is not None
+        assert mid.status == FactoryRunStatus.FAILED
+        assert "chief_engineer_review" in mid.stages_failed
+
+        closed = await service.complete_run(created.id, success=False)
+        assert closed.status == FactoryRunStatus.FAILED
+        assert closed.completed_at is not None
+        assert closed.metadata.get("completion_authority") == "orchestration_session_lifecycle"
+
+    @pytest.mark.asyncio
+    async def test_early_stage_fail_with_open_pm_tasks_releases_workspace_lease(
+        self,
+        temp_workspace: Path,
+    ) -> None:
+        """R51: open PM task lifecycles must not pin lease in draining forever.
+
+        Live path: PM creates task rows → CE provider 403 / stage fail → run
+        FAILED with completed_at stamped, but settlement barrier stayed open
+        with ``lifecycle_open`` because open never-dispatched tasks were not
+        terminalized. Terminal drain must abort those rows and release the
+        workspace lease.
+        """
+        service = FactoryRunService(
+            temp_workspace,
+            executor=FakeStageExecutor(fail_stages={"chief_engineer_review"}),
+        )
+        created = await service.create_run(FactoryConfig(name="early-fail-open-tasks"))
+        await service.start_run(created.id)
+
+        runtime = TaskRuntimeService(str(temp_workspace))
+        for index in range(3):
+            row = runtime.create_task_row(subject=f"pm-open-task-{index}")
+            binding = runtime.bind_task_to_factory_run(
+                BindRuntimeTaskToFactoryRunCommandV1(
+                    workspace=str(temp_workspace),
+                    task_id=str(row["id"]),
+                    factory_run_id=created.id,
+                )
+            )
+            assert binding.ok is True
+
+        settlement_before = runtime.query_factory_run_settlement(factory_run_id=created.id)
+        assert settlement_before["settled"] is True
+        assert int(str(settlement_before.get("observable_row_count") or 0)) == 3
+
+        result = await service.execute_stage(
+            created.id,
+            "chief_engineer_review",
+            context={"heartbeat_interval_seconds": 0},
+        )
+        assert result.status == "failed"
+
+        closed = await service.complete_run(created.id, success=False)
+        assert closed.status == FactoryRunStatus.FAILED
+        assert closed.completed_at is not None
+        assert closed.metadata.get("completion_authority") == "orchestration_session_lifecycle"
+
+        lease = closed.metadata.get("factory_workspace_run_lease")
+        assert isinstance(lease, dict)
+        assert lease.get("state") == "released", (
+            f"lease stuck at {lease.get('state')}; "
+            f"drain_conflict={closed.metadata.get('factory_workspace_run_drain_conflict')}; "
+            f"abort={closed.metadata.get('factory_task_runtime_abort')}; "
+            f"barrier={closed.metadata.get('factory_run_ledger_settlement_barrier')}"
+        )
+        assert lease.get("released_at") is not None
+        abort = closed.metadata.get("factory_task_runtime_abort")
+        assert isinstance(abort, dict)
+        assert int(str(abort.get("terminalized_count") or 0)) >= 1
 
     @pytest.mark.asyncio
     async def test_execute_stage_cancellation_is_preserved(self, temp_workspace):
