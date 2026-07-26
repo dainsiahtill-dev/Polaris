@@ -314,7 +314,13 @@ def build_rust_missing_binary_entrypoint_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Build write-file operations for declared Rust binary targets missing an entrypoint."""
+    """Build write-file ops for missing Rust binary entrypoints (declared or implied).
+
+    Covers:
+    - ``[[bin]]`` paths declared in Cargo.toml but absent from base_files
+    - Quality diagnostics for no-usable-bin / lib-only runnable crates (default
+      ``src/main.rs`` when cargo-shaped ``can't find bin`` evidence is present)
+    """
 
     normalized_base = {
         _normalize_repair_path(path): str(content or "")
@@ -328,7 +334,16 @@ def build_rust_missing_binary_entrypoint_plan(
     if not cargo:
         return None
 
-    binary_paths = _declared_rust_binary_entrypoint_paths(cargo)
+    binary_paths = list(_declared_rust_binary_entrypoint_paths(cargo))
+    # Diagnostic-driven paths (absolute or relative) for declared-missing and
+    # no-usable-bin quality evidence that does not require a [[bin]] section.
+    for diagnostic in diagnostics or ():
+        for candidate in _rust_missing_binary_paths_from_diagnostic(diagnostic):
+            if candidate not in binary_paths:
+                binary_paths.append(candidate)
+    if not binary_paths and _diagnostics_indicate_missing_rust_binary(diagnostics):
+        binary_paths.append("src/main.rs")
+
     missing_paths = tuple(
         path for path in binary_paths if _rust_binary_entrypoint_path_is_safe(path) and not normalized_base.get(path)
     )
@@ -2252,6 +2267,68 @@ def _declared_rust_binary_entrypoint_paths(cargo: Mapping[str, object]) -> tuple
         seen.add(path)
         paths.append(path)
     return tuple(paths)
+
+
+_RUST_CANT_FIND_BIN_PATH_RE = re.compile(
+    r"can't find bin\s+`[^`]+`\s+at path\s+`(?P<path>[^`]+)`",
+    re.IGNORECASE,
+)
+
+
+def _rust_missing_binary_paths_from_diagnostic(diagnostic: RepairDiagnostic) -> tuple[str, ...]:
+    """Project cargo-shaped missing-bin diagnostics into workspace-relative paths."""
+
+    candidates: list[str] = []
+    raw_path = _normalize_repair_path(str(getattr(diagnostic, "path", "") or ""))
+    if raw_path.endswith(".rs"):
+        candidates.append(raw_path)
+    text = "\n".join(
+        part
+        for part in (
+            str(getattr(diagnostic, "raw", "") or ""),
+            str(getattr(diagnostic, "message", "") or ""),
+        )
+        if str(part or "").strip()
+    )
+    for match in _RUST_CANT_FIND_BIN_PATH_RE.finditer(text):
+        absolute_or_relative = str(match.group("path") or "").strip().replace("\\", "/")
+        if not absolute_or_relative:
+            continue
+        # Prefer the trailing src/... relative segment for absolute cargo paths.
+        marker = "/src/"
+        if marker in absolute_or_relative:
+            relative = "src/" + absolute_or_relative.split(marker, 1)[1]
+        elif absolute_or_relative.startswith("src/"):
+            relative = absolute_or_relative
+        else:
+            relative = absolute_or_relative.rsplit("/", 1)[-1]
+            if relative.endswith(".rs") and "/" not in relative:
+                relative = f"src/{relative}"
+        normalized = _normalize_repair_path(relative)
+        if normalized and normalized.endswith(".rs") and normalized not in candidates:
+            candidates.append(normalized)
+    return tuple(candidates)
+
+
+def _diagnostics_indicate_missing_rust_binary(diagnostics: Sequence[RepairDiagnostic]) -> bool:
+    for diagnostic in diagnostics or ():
+        text = "\n".join(
+            part
+            for part in (
+                str(getattr(diagnostic, "raw", "") or ""),
+                str(getattr(diagnostic, "message", "") or ""),
+                str(getattr(diagnostic, "code", "") or ""),
+            )
+            if str(part or "").strip()
+        ).lower()
+        if "can't find bin" in text or "cant find bin" in text or "rust_missing_binary_entrypoint" in text:
+            return True
+        metadata = getattr(diagnostic, "metadata", None)
+        if isinstance(metadata, Mapping):
+            kind = str(metadata.get("diagnostic_kind") or metadata.get("kind") or "").lower()
+            if kind == "rust_missing_binary_entrypoint":
+                return True
+    return False
 
 
 def _rust_binary_entrypoint_path_is_safe(path: str) -> bool:

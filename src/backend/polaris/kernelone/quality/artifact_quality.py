@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 from collections.abc import Callable, Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
@@ -2370,6 +2371,128 @@ _CARGO_BIN_SECTION_RE = re.compile(
 _CARGO_BIN_NAME_RE = re.compile(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']')
 _CARGO_BIN_PATH_RE = re.compile(r'(?m)^\s*path\s*=\s*["\']([^"\']+)["\']')
 _CARGO_PACKAGE_NAME_RE = re.compile(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']')
+_CARGO_DEFAULT_RUN_RE = re.compile(r'(?m)^\s*default-run\s*=\s*["\']([^"\']+)["\']')
+# Runnable / CLI-shaped package signal (not pure library crates).
+_CARGO_RUNNABLE_NAME_RE = re.compile(
+    r"(?i)(?:^|[_-])(cli|bin|app|tool|cmd|server|service|runner|demo|game|palette|client|daemon|bot)(?:$|[_-])"
+)
+_CARGO_RUNNABLE_TEXT_RE = re.compile(
+    r"(?i)\b(cli|command[\s_-]?line|binary|entrypoint|entry[\s_-]?point|tool|server|service|"
+    r"runner|daemon|application|console)\b|命令行|二进制|入口|工具"
+)
+
+
+def _cargo_package_name(cargo_text: str) -> str:
+    package_name = "app"
+    package_match = re.search(r"(?is)\[package\](.*?)(?:\n\[|\Z)", cargo_text)
+    if package_match:
+        name_match = _CARGO_PACKAGE_NAME_RE.search(package_match.group(1))
+        if name_match:
+            package_name = str(name_match.group(1) or "").strip() or package_name
+    return package_name
+
+
+def _normalize_cargo_relative_path(raw_path: str) -> str:
+    bin_path = str(raw_path or "").strip().replace("\\", "/")
+    while bin_path.startswith("./"):
+        bin_path = bin_path[2:]
+    if not bin_path or bin_path.startswith("/") or ".." in bin_path.split("/"):
+        return ""
+    return bin_path
+
+
+def _cargo_declared_bin_targets(cargo_text: str, package_name: str) -> tuple[tuple[str, str], ...]:
+    """Return ``(bin_name, bin_path)`` pairs declared via ``[[bin]]`` sections."""
+
+    targets: list[tuple[str, str]] = []
+    for section in _CARGO_BIN_SECTION_RE.finditer(cargo_text):
+        body = str(section.group("body") or "")
+        name_match = _CARGO_BIN_NAME_RE.search(body)
+        path_match = _CARGO_BIN_PATH_RE.search(body)
+        bin_name = str(name_match.group(1) if name_match else package_name).strip() or package_name
+        bin_path = _normalize_cargo_relative_path(path_match.group(1) if path_match else "src/main.rs")
+        if not bin_path:
+            continue
+        targets.append((bin_name, bin_path))
+    return tuple(targets)
+
+
+def _cargo_workspace_has_usable_binary(root_full: Path, cargo_text: str, package_name: str) -> bool:
+    """True when at least one Cargo binary entrypoint exists on disk."""
+
+    root_resolved = root_full.resolve()
+    for _bin_name, bin_path in _cargo_declared_bin_targets(cargo_text, package_name):
+        absolute = (root_full / bin_path).resolve()
+        try:
+            absolute.relative_to(root_resolved)
+        except ValueError:
+            continue
+        if absolute.is_file():
+            return True
+    # Implicit auto-bin targets Cargo recognizes without [[bin]].
+    for candidate in ("src/main.rs",):
+        absolute = (root_full / candidate).resolve()
+        try:
+            absolute.relative_to(root_resolved)
+        except ValueError:
+            continue
+        if absolute.is_file():
+            return True
+    bin_dir = root_full / "src" / "bin"
+    if bin_dir.is_dir():
+        with suppress(OSError):
+            for rust_file in bin_dir.glob("*.rs"):
+                if rust_file.is_file():
+                    return True
+    return False
+
+
+def _cargo_runnable_entrypoint_expected(cargo_text: str, package_name: str) -> bool:
+    """Whether a binary entrypoint is expected (CLI/app-shaped), not a pure lib.
+
+    Pure library crates (lib-only, no ``[[bin]]``/default-run, no runnable name/text
+    signal) stay non-diagnosed so ecosystem libs are not forced to grow a ``main``.
+    """
+
+    lowered = cargo_text.lower()
+    if "[[bin]]" in lowered:
+        return True
+    if _CARGO_DEFAULT_RUN_RE.search(cargo_text):
+        return True
+    if _CARGO_RUNNABLE_NAME_RE.search(package_name):
+        return True
+    package_match = re.search(r"(?is)\[package\](.*?)(?:\n\[|\Z)", cargo_text)
+    package_body = package_match.group(1) if package_match else ""
+    if _CARGO_RUNNABLE_TEXT_RE.search(package_body):
+        return True
+    # Binary-only package (no [lib]): missing main is always a gap.
+    return re.search(r"(?im)^\s*\[lib\]\s*$", cargo_text) is None
+
+
+def _missing_binary_issue(
+    *,
+    root_full: Path,
+    relative_path: str,
+    bin_name: str,
+    bin_path: str,
+    reason: str,
+) -> tuple[str, ArtifactQualityIssue]:
+    absolute = (root_full / bin_path).resolve()
+    message = f"error: can't find bin `{bin_name}` at path `{absolute.as_posix()}`"
+    return message, ArtifactQualityIssue(
+        code="rust_missing_binary_entrypoint",
+        message=message,
+        path=bin_path,
+        source="cargo_manifest_scanner",
+        metadata={
+            "raw": message,
+            "diagnostic_kind": "rust_missing_binary_entrypoint",
+            "bin_name": bin_name,
+            "bin_path": bin_path,
+            "manifest_path": relative_path,
+            "missing_bin_reason": reason,
+        },
+    )
 
 
 def _scan_cargo_manifest_missing_binary_evidence(
@@ -2377,61 +2500,64 @@ def _scan_cargo_manifest_missing_binary_evidence(
     text: str,
     relative_path: str,
 ) -> _FileArtifactQualityEvidence:
-    """Detect Cargo ``[[bin]]`` entrypoints declared but missing on disk.
+    """Detect missing Cargo binary entrypoints for materialization/repair planning.
 
-    Emits cargo-shaped diagnostics so Director materialization quality can plan
-    ``deterministic_rust_missing_binary_entrypoint_repair`` without waiting for a
-    later bench ``cargo check`` measurement (R66/R71: ``[[bin]]`` → missing
-    ``src/main.rs``).
+    Covers:
+    1. Declared ``[[bin]]`` paths that are absent on disk (R66/R71).
+    2. Runnable / CLI-shaped packages with **no usable binary target at all**
+       (lib-only manifests that still need ``cargo run`` / entrypoint smoke).
+
+    Pure library crates without runnability signals stay silent. Emits
+    cargo-shaped diagnostics so Director materialization quality can plan
+    ``deterministic_rust_missing_binary_entrypoint_repair`` without waiting for
+    a later bench ``cargo check`` measurement.
     """
 
     cargo_text = str(text or "")
-    if "[[bin]]" not in cargo_text.lower():
+    if not cargo_text.strip() or not re.search(r"(?im)^\s*\[package\]\s*$", cargo_text):
         return _FileArtifactQualityEvidence()
 
-    package_name = "app"
-    package_match = re.search(r"(?is)\[package\](.*?)(?:\n\[|\Z)", cargo_text)
-    if package_match:
-        name_match = _CARGO_PACKAGE_NAME_RE.search(package_match.group(1))
-        if name_match:
-            package_name = str(name_match.group(1) or "").strip() or package_name
-
+    package_name = _cargo_package_name(cargo_text)
     errors: list[str] = []
     issues: list[ArtifactQualityIssue] = []
-    for section in _CARGO_BIN_SECTION_RE.finditer(cargo_text):
-        body = str(section.group("body") or "")
-        name_match = _CARGO_BIN_NAME_RE.search(body)
-        path_match = _CARGO_BIN_PATH_RE.search(body)
-        bin_name = str(name_match.group(1) if name_match else package_name).strip() or package_name
-        bin_path = str(path_match.group(1) if path_match else "src/main.rs").strip().replace("\\", "/")
-        while bin_path.startswith("./"):
-            bin_path = bin_path[2:]
-        if not bin_path or bin_path.startswith("/") or ".." in bin_path.split("/"):
-            continue
+
+    declared = _cargo_declared_bin_targets(cargo_text, package_name)
+    root_resolved = root_full.resolve()
+    for bin_name, bin_path in declared:
         absolute = (root_full / bin_path).resolve()
         try:
-            absolute.relative_to(root_full.resolve())
+            absolute.relative_to(root_resolved)
         except ValueError:
             continue
         if absolute.is_file():
             continue
-        message = f"error: can't find bin `{bin_name}` at path `{absolute.as_posix()}`"
-        errors.append(message)
-        issues.append(
-            ArtifactQualityIssue(
-                code="rust_missing_binary_entrypoint",
-                message=message,
-                path=bin_path,
-                source="cargo_manifest_scanner",
-                metadata={
-                    "raw": message,
-                    "diagnostic_kind": "rust_missing_binary_entrypoint",
-                    "bin_name": bin_name,
-                    "bin_path": bin_path,
-                    "manifest_path": relative_path,
-                },
-            )
+        message, issue = _missing_binary_issue(
+            root_full=root_full,
+            relative_path=relative_path,
+            bin_name=bin_name,
+            bin_path=bin_path,
+            reason="declared_bin_path_missing",
         )
+        errors.append(message)
+        issues.append(issue)
+
+    if (
+        not errors
+        and not _cargo_workspace_has_usable_binary(root_full, cargo_text, package_name)
+        and _cargo_runnable_entrypoint_expected(cargo_text, package_name)
+    ):
+        default_run = _CARGO_DEFAULT_RUN_RE.search(cargo_text)
+        bin_name = str(default_run.group(1) if default_run else package_name).strip() or package_name
+        message, issue = _missing_binary_issue(
+            root_full=root_full,
+            relative_path=relative_path,
+            bin_name=bin_name,
+            bin_path="src/main.rs",
+            reason="no_usable_binary_target",
+        )
+        errors.append(message)
+        issues.append(issue)
+
     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 

@@ -1204,15 +1204,28 @@ class FactoryRunService:
         target_run = latest or run
         stage_in_flight = target_run.metadata.get(_STAGE_IN_FLIGHT_METADATA_KEY)
         if stage_in_flight is not False:
-            return await self._record_drain_conflict(
-                target_run,
-                lease,
-                code="factory_workspace_run_drain_unproven",
-                message="Factory workspace drain cannot prove stage settlement",
-                details={
-                    "stage_in_flight": stage_in_flight,
-                },
-            )
+            # Terminal FAILED/CANCELLED closeout must not pin the workspace lease
+            # forever when a stage crash left factory_stage_in_flight sticky
+            # (L1-04 r79: drain_conflict factory_workspace_run_drain_unproven).
+            # Success paths still require an explicit stage settlement proof.
+            if target_run.status in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}:
+                target_run.metadata[_STAGE_IN_FLIGHT_METADATA_KEY] = False
+                target_run.metadata["factory_stage_in_flight_force_cleared"] = {
+                    "reason": f"factory_{target_run.status.value}",
+                    "previous": stage_in_flight,
+                    "observed_at": self._now(),
+                }
+                await self.store.save_run(target_run)
+            else:
+                return await self._record_drain_conflict(
+                    target_run,
+                    lease,
+                    code="factory_workspace_run_drain_unproven",
+                    message="Factory workspace drain cannot prove stage settlement",
+                    details={
+                        "stage_in_flight": stage_in_flight,
+                    },
+                )
 
         physical_drain = self._physical_attempt_coordinator(target_run.id).close()
         physical_drain_evidence = {
@@ -1295,12 +1308,16 @@ class FactoryRunService:
                     "tool_lifecycle_evidence_missing",
                     "effect_receipts_open",
                     "effect_receipt_missing",
+                    # Residual after failed Director materialization/quality waves
+                    # (L1-05 r79: task_boundary_failed blocked abort → lease stuck draining).
+                    "task_boundary_failed",
                 }
                 non_abortable = blocking - abortable_blockers
                 if not non_abortable and (
                     "lifecycle_open" in blocking
                     or "tool_lifecycle_evidence_missing" in blocking
                     or "effect_receipts_open" in blocking
+                    or "task_boundary_failed" in blocking
                 ):
                     abort_summary = TaskRuntimeService(str(self.workspace)).terminalize_open_tasks_for_factory_abort(
                         factory_run_id=target_run.id,
@@ -1604,17 +1621,25 @@ class FactoryRunService:
                 and current_lease.run_id == run_id
                 and current_lease.state.value in {"active", "draining"}
             )
-        # Failed / cancelled StageResults intentionally retain the stage claim
-        # until explicit reconcile (see test_failed_settled_stage_retains_exact_claim_*).
-        # Only settle here when the stage result itself authorizes claim release —
-        # otherwise complete_run / reconcile_stage_execution_for_reentry owns drain.
-        # Wrapper Exception path above already releases the claim and settles.
-        if terminal_after_stage and self._stage_result_releases_execution_claim(result):
+        # Success StageResults that authorize claim release settle immediately.
+        # Failed StageResults intentionally retain the stage claim for reconcile
+        # (see test_failed_settled_stage_retains_exact_claim_*), but terminal
+        # FAILED/CANCELLED must still drain the workspace lease here so a missed
+        # or timed-out router complete_run cannot leave lease state=active forever
+        # (L1-05 r82: director_dispatch failed, completed_at=null, lease stuck active).
+        if terminal_after_stage:
             try:
-                await self.settle_terminal_run(run_id)
+                if self._stage_result_releases_execution_claim(result):
+                    await self.settle_terminal_run(run_id)
+                else:
+                    await self.reconcile_stage_execution_for_reentry(
+                        run_id,
+                        operation="factory_stage_failed_terminal_settle",
+                    )
+                    await self.complete_run(run_id, success=False)
             except Exception as settle_exc:  # noqa: BLE001 — best-effort settle
                 logger.warning(
-                    "Factory post-stage settle failed for run %s stage %s: %s",
+                    "Factory post-stage terminal settle failed for run %s stage %s: %s",
                     run_id,
                     stage,
                     settle_exc,

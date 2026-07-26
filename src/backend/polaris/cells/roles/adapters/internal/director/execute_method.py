@@ -14,7 +14,7 @@ import os as os
 import re as re
 import subprocess as subprocess
 import sys as sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -976,6 +976,71 @@ def _execution_attempt_identity_from_context(
     if type(snapshot.identity) is not TaskRuntimeExecutionAttemptIdentityV1:
         return None
     return snapshot.identity
+
+
+def _project_deferred_followup_receipts_as_tool_results(
+    followup_receipts: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project DEO followup batch receipts into adapter tool_results shape."""
+
+    projected: list[dict[str, Any]] = []
+    for receipt in followup_receipts:
+        if not isinstance(receipt, Mapping):
+            continue
+        raw_items = receipt.get("raw_results") or receipt.get("results") or ()
+        if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+            continue
+        for raw in raw_items:
+            if not isinstance(raw, Mapping):
+                continue
+            status = str(raw.get("status") or "").strip().lower()
+            success = raw.get("success")
+            if success is False or status in {"failed", "error"}:
+                continue
+            if success is not True and status not in {"success", "ok", ""}:
+                continue
+            tool_name = str(raw.get("tool_name") or raw.get("tool") or "write_file").strip() or "write_file"
+            nested = raw.get("result")
+            result_payload = dict(nested) if isinstance(nested, Mapping) else dict(raw)
+            if "path" not in result_payload and "file" not in result_payload:
+                path = str(raw.get("path") or raw.get("file") or result_payload.get("target_path") or "").strip()
+                if path:
+                    result_payload.setdefault("path", path)
+                    result_payload.setdefault("file", path)
+            projected.append(
+                {
+                    "tool": tool_name,
+                    "tool_name": tool_name,
+                    "success": True,
+                    "status": "success",
+                    "result": result_payload,
+                    "effect_receipt": raw.get("effect_receipt"),
+                    "deferred_repair_followup_batch_id": receipt.get("deferred_repair_followup_batch_id"),
+                }
+            )
+    return projected
+
+
+async def _commit_deferred_materialization_quality_results(
+    adapter: Any,
+    *,
+    context: dict[str, Any],
+    tool_results: Sequence[Mapping[str, Any]],
+    task_id: str,
+) -> list[dict[str, Any]]:
+    """Commit deferred materialization repairs through DEO followup; no bypass writer."""
+
+    from .deferred_repair_commit_bridge import commit_materialization_deferred_repairs
+
+    followup_receipts = await commit_materialization_deferred_repairs(
+        workspace=str(getattr(adapter, "workspace", "") or ""),
+        tool_results=tool_results,
+        execution_attempt=_execution_attempt_identity_from_context(context),
+        execution_attempt_authority=_execution_attempt_authority_from_context(context),
+        turn_id=f"materialization-quality-{task_id}",
+        context=context,
+    )
+    return _project_deferred_followup_receipts_as_tool_results(followup_receipts)
 
 
 def _task_runtime_finalization_failed_result(
@@ -2221,7 +2286,7 @@ async def _execute_standard_llm_flow(
         can_accept_existing_scope,
         write_tool_evidence,
         quality_repair_summary,
-    ) = _phase_pre_materialization_quality(
+    ) = await _phase_pre_materialization_quality(
         adapter,
         task=task,
         target_task_id=target_task_id,
@@ -3279,7 +3344,7 @@ def _phase_pre_materialization_target_repair(
     )
 
 
-def _phase_pre_materialization_quality(
+async def _phase_pre_materialization_quality(
     adapter: Any,
     *,
     baseline_files: dict[str, str],
@@ -3338,6 +3403,18 @@ def _phase_pre_materialization_quality(
         )
         if deterministic_quality_tool_results:
             tool_results.extend(deterministic_quality_tool_results)
+            committed_writes = await _commit_deferred_materialization_quality_results(
+                adapter,
+                context=context,
+                tool_results=deterministic_quality_tool_results,
+                task_id=target_task_id,
+            )
+            if committed_writes:
+                tool_results.extend(committed_writes)
+                deterministic_quality_tool_results = [
+                    *deterministic_quality_tool_results,
+                    *committed_writes,
+                ]
             quality_repair_summary = deterministic_quality_summary
             quality_repair_attempts.append(deterministic_quality_summary)
             current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
@@ -3554,6 +3631,19 @@ async def _phase_quality_repair_loop(
         if deterministic_quality_tool_results:
             deterministic_quality_made_progress = True
             tool_results.extend(deterministic_quality_tool_results)
+            # DEO: plan returns deferred_request only; commit physical writes via kernel followup.
+            committed_writes = await _commit_deferred_materialization_quality_results(
+                adapter,
+                context=context,
+                tool_results=deterministic_quality_tool_results,
+                task_id=target_task_id,
+            )
+            if committed_writes:
+                tool_results.extend(committed_writes)
+                deterministic_quality_tool_results = [
+                    *deterministic_quality_tool_results,
+                    *committed_writes,
+                ]
             quality_repair_summary = deterministic_quality_summary
             quality_repair_attempts.append(deterministic_quality_summary)
             current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
@@ -3692,6 +3782,18 @@ async def _phase_quality_repair_loop(
                     break
                 if deterministic_quality_tool_results:
                     tool_results.extend(deterministic_quality_tool_results)
+                    committed_writes = await _commit_deferred_materialization_quality_results(
+                        adapter,
+                        context=context,
+                        tool_results=deterministic_quality_tool_results,
+                        task_id=target_task_id,
+                    )
+                    if committed_writes:
+                        tool_results.extend(committed_writes)
+                        deterministic_quality_tool_results = [
+                            *deterministic_quality_tool_results,
+                            *committed_writes,
+                        ]
                     quality_repair_summary = deterministic_quality_summary
                     quality_repair_attempts.append(deterministic_quality_summary)
                     current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(

@@ -189,6 +189,25 @@ def run_runtime_repair_with_director_tools(
             )
         ]
 
+    typed_execution_attempt = cast(TaskRuntimeExecutionAttemptIdentityV1, execution_attempt)
+    requested_task_id = str(task_id or "").strip()
+    bound_external_task_id = typed_execution_attempt.external_task_id
+    bound_private_task_id = str(typed_execution_attempt.task_id)
+    # Callers may pass board/pm/private row ids; DeferredDirectorRepairRequestV1
+    # binds only to external_task_id. Never raise into Director runtime — return
+    # a structured failure (R78: numeric "1" vs external form killed tools_executed=0).
+    if requested_task_id not in {bound_external_task_id, bound_private_task_id}:
+        return [
+            _failure(
+                source_tool=source_tool,
+                error_code="deo_deferred_repair_task_mismatch",
+                error_message=(
+                    "task_id must match the execution attempt's external task id "
+                    "or exact private TaskRuntime row id"
+                ),
+            )
+        ]
+
     command = PlanDirectorRepairCommandV1(
         source_tool=source_tool,
         artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
@@ -213,14 +232,24 @@ def run_runtime_repair_with_director_tools(
     if not planning.planned or planning.effect_plan is None:
         return []
 
-    request = create_deferred_director_repair_request(
-        workspace=workspace_path.resolve().as_posix(),
-        task_id=task_id,
-        execution_attempt=execution_attempt,
-        planning_command=command,
-        planning_result=planning,
-        allowed_paths=tuple(allowed_paths or base_files.keys()),
-    )
+    try:
+        request = create_deferred_director_repair_request(
+            workspace=workspace_path.resolve().as_posix(),
+            task_id=bound_external_task_id,
+            execution_attempt=typed_execution_attempt,
+            planning_command=command,
+            planning_result=planning,
+            allowed_paths=tuple(allowed_paths or base_files.keys()),
+        )
+    except (TypeError, ValueError) as exc:
+        return [
+            _failure(
+                source_tool=source_tool,
+                error_code="deo_deferred_repair_request_invalid",
+                error_message=str(exc),
+                planning=planning_payload,
+            )
+        ]
     return [_deferred_result(source_tool=source_tool, request=request, planning=planning_payload)]
 
 

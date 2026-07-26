@@ -3058,7 +3058,8 @@ def test_materialization_quality_scheduler_bridge_prefers_public_result_callback
     )
 
 
-def test_phase_pre_materialization_quality_records_post_execution_kernel_summary(
+@pytest.mark.asyncio
+async def test_phase_pre_materialization_quality_records_post_execution_kernel_summary(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3147,7 +3148,7 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
             }
         ],
     }
-    state, _evidence, _can_accept, _write_evidence, summary = execute_method_module._phase_pre_materialization_quality(
+    state, _evidence, _can_accept, _write_evidence, summary = await execute_method_module._phase_pre_materialization_quality(
         SimpleNamespace(workspace=str(tmp_path)),
         baseline_files={},
         can_accept_existing_scope=True,
@@ -3226,7 +3227,8 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert state.modified_files == ["Cargo.toml"]
 
 
-def test_phase_pre_materialization_quality_passes_artifact_quality_convergence_verifier(
+@pytest.mark.asyncio
+async def test_phase_pre_materialization_quality_passes_artifact_quality_convergence_verifier(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3269,7 +3271,7 @@ def test_phase_pre_materialization_quality_passes_artifact_quality_convergence_v
     monkeypatch.setattr(execute_method_module, "run_post_execution_language_repairs", fake_post_execution_repairs)
 
     absolute_inside = tmp_path / "lib" / "model.ts"
-    state, _evidence, _can_accept, _write_evidence, _summary = execute_method_module._phase_pre_materialization_quality(
+    state, _evidence, _can_accept, _write_evidence, _summary = await execute_method_module._phase_pre_materialization_quality(
         SimpleNamespace(workspace=str(tmp_path)),
         baseline_files={},
         can_accept_existing_scope=True,
@@ -3313,7 +3315,8 @@ def test_phase_pre_materialization_quality_passes_artifact_quality_convergence_v
     assert captured["bridge"]["convergence_verifier"] is sentinel_verifier
 
 
-def test_phase_pre_materialization_quality_passes_verifier_to_materialization_bridge(
+@pytest.mark.asyncio
+async def test_phase_pre_materialization_quality_passes_verifier_to_materialization_bridge(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3384,7 +3387,7 @@ def test_phase_pre_materialization_quality_passes_verifier_to_materialization_br
     )
     monkeypatch.setattr(execute_method_module, "run_post_execution_language_repairs", fake_post_execution_repairs)
 
-    execute_method_module._phase_pre_materialization_quality(
+    await execute_method_module._phase_pre_materialization_quality(
         SimpleNamespace(workspace=str(tmp_path)),
         baseline_files={},
         can_accept_existing_scope=False,
@@ -3425,7 +3428,8 @@ def test_phase_pre_materialization_quality_passes_verifier_to_materialization_br
     assert captured["materialization_bridge"]["convergence_verifier"] is sentinel_verifier
 
 
-def test_phase_pre_materialization_quality_omits_verifier_when_factory_fails(
+@pytest.mark.asyncio
+async def test_phase_pre_materialization_quality_omits_verifier_when_factory_fails(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3450,7 +3454,7 @@ def test_phase_pre_materialization_quality_omits_verifier_when_factory_fails(
     monkeypatch.setattr(execute_method_module, "build_artifact_quality_convergence_verifier", failing_factory)
     monkeypatch.setattr(execute_method_module, "run_post_execution_language_repairs", fake_post_execution_repairs)
 
-    execute_method_module._phase_pre_materialization_quality(
+    await execute_method_module._phase_pre_materialization_quality(
         SimpleNamespace(workspace=str(tmp_path)),
         baseline_files={},
         can_accept_existing_scope=True,

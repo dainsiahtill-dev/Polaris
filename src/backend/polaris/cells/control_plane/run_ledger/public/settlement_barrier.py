@@ -175,6 +175,10 @@ def _task_key_matches_terminal_ids(task_key: str, terminal_task_ids: set[str]) -
     a missing tool-lifecycle receipt must not keep the Factory settlement barrier
     open forever — that pin stuck workspace leases after Director stage failure
     (R55: tool_lifecycle_evidence_missing + lifecycle_open).
+
+    Matching is exact after normalization (including TASK- prefix strip) or an
+    explicit composite suffix (``...:id`` / ``.../id``). Bare ``endswith`` on
+    digit keys is forbidden so key ``1`` cannot match terminal id ``11``/``21``.
     """
 
     key = _clean_string(task_key)
@@ -183,20 +187,23 @@ def _task_key_matches_terminal_ids(task_key: str, terminal_task_ids: set[str]) -
     if key in terminal_task_ids:
         return True
     key_norm = key.upper()
-    key_suffix = key_norm[5:] if key_norm.startswith("TASK-") else key
+    key_suffix = key_norm[5:] if key_norm.startswith("TASK-") else key_norm
     for task_id in terminal_task_ids:
         if not task_id:
             continue
         tid = _clean_string(task_id)
         tid_norm = tid.upper()
-        tid_suffix = tid_norm[5:] if tid_norm.startswith("TASK-") else tid
+        tid_suffix = tid_norm[5:] if tid_norm.startswith("TASK-") else tid_norm
         if key == tid or key_norm == tid_norm:
             return True
         if key_suffix and key_suffix == tid_suffix:
             return True
+        # Composite tool-lifecycle keys only: require delimiter before the id token.
         if key.endswith(f":{tid}") or key.endswith(f"/{tid}"):
             return True
-        if tid.endswith(key) and key.isdigit():
+        if key_norm.endswith(f":{tid_norm}") or key_norm.endswith(f"/{tid_norm}"):
+            return True
+        if tid_suffix and (key_norm.endswith(f":{tid_suffix}") or key_norm.endswith(f"/{tid_suffix}")):
             return True
     return False
 

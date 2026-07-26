@@ -256,6 +256,65 @@ def test_runtime_repair_bridge_rejects_multi_round_convergence_before_planning(t
     assert results[0]["result"]["error_code"] == "deo_multi_round_repair_requires_receipt_close"
 
 
+def test_runtime_repair_bridge_binds_external_task_id_when_caller_passes_private_row_id(
+    tmp_path: Path,
+) -> None:
+    """Live factory passes board/pm task ids; deferred request must bind external_task_id.
+
+    R78: create_deferred with caller task_id raised
+    ``task_id must match execution_attempt external_task_id`` into Director
+    runtime (tools_executed=0). Private row id must be accepted as caller input
+    but the typed request always binds external_task_id.
+    """
+
+    workspace = tmp_path.resolve()
+    target = workspace / "src" / "models" / "Market.ts"
+    target.parent.mkdir(parents=True)
+    original = 'import {\n  Reputation,\n  export type ReputationTier,\n} from "./Reputation";\n'
+    target.write_text(original, encoding="utf-8")
+    attempt = _attempt(workspace, task_id="1")  # external_task_id="1", private task_id=71
+
+    results = run_runtime_repair_with_director_tools(
+        object(),
+        workspace_path=workspace,
+        task_id=str(attempt.task_id),  # private row id form used by some callers
+        source_tool=_typescript_import_specifier_source_tool(),
+        execution_attempt=attempt,
+        base_files={"src/models/Market.ts": original},
+        artifact_quality_errors=("src/models/Market.ts(3,3): error TS1003: Identifier expected.",),
+        allowed_paths=("src/models/Market.ts",),
+        max_rounds=1,
+    )
+
+    assert len(results) == 1
+    assert results[0]["success"] is True
+    request = results[0]["result"]["deferred_request"]
+    assert type(request) is DeferredDirectorRepairRequestV1
+    assert request.task_id == attempt.external_task_id == "1"
+    assert request.execution_attempt.task_id == 71
+    assert "must match execution_attempt" not in str(results[0])
+
+
+def test_runtime_repair_bridge_mismatched_task_id_is_structured_failure_not_raise(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path.resolve()
+    attempt = _attempt(workspace, task_id="task-external")
+    results = run_runtime_repair_with_director_tools(
+        object(),
+        workspace_path=workspace,
+        task_id="totally-unrelated",
+        source_tool=_typescript_import_specifier_source_tool(),
+        execution_attempt=attempt,
+        base_files={"src/models/Market.ts": "export const market = true;\n"},
+        artifact_quality_errors=("src/models/Market.ts(3,3): error TS1003: Identifier expected.",),
+        max_rounds=1,
+    )
+    assert len(results) == 1
+    assert results[0]["success"] is False
+    assert results[0]["result"]["error_code"] == "deo_deferred_repair_task_mismatch"
+
+
 def test_runtime_repair_bridge_has_no_physical_executor_or_synchronous_mutation_seam() -> None:
     source = inspect.getsource(run_runtime_repair_with_director_tools)
 

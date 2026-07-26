@@ -198,6 +198,52 @@ def _gateway_denial_code(message: str) -> str:
     return "deo_director_policy_denied"
 
 
+def _path_matches_capability_scope(path: str, capability_scope: Sequence[str]) -> bool:
+    """Return True when a workspace-relative path is covered by capability scope tokens."""
+
+    normalized = str(path or "").replace("\\", "/").strip().lstrip("./")
+    if not normalized or normalized.startswith("../") or "/../" in normalized:
+        return False
+    for raw_scope in capability_scope:
+        scope = str(raw_scope or "").replace("\\", "/").strip().strip("/")
+        if not scope:
+            continue
+        if normalized == scope or normalized.startswith(f"{scope}/") or scope.startswith(f"{normalized}/"):
+            return True
+        # Prefix token without trailing slash still covers children (e.g. src covers src/main.rs).
+        if "/" not in scope and (normalized == scope or normalized.startswith(f"{scope}/")):
+            return True
+    return False
+
+
+def _deo_delete_contingency_allowed(
+    *,
+    gateway: RoleToolGateway,
+    canonical_tool_name: str,
+    arguments: Mapping[str, object],
+) -> bool:
+    """Allow DEO-sealed delete_file contingencies without exposing free LLM deletes.
+
+    Director role policy intentionally blacklists free delete_file calls. Create-file
+    repair plans still need a sealed rollback delete in the same DEO inventory. This
+    path only opens when the role may write code and the target path is inside the
+    immutable per-turn capability scope.
+    """
+
+    if str(canonical_tool_name or "").strip().lower() != "delete_file":
+        return False
+    policy = getattr(gateway, "policy", None)
+    if not bool(getattr(policy, "allow_code_write", False)):
+        return False
+    raw_path = arguments.get("file") or arguments.get("path") or arguments.get("filepath")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return False
+    capability_scope = tuple(getattr(gateway, "_capability_scope", ()) or ())
+    if not capability_scope:
+        return False
+    return _path_matches_capability_scope(raw_path, capability_scope)
+
+
 class DirectedEffectPolicyGuard:
     """Consumes caller-captured classification evidence without registry rereads."""
 
@@ -270,7 +316,14 @@ class DirectedEffectPolicyGuard:
                 normalized_tool_args=invocation.arguments,
                 tool_snapshot=snapshot,
             )
-            if not allowed:
+            # Director blacklists free LLM deletes, but DEO sealed inventory must
+            # authorize delete_file contingencies used to roll back created files.
+            # Capability scope + code-write authority still fail-closed below.
+            if not allowed and not _deo_delete_contingency_allowed(
+                gateway=self._gateway,
+                canonical_tool_name=classification.canonical_tool_name,
+                arguments=invocation.arguments,
+            ):
                 return _denied(_gateway_denial_code(refusal))
             policy_inputs = self._gateway.capture_directed_effect_policy_inputs()
             provisional_subject = DirectorEffectPolicyOperationSubjectV1(

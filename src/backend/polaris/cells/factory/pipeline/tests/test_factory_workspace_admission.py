@@ -1429,11 +1429,16 @@ def test_replay_fence_invalidates_preexisting_stage_authority(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_failed_settled_stage_retains_exact_claim_until_explicit_reconciliation(
+async def test_failed_settled_stage_auto_releases_workspace_lease_on_terminal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed attempt stays fenced until canonical settlement is reconciled."""
+    """Terminal FAILED stage must drain/release the workspace lease inside execute_stage.
+
+    L1-05 r82 left lease state=active with stage_execution_claim still held after
+    director_dispatch failed because closeout depended solely on a later router
+    complete_run. Service-owned auto settle is the durable guarantee.
+    """
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -1461,26 +1466,24 @@ async def test_failed_settled_stage_retains_exact_claim_until_explicit_reconcili
     run = await service.create_run(FactoryConfig(name="failed-settled", stages=["director_dispatch"]))
     await service.start_run(run.id)
 
-    canonical_settlement: dict[str, object] = {
-        "schema_version": "task-runtime.factory-run-settlement/1",
-        "factory_run_id": run.id,
-        "settled": True,
-        "active_session_count": 0,
-        "active_sessions": [],
-        "conflict_count": 0,
-        "conflicts": [],
-        "observable_source": "task_runtime.observable_task_rows",
-        "observable_authoritative": True,
-        "observable_row_count": 1,
-        "proof_sources": [
-            "task_runtime.observable_task_rows",
-            "task_runtime.execution_session_files",
-        ],
-    }
-
     def query_canonical_settlement(factory_run_id: str) -> dict[str, object]:
         assert factory_run_id == run.id
-        return dict(canonical_settlement)
+        return {
+            "schema_version": "task-runtime.factory-run-settlement/1",
+            "factory_run_id": factory_run_id,
+            "settled": True,
+            "active_session_count": 0,
+            "active_sessions": [],
+            "conflict_count": 0,
+            "conflicts": [],
+            "observable_source": "task_runtime.observable_task_rows",
+            "observable_authoritative": True,
+            "observable_row_count": 1,
+            "proof_sources": [
+                "task_runtime.observable_task_rows",
+                "task_runtime.execution_session_files",
+            ],
+        }
 
     monkeypatch.setattr(service, "_query_child_session_settlement", query_canonical_settlement)
 
@@ -1494,54 +1497,24 @@ async def test_failed_settled_stage_retains_exact_claim_until_explicit_reconcili
     stored = await service.get_run(run.id)
     assert stored is not None
     assert stored.status == FactoryRunStatus.FAILED
-    retained = service._admission.current()
-    assert retained is not None
-    assert retained.state.value == "active"
-    assert retained.release_evidence is None
-    retained_claim = retained.stage_execution_claim
-    assert retained_claim is not None
-    assert retained_claim.run_id == run.id
-    assert retained_claim.stage == "director_dispatch"
-    assert retained_claim.attempt == 1
-    assert retained_claim.nonce
-    assert barrier_queries == []
-
-    reconciled = await service.reconcile_stage_execution_for_reentry(
-        run.id,
-        operation="factory_failure_terminalization",
-    )
-
-    assert reconciled.status == FactoryRunStatus.FAILED
-    after_reconciliation = service._admission.current()
-    assert after_reconciliation is not None
-    assert after_reconciliation.state.value == "active"
-    assert after_reconciliation.stage_execution_claim is None
-    assert after_reconciliation.release_evidence is None
-    assert barrier_queries == []
-
-    settled = await service.settle_terminal_run(run.id)
-
+    assert stored.completed_at is not None
+    assert stored.metadata.get("completion_authority") == "orchestration_session_lifecycle"
     released = service._admission.current()
     assert released is not None
     assert released.state.value == "released"
     assert released.stage_execution_claim is None
+    assert released.released_at is not None
     assert released.release_evidence is not None
     assert released.release_evidence.source == "factory_terminal_drain"
-    assert settled.metadata["factory_run_ledger_settlement_barrier"]["barrier_hash"] == "barrier-closed"
     assert barrier_queries == [(str(workspace.resolve()), run.id)]
 
 
 @pytest.mark.asyncio
-async def test_failed_settled_stage_complete_run_releases_workspace_lease(
+async def test_failed_settled_stage_complete_run_is_idempotent_after_auto_release(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Router-style failure closeout: reconcile claim then complete_run must release.
-
-    Mirrors factory router failure_terminalization → complete_run(success=False).
-    A failed StageResult retains the stage claim; closeout must still drain the
-    workspace lease to released (not leave active forever).
-    """
+    """Router complete_run(success=False) remains safe after service auto-release."""
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -1593,15 +1566,11 @@ async def test_failed_settled_stage_complete_run_releases_workspace_lease(
         {"heartbeat_interval_seconds": 0},
     )
     assert result.status == "failed"
-    retained = service._admission.current()
-    assert retained is not None
-    assert retained.state.value == "active"
-    assert retained.stage_execution_claim is not None
+    after_stage = service._admission.current()
+    assert after_stage is not None
+    assert after_stage.state.value == "released"
+    assert after_stage.stage_execution_claim is None
 
-    await service.reconcile_stage_execution_for_reentry(
-        run.id,
-        operation="factory_failure_terminalization",
-    )
     closed = await service.complete_run(run.id, success=False)
 
     assert closed.status == FactoryRunStatus.FAILED

@@ -1434,6 +1434,32 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "required_any": [("file",), ("content",)],
         "required_doc": "args.file + args.content required; only utf-8 supported",
     },
+    # DEO repair contingencies may seal delete_file for rolling back created files.
+    # Director LLM schemas still omit this tool via role whitelist/blacklist; physical
+    # deletes remain policy-gated through the mutation port + repair bindings.
+    "delete_file": {
+        "category": "write",
+        "description": "Delete a single workspace file. Used for DEO repair rollback of created files.",
+        "aliases": ["remove_file", "unlink_file", "rm_file"],
+        "arg_aliases": {
+            "path": "file",
+            "filepath": "file",
+            "filePath": "file",
+            "file_path": "file",
+            "filename": "file",
+            "target_file": "file",
+            "targetFile": "file",
+            "target_path": "file",
+            "targetPath": "file",
+            "target": "file",
+        },
+        "arguments": [
+            {"name": "file", "type": "string", "required": True},
+        ],
+        "response_format_hint": "Delete confirmation with file path",
+        "required_any": [("file",)],
+        "required_doc": "args.file required",
+    },
     "append_to_file": {
         "category": "write",
         "description": "Append content to the end of an existing file.",

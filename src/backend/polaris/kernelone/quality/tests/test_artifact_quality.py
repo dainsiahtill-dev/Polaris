@@ -1968,3 +1968,60 @@ path = "src/main.rs"
 
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["Cargo.toml"])
     assert not any("find bin" in error for error in errors)
+
+
+def test_cargo_manifest_reports_no_usable_bin_for_runnable_lib_only(tmp_path: Path) -> None:
+    """Lib-only CLI-shaped package with no on-disk binary must not stay silent."""
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn ok() {}\n", encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text(
+        """
+[package]
+name = "kitchen_flavor_palette"
+version = "0.1.0"
+edition = "2021"
+description = "厨房味觉配色器 — domain model and mapping engine"
+publish = false
+
+[lib]
+name = "kitchen_flavor_palette"
+path = "src/lib.rs"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["Cargo.toml", "src/lib.rs"])
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["Cargo.toml", "src/lib.rs"])
+
+    assert any("find bin" in error and "kitchen_flavor_palette" in error for error in errors)
+    issue = next(issue for issue in evidence.issues if issue.code == "rust_missing_binary_entrypoint")
+    assert issue.path == "src/main.rs"
+    assert issue.metadata["bin_name"] == "kitchen_flavor_palette"
+    assert issue.metadata["missing_bin_reason"] == "no_usable_binary_target"
+
+
+def test_cargo_manifest_pure_library_without_runnable_signal_stays_silent(tmp_path: Path) -> None:
+    """Pure library crates must not be forced to grow a binary without signal."""
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn helpers() {}\n", encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text(
+        """
+[package]
+name = "serde_helpers"
+version = "0.1.0"
+edition = "2021"
+description = "Shared serde serialization helpers"
+
+[lib]
+name = "serde_helpers"
+path = "src/lib.rs"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["Cargo.toml", "src/lib.rs"])
+    assert not any("find bin" in error for error in errors)

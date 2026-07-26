@@ -79,6 +79,7 @@ def _run_materialization_quality_public_boundary(
     artifact_quality_errors: list[str],
     artifact_quality_issues: tuple[dict[str, Any], ...] = (),
     convergence_verifier: Any = None,
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute materialization-quality repair via the typed roles public boundary."""
 
@@ -89,6 +90,7 @@ def _run_materialization_quality_public_boundary(
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=artifact_quality_issues,
         convergence_verifier=convergence_verifier,
+        execution_attempt=execution_attempt,
     )
     return tool_results, _annotate_current_task_missing_target_continuation(
         summary,
@@ -2345,6 +2347,7 @@ def _run_post_llm_materialization_runtime_guard(
         task_id=target_task_id,
         artifact_quality_errors=post_repair_errors,
         artifact_quality_issues=post_repair_issues,
+        execution_attempt=_quality_repair_execution_attempt(context),
     )
     summary = dict(guard_summary or {})
     summary.update(
@@ -2646,9 +2649,18 @@ async def _run_materialization_quality_repair_retry(
         }
     deterministic_quality_tool_results: list[dict[str, Any]] = []
     deterministic_quality_summary: dict[str, Any] = {}
-    if not missing_repair_target_files and (
+    # Missing declared Cargo [[bin]] entrypoints are plannable create-file repairs
+    # (R71+). They must not be excluded from the runtime materialization schedule
+    # just because they also appear in missing_repair_target_files (LLM write path).
+    rust_missing_bin_present = any(
+        _is_rust_missing_binary_quality_error(error, ()) for error in repair_quality_errors
+    )
+    if (
+        not missing_repair_target_files or rust_missing_bin_present
+    ) and (
         _has_scaffold_marker_quality_error(repair_quality_errors)
         or has_materialization_quality_runtime_repair_coverage(repair_quality_errors)
+        or rust_missing_bin_present
     ):
         deterministic_quality_tool_results, deterministic_quality_summary = (
             _run_materialization_quality_public_boundary(
@@ -2656,6 +2668,7 @@ async def _run_materialization_quality_repair_retry(
                 task=task,
                 task_id=target_task_id,
                 artifact_quality_errors=repair_quality_errors,
+                execution_attempt=_quality_repair_execution_attempt(context),
             )
         )
     deterministic_quality_write_paths = _extract_successful_write_paths(deterministic_quality_tool_results)

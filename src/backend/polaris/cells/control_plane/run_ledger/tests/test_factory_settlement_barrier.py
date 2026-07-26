@@ -576,3 +576,29 @@ def test_query_isolated_across_workspace_and_factory_run(tmp_path: Path) -> None
     assert factory_a.barrier_hash != factory_b.barrier_hash
     assert factory_a.workspace != other_workspace.workspace
     assert factory_a.barrier_hash != other_workspace.barrier_hash
+
+
+def test_task_key_matches_terminal_ids_rejects_digit_endswith_false_positives() -> None:
+    """Digit tool-lifecycle keys must not clear unrelated multi-digit terminal ids.
+
+    Regression: bare ``tid.endswith(key) and key.isdigit()`` let key ``1`` match
+    terminal ``11``/``21``/``110`` and drop the wrong lifecycle open set.
+    """
+
+    from polaris.cells.control_plane.run_ledger.public.settlement_barrier import (
+        _task_key_matches_terminal_ids,
+    )
+
+    assert _task_key_matches_terminal_ids("1", {"1"}) is True
+    assert _task_key_matches_terminal_ids("11", {"11"}) is True
+    assert _task_key_matches_terminal_ids("1", {"11"}) is False
+    assert _task_key_matches_terminal_ids("1", {"21"}) is False
+    assert _task_key_matches_terminal_ids("1", {"110"}) is False
+    assert _task_key_matches_terminal_ids("10", {"110"}) is False
+    assert _task_key_matches_terminal_ids("11", {"1"}) is False
+    # TASK- prefix and composite delimiter forms remain valid exact mappings.
+    assert _task_key_matches_terminal_ids("TASK-1", {"1"}) is True
+    assert _task_key_matches_terminal_ids("1", {"TASK-1"}) is True
+    assert _task_key_matches_terminal_ids("sess:1", {"1"}) is True
+    assert _task_key_matches_terminal_ids("run/TASK-2", {"TASK-2"}) is True
+    assert _task_key_matches_terminal_ids("sess:11", {"1"}) is False
