@@ -8,6 +8,7 @@ or receipt evidence.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -899,6 +900,19 @@ def _run_materialization_rust_runtime_repair(
     quality_issues = tuple(dict(item) for item in artifact_quality_issues)
     if not base_files or (not artifact_quality_errors and not quality_issues):
         return []
+    # Policy writers only accept allowed_paths. Declared Cargo [[bin]] paths that
+    # are still missing are not present in base_files (so planning sees them as
+    # absent), but must still be allowlisted for create-file commit (R71/R74).
+    cargo_text = str(base_files.get("Cargo.toml") or "")
+    allowed_paths = tuple(
+        dict.fromkeys(
+            (
+                *base_files.keys(),
+                *_declared_rust_binary_paths_from_cargo(cargo_text),
+                *_rust_missing_binary_paths_from_quality_issues(quality_issues),
+            )
+        )
+    )
     return run_runtime_repair_with_director_tools(
         adapter,
         workspace_path=workspace_path,
@@ -907,7 +921,7 @@ def _run_materialization_rust_runtime_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=quality_issues,
-        allowed_paths=tuple(base_files.keys()),
+        allowed_paths=allowed_paths,
         use_editor=True,
         convergence_verifier=convergence_verifier,
         execution_attempt=execution_attempt,
@@ -934,6 +948,61 @@ def _collect_materialization_rust_base_files(workspace_path: Path) -> dict[str, 
         except (OSError, UnicodeDecodeError):
             continue
     return base_files
+
+
+def _rust_missing_binary_paths_from_quality_issues(
+    artifact_quality_issues: Sequence[Mapping[str, Any]],
+) -> tuple[str, ...]:
+    paths: list[str] = []
+    for issue in artifact_quality_issues:
+        if not isinstance(issue, Mapping):
+            continue
+        code = str(issue.get("code") or "").strip()
+        if code not in {"rust_missing_binary_entrypoint", "artifact_quality_error"}:
+            metadata = issue.get("metadata") if isinstance(issue.get("metadata"), Mapping) else {}
+            kind = str((metadata or {}).get("diagnostic_kind") or "")
+            if (
+                kind != "rust_missing_binary_entrypoint"
+                and "can't find bin" not in str(issue.get("message") or "").lower()
+            ):
+                continue
+        metadata = issue.get("metadata") if isinstance(issue.get("metadata"), Mapping) else {}
+        candidate = (
+            str(issue.get("path") or (metadata or {}).get("bin_path") or (metadata or {}).get("path") or "")
+            .strip()
+            .replace("\\", "/")
+        )
+        while candidate.startswith("./"):
+            candidate = candidate[2:]
+        if not candidate or candidate.startswith("/") or any(part == ".." for part in candidate.split("/")):
+            continue
+        paths.append(candidate)
+    return tuple(dict.fromkeys(paths))
+
+
+def _declared_rust_binary_paths_from_cargo(cargo_text: str) -> tuple[str, ...]:
+    """Return safe relative binary entrypoint paths declared in Cargo.toml."""
+
+    text = str(cargo_text or "")
+    if "[[bin]]" not in text.lower():
+        return ()
+    section_re = re.compile(
+        r"\[\[bin\]\](?P<body>.*?)(?=\n\[\[|\n\[(?:package|lib|dependencies|dev-dependencies|"
+        r"build-dependencies|features|profile|workspace|target|bench|test|example|package\.metadata)|\Z)",
+        re.DOTALL | re.IGNORECASE,
+    )
+    path_re = re.compile(r'(?m)^\s*path\s*=\s*["\']([^"\']+)["\']')
+    paths: list[str] = []
+    for section in section_re.finditer(text):
+        body = str(section.group("body") or "")
+        match = path_re.search(body)
+        raw = str(match.group(1) if match else "src/main.rs").strip().replace("\\", "/")
+        while raw.startswith("./"):
+            raw = raw[2:]
+        if not raw or raw.startswith("/") or any(part == ".." for part in raw.split("/")):
+            continue
+        paths.append(raw)
+    return tuple(dict.fromkeys(paths))
 
 
 def _run_materialization_target_runtime(

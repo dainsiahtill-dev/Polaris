@@ -1923,8 +1923,15 @@ def _filter_missing_workspace_file_errors_to_task_write_scope(
     retained: list[str] = []
     deferred_errors: list[str] = []
     deferred_targets: list[str] = []
+    task_touches_rust = _task_write_scope_touches_rust(task, workspace_name=workspace_name)
     for error in errors:
         text = str(error or "")
+        # Cargo-declared missing binaries are project-topology repairs: any task
+        # that already materializes Rust sources / Cargo.toml must retain them
+        # so materialization quality can create src/main.rs (R71/R73).
+        if task_touches_rust and _is_rust_missing_binary_quality_error(text, issue_payloads):
+            retained.append(text)
+            continue
         missing_targets = _dedupe_preserve_order(
             [
                 *_missing_workspace_file_quality_repair_target_files(
@@ -1963,6 +1970,38 @@ def _filter_missing_workspace_file_errors_to_task_write_scope(
         issue_payloads=issue_payloads,
     )
     return _dedupe_preserve_order(retained)
+
+
+def _is_rust_missing_binary_quality_error(
+    error: str,
+    issue_payloads: tuple[dict[str, Any], ...] = (),
+) -> bool:
+    text = str(error or "")
+    if "can't find bin" in text.lower() or "cant find bin" in text.lower():
+        return True
+    raw = text.strip()
+    for issue in issue_payloads:
+        if not isinstance(issue, dict):
+            continue
+        code = str(issue.get("code") or "").strip()
+        if code != "rust_missing_binary_entrypoint":
+            continue
+        issue_raw = str((issue.get("metadata") or {}).get("raw") or issue.get("message") or "").strip()
+        if not raw or issue_raw == raw or raw in issue_raw or issue_raw in raw:
+            return True
+    return False
+
+
+def _task_write_scope_touches_rust(task: Mapping[str, Any] | None, *, workspace_name: str = "") -> bool:
+    for candidate in _task_write_scope_candidates(task, workspace_name=workspace_name):
+        normalized = str(candidate or "").strip().replace("\\", "/").lower()
+        if not normalized:
+            continue
+        if normalized == "cargo.toml" or normalized.endswith("/cargo.toml"):
+            return True
+        if Path(normalized).suffix == ".rs":
+            return True
+    return False
 
 
 def _should_defer_missing_workspace_target(path: str) -> bool:
@@ -2109,6 +2148,11 @@ def _materialization_quality_scan_paths_with_package_manifest(
     )
     if _node_package_manifest_should_be_rescanned_for_test_files(workspace_full=workspace_full, paths=paths):
         paths.append("package.json")
+    # R71/R73: Rust materialization quality must rescan Cargo.toml whenever any
+    # .rs file is in scope so declared [[bin]] paths missing on disk become
+    # artifact-quality errors that plan missing-binary entrypoint repair.
+    if _cargo_manifest_should_be_rescanned_for_rust_files(workspace_full=workspace_full, paths=paths):
+        paths.append("Cargo.toml")
     return _dedupe_preserve_order(paths)
 
 
@@ -2117,6 +2161,22 @@ def _node_package_manifest_should_be_rescanned_for_test_files(*, workspace_full:
     if not package_path.is_file():
         return False
     return any(_is_node_runtime_source_path(path) for path in paths)
+
+
+def _cargo_manifest_should_be_rescanned_for_rust_files(*, workspace_full: str, paths: list[str]) -> bool:
+    cargo_path = Path(str(workspace_full or "")).resolve() / "Cargo.toml"
+    if not cargo_path.is_file():
+        return False
+    return any(_is_rust_source_path(path) for path in paths) or any(
+        str(path or "").strip().replace("\\", "/").lower() == "cargo.toml" for path in paths
+    )
+
+
+def _is_rust_source_path(path: str) -> bool:
+    normalized = str(path or "").strip().replace("\\", "/").lower()
+    if not normalized:
+        return False
+    return Path(normalized).suffix == ".rs"
 
 
 def _is_node_runtime_source_path(path: str) -> bool:
@@ -5270,6 +5330,8 @@ _MISSING_WORKSPACE_FILE_ISSUE_CODES = frozenset(
         "missing_workspace_file",
         "unresolved_relative_import",
         "workspace_file_missing",
+        # Cargo [[bin]] path declared but missing on disk (R71/R73).
+        "rust_missing_binary_entrypoint",
     }
 )
 _PYTHON_MODULE_ALIAS_ISSUE_CODES = frozenset({"python_import_error", "python_module_not_found"})

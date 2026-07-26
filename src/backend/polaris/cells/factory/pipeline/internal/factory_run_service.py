@@ -1234,6 +1234,24 @@ class FactoryRunService:
 
         settlement = self._query_child_session_settlement(target_run.id)
         target_run.metadata[_CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY] = settlement
+        # R64: Director settlement-barrier timeouts leave owned active sessions that
+        # pin child-session settlement forever. On FAILED/CANCELLED factory drain,
+        # force-fail those owned active sessions (not foreign ones) so lease release
+        # can complete. Live success paths never take this branch.
+        if (
+            settlement.get("settled") is not True
+            and target_run.status in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}
+        ):
+            abort_summary = TaskRuntimeService(str(self.workspace)).terminalize_open_tasks_for_factory_abort(
+                factory_run_id=target_run.id,
+                reason=f"factory_{target_run.status.value}",
+                source="factory_terminal_drain_force_active",
+                force_active_sessions=True,
+            )
+            target_run.metadata["factory_task_runtime_abort"] = abort_summary
+            await self.store.save_run(target_run)
+            settlement = self._query_child_session_settlement(target_run.id)
+            target_run.metadata[_CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY] = settlement
         if settlement.get("settled") is not True:
             target_run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = False
             return await self._record_drain_conflict(
@@ -1269,8 +1287,21 @@ class FactoryRunService:
                 and settlement.get("settled") is True
             ):
                 blocking = {str(reason).strip() for reason in barrier.blocking_reasons if str(reason).strip()}
-                non_abortable = blocking - {"lifecycle_open", "lifecycle_failed"}
-                if not non_abortable and "lifecycle_open" in blocking:
+                # Residual tool/effect evidence gaps after a failed Director wave
+                # must not prevent aborting open never-dispatched rows (R55/R57).
+                abortable_blockers = {
+                    "lifecycle_open",
+                    "lifecycle_failed",
+                    "tool_lifecycle_evidence_missing",
+                    "effect_receipts_open",
+                    "effect_receipt_missing",
+                }
+                non_abortable = blocking - abortable_blockers
+                if not non_abortable and (
+                    "lifecycle_open" in blocking
+                    or "tool_lifecycle_evidence_missing" in blocking
+                    or "effect_receipts_open" in blocking
+                ):
                     abort_summary = TaskRuntimeService(str(self.workspace)).terminalize_open_tasks_for_factory_abort(
                         factory_run_id=target_run.id,
                         reason=f"factory_{target_run.status.value}",
@@ -2474,6 +2505,12 @@ class FactoryRunService:
         events = await self.store.get_authoritative_events(run_id)
         state = reduce_factory_stage_persistence(events, factory_run_id=run_id)
         if state.is_quarantined:
+            # Terminal closeout (complete_run / settle) must still proceed after
+            # quarantine terminalize; otherwise lease stays active forever (R56).
+            if persisted_run.status in TERMINAL_RUN_STATUSES:
+                if current_run is not None:
+                    self._copy_run_state(current_run, persisted_run)
+                return persisted_run
             raise FactoryStagePersistenceError(
                 "factory_stage_persistence_quarantined",
                 "Factory run has an explicit quarantine or unmatched stage event",
@@ -2863,6 +2900,39 @@ class FactoryRunService:
             },
             publish=False,
         )
+        # Quarantine must not leave orchestration forever RUNNING. Force a
+        # terminal failed projection so complete_run/settle can release the lease
+        # (assert_mutation_allowed allows closeout when status is already terminal).
+        try:
+            run = await self.store.get_run(run_id)
+            if run is not None and run.status not in TERMINAL_RUN_STATUSES:
+                timestamp = self._now()
+                run.status = FactoryRunStatus.FAILED
+                if run.completed_at is None:
+                    run.completed_at = timestamp
+                run.updated_at = timestamp
+                run.metadata[_STAGE_IN_FLIGHT_METADATA_KEY] = False
+                run.metadata["completion_authority"] = "orchestration_session_lifecycle"
+                run.metadata["verified"] = False
+                run.metadata["verification_authority"] = "execution_ledger_projection"
+                run.metadata["factory_quarantine_terminalized"] = True
+                run.metadata["last_failed_stage"] = stage
+                run.metadata["failure"] = {
+                    "stage": stage,
+                    "code": "FACTORY_STAGE_QUARANTINED",
+                    "detail": f"Stage {stage} quarantined at {failed_step}: {error_type}: {error_message}",
+                    "recoverable": True,
+                    "timestamp": timestamp,
+                }
+                self._append_unique(run.stages_failed, stage)
+                await self.store.save_run(run)
+        except Exception as terminalize_exc:  # noqa: BLE001 — best-effort quarantine terminalize
+            logger.warning(
+                "Factory quarantine terminalize failed for run %s stage %s: %s",
+                run_id,
+                stage,
+                terminalize_exc,
+            )
 
     async def _preflight_stage_transaction(
         self,

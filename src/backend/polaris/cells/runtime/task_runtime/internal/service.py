@@ -3557,19 +3557,141 @@ class TaskRuntimeService:
             execution_events=(cancelled_event,) if cancelled_event is not None else (),
         )
 
+    def force_fail_active_session_for_factory_abort(
+        self,
+        task_id: Any,
+        *,
+        factory_run_id: str,
+        reason: str = "factory_run_failed",
+        source: str = "factory_terminal_drain",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Force-fail one still-active TaskRuntime session for factory closeout.
+
+        Director settlement-barrier timeouts leave an owned ``active`` session
+        that normal cancel refuses (``factory_abort_active_session``). Once the
+        Factory run is already FAILED/CANCELLED, those orphaned sessions must
+        be force-failed so child-session settlement and lease release can
+        complete. Foreign or DEO-gated sessions remain fail-closed.
+
+        Complexity:
+            O(1) task-row/session work for the target row.
+        """
+
+        authority = str(factory_run_id or "").strip()
+        if not authority:
+            raise ValueError("factory_run_id must be a non-empty string")
+
+        normalized, task = self._task_entity_for_owner_terminal_transition(task_id)
+        if normalized is None or task is None:
+            return None
+        existing_status = task.status.value if isinstance(task.status, TaskStatus) else task.status
+        if is_terminal_task_row_status(existing_status):
+            return {
+                "ok": True,
+                "already_terminal": True,
+                "task_id": str(normalized),
+                "status": str(existing_status or "").strip().lower(),
+            }
+
+        failure_reason = sanitize_summary(reason or "factory_run_failed")
+        source_text = sanitize_summary(source or "factory_terminal_drain")
+        session = None
+        with (
+            self._get_session_lock(normalized),
+            self._board._file_lock(self._session_file_lock_path(normalized)),
+        ):
+            session = self._read_session_locked(normalized)
+            if session is None:
+                # No session — fail the open row without a session record.
+                pass
+            else:
+                session_metadata = session.metadata if isinstance(session.metadata, Mapping) else {}
+                task_metadata = task.metadata if isinstance(getattr(task, "metadata", None), Mapping) else {}
+                # Ownership: task/session factory_run_id first. session.run_id is the
+                # Director child workflow id (director-*), NOT the Factory authority.
+                owned_factory_run_id = str(
+                    task_metadata.get("factory_run_id")
+                    or session_metadata.get("factory_run_id")
+                    or ""
+                ).strip()
+                if owned_factory_run_id and owned_factory_run_id != authority:
+                    return {
+                        "ok": False,
+                        "code": "factory_abort_foreign_session",
+                        "task_id": str(normalized),
+                        "session_id": session.session_id,
+                        "existing_factory_run_id": owned_factory_run_id,
+                        "requested_factory_run_id": authority,
+                    }
+                # Force path: skip inactive DEO pre-barrier. Factory terminal
+                # closeout owns authority; residual DEO receipts remain ledger
+                # evidence, not lease-pin forever.
+                if not is_terminal_session_status(session.status):
+                    session.mark_failed(error=failure_reason)
+                    self._write_session_locked(
+                        session,
+                        allow_terminal_downgrade=True,
+                    )
+
+        merged_metadata = {
+            "factory_abort_reason": failure_reason,
+            "factory_abort_source": source_text,
+            "factory_run_id": authority,
+            "factory_abort_force_active_session": True,
+        }
+        merged_metadata.update(dict(metadata or {}))
+        if session is not None:
+            merged_metadata = self._build_runtime_metadata(
+                session=session,
+                effective_status="failed",
+                resume_state="",
+                extra_metadata=merged_metadata,
+            )
+
+        updated = self._board.update(
+            normalized,
+            status=TaskStatus.FAILED,
+            metadata=merged_metadata,
+            allow_terminal_status=True,
+        )
+        if updated is None:
+            return None
+
+        row = self._augment_task_row(updated.to_dict())
+        failed_event = self._append_execution_event(
+            "failed",
+            task_row=row,
+            session=session,
+            details={
+                "reason": failure_reason,
+                "source": source_text,
+                "factory_run_id": authority,
+                "factory_abort": True,
+                "factory_abort_force_active_session": True,
+            },
+        )
+        return project_task_row_execution_event(
+            row,
+            failed_event,
+            execution_events=(failed_event,) if failed_event is not None else (),
+        )
+
     def terminalize_open_tasks_for_factory_abort(
         self,
         *,
         factory_run_id: str,
         reason: str = "factory_run_failed",
         source: str = "factory_terminal_drain",
+        force_active_sessions: bool = False,
     ) -> dict[str, object]:
         """Cancel all open TaskRuntime rows owned by a terminal Factory run.
 
         Used by Factory terminal drain when the Run Ledger settlement barrier
         is blocked solely by open (never-dispatched) task lifecycles after the
         orchestration session has already failed or been cancelled. Active
-        sessions are not force-cancelled; they remain settlement conflicts.
+        sessions are not force-cancelled unless ``force_active_sessions`` is
+        True (FAILED/CANCELLED factory drain after Director timeout; R64).
 
         Complexity:
             O(n) over observable rows for the factory_run_id.
@@ -3586,11 +3708,12 @@ class TaskRuntimeService:
         terminalized: list[str] = []
         already_terminal: list[str] = []
         blocked_active: list[dict[str, Any]] = []
+        force_failed_active: list[str] = []
         failed: list[dict[str, Any]] = []
 
         for row_source in rows:
             row = dict(row_source)
-            task_id = self.normalize_task_id(row.get("id"))
+            task_id = self.normalize_task_id(row.get("id") or row.get("task_id"))
             if task_id is None:
                 continue
             status_token = str(row.get("status") or row.get("execution_state") or "").strip().lower()
@@ -3610,7 +3733,28 @@ class TaskRuntimeService:
                 already_terminal.append(str(task_id))
                 continue
             if result.get("ok") is False:
-                # Active session, directed-effect pre-barrier, or other owner block.
+                if force_active_sessions and str(result.get("code") or "") == "factory_abort_active_session":
+                    forced = self.force_fail_active_session_for_factory_abort(
+                        task_id,
+                        factory_run_id=authority,
+                        reason=reason_text,
+                        source=source_text,
+                    )
+                    if forced is None:
+                        failed.append(
+                            {
+                                "task_id": str(task_id),
+                                "code": "factory_abort_force_active_failed",
+                            }
+                        )
+                        continue
+                    if forced.get("ok") is False:
+                        blocked_active.append(dict(forced))
+                        continue
+                    force_failed_active.append(str(task_id))
+                    terminalized.append(str(task_id))
+                    continue
+                # Active session (no force), directed-effect pre-barrier, or other owner block.
                 blocked_active.append(dict(result))
                 continue
             terminalized.append(str(task_id))
@@ -3625,6 +3769,9 @@ class TaskRuntimeService:
             "factory_run_id": authority,
             "reason": reason_text,
             "source": source_text,
+            "force_active_sessions": bool(force_active_sessions),
+            "force_failed_active_task_ids": force_failed_active,
+            "force_failed_active_count": len(force_failed_active),
             "terminalized_task_ids": terminalized,
             "terminalized_count": len(terminalized),
             "already_terminal_task_ids": already_terminal,

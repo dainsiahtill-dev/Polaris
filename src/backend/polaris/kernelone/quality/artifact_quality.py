@@ -656,15 +656,9 @@ def _artifact_quality_issue_code_from_typed_metadata(
         return diagnostic_kind
     if diagnostic_kind == "undefined_identifier" and language == "go":
         return "go_compile_error"
-    if (
-        source_token == "file_artifact_scanner"
-        and diagnostic_kind in _FILE_ARTIFACT_SCANNER_DIAGNOSTIC_KINDS
-    ):
+    if source_token == "file_artifact_scanner" and diagnostic_kind in _FILE_ARTIFACT_SCANNER_DIAGNOSTIC_KINDS:
         return diagnostic_kind
-    if (
-        source_token == "cross_artifact_consistency"
-        and diagnostic_kind in _CROSS_ARTIFACT_CONSISTENCY_DIAGNOSTIC_KINDS
-    ):
+    if source_token == "cross_artifact_consistency" and diagnostic_kind in _CROSS_ARTIFACT_CONSISTENCY_DIAGNOSTIC_KINDS:
         return diagnostic_kind
     return ""
 
@@ -1632,7 +1626,15 @@ def _iter_target_files(root_full: Path, relative_paths: Iterable[str] | None) ->
 
 
 def _is_source_artifact(path: Path) -> bool:
-    return path.name.lower() in {"package.json", "tsconfig.json"} or path.suffix.lower() in _ARTIFACT_QUALITY_SOURCE_EXTS
+    return (
+        path.name.lower()
+        in {
+            "package.json",
+            "tsconfig.json",
+            "cargo.toml",
+        }
+        or path.suffix.lower() in _ARTIFACT_QUALITY_SOURCE_EXTS
+    )
 
 
 def _tool_receipt_contamination_error(relative_path: str, text: str) -> str:
@@ -1781,6 +1783,10 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         manifest_evidence = _scan_package_manifest_evidence(root_full, text, relative_path)
         errors.extend(manifest_evidence.errors)
         issues.extend(manifest_evidence.issues)
+    if os.path.basename(relative_path).lower() == "cargo.toml":
+        cargo_evidence = _scan_cargo_manifest_missing_binary_evidence(root_full, text, relative_path)
+        errors.extend(cargo_evidence.errors)
+        issues.extend(cargo_evidence.issues)
     if os.path.basename(relative_path).lower() == "tsconfig.json":
         tsconfig_evidence = _scan_typescript_tsconfig_evidence(text, relative_path)
         errors.extend(tsconfig_evidence.errors)
@@ -1791,7 +1797,9 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     typescript_red_flag_evidence = _scan_typescript_syntax_red_flag_evidence(root_full, full_path, text, relative_path)
     errors.extend(typescript_red_flag_evidence.errors)
     issues.extend(typescript_red_flag_evidence.issues)
-    html_module_script_evidence = _scan_html_typescript_module_script_evidence(root_full, full_path, text, relative_path)
+    html_module_script_evidence = _scan_html_typescript_module_script_evidence(
+        root_full, full_path, text, relative_path
+    )
     errors.extend(html_module_script_evidence.errors)
     issues.extend(html_module_script_evidence.issues)
     for marker in _DETERMINISTIC_SCAFFOLD_MARKERS:
@@ -2352,6 +2360,78 @@ def _package_manifest_evidence_from_errors(
         for error in errors
         if str(error or "").strip() not in direct_issue_messages
     )
+    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+
+
+_CARGO_BIN_SECTION_RE = re.compile(
+    r"\[\[bin\]\](?P<body>.*?)(?=\n\[\[|\n\[(?:package|lib|dependencies|dev-dependencies|build-dependencies|features|profile|workspace|target|bench|test|example|package\.metadata)|\Z)",
+    re.DOTALL | re.IGNORECASE,
+)
+_CARGO_BIN_NAME_RE = re.compile(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']')
+_CARGO_BIN_PATH_RE = re.compile(r'(?m)^\s*path\s*=\s*["\']([^"\']+)["\']')
+_CARGO_PACKAGE_NAME_RE = re.compile(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']')
+
+
+def _scan_cargo_manifest_missing_binary_evidence(
+    root_full: Path,
+    text: str,
+    relative_path: str,
+) -> _FileArtifactQualityEvidence:
+    """Detect Cargo ``[[bin]]`` entrypoints declared but missing on disk.
+
+    Emits cargo-shaped diagnostics so Director materialization quality can plan
+    ``deterministic_rust_missing_binary_entrypoint_repair`` without waiting for a
+    later bench ``cargo check`` measurement (R66/R71: ``[[bin]]`` → missing
+    ``src/main.rs``).
+    """
+
+    cargo_text = str(text or "")
+    if "[[bin]]" not in cargo_text.lower():
+        return _FileArtifactQualityEvidence()
+
+    package_name = "app"
+    package_match = re.search(r"(?is)\[package\](.*?)(?:\n\[|\Z)", cargo_text)
+    if package_match:
+        name_match = _CARGO_PACKAGE_NAME_RE.search(package_match.group(1))
+        if name_match:
+            package_name = str(name_match.group(1) or "").strip() or package_name
+
+    errors: list[str] = []
+    issues: list[ArtifactQualityIssue] = []
+    for section in _CARGO_BIN_SECTION_RE.finditer(cargo_text):
+        body = str(section.group("body") or "")
+        name_match = _CARGO_BIN_NAME_RE.search(body)
+        path_match = _CARGO_BIN_PATH_RE.search(body)
+        bin_name = str(name_match.group(1) if name_match else package_name).strip() or package_name
+        bin_path = str(path_match.group(1) if path_match else "src/main.rs").strip().replace("\\", "/")
+        while bin_path.startswith("./"):
+            bin_path = bin_path[2:]
+        if not bin_path or bin_path.startswith("/") or ".." in bin_path.split("/"):
+            continue
+        absolute = (root_full / bin_path).resolve()
+        try:
+            absolute.relative_to(root_full.resolve())
+        except ValueError:
+            continue
+        if absolute.is_file():
+            continue
+        message = f"error: can't find bin `{bin_name}` at path `{absolute.as_posix()}`"
+        errors.append(message)
+        issues.append(
+            ArtifactQualityIssue(
+                code="rust_missing_binary_entrypoint",
+                message=message,
+                path=bin_path,
+                source="cargo_manifest_scanner",
+                metadata={
+                    "raw": message,
+                    "diagnostic_kind": "rust_missing_binary_entrypoint",
+                    "bin_name": bin_name,
+                    "bin_path": bin_path,
+                    "manifest_path": relative_path,
+                },
+            )
+        )
     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 

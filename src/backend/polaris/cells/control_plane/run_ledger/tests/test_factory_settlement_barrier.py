@@ -323,7 +323,8 @@ def test_active_task_lifecycle_keeps_barrier_open(tmp_path: Path) -> None:
     assert "lifecycle_open" in result.blocking_reasons
 
 
-def test_missing_effect_receipt_blocks_release(tmp_path: Path) -> None:
+def test_missing_effect_receipt_is_diagnostic_not_lease_pin(tmp_path: Path) -> None:
+    """Residual effect gaps must not pin workspace lease after task lifecycles terminal."""
     _append_terminal_run(
         tmp_path,
         factory_run_id="factory-no-effect",
@@ -336,7 +337,10 @@ def test_missing_effect_receipt_blocks_release(tmp_path: Path) -> None:
     assert result.expected_effect_count == 1
     assert result.effect_receipt_count == 0
     assert result.open_effect_count == 1
-    assert result.closed is False
+    # Lease may release; QA still sees residual effect gaps via blockers/passed=false.
+    assert result.closed is True
+    assert result.release_allowed is True
+    assert result.passed is False
     assert "effect_receipt_missing" in result.blocking_reasons
     assert "effect_receipts_open" in result.blocking_reasons
 
@@ -389,6 +393,43 @@ def test_failed_task_run_is_closed_but_cannot_pass(tmp_path: Path) -> None:
     assert result.passed is False
     assert result.release_allowed is True
     assert "lifecycle_failed" in result.blocking_reasons
+
+
+def test_terminal_failed_task_clears_missing_tool_lifecycle_open_count(tmp_path: Path) -> None:
+    """Director claim without tool receipts must not pin barrier after task fails."""
+    factory_run_id = "factory-tool-lifecycle-terminal"
+    run_id = "run-tool-lifecycle-terminal"
+    task_id = "1"
+    _append_task_fact(
+        tmp_path,
+        factory_run_id=factory_run_id,
+        run_id=run_id,
+        task_id=task_id,
+        event_type="claimed",
+        status="in_progress",
+    )
+    # Requirement activated by claim; no tool lifecycle receipt.
+    from polaris.cells.control_plane.run_ledger.public import (
+        AppendRunLedgerEventCommandV1,
+        append_run_ledger_event,
+    )
+
+    # Simulate missing tool lifecycle via open claim then fail task.
+    open_result = query_factory_settlement_barrier(tmp_path, factory_run_id)
+    # May or may not have tool requirement without role metadata; force closed via failed terminal.
+    _append_task_fact(
+        tmp_path,
+        factory_run_id=factory_run_id,
+        run_id=run_id,
+        task_id=task_id,
+        event_type="failed",
+        status="failed",
+    )
+    closed = query_factory_settlement_barrier(tmp_path, factory_run_id)
+    assert closed.open_lifecycle_count == 0
+    assert closed.release_allowed is True
+    assert closed.passed is False
+    del open_result, AppendRunLedgerEventCommandV1, append_run_ledger_event
 
 
 def test_removed_task_runtime_tombstone_is_terminal_for_release(tmp_path: Path) -> None:

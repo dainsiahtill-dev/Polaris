@@ -280,6 +280,9 @@ _POST_EXECUTION_REPAIR_SCHEDULE: tuple[PostExecutionRepairScheduleStep, ...] = (
 _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_rust_crate_import_rewrite_repair",
     "deterministic_rust_dependency_repair",
+    # Declared [[bin]] path without source (R66 Cargo.toml → src/main.rs missing).
+    # Post-exec already had this tool; materialization quality schedule must too.
+    "deterministic_rust_missing_binary_entrypoint_repair",
     "deterministic_rust_missing_lib_target_repair",
     "deterministic_rust_missing_module_file_repair",
     "deterministic_rust_duplicate_module_file_repair",
@@ -288,6 +291,7 @@ _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_rust_line_suggestion_repair",
     "deterministic_rust_unresolved_pub_use_repair",
     "deterministic_rust_trait_import_repair",
+    "deterministic_rust_unused_import_repair",
 )
 _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_canvas_scale_return_type_repair",

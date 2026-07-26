@@ -346,6 +346,46 @@ class QualityChecker:
         return ()
 
     @staticmethod
+    def _repair_common_llm_json_corruptions(text: str) -> str:
+        """Apply bounded repairs for common LLM JSON stream corruptions.
+
+        Observed on factory_bench L1-05 R68 (deepseek-v4-pro CE portfolio):
+        models emit unquoted angle-bracket type soup after a JSON colon, e.g.
+        ``"actions": <(Ingredient, String)> prose.",`` instead of a quoted
+        string or string array. Without repair, the root object never parses
+        and CE schema selection fails closed even though the remaining
+        blueprint keys are present.
+
+        Repairs are intentionally narrow (angle-bracket starters only) and
+        fail-open: callers must re-validate via ``json.loads`` / balanced
+        object extraction.
+        """
+
+        if not text or "<" not in text:
+            return text
+
+        repaired = text
+        # Array-ish fields that frequently lose the opening ``[`` when the
+        # model starts the first element with a bare ``<Type>`` annotation.
+        repaired = re.sub(
+            r'("(?:actions|steps|checklist|acceptance_criteria|provider_declarations|'
+            r'consumer_declarations|target_files|scope_for_apply|risk_flags)"\s*:\s*)'
+            r"(<)",
+            r'\1[ "\2',
+            repaired,
+            count=16,
+        )
+        # Remaining unquoted angle-started values that already have a closing quote.
+        repaired = re.sub(r'(:\s*)(<[^"]*?)(")', r'\1"\2\3', repaired)
+        # Bare ``<Token>`` values before structural trailers.
+        repaired = re.sub(
+            r'(:\s*)(<[^,"{}\[\]\n]*>)(\s*[,}\]])',
+            r'\1"\2"\3',
+            repaired,
+        )
+        return repaired
+
+    @staticmethod
     def _extract_all_balanced_json_objects(text: str) -> list[dict[str, Any]]:
         """Extract all balanced top-level JSON objects embedded in text."""
         import json
@@ -442,39 +482,50 @@ class QualityChecker:
             seen.add(key)
             candidates.append(value)
 
+        def collect_from(source: str) -> None:
+            # 尝试匹配 ```json ... ``` 代码块
+            json_pattern = r"```(?:json)?\s*(.*?)\s*```"
+            matches = re.findall(json_pattern, source, re.DOTALL)
+
+            for match in matches:
+                try:
+                    add_candidate(json.loads(match.strip()))
+                except json.JSONDecodeError as e:
+                    errors.append(f"JSON解析错误: {e}")
+
+            stripped = source.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                try:
+                    add_candidate(json.loads(stripped))
+                except json.JSONDecodeError as e:
+                    errors.append(f"JSON解析错误: {e}")
+            elif stripped.startswith("[") and stripped.endswith("]"):
+                try:
+                    parsed = json.loads(stripped)
+                    if not isinstance(parsed, dict):
+                        errors.append("JSON解析错误: top-level JSON value is not an object")
+                except json.JSONDecodeError as e:
+                    errors.append(f"JSON解析错误: {e}")
+
+            for candidate in self._extract_all_balanced_json_objects(source):
+                add_candidate(candidate)
+
         if not text or not text.strip():
             return None, ["Empty text"]
 
-        # 尝试匹配 ```json ... ``` 代码块
-        json_pattern = r"```(?:json)?\s*(.*?)\s*```"
-        matches = re.findall(json_pattern, text, re.DOTALL)
-
-        for match in matches:
-            try:
-                add_candidate(json.loads(match.strip()))
-            except json.JSONDecodeError as e:
-                errors.append(f"JSON解析错误: {e}")
-
-        stripped = text.strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
-            try:
-                add_candidate(json.loads(stripped))
-            except json.JSONDecodeError as e:
-                errors.append(f"JSON解析错误: {e}")
-        elif stripped.startswith("[") and stripped.endswith("]"):
-            try:
-                parsed = json.loads(stripped)
-                if not isinstance(parsed, dict):
-                    errors.append("JSON解析错误: top-level JSON value is not an object")
-            except json.JSONDecodeError as e:
-                errors.append(f"JSON解析错误: {e}")
-
-        for candidate in self._extract_all_balanced_json_objects(text):
-            add_candidate(candidate)
-
+        collect_from(text)
         selected, selection_errors = self._select_json_candidate(candidates, role=role)
         if selected is not None:
             return selected, []
+
+        # Bounded salvage for CE (and other roles) that emit unquoted angle-bracket
+        # type soup after JSON colons. Only runs after the strict pass fails.
+        repaired = self._repair_common_llm_json_corruptions(text)
+        if repaired != text:
+            collect_from(repaired)
+            selected, selection_errors = self._select_json_candidate(candidates, role=role)
+            if selected is not None:
+                return selected, []
 
         errors.extend(selection_errors)
         if not errors:

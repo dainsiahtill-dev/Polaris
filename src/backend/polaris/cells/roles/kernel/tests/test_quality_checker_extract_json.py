@@ -237,6 +237,75 @@ class TestSchemaAwareJsonExtraction:
         assert "scope_for_apply" in data
         assert errors == []
 
+    def test_ce_recovers_unquoted_angle_bracket_actions_array(self) -> None:
+        """R68: CE emitted unquoted ``<Type>`` soup after ``actions`` colon.
+
+        Pattern mirrored from deepseek-v4-pro portfolio output where the model
+        dropped the opening quote/array bracket before angle-bracket type soup
+        but still closed with a stray quote before additional array elements.
+        """
+        checker = QualityChecker()
+        content = (
+            "{\n"
+            '  "construction_plan": {\n'
+            '    "task_plans": {"TASK-1": {"title": "models"}},\n'
+            '    "project_interface_contract": {\n'
+            '      "provider_declarations": ["crate::models::Palette"],\n'
+            '      "consumer_declarations": ["src/main.rs"]\n'
+            "    },\n"
+            '    "build_phases": [\n'
+            "      {\n"
+            '        "phase": "4. Domain types implementation",\n'
+            '        "actions": <(Ingredient, String)> where String is quantity/unit), '
+            'and method description.",\n'
+            '              "Ensure all source files contain the keywords flavor, palette."\n'
+            "            ],\n"
+            '        "verification": "cargo build --lib succeeds"\n'
+            "      }\n"
+            "    ]\n"
+            "  },\n"
+            '  "scope_for_apply": ["src/lib.rs", "src/main.rs"],\n'
+            '  "risk_flags": ["low"]\n'
+            "}\n"
+        )
+        data, errors = checker._extract_json(content, role="chief_engineer")
+        assert data is not None, errors
+        assert "construction_plan" in data
+        assert "scope_for_apply" in data
+        assert "risk_flags" in data
+        assert errors == []
+
+    def test_ce_recovers_real_r68_angle_bracket_corruptions_shape(self) -> None:
+        """Minimal shape from R68: angle soup + extra trailing fragment after root."""
+        checker = QualityChecker()
+        # Root object is complete; trailing garbage simulates stream residue.
+        content = (
+            '{"construction_plan":{"task_plans":{},"project_interface_contract":'
+            '{"provider_declarations":[],"consumer_declarations":[]},'
+            '"phases":[{"phase":"x","actions": <Foo, Bar>) helper note.",'
+            '"more work."],'
+            '"verification":"cargo check"}]},'
+            '"scope_for_apply":["src/lib.rs"],"risk_flags":["low"]}'
+            '["trailing","residue"]'
+        )
+        data, errors = checker._extract_json(content, role="chief_engineer")
+        assert data is not None, errors
+        assert set(data) >= {"construction_plan", "scope_for_apply", "risk_flags"}
+        assert errors == []
+
+    def test_valid_json_unchanged_by_angle_repair_path(self) -> None:
+        """Strict-valid CE JSON must still win without needing salvage."""
+        checker = QualityChecker()
+        content = (
+            '{"construction_plan": {"task_plans": {}, "project_interface_contract": '
+            '{"provider_declarations": [], "consumer_declarations": []}}, '
+            '"scope_for_apply": ["src/lib.rs"], "risk_flags": []}'
+        )
+        data, errors = checker._extract_json(content, role="chief_engineer")
+        assert data is not None
+        assert data["scope_for_apply"] == ["src/lib.rs"]
+        assert errors == []
+
     def test_ce_rejects_session_patch_object(self) -> None:
         """<SESSION_PATCH> object must not be accepted as CE data."""
         checker = QualityChecker()

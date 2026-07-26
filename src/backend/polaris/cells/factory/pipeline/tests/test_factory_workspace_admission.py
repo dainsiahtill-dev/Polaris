@@ -1532,6 +1532,241 @@ async def test_failed_settled_stage_retains_exact_claim_until_explicit_reconcili
 
 
 @pytest.mark.asyncio
+async def test_failed_settled_stage_complete_run_releases_workspace_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Router-style failure closeout: reconcile claim then complete_run must release.
+
+    Mirrors factory router failure_terminalization → complete_run(success=False).
+    A failed StageResult retains the stage claim; closeout must still drain the
+    workspace lease to released (not leave active forever).
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def query_closed_barrier(
+        queried_workspace: str | Path,
+        factory_run_id: str,
+    ) -> FactorySettlementBarrierResultV1:
+        assert Path(queried_workspace).resolve() == workspace.resolve()
+        return _settlement_barrier(
+            workspace=workspace,
+            factory_run_id=factory_run_id,
+            release_allowed=True,
+        )
+
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_FailedSettledStageExecutor(),
+        settlement_barrier_query=query_closed_barrier,
+    )
+    run = await service.create_run(FactoryConfig(name="failed-complete-release", stages=["director_dispatch"]))
+    await service.start_run(run.id)
+
+    monkeypatch.setattr(
+        service,
+        "_query_child_session_settlement",
+        lambda factory_run_id: {
+            "schema_version": "task-runtime.factory-run-settlement/1",
+            "factory_run_id": factory_run_id,
+            "settled": True,
+            "active_session_count": 0,
+            "active_sessions": [],
+            "conflict_count": 0,
+            "conflicts": [],
+            "observable_source": "task_runtime.observable_task_rows",
+            "observable_authoritative": True,
+            "observable_row_count": 1,
+            "proof_sources": [
+                "task_runtime.observable_task_rows",
+                "task_runtime.execution_session_files",
+            ],
+        },
+    )
+
+    result = await service.execute_stage(
+        run.id,
+        "director_dispatch",
+        {"heartbeat_interval_seconds": 0},
+    )
+    assert result.status == "failed"
+    retained = service._admission.current()
+    assert retained is not None
+    assert retained.state.value == "active"
+    assert retained.stage_execution_claim is not None
+
+    await service.reconcile_stage_execution_for_reentry(
+        run.id,
+        operation="factory_failure_terminalization",
+    )
+    closed = await service.complete_run(run.id, success=False)
+
+    assert closed.status == FactoryRunStatus.FAILED
+    assert closed.completed_at is not None
+    assert closed.metadata.get("completion_authority") == "orchestration_session_lifecycle"
+    lease_meta = closed.metadata.get("factory_workspace_run_lease") or {}
+    assert lease_meta.get("state") == "released"
+    assert lease_meta.get("released_at")
+    durable = service._admission.current()
+    assert durable is not None
+    assert durable.state.value == "released"
+    assert durable.released_at is not None
+    assert durable.stage_execution_claim is None
+    assert durable.release_evidence is not None
+
+
+@pytest.mark.asyncio
+async def test_quarantine_terminalized_failed_run_complete_run_releases_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After quarantine terminalize (status=FAILED), complete_run must still release.
+
+    The router previously returned early on factory_stage_* without complete_run,
+    leaving the workspace lease active forever. Service closeout must work once
+    the run is already terminal from quarantine terminalize.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def query_closed_barrier(
+        queried_workspace: str | Path,
+        factory_run_id: str,
+    ) -> FactorySettlementBarrierResultV1:
+        del queried_workspace
+        return _settlement_barrier(
+            workspace=workspace,
+            factory_run_id=factory_run_id,
+            release_allowed=True,
+        )
+
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_SuccessfulStageExecutor(),
+        settlement_barrier_query=query_closed_barrier,
+    )
+    run = await service.create_run(FactoryConfig(name="quarantine-closeout", stages=["pm_planning"]))
+    run = await service.start_run(run.id)
+    assert service._admission.current() is not None
+    assert service._admission.current().state.value == "active"
+
+    monkeypatch.setattr(
+        service,
+        "_query_child_session_settlement",
+        lambda factory_run_id: {
+            "schema_version": "task-runtime.factory-run-settlement/1",
+            "factory_run_id": factory_run_id,
+            "settled": True,
+            "active_session_count": 0,
+            "active_sessions": [],
+            "conflict_count": 0,
+            "conflicts": [],
+            "observable_source": "task_runtime.observable_task_rows",
+            "observable_authoritative": True,
+            "observable_row_count": 0,
+            "proof_sources": [
+                "task_runtime.observable_task_rows",
+                "task_runtime.execution_session_files",
+            ],
+        },
+    )
+
+    # Simulate quarantine terminalize on the durable run projection.
+    run.status = FactoryRunStatus.FAILED
+    run.completed_at = service._now()
+    run.metadata["factory_stage_in_flight"] = False
+    run.metadata["factory_quarantine_terminalized"] = True
+    run.metadata["completion_authority"] = "orchestration_session_lifecycle"
+    run.metadata["failure"] = {
+        "stage": "pm_planning",
+        "code": "FACTORY_STAGE_QUARANTINED",
+        "detail": "simulated quarantine",
+        "timestamp": run.completed_at,
+    }
+    await service.store.save_run(run)
+
+    closed = await service.complete_run(run.id, success=False)
+
+    assert closed.status == FactoryRunStatus.FAILED
+    lease_meta = closed.metadata.get("factory_workspace_run_lease") or {}
+    assert lease_meta.get("state") == "released"
+    assert lease_meta.get("released_at")
+    durable = service._admission.current()
+    assert durable is not None
+    assert durable.state.value == "released"
+    assert durable.released_at is not None
+
+
+@pytest.mark.asyncio
+async def test_failed_complete_run_force_fails_active_child_and_releases_lease(
+    tmp_path: Path,
+) -> None:
+    """R64: Director timeout left active session → drain stuck. Force-fail on FAILED closeout."""
+
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    workspace.mkdir()
+
+    def query_closed_barrier(
+        queried_workspace: str | Path,
+        factory_run_id: str,
+    ) -> FactorySettlementBarrierResultV1:
+        assert Path(queried_workspace).resolve() == workspace.resolve()
+        return _settlement_barrier(
+            workspace=workspace,
+            factory_run_id=factory_run_id,
+            release_allowed=True,
+        )
+
+    service = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_InflightStageExecutor(),
+        settlement_barrier_query=query_closed_barrier,
+    )
+    run = await service.create_run(FactoryConfig(name="force-active-abort", stages=["director_dispatch"]))
+    await service.start_run(run.id)
+    runtime, task_id, _identity = _create_active_factory_child(
+        workspace,
+        factory_run_id=run.id,
+    )
+
+    result = await service.execute_stage(
+        run.id,
+        "director_dispatch",
+        {"heartbeat_interval_seconds": 0},
+    )
+    assert result.metadata.get("child_sessions_settled") is False
+
+    closed = await service.complete_run(run.id, success=False)
+
+    assert closed.status == FactoryRunStatus.FAILED
+    assert closed.completed_at is not None
+    abort = closed.metadata.get("factory_task_runtime_abort") or {}
+    assert abort.get("force_active_sessions") is True
+    assert int(abort.get("force_failed_active_count") or 0) >= 1
+    lease_meta = closed.metadata.get("factory_workspace_run_lease") or {}
+    assert lease_meta.get("state") == "released"
+    assert lease_meta.get("released_at")
+    durable = service._admission.current()
+    assert durable is not None
+    assert durable.state.value == "released"
+    assert durable.stage_execution_claim is None
+    # Active child must be force-failed (not left active).
+    rows = runtime.query_observable_task_rows_projection().rows_for_factory_run(run.id)
+    assert rows, "expected factory-owned task rows before reset or residual projection"
+    # After successful release, task rows may be reset; session must not remain active.
+    session = runtime._read_session(task_id)
+    if session is not None:
+        assert str(session.status).lower() != "active"
+
+
+@pytest.mark.asyncio
 async def test_inflight_stage_claim_survives_wrapper_return_until_child_settles(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -1585,6 +1820,12 @@ async def test_inflight_stage_claim_survives_wrapper_return_until_child_settles(
 async def test_terminal_drain_reacts_to_child_terminal_fact_and_queries_remain_pure(
     tmp_path: Path,
 ) -> None:
+    """FAILED complete_run force-fails owned active Director sessions (R64) and releases.
+
+    Pre-R64 this left the lease draining forever with child_session_inflight.
+    Observation APIs still must not mutate lease state after release.
+    """
+
     workspace = tmp_path / "workspace"
     cache_root = tmp_path / "runtime"
     workspace.mkdir()
@@ -1599,6 +1840,7 @@ async def test_terminal_drain_reacts_to_child_terminal_fact_and_queries_remain_p
         workspace,
         factory_run_id=run.id,
     )
+    del identity  # force-fail path owns terminalization; no cooperative settle needed
     task_path = runtime._board.tasks_dir / f"task_{task_id}.json"
     session_path = runtime._board.tasks_dir / f"task_{task_id}.session.json"
 
@@ -1609,19 +1851,16 @@ async def test_terminal_drain_reacts_to_child_terminal_fact_and_queries_remain_p
     )
     assert result.metadata["child_sessions_settled"] is False
     assert result.metadata["inflight_run_continues"] is True
-    draining = await service.complete_run(run.id, success=False)
+    released = await service.complete_run(run.id, success=False)
 
-    assert draining.metadata["factory_child_sessions_settled"] is False
-    assert draining.metadata["factory_workspace_run_lease"]["state"] == "draining"
-    assert draining.metadata["factory_workspace_run_drain_conflict"]["code"] == (
-        "factory_workspace_run_child_session_inflight"
-    )
-    assert task_path.is_file()
-    assert session_path.is_file()
+    assert released.metadata["factory_child_sessions_settled"] is True
+    assert released.metadata["factory_workspace_run_lease"]["state"] == "released"
+    assert released.metadata.get("factory_task_runtime_abort", {}).get("force_active_sessions") is True
+    assert "factory_workspace_run_drain_conflict" not in released.metadata
+    # Reset after release removes task/session files under factory authority.
+    assert not task_path.exists()
+    assert not session_path.exists()
 
-    completed = _settle_factory_child(runtime, identity, outcome="completed", summary="child settled")
-    assert completed["success"] is True
-    await service.settle_terminal_run(run.id)
     before_read_lease = service._admission.current()
     before_read_events = await service.get_run_events(run.id)
     observed = await service.get_run(run.id)
@@ -1631,15 +1870,10 @@ async def test_terminal_drain_reacts_to_child_terminal_fact_and_queries_remain_p
     assert observed.metadata["factory_child_sessions_settled"] is True
     assert service._admission.current() == before_read_lease
     assert await service.get_run_events(run.id) == before_read_events
-    assert not task_path.exists()
-    assert not session_path.exists()
 
-    released = await service.settle_terminal_run(run.id)
-
-    assert released is not None
-    assert released.metadata["factory_child_sessions_settled"] is True
-    assert released.metadata["factory_workspace_run_lease"]["state"] == "released"
-    assert "factory_workspace_run_drain_conflict" not in released.metadata
+    again = await service.settle_terminal_run(run.id)
+    assert again is not None
+    assert again.metadata["factory_workspace_run_lease"]["state"] == "released"
 
 
 @pytest.mark.asyncio

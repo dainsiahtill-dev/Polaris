@@ -1913,3 +1913,58 @@ def test_artifact_quality_issue_projection_rejects_wrong_source_for_exact_diagno
 
         assert len(issues) == 1
         assert issues[0]["code"] != diagnostic_kind
+
+
+def test_cargo_manifest_reports_missing_binary_entrypoint(tmp_path: Path) -> None:
+    """R71: declared [[bin]] without src/main.rs must become quality evidence."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn ok() {}\n", encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text(
+        """
+[package]
+name = "taste_palette"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "taste_palette"
+path = "src/lib.rs"
+
+[[bin]]
+name = "taste_palette_cli"
+path = "src/main.rs"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["Cargo.toml"])
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["Cargo.toml"])
+
+    assert any("find bin" in error and "taste_palette_cli" in error for error in errors)
+    assert any(issue.code == "rust_missing_binary_entrypoint" for issue in evidence.issues)
+    issue = next(issue for issue in evidence.issues if issue.code == "rust_missing_binary_entrypoint")
+    assert issue.path == "src/main.rs"
+    assert issue.metadata["bin_name"] == "taste_palette_cli"
+
+
+def test_cargo_manifest_missing_binary_silent_when_entrypoint_exists(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text(
+        """
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "demo"
+path = "src/main.rs"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["Cargo.toml"])
+    assert not any("find bin" in error for error in errors)

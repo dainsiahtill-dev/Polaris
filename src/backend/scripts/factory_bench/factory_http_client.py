@@ -18,6 +18,12 @@ DEFAULT_MAX_RETRIES = 2
 MAX_RETRY_AFTER_S = 5.0
 FACTORY_EVENT_TAIL = 80
 TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "canceled"}
+# When runtime.v2 misses a late terminal event (subscription race / NATS half-close),
+# poll HTTP so isolated true-runs do not sit for the full timeout after the run is already failed.
+HTTP_TERMINAL_POLL_INTERVAL_S = 5.0
+# complete_run/settle can hold the backend run-lock for tens of seconds; short GETs time out
+# (R63 logged 13× "backend GET failed: timed out") even though durable run.json is already terminal.
+HTTP_TERMINAL_POLL_TIMEOUT_S = 30.0
 
 
 def _retry_after_seconds(exc: urllib.error.HTTPError) -> float | None:
@@ -300,9 +306,11 @@ def get_run_status(
     run_id: str,
     token: str = "",
     workspace: str = "",
+    *,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
 ) -> dict[str, Any] | None:
     url = _append_query_params(f"{backend_url}/v2/factory/runs/{run_id}", {"workspace": workspace})
-    return _http_get_json(url, token=token)
+    return _http_get_json(url, token=token, timeout_s=timeout_s)
 
 
 def cancel_factory_run(
@@ -342,6 +350,103 @@ def get_run_artifacts(
     return _http_get_json(url, token=token)
 
 
+def _coerce_terminal_run_status(status: Mapping[str, Any], *, run_id: str) -> dict[str, Any] | None:
+    """Return a terminal status snapshot, or None when still non-terminal."""
+
+    payload = dict(status)
+    payload["run_id"] = str(payload.get("run_id") or run_id).strip() or run_id
+    current = str(payload.get("status") or "").strip().lower()
+    if current not in TERMINAL_RUN_STATUSES:
+        return None
+    if current == "canceled":
+        payload["status"] = "cancelled"
+    return payload
+
+
+def _durable_run_status_snapshot(
+    run_id: str,
+    *,
+    workspace: str = "",
+    latest_status: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Read durable factory run.json from KernelOne storage (no live HTTP).
+
+    Used when HTTP status polls time out because complete_run holds the run lock
+    but the durable record has already been written terminal.
+    """
+
+    workspace_path = str(workspace or "").strip()
+    if not workspace_path:
+        return None
+    try:
+        from pathlib import Path
+
+        from polaris.kernelone.storage import resolve_storage_roots
+
+        roots = resolve_storage_roots(workspace_path)
+        run_path = Path(roots.runtime_root) / "factory" / str(run_id).strip() / "run.json"
+        if not run_path.is_file():
+            return None
+        raw = run_path.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    status_token = str(payload.get("status") or "").strip().lower()
+    merged: dict[str, Any] = {
+        **dict(latest_status or {}),
+        "run_id": run_id,
+        "status": status_token,
+        "phase": status_token or str((latest_status or {}).get("phase") or ""),
+        "completed_at": payload.get("completed_at"),
+        "current_stage": (payload.get("metadata") or {}).get("current_stage")
+        if isinstance(payload.get("metadata"), Mapping)
+        else None,
+    }
+    terminal = _coerce_terminal_run_status(merged, run_id=run_id)
+    if terminal is None:
+        return None
+    terminal["_terminal_source"] = "durable_run_json"
+    return terminal
+
+
+def _http_terminal_status_snapshot(
+    backend_url: str,
+    run_id: str,
+    *,
+    token: str = "",
+    workspace: str = "",
+    latest_status: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Best-effort snapshot used when runtime.v2 terminal events are missed.
+
+    Preference order:
+    1. HTTP GET /v2/factory/runs/{id} with an extended timeout (backend may be
+       busy inside complete_run/settle).
+    2. Durable run.json under the workspace runtime factory store.
+    """
+
+    snapshot = get_run_status(
+        backend_url,
+        run_id,
+        token=token,
+        workspace=workspace,
+        timeout_s=HTTP_TERMINAL_POLL_TIMEOUT_S,
+    )
+    if isinstance(snapshot, Mapping):
+        merged: dict[str, Any] = {**dict(latest_status or {}), **dict(snapshot), "run_id": run_id}
+        terminal = _coerce_terminal_run_status(merged, run_id=run_id)
+        if terminal is not None:
+            terminal["_terminal_source"] = "http_status_poll"
+            return terminal
+    return _durable_run_status_snapshot(
+        run_id,
+        workspace=workspace,
+        latest_status=latest_status,
+    )
+
+
 def wait_run_until_terminal(
     backend_url: str,
     run_id: str,
@@ -367,6 +472,17 @@ def wait_run_until_terminal(
         )
     except RuntimeError as exc:
         print(f"[factory-bench] event wait failed: {run_id}: {exc}", file=sys.stderr, flush=True)
+        http_terminal = _http_terminal_status_snapshot(
+            backend_url,
+            run_id,
+            token=token,
+            workspace=workspace,
+            latest_status=dict(initial_status or {}),
+        )
+        if http_terminal is not None:
+            if on_status is not None:
+                on_status(http_terminal)
+            return http_terminal
         if return_diagnostics:
             return _event_wait_diagnostic_status(
                 run_id,
@@ -396,6 +512,24 @@ async def _wait_run_until_terminal_async(
     if on_status is not None:
         on_status(latest_status)
 
+    initial_terminal = _coerce_terminal_run_status(latest_status, run_id=run_id)
+    if initial_terminal is not None:
+        return initial_terminal
+
+    # Catch races where the run finished before the WS subscription is live.
+    http_terminal = await asyncio.to_thread(
+        _http_terminal_status_snapshot,
+        backend_url,
+        run_id,
+        token=token,
+        workspace=workspace,
+        latest_status=latest_status,
+    )
+    if http_terminal is not None:
+        if on_status is not None:
+            on_status(http_terminal)
+        return http_terminal
+
     ws_url = _runtime_ws_url(backend_url, token=token, workspace=workspace)
     try:
         async with websockets.connect(ws_url, ping_interval=30) as ws:
@@ -403,6 +537,19 @@ async def _wait_run_until_terminal_async(
             while True:
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
+                    # Final HTTP chance before declaring event-wait timeout.
+                    http_terminal = await asyncio.to_thread(
+                        _http_terminal_status_snapshot,
+                        backend_url,
+                        run_id,
+                        token=token,
+                        workspace=workspace,
+                        latest_status=latest_status,
+                    )
+                    if http_terminal is not None:
+                        if on_status is not None:
+                            on_status(http_terminal)
+                        return http_terminal
                     print(f"[factory-bench] event wait timeout: {run_id}", file=sys.stderr, flush=True)
                     if return_diagnostics:
                         return _event_wait_diagnostic_status(
@@ -414,7 +561,23 @@ async def _wait_run_until_terminal_async(
                             workspace=workspace,
                         )
                     return None
-                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                recv_timeout = min(HTTP_TERMINAL_POLL_INTERVAL_S, remaining)
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=recv_timeout)
+                except asyncio.TimeoutError:
+                    http_terminal = await asyncio.to_thread(
+                        _http_terminal_status_snapshot,
+                        backend_url,
+                        run_id,
+                        token=token,
+                        workspace=workspace,
+                        latest_status=latest_status,
+                    )
+                    if http_terminal is not None:
+                        if on_status is not None:
+                            on_status(http_terminal)
+                        return http_terminal
+                    continue
                 try:
                     message = json.loads(str(raw))
                 except json.JSONDecodeError:
@@ -429,12 +592,22 @@ async def _wait_run_until_terminal_async(
                 latest_status = _status_from_factory_event(run_id, payload, latest_status)
                 if on_status is not None:
                     on_status(latest_status)
-                current_status = str(latest_status.get("status") or "").strip().lower()
-                if current_status in TERMINAL_RUN_STATUSES:
-                    if current_status == "canceled":
-                        latest_status["status"] = "cancelled"
-                    return latest_status
+                terminal = _coerce_terminal_run_status(latest_status, run_id=run_id)
+                if terminal is not None:
+                    return terminal
     except asyncio.TimeoutError:
+        http_terminal = await asyncio.to_thread(
+            _http_terminal_status_snapshot,
+            backend_url,
+            run_id,
+            token=token,
+            workspace=workspace,
+            latest_status=latest_status,
+        )
+        if http_terminal is not None:
+            if on_status is not None:
+                on_status(http_terminal)
+            return http_terminal
         print(f"[factory-bench] event wait timeout: {run_id}", file=sys.stderr, flush=True)
         if return_diagnostics:
             return _event_wait_diagnostic_status(
@@ -447,6 +620,18 @@ async def _wait_run_until_terminal_async(
             )
         return None
     except (OSError, ValueError, RuntimeError, websockets.exceptions.WebSocketException) as exc:
+        http_terminal = await asyncio.to_thread(
+            _http_terminal_status_snapshot,
+            backend_url,
+            run_id,
+            token=token,
+            workspace=workspace,
+            latest_status=latest_status,
+        )
+        if http_terminal is not None:
+            if on_status is not None:
+                on_status(http_terminal)
+            return http_terminal
         print(f"[factory-bench] runtime.v2 event wait failed: {run_id}: {exc}", file=sys.stderr, flush=True)
         if return_diagnostics:
             return _event_wait_diagnostic_status(

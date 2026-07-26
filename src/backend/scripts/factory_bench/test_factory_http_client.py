@@ -6,17 +6,21 @@ import json
 import sys
 import unittest
 from email.message import Message
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend/scripts/factory_bench")
 
+import factory_http_client as factory_http_client_mod
 from factory_http_client import (
     _factory_event_payload,
     _http_get_json,
     _http_post_json,
+    _http_terminal_status_snapshot,
     _runtime_ws_url,
     _status_from_factory_event,
     _subscribe_factory_events,
+    _wait_run_until_terminal_async,
     cancel_factory_run,
     get_audit_bundle,
     get_run_artifacts,
@@ -453,7 +457,10 @@ class TestEventWaitUntilTerminal(unittest.TestCase):
         async def _fake_wait(*args, **kwargs):
             raise RuntimeError("received 1012 (service restart)")
 
-        with patch("factory_http_client._wait_run_until_terminal_async", _fake_wait):
+        with (
+            patch("factory_http_client._wait_run_until_terminal_async", _fake_wait),
+            patch("factory_http_client.get_run_status", return_value=None),
+        ):
             result = wait_run_until_terminal(
                 "http://localhost:49977",
                 "run-42",
@@ -467,6 +474,150 @@ class TestEventWaitUntilTerminal(unittest.TestCase):
         self.assertEqual(result["phase"], "director_dispatch")
         self.assertEqual(result["_event_wait_error"]["kind"], "runtime_error")
         self.assertIn("service restart", result["_event_wait_error"]["message"])
+
+    def test_wait_run_until_terminal_http_poll_recovers_missed_ws_terminal(self) -> None:
+        """When runtime.v2 misses the terminal event, HTTP status must still close the wait."""
+
+        http_snapshot = {
+            "run_id": "run-42",
+            "status": "failed",
+            "phase": "director_dispatch",
+            "completed_at": "2026-07-25T14:00:57Z",
+        }
+
+        with patch("factory_http_client.get_run_status", return_value=http_snapshot):
+            terminal = _http_terminal_status_snapshot(
+                "http://localhost:49977",
+                "run-42",
+                workspace="/tmp/ws",
+                latest_status={"status": "running"},
+            )
+        self.assertIsNotNone(terminal)
+        assert terminal is not None
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(terminal["_terminal_source"], "http_status_poll")
+
+        class _FakeWS:
+            async def __aenter__(self) -> _FakeWS:
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            async def recv(self) -> str:
+                # Never deliver a usable factory event; force the HTTP poll path.
+                await asyncio.sleep(0.05)
+                raise asyncio.TimeoutError
+
+        # First HTTP poll (pre-WS) already sees failed → returns without needing WS events.
+        with patch.object(factory_http_client_mod, "get_run_status", return_value=http_snapshot):
+            result = asyncio.run(
+                _wait_run_until_terminal_async(
+                    "http://localhost:49977",
+                    "run-42",
+                    workspace="/tmp/ws",
+                    timeout_s=2.0,
+                    initial_status={"status": "running"},
+                )
+            )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result.get("_terminal_source"), "http_status_poll")
+
+        # Mid-wait HTTP poll: pre-WS poll empty, then WS recv times out, then HTTP terminal.
+        poll_state = {"n": 0}
+
+        def _poll_then_terminal(*_args: Any, **_kwargs: Any) -> dict[str, Any] | None:
+            poll_state["n"] += 1
+            if poll_state["n"] == 1:
+                return {"run_id": "run-42", "status": "running"}
+            return http_snapshot
+
+        with (
+            patch.object(factory_http_client_mod, "websockets") as ws_mod,
+            patch.object(factory_http_client_mod, "_subscribe_factory_events", new=AsyncMock()),
+            patch.object(factory_http_client_mod, "get_run_status", side_effect=_poll_then_terminal),
+        ):
+            ws_mod.connect = lambda *a, **k: _FakeWS()
+            result2 = asyncio.run(
+                _wait_run_until_terminal_async(
+                    "http://localhost:49977",
+                    "run-42",
+                    workspace="/tmp/ws",
+                    timeout_s=2.0,
+                    initial_status={"status": "running"},
+                )
+            )
+        self.assertIsNotNone(result2)
+        assert result2 is not None
+        self.assertEqual(result2["status"], "failed")
+        self.assertEqual(result2.get("_terminal_source"), "http_status_poll")
+        self.assertGreaterEqual(poll_state["n"], 2)
+
+    def test_wait_run_until_terminal_returns_immediate_terminal_initial_status(self) -> None:
+        result = asyncio.run(
+            _wait_run_until_terminal_async(
+                "http://localhost:49977",
+                "run-42",
+                initial_status={"status": "failed", "phase": "director_dispatch"},
+                timeout_s=1.0,
+            )
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["run_id"], "run-42")
+
+    def test_terminal_snapshot_falls_back_to_durable_run_json_when_http_times_out(
+        self,
+    ) -> None:
+        """R63: HTTP GETs timed out during complete_run; durable run.json is SSoT."""
+
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "ws"
+            runtime = Path(tmp) / "runtime"
+            run_dir = runtime / "factory" / "run-42"
+            run_dir.mkdir(parents=True)
+            workspace.mkdir()
+            (run_dir / "run.json").write_text(
+                json.dumps(
+                    {
+                        "id": "run-42",
+                        "status": "failed",
+                        "completed_at": "2026-07-26T00:00:00+00:00",
+                        "metadata": {"current_stage": "director_dispatch"},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            fake_roots = SimpleNamespace(runtime_root=str(runtime))
+
+            with (
+                patch("factory_http_client.get_run_status", return_value=None),
+                patch(
+                    "polaris.kernelone.storage.resolve_storage_roots",
+                    return_value=fake_roots,
+                ),
+            ):
+                from factory_http_client import _http_terminal_status_snapshot
+
+                terminal = _http_terminal_status_snapshot(
+                    "http://localhost:49984",
+                    "run-42",
+                    workspace=str(workspace),
+                    latest_status={"status": "running"},
+                )
+
+            self.assertIsNotNone(terminal)
+            assert terminal is not None
+            self.assertEqual(terminal["status"], "failed")
+            self.assertEqual(terminal["_terminal_source"], "durable_run_json")
+            self.assertEqual(terminal["run_id"], "run-42")
 
 
 if __name__ == "__main__":

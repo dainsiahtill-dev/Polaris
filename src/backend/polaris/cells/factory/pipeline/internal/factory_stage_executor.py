@@ -2924,11 +2924,14 @@ class OrchestrationStageExecutor:
                 "Director dispatch skipped because the PM task dependency schedule is invalid",
             )
         if reason == "no_active_director_tasks":
+            # Empty remaining wave is success: PM tasks already terminal (or none
+            # remain for Director). Treating this as failed caused stage
+            # persistence quarantine + forever-RUNNING lease hangs (R56).
             return (
                 "director.dispatch_no_active_tasks",
-                "Director dispatch admission found no active PM tasks",
-                "failed",
-                "Director dispatch skipped because no active PM tasks were admitted",
+                "Director dispatch admission found no active PM tasks remaining",
+                "completed",
+                "Director dispatch complete: no active PM tasks remain to execute",
             )
         return (
             "director.dispatch_deadline_blocker",
@@ -6172,20 +6175,24 @@ class OrchestrationStageExecutor:
                     error_code, error_detail, result_status, result_message = (
                         self._director_admission_failure_projection(admission_decision)
                     )
-                    stage_signals.append(
-                        {
-                            "code": error_code,
-                            "severity": "error",
-                            "detail": error_detail,
-                            "round": round_index,
-                            "failure_class": FailureClassV1.TASKBOARD_DEADLOCK.value,
-                            "responsible_layer": "execution_control_plane",
-                            "repairable_by_director": False,
-                            "requires_ce_replan": False,
-                            "requires_pm_revision": False,
-                            **admission_payload,
-                        }
+                    no_active_tasks = (
+                        str(admission_decision.reason or "").strip() == "no_active_director_tasks"
+                        and result_status == "completed"
                     )
+                    signal_payload: dict[str, Any] = {
+                        "code": error_code,
+                        "severity": "info" if no_active_tasks else "error",
+                        "detail": error_detail,
+                        "round": round_index,
+                        "responsible_layer": "execution_control_plane",
+                        "repairable_by_director": False,
+                        "requires_ce_replan": False,
+                        "requires_pm_revision": False,
+                        **admission_payload,
+                    }
+                    if not no_active_tasks:
+                        signal_payload["failure_class"] = FailureClassV1.TASKBOARD_DEADLOCK.value
+                    stage_signals.append(signal_payload)
                     final_result = CommandResult(
                         run_id="",
                         status=result_status,

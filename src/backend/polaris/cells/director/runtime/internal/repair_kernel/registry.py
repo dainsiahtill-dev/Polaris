@@ -2232,9 +2232,23 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="structural_repair",
                 archetype=RepairArchetype.MISSING_DEPENDENCY,
                 priority=1,
-                raw_terms=("couldn't read", "No such file or directory"),
+                # Match requires ALL raw_terms present (AND). Cargo check says:
+                # "can't find bin `name` at path `.../src/main.rs`".
+                raw_terms=("can't find bin", "at path"),
                 risk_level="low",
                 description="Creates missing Rust binary entrypoint files declared by Cargo [[bin]] targets.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.missing_binary_entrypoint_io",
+                source_tool=RUST_MISSING_BINARY_ENTRYPOINT_SOURCE_TOOL,
+                language="rust",
+                phase="structural_repair",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                raw_terms=("couldn't read", "No such file or directory"),
+                risk_level="low",
+                description="Covers I/O missing-file wording for declared Rust binary entrypoints.",
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(

@@ -2370,20 +2370,24 @@ async def _execute_run_with_service(
         # left the Factory run stuck in RUNNING with an abandoned stage claim
         # ("Task exception was never retrieved"). CancelledError is BaseException and
         # is intentionally not swallowed here.
-        if str(getattr(exc, "code", "")).startswith("factory_stage_"):
+        is_stage_quarantine = str(getattr(exc, "code", "")).startswith("factory_stage_")
+        if is_stage_quarantine:
+            # Stage persistence quarantine stops automatic router mutations, but
+            # lease closeout must still run. Quarantine terminalize marks the run
+            # FAILED so complete_run/settle can release the workspace lease (R56/R60).
             logger.error(
-                "Factory run %s remains quarantined at stage=%s; automatic router mutation stopped: %s",
+                "Factory run %s quarantined at stage=%s; stopping further mutations and closing lease: %s",
                 run_id,
                 active_stage or "<none>",
                 exc,
             )
-            return
-        logger.exception(
-            "Factory run %s failed at stage=%s: %s",
-            run_id,
-            active_stage or "<none>",
-            exc,
-        )
+        else:
+            logger.exception(
+                "Factory run %s failed at stage=%s: %s",
+                run_id,
+                active_stage or "<none>",
+                exc,
+            )
         try:
             await service.reconcile_stage_execution_for_reentry(
                 run_id,
@@ -2402,48 +2406,85 @@ async def _execute_run_with_service(
             failure_stage = active_stage or str(current_run.metadata.get("current_stage") or "").strip()
             tb = traceback.format_exc(limit=20)
             failure_detail = str(exc)
-            failure_code = _classify_factory_failure_code(stage=failure_stage, detail=failure_detail)
+            failure_code = (
+                str(getattr(exc, "code", "") or "").strip()
+                if is_stage_quarantine
+                else _classify_factory_failure_code(stage=failure_stage, detail=failure_detail)
+            ) or _classify_factory_failure_code(stage=failure_stage, detail=failure_detail)
             suggested_action = _factory_failure_suggestion(failure_code)
             failure_timestamp = datetime.now(timezone.utc).isoformat()
 
             def apply_failure(current: FactoryRun) -> bool:
                 if current.status == ServiceRunStatus.CANCELLED:
                     return False
-                current.metadata["failure"] = {
-                    "stage": failure_stage or "unknown",
-                    "code": failure_code,
-                    "detail": failure_detail,
-                    "traceback": tb,
-                    "timestamp": failure_timestamp,
-                }
-                if suggested_action:
-                    current.metadata["failure"]["recoverable"] = True
-                    current.metadata["failure"]["suggested_action"] = suggested_action
+                # Preserve quarantine terminalize failure payload when already set.
+                existing_failure = current.metadata.get("failure")
+                if not (
+                    is_stage_quarantine
+                    and isinstance(existing_failure, dict)
+                    and str(existing_failure.get("code") or "") == "FACTORY_STAGE_QUARANTINED"
+                ):
+                    current.metadata["failure"] = {
+                        "stage": failure_stage or "unknown",
+                        "code": failure_code,
+                        "detail": failure_detail,
+                        "traceback": tb,
+                        "timestamp": failure_timestamp,
+                    }
+                    if suggested_action:
+                        current.metadata["failure"]["recoverable"] = True
+                        current.metadata["failure"]["suggested_action"] = suggested_action
                 if failure_stage:
                     current.metadata["last_failed_stage"] = failure_stage
                 return True
 
-            current_run = await service.apply_automatic_router_mutation(
-                run_id,
-                operation="failure_terminalization",
-                mutation=apply_failure,
-                event={
-                    "type": "error",
-                    "stage": failure_stage or None,
-                    "message": str(exc),
-                    "traceback": tb,
-                },
-            )
+            try:
+                current_run = await service.apply_automatic_router_mutation(
+                    run_id,
+                    operation="failure_terminalization",
+                    mutation=apply_failure,
+                    event={
+                        "type": "error",
+                        "stage": failure_stage or None,
+                        "message": str(exc),
+                        "traceback": tb,
+                    },
+                )
+            except Exception as mutation_exc:  # noqa: BLE001 — quarantine may block non-closeout writes
+                logger.error(
+                    "Factory run %s failure metadata mutation skipped: %s",
+                    run_id,
+                    mutation_exc,
+                )
+                current_run = await service.get_run(run_id)
+                if current_run is None:
+                    return
             if current_run.status == ServiceRunStatus.CANCELLED:
                 return
-            await _persist_run_summary(
-                service=service,
-                run_id=run_id,
-                payload=payload,
-                workspace=workspace,
-                status="FAIL",
-            )
-            await service.complete_run(run_id, success=False)
+            try:
+                await _persist_run_summary(
+                    service=service,
+                    run_id=run_id,
+                    payload=payload,
+                    workspace=workspace,
+                    status="FAIL",
+                )
+            except Exception as summary_exc:  # noqa: BLE001 — summary is non-authoritative
+                logger.warning(
+                    "Factory run %s FAIL summary persistence skipped: %s",
+                    run_id,
+                    summary_exc,
+                )
+            # Always drive terminal drain/release — including quarantine paths that
+            # previously returned early and left the workspace lease active forever.
+            try:
+                await service.complete_run(run_id, success=False)
+            except Exception as complete_exc:  # noqa: BLE001 — last-chance log; lease may need recovery
+                logger.error(
+                    "Factory run %s complete_run after failure did not finish: %s",
+                    run_id,
+                    complete_exc,
+                )
 
 
 def _schedule_factory_run_task(

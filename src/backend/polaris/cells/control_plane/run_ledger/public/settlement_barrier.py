@@ -167,24 +167,66 @@ def _latest_task_facts(
     return {task_id: selected[2] for task_id, selected in latest.items()}
 
 
+def _task_key_matches_terminal_ids(task_key: str, terminal_task_ids: set[str]) -> bool:
+    """Return True when a tool-lifecycle task key maps to a terminal TaskRuntime id.
+
+    Tool lifecycle keys may be numeric board ids, external/pm task tokens, or
+    prefixed forms. Once the task itself is terminal (failed/cancelled/completed),
+    a missing tool-lifecycle receipt must not keep the Factory settlement barrier
+    open forever — that pin stuck workspace leases after Director stage failure
+    (R55: tool_lifecycle_evidence_missing + lifecycle_open).
+    """
+
+    key = _clean_string(task_key)
+    if not key:
+        return False
+    if key in terminal_task_ids:
+        return True
+    key_norm = key.upper()
+    key_suffix = key_norm[5:] if key_norm.startswith("TASK-") else key
+    for task_id in terminal_task_ids:
+        if not task_id:
+            continue
+        tid = _clean_string(task_id)
+        tid_norm = tid.upper()
+        tid_suffix = tid_norm[5:] if tid_norm.startswith("TASK-") else tid
+        if key == tid or key_norm == tid_norm:
+            return True
+        if key_suffix and key_suffix == tid_suffix:
+            return True
+        if key.endswith(f":{tid}") or key.endswith(f"/{tid}"):
+            return True
+        if tid.endswith(key) and key.isdigit():
+            return True
+    return False
+
+
 def _lifecycle_counts(
     run_projection: Mapping[str, Any],
     task_runtime_facts: Sequence[Mapping[str, Any]],
 ) -> _LifecycleCounts:
     latest_task_facts = _latest_task_facts(task_runtime_facts)
-    task_states = tuple(_task_state(fact) for fact in latest_task_facts.values())
-    open_task_count = sum(state not in _TERMINAL_TASK_STATES for state in task_states)
-    active_task_count = sum(state in _ACTIVE_LIFECYCLE_STATES for state in task_states)
-    failed_task_count = sum(state in _FAILED_TASK_STATES for state in task_states)
+    task_states = {task_id: _task_state(fact) for task_id, fact in latest_task_facts.items()}
+    open_task_count = sum(state not in _TERMINAL_TASK_STATES for state in task_states.values())
+    active_task_count = sum(state in _ACTIVE_LIFECYCLE_STATES for state in task_states.values())
+    failed_task_count = sum(state in _FAILED_TASK_STATES for state in task_states.values())
+    terminal_task_ids = {
+        task_id for task_id, state in task_states.items() if state in _TERMINAL_TASK_STATES
+    }
 
     lifecycle = _mapping(run_projection.get("tool_lifecycle"))
     latest_tool_lifecycles = _mapping(lifecycle.get("latest_by_task"))
-    missing_tool_keys = set(_string_tuple(lifecycle.get("missing_required_task_keys")))
+    missing_tool_keys = {
+        key
+        for key in _string_tuple(lifecycle.get("missing_required_task_keys"))
+        if not _task_key_matches_terminal_ids(key, terminal_task_ids)
+    }
     active_tool_keys = {
         _clean_string(task_key)
         for task_key, raw_event in latest_tool_lifecycles.items()
         if _clean_string(task_key)
         and _clean_string(_mapping(raw_event).get("status")).lower() in _ACTIVE_LIFECYCLE_STATES
+        and not _task_key_matches_terminal_ids(str(task_key), terminal_task_ids)
     }
     open_tool_keys = missing_tool_keys | active_tool_keys
     expected_effect_count = _non_negative_int(lifecycle.get("dispatched_tool_calls_count"))
@@ -334,9 +376,10 @@ def project_factory_settlement_barrier(
         counts=counts,
         run_projection=run_projection,
     )
-    closed = bool(
-        scope_found and counts.open_count == 0 and counts.open_effect_count == 0 and not missing_required_modalities
-    )
+    # open_effect_count stays in blocking_reasons for diagnostics, but must not
+    # pin release once every TaskRuntime lifecycle is terminal (R57 residual
+    # effect_receipts_open after Director materialization + stage fail).
+    closed = bool(scope_found and counts.open_count == 0 and not missing_required_modalities)
     passed = bool(closed and bool(run_projection.get("ok")) and counts.failed_count == 0)
     hash_payload = {
         "schema_version": FACTORY_SETTLEMENT_BARRIER_SCHEMA_V1,
