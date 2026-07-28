@@ -486,6 +486,15 @@ class TestChiefEngineerBlueprintPortfolio:
         assert persisted["target_files"] == ["src/interface_projection.py"]
         assert persisted["scope_paths"] == ["src/interface_projection.py"]
         assert "portfolio_path" not in persisted
+        job_token = persisted["job_token"]
+        assert job_token["token_id"].startswith("job-")
+        assert job_token["run_id"] == "run-projection"
+        assert job_token["stage"] == "pending_exec"
+        assert job_token["target_files"] == ["src/interface_projection.py"]
+        assert job_token["allowed_write_paths"] == ["src/interface_projection.py"]
+        assert job_token["capability_audit"] == {"ok": True, "issues": []}
+        assert job_token["blueprint_hash"] == persisted["blueprint_hash"]
+        assert persisted["capability_token"] == job_token
 
     def test_task_contract_normalizes_duplicates_and_rejects_unsafe_paths(self) -> None:
         task = ChiefEngineerPortfolioTaskV1(
@@ -1249,6 +1258,8 @@ class TestChiefEngineerBlueprintPublicService:
         persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
         assert isinstance(persisted, dict)
         assert persisted["handoff_ready"] is False
+        assert "job_token" not in persisted
+        assert "capability_token" not in persisted
 
     def test_generate_fails_before_persisting_ready_blueprint_without_owner_evidence(
         self,

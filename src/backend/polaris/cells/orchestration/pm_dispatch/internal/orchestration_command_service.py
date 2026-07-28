@@ -1077,6 +1077,9 @@ class OrchestrationCommandService:
                     updated_at.isoformat() if (updated_at := getattr(task, "updated_at", None)) is not None else None
                 ),
             }
+            result_evidence = getattr(task, "result_evidence", None)
+            if isinstance(result_evidence, dict) and result_evidence:
+                row["result_evidence"] = dict(result_evidence)
             rows.append(row)
 
         rows.sort(

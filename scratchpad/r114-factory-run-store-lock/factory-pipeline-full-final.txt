@@ -1,0 +1,93 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/dains/Documents/polaris/src/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, cov-7.1.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 1266 items
+
+src/backend/polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py . [  0%]
+                                                                         [  0%]
+src/backend/polaris/cells/factory/pipeline/tests/test_bench_gates.py ... [  0%]
+........................................................................ [  6%]
+........................................................................ [ 11%]
+...........................................                              [ 15%]
+src/backend/polaris/cells/factory/pipeline/tests/test_bench_service.py . [ 15%]
+...............                                                          [ 16%]
+src/backend/polaris/cells/factory/pipeline/tests/test_contracts.py ..... [ 16%]
+.................................................                        [ 20%]
+src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py . [ 20%]
+...........................................................              [ 25%]
+src/backend/polaris/cells/factory/pipeline/tests/test_director_fanout_evidence.py . [ 25%]
+........................                                                 [ 27%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_ce_timeout_budget.py . [ 27%]
+                                                                         [ 27%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_deadline_policy.py . [ 27%]
+...............                                                          [ 28%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_event_chain.py . [ 28%]
+..................................                                       [ 31%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_execution_control_plane_ssot.py . [ 31%]
+.....................                                                    [ 33%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_failure_attribution.py . [ 33%]
+.                                                                        [ 33%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_physical_attempt_control.py . [ 33%]
+.......................................................                  [ 37%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_admission.py . [ 37%]
+.......                                                                  [ 38%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py . [ 38%]
+........................................................................ [ 44%]
+..............................................................           [ 49%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_provenance.py . [ 49%]
+................................................                         [ 52%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_run_service.py . [ 53%]
+...............                                                          [ 54%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_role_evidence_source_resolver.py . [ 54%]
+...........................                                              [ 56%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_run_models.py . [ 56%]
+............                                                             [ 57%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_run_service_pm_contract.py . [ 57%]
+.                                                                        [ 57%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_settlement_consumer.py . [ 57%]
+........................                                                 [ 59%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_settlement_runtime.py . [ 59%]
+........................................................                 [ 64%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py . [ 64%]
+........................................................................ [ 69%]
+........................................................................ [ 75%]
+........................................................................ [ 81%]
+......................................................                   [ 85%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_enum_summary.py . [ 85%]
+.............                                                            [ 86%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_write_catalog.py . [ 86%]
+.                                                                        [ 86%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_persistence.py . [ 86%]
+...........................                                              [ 88%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_persistence_service.py . [ 89%]
+........................                                                 [ 90%]
+src/backend/polaris/cells/factory/pipeline/tests/test_factory_workspace_admission.py . [ 90%]
+...............................................                          [ 94%]
+src/backend/polaris/cells/factory/pipeline/tests/test_npm_dependency_repair.py . [ 94%]
+....                                                                     [ 95%]
+src/backend/polaris/cells/factory/pipeline/tests/test_pm_plan_language_validation.py . [ 95%]
+............                                                             [ 96%]
+src/backend/polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py . [ 96%]
+                                                                         [ 96%]
+src/backend/polaris/cells/factory/pipeline/tests/test_projection_http_resources.py . [ 96%]
+.                                                                        [ 96%]
+src/backend/polaris/cells/factory/pipeline/tests/test_projection_lab.py . [ 96%]
+..                                                                       [ 96%]
+src/backend/polaris/cells/factory/pipeline/tests/test_projection_reproject.py . [ 96%]
+                                                                         [ 96%]
+src/backend/polaris/cells/factory/pipeline/tests/test_run_ledger.py .... [ 96%]
+..........................                                               [ 99%]
+src/backend/polaris/cells/factory/pipeline/tests/test_stale_recovery_public.py . [ 99%]
+...........                                                              [100%]
+
+=============================== warnings summary ===============================
+polaris/cells/factory/pipeline/tests/test_factory_workspace_admission.py::test_process_workspace_admission_has_one_winner
+polaris/cells/factory/pipeline/tests/test_factory_workspace_admission.py::test_process_workspace_admission_has_one_winner
+  /home/dains/.pyenv/versions/3.12.3/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=82015) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================= 1266 passed, 2 warnings in 738.98s (0:12:18) =================

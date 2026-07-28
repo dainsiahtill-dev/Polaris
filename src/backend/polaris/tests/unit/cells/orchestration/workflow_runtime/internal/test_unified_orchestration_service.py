@@ -16,6 +16,8 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts imp
     RoleEntrySpec,
     RunStatus,
     SignalRequest,
+    TaskPhase,
+    TaskSnapshot,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
     InMemoryOrchestrationRepository,
@@ -175,6 +177,104 @@ class TestUnifiedOrchestrationService:
         ui_state = await service.get_ui_state("r1")
         assert ui_state is not None
         assert ui_state["run_id"] == "r1"
+
+    @pytest.mark.asyncio
+    async def test_execute_task_persists_bounded_director_claim_failure_evidence(
+        self,
+        service: UnifiedOrchestrationService,
+        tmp_path: Path,
+    ) -> None:
+        class _ClaimFailureAdapter:
+            role_id = "director"
+            workspace = str(tmp_path)
+
+            async def execute(
+                self,
+                *,
+                task_id: str,
+                input_data: dict[str, object],
+                context: dict[str, object],
+            ) -> dict[str, object]:
+                del input_data, context
+                return {
+                    "success": False,
+                    "task_id": task_id,
+                    "error": "Director must claim TaskBoard task before execution",
+                    "error_code": "director.task_claim_required",
+                    "failure_stage": "taskboard_claim",
+                    "task_runtime_claim_required": True,
+                    "task_runtime_claim_failure_reason": "task_blocked",
+                    "task_runtime_claim_evidence": {
+                        "requested_task_id": "TASK-2",
+                        "selected_task_id": "2",
+                        "selection_source": "factory_claimable_projection",
+                        "board_claim_applied": False,
+                        "claim_failure_reason": "task_blocked",
+                        "claim_attempts": [
+                            {
+                                "attempt": {"nested": "x" * 20_000},
+                                "task_id": "2",
+                                "selection_source": "factory_claimable_projection",
+                                "claimed": False,
+                                "reason": "task_blocked",
+                            }
+                        ],
+                        "oversized_untrusted_payload": "x" * 20_000,
+                    },
+                    "decision_signals": [
+                        {
+                            "code": "director.task_claim_required",
+                            "severity": "error",
+                            "detail": "task blocked",
+                            "claim_attempt_count": {"nested": "x" * 20_000},
+                        }
+                    ],
+                }
+
+        run_id = "director-result-evidence"
+        workflow_task_id = "task-0-director"
+        service._adapters["director"] = _ClaimFailureAdapter()  # type: ignore[assignment]
+        await service._repo.save_snapshot(
+            OrchestrationSnapshot(
+                run_id=run_id,
+                workspace=str(tmp_path),
+                status=RunStatus.RUNNING,
+                tasks={
+                    workflow_task_id: TaskSnapshot(
+                        task_id=workflow_task_id,
+                        status=RunStatus.PENDING,
+                        phase=TaskPhase.INIT,
+                        role_id="director",
+                    )
+                },
+            )
+        )
+        task = PipelineTask(
+            task_id=workflow_task_id,
+            role_entry=RoleEntrySpec(
+                role_id="director",
+                input="execute TASK-2",
+                scope_paths=[str(tmp_path)],
+                metadata={"task_id": "TASK-2", "external_task_id": "TASK-2"},
+            ),
+        )
+
+        result = await service._execute_task(run_id, task)
+
+        assert result["success"] is False
+        snapshot = await service._repo.get_snapshot(run_id)
+        assert snapshot is not None
+        evidence = snapshot.tasks[workflow_task_id].result_evidence
+        assert evidence["schema_version"] == "workflow-runtime.role-result-evidence/1"
+        assert evidence["task_id"] == "TASK-2"
+        assert evidence["task_runtime_claim_failure_reason"] == "task_blocked"
+        claim = evidence["task_runtime_claim_evidence"]
+        assert claim["requested_task_id"] == "TASK-2"
+        assert claim["selected_task_id"] == "2"
+        assert claim["claim_attempts"][0]["reason"] == "task_blocked"
+        assert claim["claim_attempts"][0]["attempt"] is None
+        assert "oversized_untrusted_payload" not in claim
+        assert evidence["decision_signals"][0]["claim_attempt_count"] is None
 
     def test_coerce_positive_int(self, service: UnifiedOrchestrationService) -> None:
         assert service._coerce_positive_int("5", 1) == 5

@@ -96,6 +96,10 @@ Defined in `public/contracts.py`:
 - Guarded Director sessions validate the exact public TaskRuntime execution
   attempt before request preparation or kernel/controller construction; stream,
   non-stream, and direct-stream paths share this fail-closed ordering.
+- `ExecuteRoleTaskCommandV1.structured_output_contract` is the only typed path
+  for caller-owned result schemas. Runtime projects it once into the role-turn
+  context and rejects any pre-existing projection drift before kernel/provider
+  construction.
 - Direct cross-cell access to `internal/**` is not allowed.
 - Latest-only runtime ports do not keep prompt-driven fallback behavior; retired
   adapter call paths are migration targets and must not gain new behavior.

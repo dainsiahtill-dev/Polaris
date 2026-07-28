@@ -49,6 +49,11 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_context_output_budget_tokens
 from polaris.cells.roles.kernel.internal.llm_caller.request_facts import project_role_request_facts
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    StructuredOutputStreamNormalizer,
+    normalize_structured_output_response,
+    resolve_structured_output_transport,
+)
 from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 from polaris.cells.roles.kernel.internal.transaction.recon_policy import resolve_recon_required
@@ -333,17 +338,9 @@ def create_transaction_kernel(
                 floor_value = 0
             if floor_value > 0:
                 existing_budget = _resolve_existing_output_budget_tokens(override)
-                forced_tool_choice = tool_choice is not None and not (
-                    isinstance(tool_choice, str) and tool_choice.strip().lower() in {"", "auto"}
-                )
-                if forced_tool_choice:
-                    override["llm_max_tokens"] = floor_value
-                    override["_transaction_kernel_retry_output_budget_bounded"] = True
-                    override["_transaction_kernel_retry_output_budget_reason"] = (
-                        "forced_tool_retry_must_not_inherit_full_execution_budget"
-                    )
-                else:
-                    override["llm_max_tokens"] = max(floor_value, existing_budget or 0)
+                override["llm_max_tokens"] = max(floor_value, existing_budget or 0)
+                override.pop("_transaction_kernel_retry_output_budget_bounded", None)
+                override.pop("_transaction_kernel_retry_output_budget_reason", None)
         return override
 
     def _extract_model_override_from_request_payload(request_payload: dict[str, Any]) -> str | None:
@@ -387,6 +384,7 @@ def create_transaction_kernel(
         context_override=getattr(provider_request, "context_override", None),
         metadata=getattr(provider_request, "metadata", None),
     )
+    structured_output_transport = resolve_structured_output_transport(role_request_fact_projection.context_override)
 
     class _LLMProvider:
         """Encapsulated LLM provider for TransactionKernel."""
@@ -427,7 +425,7 @@ def create_transaction_kernel(
                 if hasattr(llm_invoker, "call_finalization") and inspect.iscoroutinefunction(
                     getattr(llm_invoker, "call_finalization", None)
                 ):
-                    return await llm_invoker.call_finalization(
+                    finalization_response = await llm_invoker.call_finalization(
                         profile=effective_profile,
                         system_prompt=system_prompt,
                         context=context,
@@ -435,6 +433,10 @@ def create_transaction_kernel(
                         task_id=task_id_str,
                         attempt=0,
                         turn_round=0,
+                    )
+                    return normalize_structured_output_response(
+                        finalization_response,
+                        structured_output_transport,
                     )
                 response = await llm_invoker.call(
                     profile=effective_profile,
@@ -448,7 +450,7 @@ def create_transaction_kernel(
                 if getattr(response, "error", None):
                     raise RuntimeError(str(response.error))
                 native_tool_calls = native_tool_calls_from_response(response)
-                return {
+                normalized_response = {
                     "content": response.content,
                     "thinking": getattr(response, "thinking", None),
                     "tool_calls": native_tool_calls,
@@ -456,10 +458,14 @@ def create_transaction_kernel(
                     "model": str(getattr(response, "model", "unknown") or "unknown"),
                     "usage": dict(getattr(response, "metadata", {}) or {}),
                 }
+                return normalize_structured_output_response(
+                    normalized_response,
+                    structured_output_transport,
+                )
             if hasattr(llm_invoker, "call_decision") and inspect.iscoroutinefunction(
                 getattr(llm_invoker, "call_decision", None)
             ):
-                return await llm_invoker.call_decision(
+                decision_response = await llm_invoker.call_decision(
                     profile=effective_profile,
                     system_prompt=system_prompt,
                     context=context,
@@ -468,6 +474,10 @@ def create_transaction_kernel(
                     task_id=task_id_str,
                     attempt=0,
                     turn_round=0,
+                )
+                return normalize_structured_output_response(
+                    decision_response,
+                    structured_output_transport,
                 )
             response = await llm_invoker.call(
                 profile=effective_profile,
@@ -481,7 +491,7 @@ def create_transaction_kernel(
             if getattr(response, "error", None):
                 raise RuntimeError(str(response.error))
             native_tool_calls = native_tool_calls_from_response(response)
-            return {
+            normalized_response = {
                 "content": response.content,
                 "thinking": getattr(response, "thinking", None),
                 "tool_calls": native_tool_calls,
@@ -489,6 +499,10 @@ def create_transaction_kernel(
                 "model": str(getattr(response, "model", "unknown") or "unknown"),
                 "usage": dict(getattr(response, "metadata", {}) or {}),
             }
+            return normalize_structured_output_response(
+                normalized_response,
+                structured_output_transport,
+            )
 
     class _ToolRuntime:
         """Encapsulated tool runtime for TransactionKernel."""
@@ -568,6 +582,11 @@ def create_transaction_kernel(
 
             run_id = str(provider_request.run_id or "").strip() or None
             task_id_str = str(provider_request.task_id or "").strip() or None
+            stream_normalizer = (
+                StructuredOutputStreamNormalizer(structured_output_transport)
+                if structured_output_transport is not None
+                else None
+            )
 
             async for chunk in llm_invoker.call_stream(
                 profile=effective_profile,
@@ -577,7 +596,11 @@ def create_transaction_kernel(
                 task_id=task_id_str,
                 attempt=0,
             ):
-                yield chunk
+                if stream_normalizer is None:
+                    yield chunk
+                    continue
+                for projected in stream_normalizer.project(chunk):
+                    yield projected
 
     llm_provider = _LLMProvider()
     tool_runtime = _ToolRuntime()

@@ -19,6 +19,9 @@ import asyncio
 import json
 from typing import Any, cast
 
+from polaris.cells.roles.adapters.internal.pm.synthesis import (
+    _extract_deterministic_checks_from_directive,
+)
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 
 # ---------------------------------------------------------------------------
@@ -435,6 +438,302 @@ class TestPlanArtifactSanitization:
 
 
 class TestFrontendTestRepairContracts:
+    def test_deterministic_checks_use_declared_markdown_section(self) -> None:
+        directive = """
+## Acceptance Criteria
+- Web projects provide an <html> entrypoint.
+
+## Deterministic Checks
+- rust_compile
+- min_files:3
+
+## Language-Specific Runnable Contract
+- cargo build must pass.
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_explicit_html_check_and_legacy_inline_checks_remain_supported(self) -> None:
+        explicit_section = """
+## Deterministic Checks
+- html
+- ts_syntax
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(explicit_section) == [
+            "html",
+            "ts_syntax",
+        ]
+        assert _extract_deterministic_checks_from_directive("Verify rust_compile and min_files:3.") == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_section_accepts_closing_hashes(self) -> None:
+        directive = """
+## Acceptance Criteria
+- Web projects provide an <html> entrypoint.
+
+## Deterministic Checks ##
+- rust_compile
+
+## Other Checks
+- py_compile
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == ["rust_compile"]
+
+    def test_deterministic_check_section_keeps_nested_subsections_and_ignores_fenced_headings(self) -> None:
+        directive = """
+## Deterministic Checks
+### Rust
+- rust_compile
+```text
+## This is fenced content, not a section boundary
+```
+### Shared
+- min_files:3
+
+## Other Checks
+- py_compile
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_section_resets_bare_declarations_after_nested_heading(self) -> None:
+        directive = """
+## Deterministic Checks
+### Rust
+rust_compile
+min_files:3
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_section_ignores_examples_notes_and_negated_identifiers(self) -> None:
+        directive = """
+## Deterministic Checks
+1. rust_compile
+
+min_files:3
+
+```text
+- html
+- ts_syntax
+```
+
+### Notes
+Mentioning html here is explanatory prose, not a declared check.
+- no_html_for_cli
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+        assert _extract_deterministic_checks_from_directive(
+            "Keep no_html_for_cli metadata and verify rust_compile."
+        ) == ["rust_compile"]
+
+    def test_deterministic_check_section_ignores_lazy_list_continuation(self) -> None:
+        directive = """
+## Deterministic Checks
+- Example verifier name:
+html
+- rust_compile
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == ["rust_compile"]
+
+    def test_deterministic_check_section_ignores_lazy_blockquote_continuation(self) -> None:
+        directive = """
+## Deterministic Checks
+> Example verifier name:
+html
+- rust_compile
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == ["rust_compile"]
+
+    def test_deterministic_check_section_ignores_plain_paragraph_continuation(self) -> None:
+        directive = """
+## Deterministic Checks
+Example verifier name:
+html
+
+rust_compile
+min_files:3
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_section_ignores_indented_fences_and_code_blocks(self) -> None:
+        directive = """
+## Deterministic Checks
+- rust_compile
+- Example payload:
+    ```text
+    - html
+    - ts_syntax
+    ```
+
+    java_compile
+    - cpp_compile
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == ["rust_compile"]
+        assert _extract_deterministic_checks_from_directive(
+            "Keep no-html-for-cli metadata and verify rust_compile."
+        ) == ["rust_compile"]
+
+    def test_deterministic_check_section_ignores_list_item_fenced_blocks(self) -> None:
+        directive = """
+## Deterministic Checks
+- rust_compile
+- ```text
+  html
+  ts_syntax
+  ```
+- min_files:3
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_fence_closes_only_with_container_valid_marker(self) -> None:
+        directive = """
+## Deterministic Checks
+- rust_compile
+```text
+- ```
+html
+1. ```
+ts_syntax
+- [ ] ```
+java_compile
+    ```
+cpp_compile
+```
+- min_files:3
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_fence_enforces_container_minimum_indent(self) -> None:
+        directive = """
+## Deterministic Checks
+- rust_compile
+- ```text
+  html
+```
+ts_syntax
+  ```
+- min_files:3
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_rejects_backticks_in_backtick_fence_info(self) -> None:
+        directive = """
+## Deterministic Checks
+- rust_compile
+```text```
+- min_files:3
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_fence_inherits_list_continuation_indent(self) -> None:
+        directive = """
+## Deterministic Checks
+- rust_compile
+- Example:
+  ```text
+  html
+```
+ts_syntax
+  ```
+- min_files:3
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_list_fence_ends_when_container_dedents(self) -> None:
+        directive = """
+## Deterministic Checks
+- rust_compile
+- ```text
+  html
+```
+ts_syntax
+```
+- min_files:3
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
+    def test_deterministic_check_task_list_checkbox_does_not_expand_container_indent(self) -> None:
+        directive = """
+## Deterministic Checks
+- [ ] ```text
+  html
+  ```
+- rust_compile
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == ["rust_compile"]
+
+    def test_deterministic_check_nested_list_dedent_restores_outer_container(self) -> None:
+        directive = """
+## Deterministic Checks
+- rust_compile
+- Outer example:
+  - Nested example:
+    ```text
+    html
+    ```
+  ```text
+  html
+```
+ts_syntax
+  ```
+- min_files:3
+""".strip()
+
+        assert _extract_deterministic_checks_from_directive(directive) == [
+            "rust_compile",
+            "min_files:3",
+        ]
+
     def test_synthesizes_placeholder_repair_before_generic_frontend_plan(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         contracts = adapter._synthesize_task_contracts_from_directive(
@@ -863,6 +1162,28 @@ class TestFrontendTestRepairContracts:
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
+    def test_go_contract_preserves_explicit_html_deterministic_check(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+# Product Requirements — Go Inspector
+
+## Project Metadata
+- 主语言: go
+- 项目类型: cli
+
+## Deterministic Checks
+- html
+- go_compile
+- min_files:3
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        serialized = json.dumps(contracts, ensure_ascii=False)
+
+        assert "确定性检查进入任务验收：html; go_compile; min_files:3" in serialized
+        assert "go_compile" in serialized
+        assert "min_files:3" in serialized
+
     def test_rust_root_workspace_directive_prefers_cargo_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         directive = """
@@ -901,13 +1222,26 @@ class TestFrontendTestRepairContracts:
         assert "src/main.rs" in targets
         assert "src/engine/flavor_rules.rs" in targets
         assert "src/models/flavor.rs" in targets
-        assert "tests/test_product.py" in targets
+        assert "tests/product.rs" in targets
+        assert "tests/test_product.py" not in targets
         assert "README.md" in targets
         assert "index.html" not in targets
         assert "styles.css" not in targets
-        assert "cargo build" in serialized or "cargo check" in serialized
+        assert "cargo test" in serialized
+        assert "python -m unittest" not in serialized
+        assert '"html"' not in serialized
+        assert "确定性检查进入任务验收：html" not in serialized
         assert "flavor" in serialized
         assert "palette" in serialized
+        verification_task = next(item for item in contracts if item.get("id") == "TASK-3")
+        assert verification_task["target_files"] == ["tests/product.rs", "README.md"]
+        assert "Cargo.toml" in verification_task["context_files"]
+        assert "src/lib.rs" in verification_task["context_files"]
+        assert "src/engine/flavor_rules.rs" in verification_task["context_files"]
+        assert set(verification_task["target_files"]).isdisjoint(verification_task["context_files"])
+        assert all(
+            set(item.get("target_files") or []).issubset(set(item.get("scope_paths") or [])) for item in contracts
+        ), "every declared task target must remain inside that task's capability scope"
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
@@ -1818,6 +2152,28 @@ class TestNormalizeTaskContract:
 
         assert result["scope_paths"] == ["src/store", "src/spec/generationSpec.ts", "package.json"]
 
+    def test_declared_targets_are_never_truncated_from_capability_scope(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        targets = [
+            "Cargo.toml",
+            "src/lib.rs",
+            "src/models/mod.rs",
+            "src/models/flavor.rs",
+            "src/models/palette.rs",
+            "src/models/ingredient.rs",
+            "src/models/recipe.rs",
+        ]
+        raw = {
+            "title": "Implement Rust domain model",
+            "target_files": targets,
+            "scope_paths": [*targets, "src/", "tests/"],
+        }
+
+        result = adapter._normalize_task_contract(raw, 1, "")
+
+        assert result["target_files"] == targets
+        assert result["scope_paths"] == targets
+
     def test_inline_target_files_are_preferred_over_title_inference(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         raw = {
@@ -1987,6 +2343,55 @@ class TestNormalizeTaskContract:
             ["calculator.py", "tests/test_calculator.py"],
             ["README.md", "tests/test_calculator.py"],
         ]
+
+    def test_quality_autofix_added_targets_remain_inside_capability_scope(
+        self,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_PM_DOMAIN_TEXT_HINTS", "1")
+        adapter = _make_adapter(tmp_path)
+        directive = (
+            "Build a multiplayer online creative card game with a TypeScript Three.js 3D client and a Node.js backend."
+        )
+        contracts = [
+            {
+                "id": "PM-CARD3D-TESTS",
+                "title": "Add multiplayer card integration tests",
+                "goal": "Replace placeholder tests with meaningful multiplayer card coverage.",
+                "description": "Replace placeholder tests with meaningful multiplayer card coverage.",
+                "scope": "tests",
+                "scope_paths": ["tests"],
+                "target_files": ["tests/integration/multiplayer-flow.test.ts"],
+                "steps": ["Read all seed test files.", "Replace placeholder arithmetic tests.", "Run npm test."],
+                "acceptance": ["Run `npm test` exits 0."],
+                "acceptance_criteria": ["Run `npm test` exits 0."],
+                "phase": "implementation",
+                "depends_on": [],
+                "assigned_to": "Director",
+                "execution_checklist": [
+                    "Read all seed test files.",
+                    "Replace placeholder arithmetic tests.",
+                    "Run npm test.",
+                ],
+                "backlog_ref": "PM-CARD3D-TESTS",
+                "metadata": {},
+            }
+        ]
+
+        normalized, _quality = adapter._evaluate_contract_quality(contracts, directive=directive)
+        task = normalized[0]
+        target_files = cast(list[str], task["target_files"])
+        scope_paths = cast(list[str], task["scope_paths"])
+
+        assert "scripts/build.mjs" in target_files
+        assert "scripts/test.mjs" in target_files
+        assert scope_paths[0] == "tests"
+        assert all(
+            any(target == scope.strip("/") or target.startswith(f"{scope.strip('/')}/") for scope in scope_paths)
+            for target in target_files
+        )
+        assert set(scope_paths[1:]).issubset(set(target_files))
 
     def test_fallback_goal_does_not_echo_prompt_directive(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

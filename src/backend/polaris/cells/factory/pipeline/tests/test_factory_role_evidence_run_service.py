@@ -379,9 +379,10 @@ async def test_run_service_fails_closed_before_persisting_nested_live_port_leak(
     persisted_result = stored.metadata["stage_results"]["pm_planning"]
     assert persisted_result["status"] == "failed"
     assert persisted_result["metadata"] == {
-        "child_sessions_settled": False,
-        "inflight_run_continues": True,
+        "child_sessions_settled": True,
+        "inflight_run_continues": False,
         "settlement_source": "factory_stage_wrapper_exception",
+        "exception_type": "RuntimeError",
     }
     persisted_text = (service.store.get_run_dir(run.id) / "run.json").read_text(encoding="utf-8")
     assert _FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY not in persisted_text
@@ -436,7 +437,9 @@ async def test_run_service_rejects_nested_caller_carried_authority_before_stage_
 
 
 @pytest.mark.asyncio
-async def test_failed_result_retains_claim_but_closes_old_authority_port(tmp_path: Path) -> None:
+async def test_failed_result_settles_terminal_claim_and_closes_old_authority_port(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "failed-result"
     workspace.mkdir()
     executor = _TerminalProbeExecutor("failed")
@@ -449,7 +452,7 @@ async def test_failed_result_retains_claim_but_closes_old_authority_port(tmp_pat
     assert result.status == "failed"
     assert executor.port is not None and executor.port._closed is True
     lease = service._admission.current()
-    assert lease is not None and lease.stage_execution_claim is not None
+    assert lease is not None and lease.stage_execution_claim is None
 
 
 @pytest.mark.asyncio

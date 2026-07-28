@@ -10064,6 +10064,36 @@ def test_rust_missing_trait_derive_rule_does_not_take_serde_diagnostics() -> Non
     assert plan is None
 
 
+def test_rust_missing_trait_derive_rule_covers_enum_ord_with_prerequisites() -> None:
+    """L1-05 r92: BTreeMap keys are enums; Ord requires PartialOrd/Eq companions."""
+
+    relative_path = "src/models/flavor.rs"
+    content = "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub enum Flavor {\n    Sweet,\n}\n"
+    raw = _rust_missing_trait_derive_error(
+        symbol="Flavor",
+        trait="Ord",
+        path=relative_path,
+        line=2,
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_missing_trait_derive_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.source_tool == "deterministic_rust_derive_repair"
+    operation = plan.operations[0]
+    assert operation.path == relative_path
+    assert operation.metadata["item_kind"] == "enum"
+    # Existing PartialEq/Eq stay; Ord expansion also adds PartialOrd.
+    assert set(operation.metadata["traits_added"]) >= {"Ord", "PartialOrd"}
+    assert "Ord" in (operation.replacement or "")
+    assert "PartialOrd" in (operation.replacement or "")
+
+
 def test_rust_missing_trait_derive_runtime_binding_executes_public_edit(tmp_path: Path) -> None:
     relative_path = "src/lib.rs"
     target = tmp_path / relative_path
@@ -10104,11 +10134,11 @@ def test_rust_missing_trait_derive_runtime_binding_executes_public_edit(tmp_path
         (
             relative_path,
             "#[derive(Debug)]\n",
-            "#[derive(Debug, Eq)]\n",
+            "#[derive(Debug, Eq, PartialEq)]\n",
         )
     ]
     assert write_calls == []
-    assert "#[derive(Debug, Eq)]" in target.read_text(encoding="utf-8")
+    assert "#[derive(Debug, Eq, PartialEq)]" in target.read_text(encoding="utf-8")
 
 
 def _rust_copy_derive_error(*, path: str = "src/lib.rs", line: int = 2) -> str:

@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from polaris.cells.factory.pipeline.internal import factory_store as factory_store_module
 from polaris.cells.factory.pipeline.internal.factory_store import (
     FactoryRunSnapshotError,
     FactoryStore,
     FileLockTimeoutError,
-    _acquire_file_lock,
     _acquire_lock_with_timeout,
     _get_run_file_lock,
+    _run_file_operation,
 )
 
 
@@ -65,34 +68,70 @@ class TestAcquireLockWithTimeout:
         lock.release()
 
 
-class TestAcquireFileLock:
-    """Tests for _acquire_file_lock async context manager."""
+class TestRunFileOperation:
+    """Tests for one-worker lock-protected file operations."""
 
     @pytest.mark.asyncio
     async def test_acquire_and_release(self) -> None:
         path = Path("/tmp/test_lock.json")
-        async with _acquire_file_lock(path, timeout=1.0):
-            pass  # Should not raise
+        assert await _run_file_operation(path, lambda: "ok", timeout=1.0) == "ok"
 
     @pytest.mark.asyncio
-    async def test_cancelled_waiter_does_not_leak_lock(self, tmp_path: Path) -> None:
+    async def test_cancelled_operation_settles_worker_and_does_not_leak_lock(self, tmp_path: Path) -> None:
         path = tmp_path / "run.json"
         path.write_text("{}", encoding="utf-8")
+        operation_started = threading.Event()
+        release_operation = threading.Event()
+        operation_completed = threading.Event()
 
-        async def _wait_for_lock() -> None:
-            async with _acquire_file_lock(path, timeout=0.5):
-                pass
+        def slow_operation() -> None:
+            operation_started.set()
+            if not release_operation.wait(timeout=1.0):
+                raise AssertionError("test did not release file operation")
+            operation_completed.set()
 
-        async with _acquire_file_lock(path, timeout=1.0):
-            waiter = asyncio.create_task(_wait_for_lock())
-            await asyncio.sleep(0.05)
-            waiter.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await waiter
+        worker = asyncio.create_task(_run_file_operation(path, slow_operation, timeout=1.0))
+        while not operation_started.is_set():
+            await asyncio.sleep(0)
+        worker.cancel()
+        asyncio.get_running_loop().call_later(0.02, release_operation.set)
+        with pytest.raises(asyncio.CancelledError):
+            await worker
 
-        await asyncio.sleep(0.1)
-        async with _acquire_file_lock(path, timeout=1.0):
-            pass
+        assert operation_completed.is_set()
+        assert await _run_file_operation(path, lambda: "released", timeout=1.0) == "released"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_operation_keeps_cancellation_authoritative_after_late_worker_failure(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        path = tmp_path / "run.json"
+        path.write_text("{}", encoding="utf-8")
+        operation_started = threading.Event()
+        release_operation = threading.Event()
+        operation_completed = threading.Event()
+
+        def failing_operation() -> None:
+            operation_started.set()
+            if not release_operation.wait(timeout=1.0):
+                raise AssertionError("test did not release file operation")
+            operation_completed.set()
+            raise OSError("late-worker-failure")
+
+        caller = asyncio.create_task(_run_file_operation(path, failing_operation, timeout=1.0))
+        while not operation_started.is_set():
+            await asyncio.sleep(0)
+        caller.cancel()
+        asyncio.get_running_loop().call_later(0.02, release_operation.set)
+
+        with pytest.raises(asyncio.CancelledError) as captured:
+            await caller
+
+        assert operation_completed.is_set()
+        assert isinstance(captured.value.__cause__, OSError)
+        assert str(captured.value.__cause__) == "late-worker-failure"
+        assert await _run_file_operation(path, lambda: "released", timeout=1.0) == "released"
 
 
 class TestFactoryStore:
@@ -122,6 +161,101 @@ class TestFactoryStore:
         run_file = tmp_store.get_run_dir("run-001") / "run.json"
         assert run_file.exists()
 
+    def test_save_run_does_not_queue_protected_io_behind_same_lock_waiters(
+        self,
+        tmp_store: FactoryStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """R114: lock owner must execute its I/O before same-lock waiters.
+
+        The former two-hop design acquired ``threading.Lock`` in one default
+        executor job, returned to the event loop while retaining it, then
+        queued protected I/O as another job. Concurrent GET jobs could occupy
+        every worker waiting for that lock, leaving the owner I/O queued behind
+        its own waiters.
+        """
+
+        run_id = "run-thread-pool-inversion"
+        run_file = tmp_store.get_run_dir(run_id) / "run.json"
+        run_file.parent.mkdir(parents=True)
+        run_file.write_text('{"id":"previous"}', encoding="utf-8")
+        mock_run = MagicMock()
+        mock_run.id = run_id
+        mock_run.to_dict.return_value = {"id": run_id, "status": "running"}
+
+        first_acquired = threading.Event()
+        release_first = threading.Event()
+        call_guard = threading.Lock()
+        call_count = 0
+
+        def controlled_acquire(lock: threading.Lock, timeout: float) -> bool:
+            nonlocal call_count
+            with call_guard:
+                call_count += 1
+                first_call = call_count == 1
+            if first_call:
+                if not lock.acquire(timeout=timeout):
+                    raise FileLockTimeoutError(Path("<unknown>"), timeout)
+                first_acquired.set()
+                if not release_first.wait(timeout=1.0):
+                    lock.release()
+                    raise AssertionError("test did not release first lock acquisition")
+                return True
+            if not lock.acquire(timeout=0.2):
+                raise FileLockTimeoutError(Path("<unknown>"), 0.2)
+            return True
+
+        monkeypatch.setattr(factory_store_module, "_acquire_lock_with_timeout", controlled_acquire)
+
+        async def scenario() -> bool:
+            loop = asyncio.get_running_loop()
+            executor = ThreadPoolExecutor(max_workers=2)
+            loop.set_default_executor(executor)
+            writer = asyncio.create_task(tmp_store.save_run(mock_run))
+            while not first_acquired.is_set():
+                await asyncio.sleep(0)
+
+            readers = [asyncio.create_task(tmp_store._read_file(run_file)) for _ in range(12)]
+            await asyncio.sleep(0.02)
+            release_first.set()
+            done, _ = await asyncio.wait({writer}, timeout=0.5)
+            completed_without_inversion = writer in done
+            await asyncio.wait_for(writer, timeout=2.0)
+            await asyncio.gather(*readers, return_exceptions=True)
+            executor.shutdown(wait=True)
+            return completed_without_inversion
+
+        assert asyncio.run(scenario()) is True
+        assert json.loads(run_file.read_text(encoding="utf-8")) == mock_run.to_dict.return_value
+
+    @pytest.mark.asyncio
+    async def test_concurrent_snapshot_reads_never_observe_partial_json(self, tmp_store: FactoryStore) -> None:
+        """Concurrent readers see either complete old or complete new bytes."""
+
+        run_file = tmp_store.get_run_dir("run-atomic-concurrency") / "run.json"
+        run_file.parent.mkdir(parents=True)
+        await tmp_store._write_file_atomic(run_file, json.dumps({"revision": 0}))
+        observed: list[int] = []
+
+        async def writer(revision: int) -> None:
+            await tmp_store._write_file_atomic(run_file, json.dumps({"revision": revision}))
+
+        async def reader() -> None:
+            for _ in range(12):
+                # Deliberately bypass the in-process lock. Atomic replacement
+                # must protect external/cross-process readers too.
+                payload = json.loads(await asyncio.to_thread(run_file.read_text, encoding="utf-8"))
+                observed.append(payload["revision"])
+
+        await asyncio.gather(
+            *(writer(revision) for revision in range(1, 9)),
+            *(reader() for _ in range(6)),
+        )
+
+        assert observed
+        assert set(observed).issubset(set(range(9)))
+        assert set(json.loads(run_file.read_text(encoding="utf-8"))) == {"revision"}
+
     @pytest.mark.asyncio
     async def test_get_run_not_found(self, tmp_store: FactoryStore) -> None:
         result = await tmp_store.get_run("nonexistent")
@@ -136,6 +270,23 @@ class TestFactoryStore:
         result = await tmp_store.get_run("run-corrupt")
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_run_propagates_snapshot_lock_contention(self, tmp_store: FactoryStore) -> None:
+        """An existing busy snapshot is not a missing/corrupt run."""
+
+        run_id = "run-busy"
+        run_file = tmp_store.get_run_dir(run_id) / "run.json"
+        run_file.parent.mkdir(parents=True)
+        run_file.write_text('{"id":"run-busy"}', encoding="utf-8")
+        contention = FileLockTimeoutError(run_file, 5.0)
+
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(tmp_store, "_read_file", AsyncMock(side_effect=contention))
+            with pytest.raises(FileLockTimeoutError) as captured:
+                await tmp_store.get_run(run_id)
+
+        assert captured.value.file_path == run_file
 
     @pytest.mark.asyncio
     async def test_append_and_get_events(self, tmp_store: FactoryStore) -> None:

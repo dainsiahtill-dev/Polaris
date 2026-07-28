@@ -17,6 +17,7 @@ from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeServi
 from .contracts import (
     AbortDirectedEffectOperationCommandV1,
     AdmitDirectedEffectOperationCommandV1,
+    AdmitDirectedEffectParentBatchCommandV1,
     AdmitDirectedEffectParentCommandV1,
     BindRuntimeTaskToFactoryRunCommandV1,
     ClaimDirectedEffectCommandV1,
@@ -111,6 +112,16 @@ def admit_directed_effect_parent(
     if not isinstance(command, AdmitDirectedEffectParentCommandV1):
         raise TypeError("command must be AdmitDirectedEffectParentCommandV1")
     return TaskRuntimeService(command.workspace).admit_directed_effect_parent(command)
+
+
+def admit_directed_effect_parent_batch(
+    command: AdmitDirectedEffectParentBatchCommandV1,
+) -> DirectedEffectOperationResultV1:
+    """Admit one parent batch after TaskRuntime safely closes its predecessor."""
+
+    if not isinstance(command, AdmitDirectedEffectParentBatchCommandV1):
+        raise TypeError("command must be AdmitDirectedEffectParentBatchCommandV1")
+    return TaskRuntimeService(command.workspace).admit_directed_effect_parent_batch(command)
 
 
 def get_directed_effect_parent_registry(

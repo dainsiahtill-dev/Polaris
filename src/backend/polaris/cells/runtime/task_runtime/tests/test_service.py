@@ -8271,6 +8271,69 @@ def test_task_runtime_factory_event_preserves_payload_director_run_id(
     assert payload["director_run_id"] == "director-123456789abc"
 
 
+def test_task_runtime_factory_event_keeps_durable_snapshot_out_of_realtime_projection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A durable Task row snapshot must not overflow the NATS realtime frame."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    published: dict[str, object] = {}
+
+    class Publisher:
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            published["subject"] = subject
+            published["payload"] = payload
+            return True
+
+    import polaris.infrastructure.log_pipeline.jetstream_publisher as publisher_module
+
+    monkeypatch.setattr(
+        publisher_module,
+        "get_log_jetstream_publisher",
+        lambda: Publisher(),
+    )
+    huge_snapshot = {
+        "id": 1,
+        "metadata": {
+            "adapter_result": {
+                "quality_repair_attempts": [{"provider_result": "x" * 2_000_000}],
+            }
+        },
+    }
+
+    ok = service._publish_factory_execution_event(
+        {
+            "run_id": "director-123456789abc",
+            "factory_run_id": "factory_123456789abc",
+            "task_id": "1",
+            "event_type": "failed",
+            "status": "failed",
+            "fact_event_id": "evt-durable-task-row-snapshot",
+            "fact_event_seq": 63,
+            "fact_stream": "task_runtime.execution",
+            "task_row_snapshot": huge_snapshot,
+        }
+    )
+
+    assert ok is True
+    envelope = published["payload"]
+    assert isinstance(envelope, dict)
+    payload = envelope["payload"]
+    assert isinstance(payload, dict)
+    assert "task_row_snapshot" not in payload
+    assert payload["task_row_snapshot_projection"] == {
+        "schema_version": "task-runtime.realtime-row-snapshot-projection/1",
+        "status": "durable_fact_only",
+        "fact_event_id": "evt-durable-task-row-snapshot",
+        "fact_event_seq": 63,
+        "fact_stream": "task_runtime.execution",
+    }
+    assert len(json.dumps(envelope, ensure_ascii=False).encode("utf-8")) < 1_048_576
+
+
 def test_create_task_row_projects_fact_event_seq_matching_fact_stream(tmp_path: Path) -> None:
     """``create_task_row`` must project a positive ``fact_event_seq`` that matches the
     seq stored in the fact stream entry. The seq must NOT be fabricated on

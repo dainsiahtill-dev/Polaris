@@ -739,7 +739,9 @@ def test_marker_append_holds_arbiter_permit_across_pre_durable_seam() -> None:
 
 
 @pytest.mark.asyncio
-async def test_role_artifact_binding_failure_persists_only_explicit_failed_result(tmp_path: Path) -> None:
+async def test_role_artifact_binding_failure_persists_failed_result_and_settles_terminal_claim(
+    tmp_path: Path,
+) -> None:
     def fail_binding(_run_id: str, _result: StageResult) -> None:
         raise FactoryStageArtifactBindingError("binding_invalid", "source artifact drifted")
 
@@ -754,11 +756,16 @@ async def test_role_artifact_binding_failure_persists_only_explicit_failed_resul
     result = await service.execute_stage(run.id, "pm_planning")
 
     events = await service.store.get_authoritative_events(run.id)
-    stage_event = events[-2]
+    stage_events = [event for event in events if event.get("type") == "stage_completed"]
+    commit_events = [event for event in events if event.get("type") == "factory_stage_persistence_committed"]
     assert result.status == "failed"
     assert result.metadata["error_code"] == "factory_stage_artifact_binding_failed"
+    assert len(stage_events) == 1
+    assert len(commit_events) == 1
+    stage_event = stage_events[0]
     assert stage_event["type"] == "stage_completed"
     assert stage_event["result"]["status"] == "failed"
     assert "stage_artifact_bindings" not in stage_event
-    assert events[-1]["type"] == "factory_stage_persistence_committed"
-    assert _claim_is_preserved(service, run.id)
+    assert events.index(stage_event) < events.index(commit_events[0])
+    assert any(event.get("type") == "failed" for event in events)
+    assert not _claim_is_preserved(service, run.id)

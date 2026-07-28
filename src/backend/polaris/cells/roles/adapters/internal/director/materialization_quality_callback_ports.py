@@ -950,6 +950,24 @@ def _collect_materialization_rust_base_files(workspace_path: Path) -> dict[str, 
     return base_files
 
 
+def _normalize_rust_missing_binary_relative_path(path: str) -> str:
+    """Normalize absolute/relative cargo missing-bin paths for allowed_paths."""
+
+    candidate = str(path or "").strip().replace("\\", "/")
+    while candidate.startswith("./"):
+        candidate = candidate[2:]
+    if not candidate:
+        return ""
+    is_absolute = candidate.startswith("/") or bool(re.match(r"^[A-Za-z]:/", candidate))
+    if is_absolute:
+        return "src/main.rs" if candidate.lower().endswith("/src/main.rs") else ""
+    if any(part == ".." for part in candidate.split("/")):
+        return ""
+    if not candidate.endswith(".rs"):
+        return ""
+    return candidate
+
+
 def _rust_missing_binary_paths_from_quality_issues(
     artifact_quality_issues: Sequence[Mapping[str, Any]],
 ) -> tuple[str, ...]:
@@ -958,25 +976,45 @@ def _rust_missing_binary_paths_from_quality_issues(
         if not isinstance(issue, Mapping):
             continue
         code = str(issue.get("code") or "").strip()
-        if code not in {"rust_missing_binary_entrypoint", "artifact_quality_error"}:
-            metadata = issue.get("metadata") if isinstance(issue.get("metadata"), Mapping) else {}
-            kind = str((metadata or {}).get("diagnostic_kind") or "")
-            if (
-                kind != "rust_missing_binary_entrypoint"
-                and "can't find bin" not in str(issue.get("message") or "").lower()
-            ):
-                continue
+        message = str(issue.get("message") or "")
         metadata = issue.get("metadata") if isinstance(issue.get("metadata"), Mapping) else {}
+        kind = str((metadata or {}).get("diagnostic_kind") or "")
+        text_blob = "\n".join(
+            part
+            for part in (
+                message,
+                str((metadata or {}).get("raw") or ""),
+                code,
+                kind,
+            )
+            if str(part or "").strip()
+        )
+        lowered = text_blob.lower()
+        if (
+            code not in {"rust_missing_binary_entrypoint", "artifact_quality_error"}
+            and kind != "rust_missing_binary_entrypoint"
+            and "can't find bin" not in lowered
+            and "cant find bin" not in lowered
+        ):
+            continue
         candidate = (
             str(issue.get("path") or (metadata or {}).get("bin_path") or (metadata or {}).get("path") or "")
             .strip()
             .replace("\\", "/")
         )
-        while candidate.startswith("./"):
-            candidate = candidate[2:]
-        if not candidate or candidate.startswith("/") or any(part == ".." for part in candidate.split("/")):
+        normalized = _normalize_rust_missing_binary_relative_path(candidate)
+        if not normalized:
+            # Display-string fallback: cargo messages often carry absolute paths only.
+            match = re.search(
+                r"can'?t find bin\s+[`'\"][^`'\"]+[`'\"]\s+at path\s+[`'\"]([^`'\"]+)[`'\"]",
+                text_blob,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                normalized = _normalize_rust_missing_binary_relative_path(str(match.group(1) or ""))
+        if not normalized:
             continue
-        paths.append(candidate)
+        paths.append(normalized)
     return tuple(dict.fromkeys(paths))
 
 

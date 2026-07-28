@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .contracts import (
+    FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
     CancelFactoryRunCommandV1,
     FactoryLifecycleOperationClaimV1,
     FactoryPipelineError,
@@ -10,6 +11,7 @@ from .contracts import (
     FactoryRunResultV1,
     FactoryRunStartedEventV1,
     FactoryStageExecutionClaimV1,
+    FactoryTerminalTaskRuntimeProjectionV1,
     FactoryWorkspaceReleaseEvidenceV1,
     FactoryWorkspaceRunLeaseConflictError,
     FactoryWorkspaceRunLeaseStateV1,
@@ -49,6 +51,7 @@ from .service import (
 )
 
 __all__ = [
+    "FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY",
     "TERMINAL_RUN_STATUSES",
     "CancelFactoryRunCommandV1",
     "FactoryConfig",
@@ -64,6 +67,7 @@ __all__ = [
     "FactorySettlementRuntime",
     "FactorySettlementRuntimeError",
     "FactoryStageExecutionClaimV1",
+    "FactoryTerminalTaskRuntimeProjectionV1",
     "FactoryWorkspaceReleaseEvidenceV1",
     "FactoryWorkspaceRunLeaseConflictError",
     "FactoryWorkspaceRunLeaseStateV1",

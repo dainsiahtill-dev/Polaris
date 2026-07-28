@@ -11,7 +11,7 @@ import time
 import unicodedata
 import uuid
 from collections.abc import Callable
-from contextlib import AbstractContextManager, asynccontextmanager
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -117,52 +117,68 @@ def _acquire_lock_with_timeout(lock: threading.Lock, timeout: float) -> bool:
     return result
 
 
-def _release_acquired_lock_from_task(task: asyncio.Future[bool], lock: threading.Lock) -> None:
-    try:
-        acquired = bool(task.result())
-    except (asyncio.CancelledError, OSError, RuntimeError, ValueError):
-        return
-    if acquired:
-        lock.release()
+def _run_locked_file_operation(
+    file_path: Path,
+    operation: Callable[[], Any],
+    timeout: float,
+) -> Any:
+    """Acquire, execute, and release one file operation in the same worker."""
 
-
-@asynccontextmanager
-async def _acquire_file_lock(file_path: Path, timeout: float = 5.0) -> Any:
-    """Acquire/release a cross-loop lock without blocking the event loop.
-
-    Uses asyncio.wait_for() to implement timeout protection, preventing
-    indefinite waiting when the lock is held by another thread.
-
-    Args:
-        file_path: Path to the file being locked.
-        timeout: Maximum time in seconds to wait for the lock.
-                 Defaults to 5.0 seconds.
-
-    Raises:
-        FileLockTimeoutError: When lock acquisition exceeds the timeout.
-            Subclass of TimeoutError for explicit handling.
-
-    Yields:
-        None
-    """
     lock = _get_run_file_lock(file_path)
-
-    acquire_task = asyncio.ensure_future(asyncio.to_thread(_acquire_lock_with_timeout, lock, timeout))
     try:
-        await asyncio.wait_for(asyncio.shield(acquire_task), timeout=timeout + 1.0)
-    except asyncio.CancelledError:
-        acquire_task.add_done_callback(lambda task: _release_acquired_lock_from_task(task, lock))
-        raise
+        _acquire_lock_with_timeout(lock, timeout)
     except FileLockTimeoutError:
         raise FileLockTimeoutError(file_path, timeout) from None
-    except asyncio.TimeoutError:
-        acquire_task.add_done_callback(lambda task: _release_acquired_lock_from_task(task, lock))
-        raise FileLockTimeoutError(file_path, timeout) from None
-
     try:
-        yield
+        return operation()
     finally:
         lock.release()
+
+
+async def _run_file_operation(
+    file_path: Path,
+    operation: Callable[[], Any],
+    timeout: float = 5.0,
+) -> Any:
+    """Run one complete lock-protected operation without executor inversion.
+
+    Lock acquisition, synchronous I/O, and release stay inside one worker
+    callback. Same-file waiters can occupy other executor workers without
+    queueing the lock owner's I/O behind themselves.
+    """
+
+    worker = asyncio.create_task(
+        asyncio.to_thread(
+            _run_locked_file_operation,
+            file_path,
+            operation,
+            timeout,
+        )
+    )
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError as cancellation:
+        worker_failure: BaseException | None = None
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except BaseException as exc:  # noqa: BLE001 - cancellation remains authoritative
+                worker_failure = exc
+                break
+        if worker_failure is None:
+            try:
+                worker.result()
+            except BaseException as exc:  # noqa: BLE001 - consume terminal worker outcome
+                worker_failure = exc
+        if worker_failure is not None and not isinstance(worker_failure, asyncio.CancelledError):
+            logger.debug(
+                "factory file operation settled with worker failure after caller cancellation: %s",
+                worker_failure,
+            )
+            raise cancellation from worker_failure
+        raise cancellation
 
 
 class FactoryStore:
@@ -430,11 +446,24 @@ class FactoryStore:
 
     async def _write_file_atomic(self, run_file: Path, content: str) -> None:
         """异步文件写入 helper with Windows-safe replace retries."""
-        async with _acquire_file_lock(run_file):
-            temp_file = run_file.with_name(f"{run_file.name}.{uuid.uuid4().hex}.tmp")
-            # 文件写入在线程池中执行，但锁保护是异步的
-            await asyncio.to_thread(self._write_temp_file, temp_file, content)
-            await self._replace_with_retry(temp_file, run_file)
+        temp_file = run_file.with_name(f"{run_file.name}.{uuid.uuid4().hex}.tmp")
+
+        def write_and_replace() -> None:
+            try:
+                self._write_temp_file(temp_file, content)
+                self._replace_with_retry_sync(temp_file, run_file)
+            except BaseException:
+                try:
+                    temp_file.unlink(missing_ok=True)
+                except OSError as cleanup_exc:
+                    logger.warning(
+                        "factory_store: failed to clean up temp file %s after locked write failure: %s",
+                        temp_file,
+                        cleanup_exc,
+                    )
+                raise
+
+        await _run_file_operation(run_file, write_and_replace)
 
     def _write_temp_file(self, temp_file: Path, content: str) -> None:
         """同步文件写入（在线程池中执行）"""
@@ -442,19 +471,22 @@ class FactoryStore:
 
     async def _replace_with_retry(self, temp_file: Path, run_file: Path) -> None:
         """异步替换文件，带重试逻辑"""
+        await asyncio.to_thread(self._replace_with_retry_sync, temp_file, run_file)
+
+    def _replace_with_retry_sync(self, temp_file: Path, run_file: Path) -> None:
+        """Synchronously replace a file inside one lock-owning worker."""
         retry_delays = (0.01, 0.02, 0.05, 0.1, 0.2)
         last_error: Exception | None = None
         for delay in (*retry_delays, 0.0):
             try:
-                await asyncio.to_thread(temp_file.replace, run_file)
+                temp_file.replace(run_file)
                 last_error = None
                 break
             except PermissionError as exc:
                 last_error = exc
                 if delay <= 0:
                     break
-                # 使用 asyncio.sleep 替代 time.sleep
-                await asyncio.sleep(delay)
+                time.sleep(delay)
 
         if last_error is not None:
             try:
@@ -479,6 +511,8 @@ class FactoryStore:
             content = await self._read_file(run_file)
             data = json.loads(content)
             return FactoryRun.from_dict(data)
+        except FileLockTimeoutError:
+            raise
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
             logger.warning(
                 "factory_store: invalid run record skipped run_id=%s path=%s error=%s",
@@ -581,9 +615,7 @@ class FactoryStore:
 
     async def _read_file(self, file_path: Path) -> str:
         """异步文件读取 helper"""
-        async with _acquire_file_lock(file_path):
-            # 读取操作在线程池中执行
-            return await asyncio.to_thread(self._read_file_sync, file_path)
+        return await _run_file_operation(file_path, lambda: self._read_file_sync(file_path))
 
     def _read_file_sync(self, file_path: Path) -> str:
         """同步文件读取（在线程池中执行）"""
@@ -911,8 +943,7 @@ class FactoryStore:
 
     async def _append_file(self, file_path: Path, content: str) -> None:
         """异步文件追加 helper"""
-        async with _acquire_file_lock(file_path):
-            await asyncio.to_thread(self._append_file_sync, file_path, content)
+        await _run_file_operation(file_path, lambda: self._append_file_sync(file_path, content))
 
     def _append_file_sync(self, file_path: Path, content: str) -> None:
         """同步文件追加（在线程池中执行）"""
@@ -960,8 +991,7 @@ class FactoryStore:
 
     async def _read_lines(self, file_path: Path) -> list[str]:
         """异步文件读取行 helper"""
-        async with _acquire_file_lock(file_path):
-            return await asyncio.to_thread(self._read_lines_sync, file_path)
+        return await _run_file_operation(file_path, lambda: self._read_lines_sync(file_path))
 
     def _read_lines_sync(self, file_path: Path) -> list[str]:
         """同步文件读取行（在线程池中执行）"""

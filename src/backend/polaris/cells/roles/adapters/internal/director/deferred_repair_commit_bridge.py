@@ -52,6 +52,11 @@ def _mapping(value: Any) -> Mapping[str, Any] | None:
     return value if isinstance(value, Mapping) else None
 
 
+def _is_lower_sha256(value: Any) -> bool:
+    token = str(value or "").strip()
+    return len(token) == 64 and all(character in "0123456789abcdef" for character in token)
+
+
 def _capability_token_from_context(context: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(context, Mapping):
         return None
@@ -62,29 +67,59 @@ def _capability_token_from_context(context: Mapping[str, Any] | None) -> dict[st
     override = _mapping(context.get("context_override"))
     if override is not None:
         containers.append(override)
+
+    tokens: list[dict[str, Any]] = []
     for container in containers:
         for key in _CAPABILITY_TOKEN_KEYS:
             token = _mapping(container.get(key))
             if token is not None and str(token.get("token_id") or "").strip():
-                return dict(token)
-        envelope = _mapping(container.get("execution_envelope")) or _mapping(
-            container.get("director_execution_envelope")
-        )
-        if envelope is not None:
-            authorization = _mapping(envelope.get("authorization")) or {}
+                tokens.append(dict(token))
+    if not tokens:
+        return None
+    token_ids = {str(token.get("token_id") or "").strip() for token in tokens}
+    if len(token_ids) != 1:
+        return None
+    token = tokens[0]
+    token_id = next(iter(token_ids))
+
+    envelopes: list[Mapping[str, Any]] = []
+    for container in containers:
+        for key in (
+            "execution_envelope",
+            "director_execution_envelope",
+            "task_execution_envelope",
+        ):
+            envelope = _mapping(container.get(key))
+            if envelope is not None:
+                envelopes.append(envelope)
+
+    embedded_hash = str(token.get("execution_envelope_hash") or "").strip()
+    if embedded_hash:
+        if not _is_lower_sha256(embedded_hash):
+            return None
+        for envelope in envelopes:
             envelope_hash = str(envelope.get("envelope_hash") or "").strip()
-            token_id = str(authorization.get("capability_token_ref") or envelope.get("envelope_id") or "").strip()
-            if token_id or envelope_hash:
-                return {
-                    "token_id": token_id or f"execution-envelope:{(envelope_hash or 'materialization')[:16]}",
-                    "execution_envelope_hash": envelope_hash,
-                    "allowed_commands": authorization.get("allowed_commands") or (),
-                    "allowed_paths": authorization.get("allowed_write_paths")
-                    or authorization.get("target_files")
-                    or (),
-                    "capability_audit": {"ok": True},
-                    "source": "director.execution_envelope.authorization",
-                }
+            authorization = _mapping(envelope.get("authorization"))
+            if (
+                not _is_lower_sha256(envelope_hash)
+                or envelope_hash != embedded_hash
+                or authorization is None
+                or str(authorization.get("capability_token_ref") or "").strip() != token_id
+            ):
+                return None
+        return token
+
+    for envelope in envelopes:
+        envelope_hash = str(envelope.get("envelope_hash") or "").strip()
+        authorization = _mapping(envelope.get("authorization"))
+        if (
+            _is_lower_sha256(envelope_hash)
+            and authorization is not None
+            and str(authorization.get("capability_token_ref") or "").strip() == token_id
+        ):
+            merged = dict(token)
+            merged["execution_envelope_hash"] = envelope_hash
+            return merged
     return None
 
 

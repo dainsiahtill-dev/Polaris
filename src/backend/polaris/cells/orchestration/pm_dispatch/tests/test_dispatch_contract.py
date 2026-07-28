@@ -385,6 +385,32 @@ class TestOrchestrationCommandServiceStatics:
         result = OrchestrationCommandService._build_failed_task_summaries(mock_snapshot)
         assert result == []
 
+    def test_build_failed_task_summaries_preserves_structured_role_result_evidence(self) -> None:
+        from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import (
+            OrchestrationCommandService,
+        )
+
+        failed_task = MagicMock()
+        failed_task.task_id = "task-0-director"
+        failed_task.role_id = "director"
+        failed_task.status.value = "failed"
+        failed_task.error_category = "runtime"
+        failed_task.error_message = "Director must claim TaskBoard task before execution"
+        failed_task.updated_at = None
+        failed_task.result_evidence = {
+            "schema_version": "workflow-runtime.role-result-evidence/1",
+            "task_id": "TASK-2",
+            "task_runtime_claim_failure_reason": "task_blocked",
+        }
+        mock_snapshot = MagicMock()
+        mock_snapshot.tasks = {"task-0-director": failed_task}
+
+        result = OrchestrationCommandService._build_failed_task_summaries(mock_snapshot)
+
+        assert result[0]["task_id"] == "task-0-director"
+        assert result[0]["result_evidence"]["task_id"] == "TASK-2"
+        assert result[0]["result_evidence"]["task_runtime_claim_failure_reason"] == "task_blocked"
+
     def test_build_task_status_counts_empty_tasks(self) -> None:
         from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import (
             OrchestrationCommandService,

@@ -11,6 +11,7 @@ purpose: 'Provide the shared role execution kernel for prompt construction, outp
   '
 current_modules:
 - polaris.cells.roles.kernel.public.service
+- polaris.cells.roles.kernel.public.structured_output_contracts
 - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
 - polaris.cells.roles.kernel.public.directed_effect_contracts
 - polaris.cells.roles.kernel.public.directed_effect_service
@@ -30,6 +31,7 @@ current_modules:
 - polaris.cells.roles.kernel.internal.context_gateway
 - polaris.cells.roles.kernel.internal.llm_caller.factory_dispatch_propagation
 - polaris.cells.roles.kernel.internal.context_models
+- polaris.cells.roles.kernel.internal.structured_output_transport
 - polaris.cells.roles.kernel.internal.tool_gateway
 - polaris.cells.roles.kernel.internal.turn_engine
 - polaris.cells.roles.kernel.internal.constitution_rules
@@ -40,6 +42,7 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.roles.kernel.public.contracts
+  - polaris.cells.roles.kernel.public.structured_output_contracts
   - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
   - polaris.cells.roles.kernel.public.directed_effect_contracts
   - polaris.cells.roles.kernel.public.directed_effect_service
@@ -105,6 +108,7 @@ verification:
   - tests/test_llm_invoker_role_binding_fallback.py
   - tests/test_llm_invoker_final_request_receipt.py
   - tests/test_llm_caller_capability_profile.py
+  - tests/test_structured_output_transport.py
   - tests/test_role_kernel_write_budget.py
   - tests/test_turn_engine_semantic_stages.py
   - tests/test_turn_engine_policy_convergence.py

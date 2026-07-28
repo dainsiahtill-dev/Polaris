@@ -208,7 +208,9 @@ def test_post_llm_materialization_guard_routes_runtime_covered_errors(monkeypatc
         task_id: str,
         artifact_quality_errors: list[str],
         artifact_quality_issues: tuple[dict[str, Any], ...] = (),
+        execution_attempt: Any = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        assert execution_attempt is None
         captured["task_id"] = task_id
         captured["artifact_quality_errors"] = list(artifact_quality_errors)
         captured["artifact_quality_issues"] = tuple(dict(item) for item in artifact_quality_issues)

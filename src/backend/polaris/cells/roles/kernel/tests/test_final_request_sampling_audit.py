@@ -15,6 +15,14 @@ from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     final_request_evidence_coverage_violation,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    STRUCTURED_OUTPUT_TOOL_NAME,
+    resolve_structured_output_transport,
+)
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
+    RoleStructuredOutputContractV1,
+)
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
@@ -2875,6 +2883,77 @@ def test_final_request_context_audit_does_not_claim_registry_provenance_for_unkn
     assert registry["aliases_present"] is False
     assert registry["arg_aliases_present"] is False
     assert registry["missing_schema_tools"] == ["unknown_mutation_tool"]
+
+
+def test_final_request_context_audit_separates_non_executable_provider_result_protocol() -> None:
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete Chief Engineer blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "construction_plan": {"type": "object"},
+                "scope_for_apply": {"type": "array"},
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+            "additionalProperties": False,
+        },
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="chief_engineer",
+        input="",
+        options={
+            "temperature": 0.2,
+            "max_tokens": 2000,
+            "tools": [plan.tool_definition],
+            "tool_choice": plan.tool_choice,
+        },
+        context={"chat_messages": [{"role": "system", "content": "You are Chief Engineer."}]},
+    )
+    prepared = PreparedLLMRequest(
+        messages=list(ai_request.context["chat_messages"]),
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+        structured_output_transport=plan,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="chief_engineer", max_context_tokens=128_000),
+    )
+
+    coverage = audit["final_request_evidence_coverage"]
+    protocol = coverage["provider_protocol_schema_coverage"]
+    assert protocol["schema_version"] == "polaris.provider_protocol_schema_coverage.v1"
+    assert protocol["active"] is True
+    assert protocol["valid"] is True
+    assert protocol["tool_name"] == STRUCTURED_OUTPUT_TOOL_NAME
+    assert protocol["transport"] == "provider_tool"
+    assert protocol["strict"] is True
+    assert protocol["executable_tool"] is False
+    assert protocol["side_effect"] is False
+    assert protocol["tool_lifecycle"] is False
+    assert protocol["tool_schema_hash"] == context_audit_module._stable_digest(plan.tool_definition)
+    assert protocol["tool_choice_hash"] == context_audit_module._stable_digest(plan.tool_choice)
+    registry = coverage["tool_schema_registry_coverage"]
+    assert registry == {
+        "registry_source": "",
+        "aliases_present": False,
+        "arg_aliases_present": False,
+        "schema_hash": "",
+        "missing_schema_tools": [],
+    }
+    assert ToolSpecRegistry.get_llm_schema(STRUCTURED_OUTPUT_TOOL_NAME) is None
 
 
 def test_pm_route_probe_final_provider_request_has_no_tools() -> None:

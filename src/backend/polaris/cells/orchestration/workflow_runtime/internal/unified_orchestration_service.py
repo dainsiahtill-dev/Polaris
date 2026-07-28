@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
@@ -39,6 +39,117 @@ from polaris.cells.workspace.integrity.public import TaskFileChangeTracker
 logger = logging.getLogger(__name__)
 
 RoleAdapterFactory = Callable[[str, str], RoleOrchestrationAdapter]
+
+
+def _bounded_result_text(value: Any, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1]}…"
+
+
+def _bounded_nonnegative_int(value: Any, *, maximum: int = 1_000_000) -> int | None:
+    """Project an untrusted counter without retaining arbitrary nested data."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        parsed = int(value.strip())
+    else:
+        return None
+    return parsed if 0 <= parsed <= maximum else None
+
+
+def _bounded_claim_attempts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value[:8]:
+        if not isinstance(item, Mapping):
+            continue
+        rows.append(
+            {
+                "attempt": _bounded_nonnegative_int(item.get("attempt")),
+                "task_id": _bounded_result_text(item.get("task_id"), limit=96),
+                "selection_source": _bounded_result_text(item.get("selection_source"), limit=120),
+                "claimed": item.get("claimed") is True or item.get("success") is True,
+                "reason": _bounded_result_text(item.get("reason"), limit=120),
+                "resumed": item.get("resumed") is True,
+                "session_id": _bounded_result_text(item.get("session_id"), limit=120),
+            }
+        )
+    return rows
+
+
+def _bounded_taskboard_claim_evidence(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    attempts = value.get("claim_attempts")
+    return {
+        "requested_task_id": _bounded_result_text(value.get("requested_task_id"), limit=96),
+        "selected_task_id": _bounded_result_text(value.get("selected_task_id"), limit=96),
+        "selection_source": _bounded_result_text(value.get("selection_source"), limit=120),
+        "selected_from_board": value.get("selected_from_board") is True,
+        "selected_subject": _bounded_result_text(value.get("selected_subject")),
+        "board_claim_applied": value.get("board_claim_applied") is True,
+        "claim_failure_reason": _bounded_result_text(value.get("claim_failure_reason"), limit=120),
+        "claim_attempts": _bounded_claim_attempts(attempts),
+    }
+
+
+def _bounded_role_result_evidence(result: Any) -> dict[str, Any]:
+    """Project role results into a small, auditable orchestration fact."""
+
+    if not isinstance(result, Mapping):
+        return {}
+    evidence: dict[str, Any] = {
+        "schema_version": "workflow-runtime.role-result-evidence/1",
+        "task_id": _bounded_result_text(result.get("task_id"), limit=96),
+        "success": result.get("success") is True,
+    }
+    for key in (
+        "error_code",
+        "failure_stage",
+        "root_cause_hint",
+        "control_plane_failure_code",
+        "task_runtime_claim_failure_reason",
+    ):
+        token = _bounded_result_text(result.get(key), limit=160)
+        if token:
+            evidence[key] = token
+    if result.get("task_runtime_claim_required") is True:
+        evidence["task_runtime_claim_required"] = True
+    claim_evidence = _bounded_taskboard_claim_evidence(result.get("task_runtime_claim_evidence"))
+    if claim_evidence:
+        evidence["task_runtime_claim_evidence"] = claim_evidence
+    claim_attempts = _bounded_claim_attempts(result.get("task_runtime_claim_attempts"))
+    if claim_attempts:
+        evidence["task_runtime_claim_attempts"] = claim_attempts
+    signals: list[dict[str, Any]] = []
+    raw_signals = result.get("decision_signals")
+    if isinstance(raw_signals, list):
+        for item in raw_signals[:8]:
+            if not isinstance(item, Mapping):
+                continue
+            signals.append(
+                {
+                    "code": _bounded_result_text(item.get("code"), limit=120),
+                    "severity": _bounded_result_text(item.get("severity"), limit=32),
+                    "detail": _bounded_result_text(item.get("detail")),
+                    "claim_failure_reason": _bounded_result_text(
+                        item.get("claim_failure_reason"),
+                        limit=120,
+                    ),
+                    "claim_attempt_count": _bounded_nonnegative_int(
+                        item.get("claim_attempt_count"),
+                    ),
+                }
+            )
+    if signals:
+        evidence["decision_signals"] = signals
+    return evidence
 
 
 def _adapter_task_id_for_role(
@@ -610,6 +721,7 @@ class UnifiedOrchestrationService(OrchestrationService):
                 status=RunStatus.COMPLETED if result.get("success") else RunStatus.FAILED,
                 file_changes=file_changes,
                 error_message=result.get("error"),
+                result_evidence=_bounded_role_result_evidence(result),
             )
 
             return result
@@ -842,6 +954,7 @@ class UnifiedOrchestrationService(OrchestrationService):
         status: RunStatus,
         file_changes,
         error_message: str | None = None,
+        result_evidence: dict[str, Any] | None = None,
     ) -> None:
         """更新任务状态并包含文件变更信息"""
         snapshot = await self._repo.get_snapshot(run_id)
@@ -874,6 +987,8 @@ class UnifiedOrchestrationService(OrchestrationService):
         if error_message:
             task.error_message = error_message
             task.error_category = self._categorize_error(error_message)
+        if result_evidence is not None:
+            task.result_evidence = dict(result_evidence)
 
         await self._update_snapshot(snapshot)
 

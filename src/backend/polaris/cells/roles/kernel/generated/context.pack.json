@@ -2,8 +2,8 @@
   "id": "roles.kernel",
   "title": "Roles Kernel",
   "kind": "capability",
-  "purpose": "Provide the shared role execution kernel and the typed semantic final-request evidence cutoff contract used by Factory role flows.",
-  "summary": "Canonical generated context for roles.kernel, including the closed B3.2 semantic freeze and B3.3 zero-transport dispatch-propagation surfaces while physical provider-attempt qualification remains guarded.",
+  "purpose": "Provide the shared role execution kernel, typed semantic final-request evidence cutoff, and caller-owned structured result transport used by role flows.",
+  "summary": "Canonical generated context for roles.kernel, including physical provider-attempt qualification and a provider-tool structured result protocol that is normalized before executable Tool Lifecycle decoding.",
   "owned_paths": [
     "polaris/cells/roles/kernel/**"
   ],
@@ -64,6 +64,7 @@
   ],
   "invariants": [
     "Cross-Cell callers use only roles.kernel public contracts; no external caller imports roles.kernel internal modules.",
+    "Caller-owned JSON result schemas enter through RoleStructuredOutputContractV1; the exact reserved result tool is audited and qualified as a non-executable provider protocol, while every executable or unknown tool remains subject to ToolSpecRegistry provenance; result payloads are locally validated and normalized before TransactionKernel can dispatch a tool or create an effect receipt.",
     "FactoryRoleEvidenceCutoffAckV1 remains locator-only; resolve_cutoff_proof strictly reconstructs a detached FactoryRoleEvidenceCutoffProofV1 from committed authority facts.",
     "B3.2 freezes the provider-visible semantic request after evidence injection; B3.3 propagates its exact runtime-private port through retry, fallback, and stream seams without authorizing physical provider transport.",
     "Runtime-only cutoff authority ports never enter serializable provider requests, events, snapshots, or context packs.",
@@ -74,6 +75,7 @@
     "polaris/cells/roles/kernel/public/final_request_evidence_cutoff.py",
     "polaris/cells/roles/kernel/internal/llm_caller/factory_dispatch_propagation.py",
     "polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py",
+    "polaris/cells/roles/kernel/internal/structured_output_transport.py",
     "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
   ],
   "test_targets": [
@@ -81,6 +83,7 @@
     "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py",
     "polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py",
     "polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py",
+    "polaris/cells/roles/kernel/tests/test_structured_output_transport.py",
     "polaris/cells/roles/kernel/tests/test_llm_caller_components.py",
     "polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py",
     "polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py",
@@ -94,7 +97,9 @@
       "generated/context.pack.json",
       "generated/verify.pack.json",
       "public/final_request_evidence_cutoff.py",
+      "public/structured_output_contracts.py",
       "internal/llm_caller/factory_dispatch_propagation.py",
+      "internal/structured_output_transport.py",
       "internal/llm_caller/request_preparer.py",
       "internal/llm_caller/invoker.py"
     ],

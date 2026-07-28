@@ -193,12 +193,24 @@ class TestOrchestrationRunRequest:
 
 class TestTaskSnapshot:
     def test_to_dict(self) -> None:
-        snap = TaskSnapshot(task_id="t1", status=RunStatus.RUNNING, phase=TaskPhase.EXECUTING, role_id="pm")
+        snap = TaskSnapshot(
+            task_id="t1",
+            status=RunStatus.RUNNING,
+            phase=TaskPhase.EXECUTING,
+            role_id="pm",
+            result_evidence={
+                "schema_version": "workflow-runtime.role-result-evidence/1",
+                "task_id": "TASK-2",
+                "task_runtime_claim_failure_reason": "task_blocked",
+            },
+        )
         d = snap.to_dict()
         assert d["task_id"] == "t1"
         assert d["status"] == "running"
         assert d["phase"] == "executing"
         assert d["role_id"] == "pm"
+        assert d["result_evidence"]["task_id"] == "TASK-2"
+        assert d["result_evidence"]["task_runtime_claim_failure_reason"] == "task_blocked"
 
 
 class TestSignalRequest:

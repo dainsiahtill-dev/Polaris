@@ -52,6 +52,9 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     bind_factory_role_evidence_authority,
 )
 from polaris.cells.roles.kernel.public.service import QualityChecker
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    RoleStructuredOutputContractV1,
+)
 from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleTaskCommandV1,
     RoleExecutionResultV1,
@@ -328,7 +331,8 @@ _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS = (
 _CE_BLUEPRINT_OUTPUT_CONTRACT = """
 
 Chief Engineer output contract:
-- Return exactly one JSON object, with no Markdown fence and no surrounding prose.
+- Call submit_structured_role_output exactly once with the complete result object. This is a
+  provider response protocol, not an executable workspace tool and not a side effect.
 - Required top-level keys: construction_plan, scope_for_apply, risk_flags.
 - construction_plan must describe one coherent project architecture, not isolated task answers.
 - construction_plan.task_plans must be an object keyed by every PM task id. Each task plan must name
@@ -339,7 +343,7 @@ Chief Engineer output contract:
 - scope_for_apply must be an array of repository-relative paths or modules. It is advisory only and
   cannot expand the PM-authoritative target_files/scope_paths.
 - risk_flags must be an array, even when empty.
-- Do not emit tool calls, code patches, <SESSION_PATCH>, or file edit instructions.
+- Do not call any other tool or emit code patches, <SESSION_PATCH>, or file edit instructions.
 """
 
 
@@ -4555,22 +4559,41 @@ class OrchestrationStageExecutor:
                 getattr(ce_result, "status", None),
             )
         ).lower()
-        return any(
-            token in failure_text
-            for token in (
-                "thinking-only response",
-                "thinking only response",
-                "thinking_only_response",
-                "empty response",
-                "no visible output",
-                "no visible output or tool calls",
+        provider_result_protocol_failures = (
+            "structured_output_payload_schema_mismatch",
+            "structured_output_tool_arguments_invalid_json",
+            "structured_output_tool_arguments_must_be_object",
+            "structured_output_tool_must_be_called_exactly_once",
+        )
+        return (
+            any(
+                token in failure_text
+                for token in (
+                    "thinking-only response",
+                    "thinking only response",
+                    "thinking_only_response",
+                    "empty response",
+                    "no visible output",
+                    "no visible output or tool calls",
+                )
             )
-        ) or ("model returned" in failure_text and "awaiting user clarification" in failure_text)
+            or any(token in failure_text for token in provider_result_protocol_failures)
+            or ("model returned" in failure_text and "awaiting user clarification" in failure_text)
+        )
 
     @staticmethod
     def _ce_schema_repair_failure_class(ce_result: Any) -> str:
         error_code = str(getattr(ce_result, "error_code", None) or "").strip().lower()
-        if error_code == "output_validation_failed":
+        error_message = str(getattr(ce_result, "error_message", None) or "").strip().lower()
+        if error_code == "output_validation_failed" or any(
+            token in error_message
+            for token in (
+                "structured_output_payload_schema_mismatch",
+                "structured_output_tool_arguments_invalid_json",
+                "structured_output_tool_arguments_must_be_object",
+                "structured_output_tool_must_be_called_exactly_once",
+            )
+        ):
             return "output_validation_failed"
         return "thinking_only_response"
 
@@ -4780,6 +4803,74 @@ class OrchestrationStageExecutor:
             "Validated PM tasks:\n" + "\n".join(task_lines) + _CE_BLUEPRINT_OUTPUT_CONTRACT
         )
 
+    @staticmethod
+    def _chief_engineer_structured_output_contract(
+        portfolio_task_ids: tuple[str, ...],
+    ) -> RoleStructuredOutputContractV1:
+        """Build the caller-owned provider schema for one CE portfolio."""
+
+        task_plan_properties = {
+            task_id: {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": True,
+            }
+            for task_id in portfolio_task_ids
+        }
+        return RoleStructuredOutputContractV1(
+            schema_name="chief_engineer_blueprint_portfolio",
+            description=(
+                "Submit the complete Chief Engineer portfolio for every validated PM task id, "
+                "including the shared project interface contract."
+            ),
+            json_schema={
+                "type": "object",
+                "properties": {
+                    "construction_plan": {
+                        "type": "object",
+                        "properties": {
+                            "task_plans": {
+                                "type": "object",
+                                "properties": task_plan_properties,
+                                "required": list(portfolio_task_ids),
+                                "additionalProperties": False,
+                            },
+                            "project_interface_contract": {
+                                "type": "object",
+                                "properties": {
+                                    "provider_declarations": {
+                                        "type": "array",
+                                        "items": {"type": "object"},
+                                    },
+                                    "consumer_declarations": {
+                                        "type": "array",
+                                        "items": {"type": "object"},
+                                    },
+                                },
+                                "required": [
+                                    "provider_declarations",
+                                    "consumer_declarations",
+                                ],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "required": [
+                            "task_plans",
+                            "project_interface_contract",
+                        ],
+                        "additionalProperties": True,
+                    },
+                    "scope_for_apply": {"type": "array", "items": {}},
+                    "risk_flags": {"type": "array", "items": {}},
+                },
+                "required": [
+                    "construction_plan",
+                    "risk_flags",
+                ],
+                "additionalProperties": False,
+            },
+        )
+
     def _claim_chief_engineer_execution_attempt(
         self,
         *,
@@ -4902,7 +4993,7 @@ class OrchestrationStageExecutor:
         """Validate the nested project-level CE output contract."""
 
         errors: list[str] = []
-        required_keys = {"construction_plan", "scope_for_apply", "risk_flags"}
+        required_keys = {"construction_plan", "risk_flags"}
         missing_keys = sorted(required_keys - set(payload))
         if missing_keys:
             errors.append("missing top-level keys: " + ", ".join(missing_keys))
@@ -4937,7 +5028,7 @@ class OrchestrationStageExecutor:
                 errors.append("project_interface_contract.provider_declarations must be an array")
             if not isinstance(consumers, list):
                 errors.append("project_interface_contract.consumer_declarations must be an array")
-        if not isinstance(payload.get("scope_for_apply"), list):
+        if "scope_for_apply" in payload and not isinstance(payload.get("scope_for_apply"), list):
             errors.append("scope_for_apply must be an array")
         if not isinstance(payload.get("risk_flags"), list):
             errors.append("risk_flags must be an array")
@@ -5119,6 +5210,7 @@ class OrchestrationStageExecutor:
                 context=repair_context,
                 timeout_seconds=repair_timeout_seconds,
                 execution_attempt=execution_attempt,
+                structured_output_contract=self._chief_engineer_structured_output_contract(portfolio_task_ids),
                 metadata={
                     "pm_task_contract": dict(repair_context["pm_task_contract"]),
                     "pm_task_contracts": list(repair_context["pm_task_contracts"]),
@@ -5330,8 +5422,6 @@ class OrchestrationStageExecutor:
                         "suppress_tool_policy_prompt": True,
                         "disable_internal_tool_rounds": True,
                         "delivery_mode": "analyze_only",
-                        "_transaction_kernel_forced_tool_definitions": [],
-                        "_transaction_kernel_forced_tool_choice": "none",
                         "temperature": 0.2,
                         "response_format_mode": "json",
                         "chief_engineer_json_contract_required": True,
@@ -5375,6 +5465,9 @@ class OrchestrationStageExecutor:
                         context=portfolio_context,
                         timeout_seconds=ce_timeout_seconds,
                         execution_attempt=ce_execution_attempt,
+                        structured_output_contract=self._chief_engineer_structured_output_contract(
+                            tuple(task.task_id for task in portfolio_tasks)
+                        ),
                         metadata={
                             "pm_task_contract": dict(portfolio_context["pm_task_contract"]),
                             "pm_task_contracts": list(portfolio_context["pm_task_contracts"]),
@@ -5592,6 +5685,22 @@ class OrchestrationStageExecutor:
                     ce_llm_blueprint = dict(quality_result.data)
 
             if ce_llm_blueprint and call_error_count == 0:
+                if "scope_for_apply" not in ce_llm_blueprint:
+                    omission_signal: dict[str, Any] = {
+                        "code": "chief_engineer.scope_advisory_omitted",
+                        "severity": "warning",
+                        "detail": (
+                            "CE omitted non-authoritative scope_for_apply advice; "
+                            "PM target_files and scope_paths remain the apply authority."
+                        ),
+                        "task_id": portfolio_task_id,
+                        "provider": ce_provider,
+                        "model": ce_model,
+                        "pm_authority_preserved": True,
+                        "scope_expansion_allowed": False,
+                    }
+                    self._attach_ce_llm_evidence(omission_signal, ce_evidence)
+                    stage_signals.append(omission_signal)
                 output_errors = self._chief_engineer_portfolio_output_errors(
                     ce_llm_blueprint,
                     task_ids=tuple(task.task_id for task in portfolio_tasks),
@@ -6041,6 +6150,7 @@ class OrchestrationStageExecutor:
             stage_signals.append(task_runtime_projection_failure)
         attempts: list[dict[str, Any]] = []
         last_command_result: CommandResult | None = None
+        last_director_execution_deadline_monotonic: float | None = None
         final_result: CommandResult | None = None
         max_rounds = int(context.get("director_max_rounds") or 0)
         if max_rounds <= 0:
@@ -6246,10 +6356,22 @@ class OrchestrationStageExecutor:
                     factory_run_id=run.id,
                 )
                 if not round_requested_task_ids and attempts:
+                    inflight_run_id = str((last_command_result.run_id if last_command_result else "") or "").strip()
+                    active_execution_observed = bool(
+                        inflight_run_id and self._active_director_execution_progress_marker(run_id=inflight_run_id)
+                    )
+                    carried_execution_lease_seconds = (
+                        _whole_wait_seconds(last_director_execution_deadline_monotonic)
+                        if active_execution_observed and last_director_execution_deadline_monotonic is not None
+                        else 0
+                    )
+                    inflight_settlement_wait_seconds = (
+                        carried_execution_lease_seconds + director_settlement_timeout_seconds
+                    )
                     settle_result = await self._settle_inflight_director_run_after_timeout(
                         service,
-                        run_id=str((last_command_result.run_id if last_command_result else "") or "").strip(),
-                        grace_seconds=director_settlement_timeout_seconds,
+                        run_id=inflight_run_id,
+                        grace_seconds=inflight_settlement_wait_seconds,
                         cancel_event=self._resolve_cancel_event(context),
                         abort_checker=abort_checker,
                     )
@@ -6277,6 +6399,10 @@ class OrchestrationStageExecutor:
                                 "progress_made": self._has_director_progress(before_stats, settled_stats),
                                 "workspace_delta_progress": workspace_delta_progress,
                                 "workspace_delta": workspace_delta,
+                                "active_execution_observed": active_execution_observed,
+                                "carried_execution_lease_seconds": carried_execution_lease_seconds,
+                                "settlement_timeout_seconds": director_settlement_timeout_seconds,
+                                "execution_barrier_wait_seconds": inflight_settlement_wait_seconds,
                                 "settled_after_timeout": True,
                             }
                         )
@@ -6306,6 +6432,10 @@ class OrchestrationStageExecutor:
                                 "round": round_index,
                                 "run_id": str(settle_result.run_id or "").strip(),
                                 "taskboard_after": settled_stats,
+                                "active_execution_observed": active_execution_observed,
+                                "carried_execution_lease_seconds": carried_execution_lease_seconds,
+                                "settlement_timeout_seconds": director_settlement_timeout_seconds,
+                                "execution_barrier_wait_seconds": inflight_settlement_wait_seconds,
                             }
                         )
                         if self._is_taskboard_converged(settled_stats):
@@ -6383,6 +6513,7 @@ class OrchestrationStageExecutor:
                     round_requested_task_ids = list(requested_task_ids or [])
                 base_options["metadata"]["director_claimable_task_ids"] = list(round_requested_task_ids)
                 execution_deadline_monotonic = _new_monotonic_deadline(director_execution_timeout_seconds)
+                last_director_execution_deadline_monotonic = execution_deadline_monotonic
                 director_execution_deadline_epoch_seconds = datetime.now(
                     timezone.utc
                 ).timestamp() + _remaining_monotonic_seconds(execution_deadline_monotonic)

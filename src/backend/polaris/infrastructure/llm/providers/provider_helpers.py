@@ -1303,6 +1303,70 @@ def list_models_from_api(
 
 _STREAM_RETRY_DELAY_SEC: float = float(os.environ.get("KERNELONE_STREAM_RETRY_DELAY_SEC", "5.0"))
 _STREAM_RETRY_MAX_ATTEMPTS: int = int(os.environ.get("KERNELONE_STREAM_RETRY_MAX_ATTEMPTS", "3"))
+_PROVIDER_STREAM_ERROR_BODY_MAX_BYTES = 500
+
+
+class _ProviderStreamHttpError(RuntimeError):
+    """Carry one provider HTTP failure, including its bounded response body."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        url: str,
+        error_body: str,
+        body_truncated: bool = False,
+    ) -> None:
+        self.status_code = status_code
+        self.error_body = error_body[:500]
+        self.body_truncated = body_truncated or len(error_body) > 500
+        detail = self.error_body if self.error_body else "(empty)"
+        truncation = " [truncated]" if self.body_truncated else ""
+        super().__init__(f"provider_stream_http_error:{status_code} from {url}: {detail}{truncation}")
+
+
+def _bounded_provider_stream_error_chunk_prefix(
+    chunk: bytes | bytearray | memoryview | str,
+    max_bytes: int,
+) -> bytes:
+    """Copy at most ``max_bytes`` from one provider-controlled stream chunk."""
+
+    if max_bytes <= 0:
+        return b""
+    if isinstance(chunk, str):
+        return chunk[:max_bytes].encode("utf-8", errors="replace")[:max_bytes]
+    if isinstance(chunk, (bytes, bytearray, memoryview)):
+        view = memoryview(chunk)
+        if view.format != "B" or view.ndim != 1:
+            view = view.cast("B")
+        return bytes(view[:max_bytes])
+    raise TypeError("provider_stream_error_body_chunk_not_bytes")
+
+
+async def _read_bounded_provider_stream_error_body(
+    response: aiohttp.ClientResponse,
+) -> tuple[str, bool]:
+    """Read at most one bounded provider error-body prefix."""
+
+    read_limit = _PROVIDER_STREAM_ERROR_BODY_MAX_BYTES + 1
+    content = response.content
+    read = getattr(content, "read", None)
+    if callable(read):
+        raw_value = await read(read_limit)
+        if not isinstance(raw_value, (bytes, bytearray, memoryview)):
+            raise TypeError("provider_stream_error_body_read_not_bytes")
+        raw = bytes(raw_value)
+    else:
+        buffer = bytearray()
+        async for chunk in content:
+            remaining = read_limit - len(buffer)
+            buffer.extend(_bounded_provider_stream_error_chunk_prefix(chunk, remaining))
+            if len(buffer) >= read_limit:
+                break
+        raw = bytes(buffer)
+    truncated = len(raw) > _PROVIDER_STREAM_ERROR_BODY_MAX_BYTES
+    bounded = raw[:_PROVIDER_STREAM_ERROR_BODY_MAX_BYTES]
+    return bounded.decode("utf-8", errors="replace"), truncated
 
 
 def _is_retryable_network_error(exc: BaseException) -> bool:
@@ -1317,13 +1381,18 @@ def _is_retryable_network_error(exc: BaseException) -> bool:
     exc_type = type(exc).__name__
     exc_msg = str(exc).lower()
 
-    # aiohttp client errors that indicate transient network issues
+    status_code = getattr(exc, "status_code", None)
+    if not isinstance(status_code, int):
+        status_code = getattr(exc, "status", None)
+    if isinstance(status_code, int):
+        return status_code in {408, 425, 429} or 500 <= status_code < 600
+
+    # aiohttp client errors that always indicate transport failures.
     retryable_errors = {
         "ClientConnectorError",
         "ClientOSError",
         "ClientSSLError",
         "ServerDisconnectedError",
-        "ClientResponseError",  # HTTP 5xx, 429, etc.
     }
 
     # Connection-related errors from asyncio and socket layer
@@ -1342,7 +1411,7 @@ def _is_retryable_network_error(exc: BaseException) -> bool:
 
     # Check for HTTP status codes in exception message (e.g., "429 Client Response: Too Many Requests")
     # These indicate server-side errors that may be transient
-    status_indicators = ["429", "502", "503", "504", "500", "502", "503", "504"]
+    status_indicators = ["408", "425", "429", "500", "501", "502", "503", "504"]
     for indicator in status_indicators:
         if indicator in exc_msg:
             return True
@@ -1524,16 +1593,29 @@ async def _consume_data_line_response(
     url: str,
 ) -> AsyncIterator[dict[str, Any]]:
     if not response.ok:
+        error_body = ""
+        body_truncated = False
+        aiohttp_module = _ensure_aiohttp_imported()
+        aiohttp_client_error = getattr(aiohttp_module, "ClientError", RuntimeError)
+        body_read_errors = (aiohttp_client_error, OSError, RuntimeError, TypeError, ValueError)
         try:
-            error_body = await response.text()
+            error_body, body_truncated = await _read_bounded_provider_stream_error_body(response)
+            truncation = " [truncated]" if body_truncated else ""
             logger.warning(
-                "[provider-helpers] HTTP %s from %s: %s",
+                "[provider-helpers] HTTP %s from %s: %s%s",
                 response.status,
                 url,
-                error_body[:500] if error_body else "(empty)",
+                error_body if error_body else "(empty)",
+                truncation,
             )
-        except (RuntimeError, ValueError):
+        except body_read_errors:
             logger.warning("[provider-helpers] HTTP %s from %s (failed to read body)", response.status, url)
+        raise _ProviderStreamHttpError(
+            status_code=int(response.status),
+            url=url,
+            error_body=error_body,
+            body_truncated=body_truncated,
+        )
     response.raise_for_status()
     content_type = str(response.headers.get("Content-Type", "") or "").lower()
     if "application/json" in content_type:

@@ -3,9 +3,62 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+    _add_context_os_audit_findings,
     _add_evidence_coverage_findings,
     _coverage_flags,
 )
+
+
+def test_context_os_audit_failure_is_first_class_final_request_finding() -> None:
+    quality: dict[str, object] = {"findings": [], "missing_coverage": []}
+    context_os_audit = {
+        "ok": False,
+        "expected": True,
+        "control_plane": {
+            "isolated": False,
+            "metadata_key_hits": [],
+            "content_hits": [
+                "chief_engineer_llm_timeout_seconds:",
+                "chief_engineer_deadline_decision:",
+            ],
+        },
+    }
+
+    projected = _add_context_os_audit_findings(quality, context_os_audit)
+
+    assert projected["context_needs_review"] is True
+    assert projected["findings"] == [
+        {
+            "code": "context_os_prompt_audit_failed",
+            "severity": "error",
+            "control_plane_isolated": False,
+            "metadata_key_hits": [],
+            "content_hits": [
+                "chief_engineer_llm_timeout_seconds:",
+                "chief_engineer_deadline_decision:",
+            ],
+        }
+    ]
+
+
+def test_context_os_audit_success_does_not_change_final_request_quality() -> None:
+    quality: dict[str, object] = {"findings": [], "missing_coverage": []}
+
+    projected = _add_context_os_audit_findings(
+        quality,
+        {
+            "ok": True,
+            "expected": True,
+            "control_plane": {
+                "isolated": True,
+                "metadata_key_hits": [],
+                "content_hits": [],
+            },
+        },
+    )
+
+    assert projected["context_needs_review"] is False
+    assert projected["findings"] == []
 
 
 def test_add_evidence_coverage_findings_uses_structured_missing_evidence_slots() -> None:

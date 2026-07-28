@@ -176,6 +176,7 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES = {
     ("_create_with_execution_event", "create"): 1,
     ("_reopen_with_execution_event", "reopen"): 1,
     ("_update_with_execution_event", "update"): 1,
+    ("cancel_task_row_for_factory_abort", "update"): 1,
     ("cancel_task_row_for_deduplication", "update"): 1,
     ("claim_execution", "update"): 1,
     ("_project_settled_execution_attempt_locked", "update"): 2,
@@ -184,6 +185,7 @@ REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES = {
     ("_heartbeat_execution_attempt_locked", "update"): 1,
     ("heartbeat_execution", "update"): 1,
     ("refresh_dependency_unblocks", "update"): 2,
+    ("force_fail_active_session_for_factory_abort", "update"): 1,
     ("suspend_active_executions_for_run", "update"): 1,
     ("fence_expired_factory_run_sessions", "update"): 1,
 }
@@ -208,8 +210,10 @@ TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_CONSUMERS = frozenset(
 TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_HELPER = "_task_entity_for_owner_terminal_transition"
 TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS = frozenset(
     {
+        "cancel_task_row_for_factory_abort",
         "cancel_task_row_for_deduplication",
         "fail_task_row_from_role_adapter",
+        "force_fail_active_session_for_factory_abort",
     }
 )
 TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_HELPER = "_task_entity_for_dependency_side_effect"

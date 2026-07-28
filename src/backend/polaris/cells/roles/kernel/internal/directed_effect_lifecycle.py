@@ -42,7 +42,7 @@ from polaris.cells.roles.kernel.public.directed_effect_contracts import (
 from polaris.cells.runtime.task_runtime.public import (
     AbortDirectedEffectOperationCommandV1,
     AdmitDirectedEffectOperationCommandV1,
-    AdmitDirectedEffectParentCommandV1,
+    AdmitDirectedEffectParentBatchCommandV1,
     ClaimDirectedEffectCommandV1,
     DirectedEffectClaimGrantV1,
     DirectedEffectInventoryResultV1,
@@ -61,7 +61,7 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptIdentityV1,
     abort_directed_effect_operation,
     admit_directed_effect_operation,
-    admit_directed_effect_parent,
+    admit_directed_effect_parent_batch,
     claim_directed_effect,
     enroll_directed_effect_operation_stream,
     enroll_directed_effect_parent_registry_stream,
@@ -125,9 +125,9 @@ class DirectedEffectTaskRuntimePortsV1:
         DirectedEffectStreamEnrollmentResultV1,
     ] = enroll_directed_effect_parent_registry_stream
     admit_parent: Callable[
-        [AdmitDirectedEffectParentCommandV1],
+        [AdmitDirectedEffectParentBatchCommandV1],
         DirectedEffectOperationResultV1,
-    ] = admit_directed_effect_parent
+    ] = admit_directed_effect_parent_batch
     enroll_operation_stream: Callable[
         [EnrollDirectedEffectOperationStreamCommandV1],
         DirectedEffectStreamEnrollmentResultV1,
@@ -484,14 +484,12 @@ class DirectedEffectLifecycleService:
         try:
             parent_result = _canonical_port_result(
                 self._ports.admit_parent(
-                    AdmitDirectedEffectParentCommandV1(
+                    AdmitDirectedEffectParentBatchCommandV1(
                         workspace=execution_attempt.workspace,
                         task_id=execution_attempt.task_id,
                         execution_attempt=execution_attempt,
                         correlation=correlation,
                         admission_idempotency_key=parent_admission_key,
-                        expected_version=0,
-                        expected_seq=1,
                         actor="roles.kernel",
                     )
                 ),
@@ -511,9 +509,9 @@ class DirectedEffectLifecycleService:
             != DirectedEffectParentRegistryIdentityV1.from_execution_attempt(execution_attempt)
             or parent_binding.correlation != correlation
             or parent_binding.admission_idempotency_key != parent_admission_key
-            or parent_binding.registry_version != 1
-            or parent_binding.parent_sequence != 1
-            or parent_binding.source_event_seq != 1
+            or parent_binding.registry_version < 1
+            or parent_binding.parent_sequence < 1
+            or parent_binding.source_event_seq != parent_binding.registry_version
             or parent_binding.actor != "roles.kernel"
         ):
             return _denied("parent_admission", "deo_parent_admission_failed", parent_result.code)

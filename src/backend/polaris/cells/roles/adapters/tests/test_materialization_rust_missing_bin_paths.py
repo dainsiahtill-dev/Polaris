@@ -17,7 +17,6 @@ from polaris.cells.roles.adapters.internal.director.quality_gate import (
 from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
     run_runtime_repair_with_director_tools,
 )
-from polaris.cells.roles.kernel.internal.deferred_repair_effects import DeferredRepairEffectSynthesizer
 from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
 from polaris.kernelone.quality import scan_workspace_artifact_quality
 
@@ -75,13 +74,47 @@ def test_declared_bin_paths_extend_allowed_paths_without_faking_base_files(tmp_p
     assert "src/main.rs" in allowed
 
 
-def test_rust_task_retains_missing_bin_error_outside_literal_write_scope() -> None:
+def test_rust_missing_bin_paths_from_display_string_issues_include_main_rs() -> None:
+    """Display-string rehydration must still allowlist src/main.rs for DEO commit."""
+
+    from polaris.kernelone.quality import artifact_quality_issues_from_errors
+
+    issues = artifact_quality_issues_from_errors(
+        ["error: can't find bin `kitchen_flavor_palette` at path `/tmp/ws/src/main.rs`"]
+    )
+    paths = _rust_missing_binary_paths_from_quality_issues(issues)
+    assert paths == ("src/main.rs",)
+
+
+def test_rust_missing_bin_paths_reject_absolute_path_outside_src() -> None:
+    paths = _rust_missing_binary_paths_from_quality_issues(
+        (
+            {
+                "code": "rust_missing_binary_entrypoint",
+                "path": "/tmp/elsewhere/escape.rs",
+                "metadata": {"bin_path": "/tmp/elsewhere/escape.rs"},
+            },
+        )
+    )
+    assert paths == ()
+
+
+def test_rust_task_defers_missing_bin_owned_by_explicit_downstream_task() -> None:
     err = "error: can't find bin `demo` at path `/tmp/ws/src/main.rs`"
+    context = {
+        "project_declared_target_files": [
+            "Cargo.toml",
+            "src/lib.rs",
+            "src/models/flavor.rs",
+            "src/main.rs",
+        ]
+    }
     retained = _filter_missing_workspace_file_errors_to_task_write_scope(
         [err],
-        task={"target_files": ["src/lib.rs", "src/models/flavor.rs"]},
+        task={"target_files": ["Cargo.toml", "src/lib.rs", "src/models/flavor.rs"]},
         workspace_full="/tmp/ws",
         workspace_name="",
+        context=context,
         issue_payloads=(
             {
                 "code": "rust_missing_binary_entrypoint",
@@ -91,7 +124,66 @@ def test_rust_task_retains_missing_bin_error_outside_literal_write_scope() -> No
             },
         ),
     )
+
+    assert retained == []
+    assert context["director_task_boundary_deferred_quality_errors"] == [
+        {
+            "schema_version": "director.task_boundary.deferred_quality_errors.v1",
+            "reason": "missing_workspace_file_outside_current_task_target_files",
+            "artifact_quality_errors": [err],
+            "target_files": ["src/main.rs"],
+            "artifact_quality_issues": [
+                {
+                    "code": "rust_missing_binary_entrypoint",
+                    "message": err,
+                    "path": "src/main.rs",
+                    "metadata": {"raw": err, "bin_path": "src/main.rs"},
+                }
+            ],
+        }
+    ]
+
+
+def test_rust_task_retains_missing_bin_without_explicit_project_owner() -> None:
+    err = "error: can't find bin `demo` at path `/tmp/ws/src/main.rs`"
+    retained = _filter_missing_workspace_file_errors_to_task_write_scope(
+        [err],
+        task={"target_files": ["Cargo.toml", "src/lib.rs", "src/models/flavor.rs"]},
+        workspace_full="/tmp/ws",
+        workspace_name="",
+        context={},
+        issue_payloads=(
+            {
+                "code": "rust_missing_binary_entrypoint",
+                "message": err,
+                "path": "src/main.rs",
+                "metadata": {"raw": err, "bin_path": "src/main.rs"},
+            },
+        ),
+    )
+
     assert err in retained
+
+
+def test_rust_task_retains_missing_bin_inside_current_write_scope() -> None:
+    err = "error: can't find bin `demo` at path `/tmp/ws/src/main.rs`"
+    retained = _filter_missing_workspace_file_errors_to_task_write_scope(
+        [err],
+        task={"target_files": ["Cargo.toml", "src/main.rs"]},
+        workspace_full="/tmp/ws",
+        workspace_name="",
+        context={"project_declared_target_files": ["Cargo.toml", "src/main.rs"]},
+        issue_payloads=(
+            {
+                "code": "rust_missing_binary_entrypoint",
+                "message": err,
+                "path": "src/main.rs",
+                "metadata": {"raw": err, "bin_path": "src/main.rs"},
+            },
+        ),
+    )
+
+    assert retained == [err]
 
 
 def test_quality_issue_paths_extract_declared_bin() -> None:
@@ -177,20 +269,13 @@ def test_missing_bin_plan_defers_and_synthesizes_write_file_without_bypass(
     assert request is not None
     assert "src/main.rs" in list(payload.get("allowed_paths") or [])
 
-    synthesis = DeferredRepairEffectSynthesizer().synthesize(
-        request,
-        expected_workspace=str(tmp_path),
-        expected_task_id="task-1",
-        expected_execution_attempt=attempt,
-    )
-    assert synthesis.ok is True
     forward_paths = {
-        str(inv.arguments.get("path") or inv.arguments.get("file") or "")
-        for inv in synthesis.forward_invocations
-        if inv.tool_name == "write_file"
+        effect.target_path
+        for effect in request.plan.effects
+        if effect.contingency_kind == "forward" and effect.tool_name == "write_file"
     }
     assert "src/main.rs" in forward_paths
-    # Adapter/synthesizer must not physically create the file; tool_batch followup owns commit.
+    # The adapter only emits the public deferred request; tool_batch followup owns commit.
     assert not (tmp_path / "src" / "main.rs").exists()
 
 

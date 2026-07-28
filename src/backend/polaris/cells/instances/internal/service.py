@@ -40,6 +40,7 @@ DEFAULT_WATCHDOG_INTERVAL_SECONDS = 2.0
 PROCESS_TERMINATE_TIMEOUT_SECONDS = 5.0
 PORT_RELEASE_TIMEOUT_SECONDS = 8.0
 BACKEND_IDENTITY_TIMEOUT_SECONDS = 75.0
+BACKEND_IDENTITY_REQUEST_TIMEOUT_SECONDS = 5.0
 FRONTEND_IDENTITY_TIMEOUT_SECONDS = 10.0
 PARTIAL_STARTUP_GRACE_SECONDS = 120.0
 REGISTRY_LOCK_TIMEOUT_SECONDS = 30.0
@@ -1344,7 +1345,10 @@ class InstanceSupervisor:
             headers={"Authorization": f"Bearer {record.token}"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=1.0) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=BACKEND_IDENTITY_REQUEST_TIMEOUT_SECONDS,
+            ) as response:
                 body = response.read()
         except (urllib.error.URLError, TimeoutError, OSError):
             return None

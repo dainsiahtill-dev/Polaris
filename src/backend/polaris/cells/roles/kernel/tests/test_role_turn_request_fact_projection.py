@@ -55,6 +55,10 @@ from polaris.cells.roles.kernel.internal.llm_caller.invoker import _invoke_execu
 from polaris.cells.roles.kernel.internal.llm_caller.request_facts import project_role_request_facts
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import pin_write_tool_file_param_to_targets
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    STRUCTURED_OUTPUT_TOOL_NAME,
+    resolve_structured_output_transport,
+)
 from polaris.cells.roles.kernel.public import final_request_evidence_cutoff as cutoff_contract
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
@@ -68,6 +72,10 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
 from polaris.cells.roles.kernel.public.physical_attempt_control import (
     FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
     FactoryPhysicalAttemptGrantViewV1,
+)
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
+    RoleStructuredOutputContractV1,
 )
 from polaris.cells.roles.kernel.tests._physical_attempt_control_test_double import (
     FactoryPhysicalAttemptTestControlPort as FactoryPhysicalAttemptLiveControlPort,
@@ -377,6 +385,195 @@ async def test_stream_transaction_kernel_uses_same_request_fact_projection() -> 
     assert projected["target_files"] == ["src/models/weather.py"]
     assert projected["scope_paths"] == ["src/models/weather.py"]
     assert projected["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_stream_transaction_kernel_consumes_result_tool_before_tool_lifecycle() -> None:
+    payload = {
+        "construction_plan": {},
+        "scope_for_apply": [],
+        "risk_flags": [],
+    }
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "construction_plan": {"type": "object"},
+                "scope_for_apply": {"type": "array"},
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+            "additionalProperties": False,
+        },
+    )
+
+    async def _fake_call_stream(**_kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "chunk", "content": "Submitting result."}
+        yield {
+            "type": "tool_call",
+            "tool": "submit_structured_role_output",
+            "args": payload,
+            "call_id": "call-ce-result",
+        }
+        yield {"type": "complete", "metadata": {"provider_id": "deepseek"}}
+
+    request = SimpleNamespace(
+        message="Review the PM portfolio.",
+        task_id="CE-PORTFOLIO-run-structured",
+        run_id="run-structured",
+        workspace=".",
+        metadata={},
+        context_override={
+            STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection(),
+        },
+    )
+    kernel = RoleExecutionKernel.create_default(
+        workspace=".",
+        llm_invoker=SimpleNamespace(call_stream=_fake_call_stream),
+    )
+    transaction_kernel = create_transaction_kernel(kernel, "chief_engineer", _profile(), request)
+    assert transaction_kernel.llm_provider_stream is not None
+
+    events = [
+        event
+        async for event in transaction_kernel.llm_provider_stream(
+            {
+                "messages": [
+                    {"role": "system", "content": "You are Chief Engineer."},
+                    {"role": "user", "content": request.message},
+                ],
+            }
+        )
+    ]
+
+    assert [event["type"] for event in events] == ["chunk", "complete"]
+    assert json.loads(events[0]["content"]) == payload
+    evidence = events[1]["metadata"]["structured_output_transport"]
+    assert evidence["tool_lifecycle"] is False
+    assert evidence["side_effect"] is False
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.asyncio
+async def test_transaction_kernel_wires_exact_structured_result_request_without_mutation_prompt(
+    stream: bool,
+) -> None:
+    """Exercise the real TransactionKernel caller bridge in both transport modes."""
+
+    payload = {
+        "construction_plan": {},
+        "scope_for_apply": [],
+        "risk_flags": [],
+    }
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "construction_plan": {"type": "object"},
+                "scope_for_apply": {"type": "array"},
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+            "additionalProperties": False,
+        },
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    captured_contexts: list[Any] = []
+
+    async def _fake_call_decision(*, context: Any, **_kwargs: Any) -> dict[str, Any]:
+        captured_contexts.append(context)
+        native_call = {
+            "id": "call-ce-result",
+            "type": "function",
+            "function": {
+                "name": STRUCTURED_OUTPUT_TOOL_NAME,
+                "arguments": json.dumps(payload),
+            },
+        }
+        return {
+            "content": "",
+            "thinking": "",
+            "tool_calls": [native_call],
+            "native_tool_calls": [native_call],
+            "model": "test-model",
+            "usage": {},
+        }
+
+    async def _fake_call_stream(*, context: Any, **_kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+        captured_contexts.append(context)
+        yield {
+            "type": "tool_call",
+            "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+            "args": payload,
+            "call_id": "call-ce-result",
+        }
+        yield {"type": "complete", "metadata": {"provider_id": "test-provider"}}
+
+    request = SimpleNamespace(
+        message="Review the PM portfolio.",
+        task_id="",
+        run_id="",
+        workspace=".",
+        metadata={},
+        context_override={
+            STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection(),
+        },
+    )
+    kernel = RoleExecutionKernel.create_default(
+        workspace=".",
+        llm_invoker=SimpleNamespace(
+            call_decision=_fake_call_decision,
+            call_stream=_fake_call_stream,
+        ),
+    )
+    transaction_kernel = create_transaction_kernel(kernel, "chief_engineer", _profile(), request)
+    context = [
+        {"role": "system", "content": "You are the Chief Engineer."},
+        {
+            "role": "user",
+            "content": (
+                "Return the complete portfolio for src/main.rs and tests. The downstream Director owns implementation."
+            ),
+        },
+    ]
+
+    if stream:
+        _ = [
+            event
+            async for event in transaction_kernel.execute_stream(
+                "turn-structured-wiring-stream",
+                context,
+                [plan.tool_definition],
+                tool_choice_override=plan.tool_choice,
+            )
+        ]
+    else:
+        await transaction_kernel.execute(
+            "turn-structured-wiring-nonstream",
+            context,
+            [plan.tool_definition],
+            tool_choice_override=plan.tool_choice,
+        )
+
+    assert len(captured_contexts) == 1
+    override = captured_contexts[0].context_override
+    assert override[request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY] == [plan.tool_definition]
+    assert override[request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY] == plan.tool_choice
+    prebuilt = override[request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY]
+    rendered = "\n".join(str(message.get("content") or "") for message in prebuilt)
+    assert "SYSTEM CONSTRAINT (Structured Result)" in rendered
+    assert "Call submit_structured_role_output exactly once" in rendered
+    assert "SYSTEM CONSTRAINT (Execution)" not in rendered
+    assert "TASK CONTRACT (single-batch planning)" not in rendered
+    assert "This request requires mutation" not in rendered
+    assert "POSITIVE TOOL SEQUENCE TEMPLATES" not in rendered
 
 
 @pytest.mark.asyncio
@@ -906,6 +1103,7 @@ async def _prepare_b33_factory_request(
     temperature: float = 0.2,
     max_tokens: int = 4000,
     stream: bool = False,
+    structured_output_contract: RoleStructuredOutputContractV1 | None = None,
 ) -> tuple[_B32CutoffPort, FactoryRoleEvidenceAuthorityBindingV1, SimpleNamespace, Any]:
     port = _B32CutoffPort()
     authority = _b32_authority(
@@ -915,19 +1113,22 @@ async def _prepare_b33_factory_request(
         execution_authority_hash=execution_authority_hash,
         attempt_budget=attempt_budget,
     )
+    context_override: dict[str, Any] = {
+        request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
+            {"role": "system", "content": f"You are {role}."},
+            {"role": "user", "content": "Review."},
+        ],
+        request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: list(tool_definitions or []),
+        request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY: tool_choice,
+        "capability_profile_ref": {"sha256": "f" * 64},
+        "required_tools": list(required_tools or []),
+    }
+    if structured_output_contract is not None:
+        context_override[STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY] = structured_output_contract.to_context_projection()
     context = SimpleNamespace(
         message="Review.",
         domain="code",
-        context_override={
-            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
-                {"role": "system", "content": f"You are {role}."},
-                {"role": "user", "content": "Review."},
-            ],
-            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: list(tool_definitions or []),
-            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY: tool_choice,
-            "capability_profile_ref": {"sha256": "f" * 64},
-            "required_tools": list(required_tools or []),
-        },
+        context_override=context_override,
     )
     with bind_factory_role_evidence_authority(authority):
         prepared = await LLMRequestPreparer(workspace=workspace)._prepare_llm_request(
@@ -940,6 +1141,23 @@ async def _prepare_b33_factory_request(
             factory_semantic_identity=_semantic_identity(),
         )
     return port, authority, context, prepared
+
+
+def _b35_structured_output_contract() -> RoleStructuredOutputContractV1:
+    return RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete Chief Engineer blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "construction_plan": {"type": "object"},
+                "scope_for_apply": {"type": "array"},
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+            "additionalProperties": False,
+        },
+    )
 
 
 @pytest.mark.parametrize("role", ["architect", "pm", "chief_engineer", "director", "qa"])
@@ -2089,6 +2307,178 @@ async def test_b35_toolspec_registry_alias_contract_is_exact(tmp_path: Any) -> N
             frozen=frozen,
             binding=dispatch_port._binding,
             final_request_context_audit=drifted_audit,
+            context_snapshot_ref=context_snapshot_ref,
+        )
+
+
+@pytest.mark.asyncio
+async def test_b35_qualifies_exact_non_executable_provider_result_protocol(tmp_path: Path) -> None:
+    contract = _b35_structured_output_contract()
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    _, _, _, prepared = await _prepare_b33_factory_request(
+        "chief_engineer",
+        workspace=str(tmp_path),
+        tool_definitions=[plan.tool_definition],
+        tool_choice=plan.tool_choice,
+        structured_output_contract=contract,
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    assert prepared.structured_output_transport is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    assert payload["tools"] == [plan.tool_definition]
+    assert payload["tool_choice"] == plan.tool_choice
+
+    observed = build_final_request_context_audit_for_request(
+        ai_request=prepared.ai_request,
+        prepared=prepared,
+        profile=_profile("chief_engineer"),
+    )
+    bound = dispatch_port.bind_final_request_context_audit(observed)
+    provider_request = {
+        "schema_version": "llm.provider_request_snapshot.v1",
+        "role": payload["role"],
+        "provider_id": payload["provider_id"],
+        "model": payload["model"],
+        "factory_final_request": final_request_snapshot_evidence(frozen),
+        "final_request_context_audit": bound,
+    }
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        provider_request,
+    )
+    bound["final_request_evidence_coverage"]["context_snapshot_ref"] = context_snapshot_ref
+
+    qualified = qualify_final_provider_request(
+        workspace=str(tmp_path),
+        frozen=frozen,
+        binding=dispatch_port._binding,
+        final_request_context_audit=bound,
+        context_snapshot_ref=context_snapshot_ref,
+    )
+
+    coverage = qualified["final_request_evidence_coverage"]
+    assert coverage["provider_protocol_schema_coverage"]["valid"] is True
+    assert coverage["provider_protocol_schema_coverage"]["executable_tool"] is False
+    assert coverage["tool_schema_registry_coverage"]["missing_schema_tools"] == []
+    assert ToolSpecRegistry.get_llm_schema(STRUCTURED_OUTPUT_TOOL_NAME) is None
+
+
+@pytest.mark.asyncio
+async def test_b35_rejects_spoofed_provider_result_protocol_schema(tmp_path: Path) -> None:
+    contract = _b35_structured_output_contract()
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    spoofed_tool = copy.deepcopy(plan.tool_definition)
+    spoofed_tool["function"]["description"] = "Spoofed result protocol."
+    _, _, _, prepared = await _prepare_b33_factory_request(
+        "chief_engineer",
+        workspace=str(tmp_path),
+        tool_definitions=[spoofed_tool],
+        tool_choice=plan.tool_choice,
+        structured_output_contract=contract,
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    observed = build_final_request_context_audit_for_request(
+        ai_request=prepared.ai_request,
+        prepared=prepared,
+        profile=_profile("chief_engineer"),
+    )
+    assert observed["final_request_evidence_coverage"]["provider_protocol_schema_coverage"]["valid"] is False
+    bound = dispatch_port.bind_final_request_context_audit(observed)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        {
+            "schema_version": "llm.provider_request_snapshot.v1",
+            "role": payload["role"],
+            "provider_id": payload["provider_id"],
+            "model": payload["model"],
+            "factory_final_request": final_request_snapshot_evidence(frozen),
+            "final_request_context_audit": bound,
+        },
+    )
+    bound["final_request_evidence_coverage"]["context_snapshot_ref"] = context_snapshot_ref
+
+    with pytest.raises(FinalProviderAttemptQualificationError, match="provider_protocol_tool_schema_drift"):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=bound,
+            context_snapshot_ref=context_snapshot_ref,
+        )
+
+
+@pytest.mark.asyncio
+async def test_b35_rejects_provider_result_protocol_mixed_with_executable_tools(tmp_path: Path) -> None:
+    contract = _b35_structured_output_contract()
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    executable_tool = ToolSpecRegistry.get_llm_schema(
+        "read_file",
+        include_arg_aliases=True,
+        deterministic=True,
+    )
+    assert isinstance(executable_tool, dict)
+    _, _, _, prepared = await _prepare_b33_factory_request(
+        "chief_engineer",
+        workspace=str(tmp_path),
+        tool_definitions=[plan.tool_definition, executable_tool],
+        tool_choice=plan.tool_choice,
+        structured_output_contract=contract,
+    )
+    frozen = prepared.factory_semantic_request
+    dispatch_port = prepared.factory_dispatch_port
+    assert frozen is not None and dispatch_port is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    observed = build_final_request_context_audit_for_request(
+        ai_request=prepared.ai_request,
+        prepared=prepared,
+        profile=_profile("chief_engineer"),
+    )
+    protocol = observed["final_request_evidence_coverage"]["provider_protocol_schema_coverage"]
+    assert protocol["valid"] is False
+    assert protocol["failure_code"] == "provider_protocol_tool_surface_mixed"
+    bound = dispatch_port.bind_final_request_context_audit(observed)
+    context_snapshot_ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        {
+            "schema_version": "llm.provider_request_snapshot.v1",
+            "role": payload["role"],
+            "provider_id": payload["provider_id"],
+            "model": payload["model"],
+            "factory_final_request": final_request_snapshot_evidence(frozen),
+            "final_request_context_audit": bound,
+        },
+    )
+    bound["final_request_evidence_coverage"]["context_snapshot_ref"] = context_snapshot_ref
+
+    with pytest.raises(FinalProviderAttemptQualificationError, match="provider_protocol_tool_surface_mixed"):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=bound,
             context_snapshot_ref=context_snapshot_ref,
         )
 

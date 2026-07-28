@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
@@ -12,6 +13,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     merge_failure_evidence_payload,
     summarize_failed_gate_evidence_context_slot,
 )
+from polaris.kernelone.audit.context_os_prompt import compact_context_os_audit
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.events.final_request_evidence import (
     build_final_request_coverage_sources,
@@ -34,6 +36,11 @@ from polaris.kernelone.events.final_request_evidence import (
 )
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
+from ..structured_output_transport import (
+    STRUCTURED_OUTPUT_TOOL_NAME,
+    STRUCTURED_OUTPUT_TRANSPORT_SCHEMA,
+    StructuredOutputTransportPlan,
+)
 from .final_request_metrics import canonical_message_chars
 from .response_types import PreparedLLMRequest
 
@@ -55,6 +62,8 @@ _OPTIONAL_CONTEXT_QUALITY_FLAGS = frozenset(
     }
 )
 _TOOL_REGISTRY_SOURCE = "polaris.kernelone.tool_execution.ToolSpecRegistry"
+_PROVIDER_PROTOCOL_COVERAGE_SCHEMA = "polaris.provider_protocol_schema_coverage.v1"
+_PROVIDER_PROTOCOL_SOURCE = "roles.kernel.structured_output_transport"
 
 
 class FinalRequestEvidenceCoverageError(RuntimeError):
@@ -1857,10 +1866,80 @@ def _tool_schema_properties(tool_schema: Any) -> dict[str, Any]:
     return dict(properties) if isinstance(properties, dict) else {}
 
 
+def _provider_protocol_schema_coverage(
+    tool_schema_payload: Any,
+    *,
+    tool_choice_payload: Any,
+    plan: StructuredOutputTransportPlan | None,
+) -> dict[str, Any]:
+    """Bind one caller-owned result protocol to the exact provider surface.
+
+    This protocol is deliberately separate from executable ToolSpecRegistry
+    tools.  It returns typed content and is consumed before authorization,
+    Tool Lifecycle, effect receipts, or mutation ports.
+    """
+
+    if plan is None:
+        return {
+            "schema_version": _PROVIDER_PROTOCOL_COVERAGE_SCHEMA,
+            "active": False,
+            "valid": True,
+            "protocol_source": "",
+            "tool_name": "",
+            "transport": "",
+            "strict": False,
+            "executable_tool": False,
+            "side_effect": False,
+            "tool_lifecycle": False,
+            "contract_hash": "",
+            "tool_schema_hash": "",
+            "observed_tool_schema_hash": "",
+            "tool_choice_hash": "",
+            "observed_tool_choice_hash": "",
+            "failure_code": "",
+        }
+
+    tools = tool_schema_payload if isinstance(tool_schema_payload, list) else []
+    expected_tool = plan.tool_definition
+    expected_choice = plan.tool_choice
+    actual_tool = tools[0] if len(tools) == 1 and isinstance(tools[0], dict) else None
+    if not tools:
+        failure_code = "provider_protocol_tool_missing"
+    elif len(tools) != 1:
+        failure_code = "provider_protocol_tool_surface_mixed"
+    elif actual_tool != expected_tool:
+        failure_code = "provider_protocol_tool_schema_drift"
+    elif tool_choice_payload != expected_choice:
+        failure_code = "provider_protocol_tool_choice_drift"
+    else:
+        failure_code = ""
+    return {
+        "schema_version": _PROVIDER_PROTOCOL_COVERAGE_SCHEMA,
+        "active": True,
+        "valid": not failure_code,
+        "protocol_source": _PROVIDER_PROTOCOL_SOURCE,
+        "transport_schema": STRUCTURED_OUTPUT_TRANSPORT_SCHEMA,
+        "tool_name": STRUCTURED_OUTPUT_TOOL_NAME,
+        "schema_name": plan.contract.schema_name,
+        "transport": plan.contract.transport,
+        "strict": plan.contract.strict,
+        "executable_tool": False,
+        "side_effect": False,
+        "tool_lifecycle": False,
+        "contract_hash": _stable_digest(plan.contract.to_context_projection()),
+        "tool_schema_hash": _stable_digest(expected_tool),
+        "observed_tool_schema_hash": _stable_digest(actual_tool) if actual_tool is not None else "",
+        "tool_choice_hash": _stable_digest(expected_choice),
+        "observed_tool_choice_hash": _stable_digest(tool_choice_payload),
+        "failure_code": failure_code,
+    }
+
+
 def _tool_schema_registry_coverage(
     tool_schema_payload: Any,
     *,
     missing_required_tools: list[str],
+    exempt_tool_schemas: tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     """Project registry provenance from the exact final provider tool surface.
 
@@ -1871,7 +1950,16 @@ def _tool_schema_registry_coverage(
     alias coverage that qualification binds to that same request.
     """
 
-    if not isinstance(tool_schema_payload, list) or not tool_schema_payload:
+    executable_tool_schemas = (
+        [
+            tool_schema
+            for tool_schema in tool_schema_payload
+            if not (isinstance(tool_schema, dict) and any(tool_schema == exempt for exempt in exempt_tool_schemas))
+        ]
+        if isinstance(tool_schema_payload, list)
+        else []
+    )
+    if not executable_tool_schemas:
         return {
             "registry_source": "",
             "aliases_present": False,
@@ -1883,7 +1971,7 @@ def _tool_schema_registry_coverage(
     missing_schema_tools = list(missing_required_tools)
     aliases_present = True
     arg_aliases_present = True
-    for tool_schema in tool_schema_payload:
+    for tool_schema in executable_tool_schemas:
         raw_name = _tool_name_from_schema(tool_schema)
         canonical_name = _canonical_tool_name(raw_name)
         try:
@@ -1930,7 +2018,7 @@ def _tool_schema_registry_coverage(
         "registry_source": _TOOL_REGISTRY_SOURCE if not missing_schema_tools else "",
         "aliases_present": aliases_present,
         "arg_aliases_present": arg_aliases_present,
-        "schema_hash": _stable_digest(tool_schema_payload),
+        "schema_hash": _stable_digest(executable_tool_schemas),
         "missing_schema_tools": missing_schema_tools,
     }
 
@@ -2204,6 +2292,7 @@ def _final_request_evidence_coverage(
     coverage: dict[str, bool],
     request_metadata_summary: dict[str, Any],
     tool_schema_payload: Any,
+    tool_choice_payload: Any,
     response_format_payload: Any,
 ) -> dict[str, Any]:
     envelope = _execution_envelope(ai_request)
@@ -2255,6 +2344,19 @@ def _final_request_evidence_coverage(
         included_refs=included_refs,
         workflow_chain=workflow_chain,
         request_metadata_summary=request_metadata_summary,
+    )
+    structured_output_transport = getattr(prepared, "structured_output_transport", None)
+    provider_protocol_coverage = _provider_protocol_schema_coverage(
+        tool_schema_payload,
+        tool_choice_payload=tool_choice_payload,
+        plan=structured_output_transport,
+    )
+    exempt_tool_schemas = (
+        (structured_output_transport.tool_definition,)
+        if provider_protocol_coverage["active"] is True
+        and provider_protocol_coverage["valid"] is True
+        and structured_output_transport is not None
+        else ()
     )
     total_required = len(required_refs) + len(required_tools)
     total_missing = len(missing_required_refs) + len(missing_required_tools)
@@ -2315,7 +2417,9 @@ def _final_request_evidence_coverage(
         "tool_schema_registry_coverage": _tool_schema_registry_coverage(
             tool_schema_payload,
             missing_required_tools=missing_required_tools,
+            exempt_tool_schemas=exempt_tool_schemas,
         ),
+        "provider_protocol_schema_coverage": provider_protocol_coverage,
         "structured_evidence": final_request_structured_evidence_from_metadata_summary(request_metadata_summary),
         "workflow_chain": workflow_chain,
         "ledger_evidence": _ledger_evidence(ai_request, receipt_refs=receipt_refs),
@@ -2373,6 +2477,51 @@ def _add_evidence_coverage_findings(quality: dict[str, Any], evidence_coverage: 
         "missing_required_refs": list(missing_refs),
         "missing_required_tools": list(missing_tools),
     }
+
+
+def _add_context_os_audit_findings(
+    quality: dict[str, Any],
+    context_os_audit: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Make prompt-isolation failure first-class in final request quality."""
+
+    projected = dict(quality)
+    findings = list(projected.get("findings") or [])
+    if context_os_audit.get("expected") is True and context_os_audit.get("ok") is not True:
+        control_plane = context_os_audit.get("control_plane")
+        control_payload = control_plane if isinstance(control_plane, Mapping) else {}
+        if not any(
+            isinstance(item, Mapping) and item.get("code") == "context_os_prompt_audit_failed" for item in findings
+        ):
+            findings.append(
+                {
+                    "code": "context_os_prompt_audit_failed",
+                    "severity": "error",
+                    "control_plane_isolated": bool(control_payload.get("isolated")),
+                    "metadata_key_hits": [
+                        str(item) for item in (control_payload.get("metadata_key_hits") or ()) if str(item).strip()
+                    ],
+                    "content_hits": [
+                        str(item) for item in (control_payload.get("content_hits") or ()) if str(item).strip()
+                    ],
+                }
+            )
+    projected["findings"] = findings
+    projected["context_needs_review"] = bool(findings)
+    return projected
+
+
+def _prepared_context_os_audit(
+    *,
+    prepared: PreparedLLMRequest,
+    ai_request: Any,
+) -> dict[str, Any]:
+    raw_audit = getattr(prepared, "context_os_audit", None)
+    if not isinstance(raw_audit, Mapping):
+        request_context = getattr(ai_request, "context", None)
+        if isinstance(request_context, Mapping):
+            raw_audit = request_context.get("context_os_audit")
+    return compact_context_os_audit(raw_audit) if isinstance(raw_audit, Mapping) else {}
 
 
 def _prompt_profile_selection(ai_request: Any) -> dict[str, Any]:
@@ -2497,6 +2646,10 @@ def build_final_request_context_audit_for_request(
     execution_profile = _execution_profile(ai_request)
     execution_strategy = _execution_strategy(ai_request)
     execution_contract = _execution_contract(ai_request)
+    context_os_audit = _prepared_context_os_audit(
+        prepared=prepared,
+        ai_request=ai_request,
+    )
     quality = _context_quality_findings(
         coverage=coverage,
         context_underutilized=context_underutilized,
@@ -2516,9 +2669,11 @@ def build_final_request_context_audit_for_request(
         coverage=coverage,
         request_metadata_summary=request_metadata_summary,
         tool_schema_payload=tool_schema_payload,
+        tool_choice_payload=tool_choice_payload,
         response_format_payload=response_format_payload,
     )
     quality = _add_evidence_coverage_findings(quality, evidence_coverage)
+    quality = _add_context_os_audit_findings(quality, context_os_audit)
     tool_execution_surface = _tool_execution_surface_audit(
         ai_request=ai_request,
         tool_schema_count=tool_schema_count,
@@ -2557,6 +2712,7 @@ def build_final_request_context_audit_for_request(
         "available_token_headroom": max(0, window_tokens - final_request_token_estimate),
         "coverage": coverage,
         "final_request_evidence_coverage": evidence_coverage,
+        "context_os_audit": context_os_audit,
         "context_quality": quality,
         "sampling": sampling,
         "request_metadata_summary": request_metadata_summary,

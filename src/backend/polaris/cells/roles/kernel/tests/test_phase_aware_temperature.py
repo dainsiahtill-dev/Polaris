@@ -461,7 +461,7 @@ class TestTransactionKernelTemperatureChannel:
         assert context_override[_FLOOR_CHANNEL_KEY] == 128000
 
     @pytest.mark.asyncio
-    async def test_forced_retry_output_floor_bounds_execution_strategy_budget(self) -> None:
+    async def test_forced_retry_output_floor_preserves_execution_strategy_budget(self) -> None:
         captured_contexts: list[Any] = []
 
         async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
@@ -500,12 +500,9 @@ class TestTransactionKernelTemperatureChannel:
         assert len(captured_contexts) == 1
         context_override = getattr(captured_contexts[0], "context_override", None)
         assert isinstance(context_override, dict)
-        assert context_override[_FLOOR_CHANNEL_KEY] == 7000
-        assert context_override["_transaction_kernel_retry_output_budget_bounded"] is True
-        assert (
-            context_override["_transaction_kernel_retry_output_budget_reason"]
-            == "forced_tool_retry_must_not_inherit_full_execution_budget"
-        )
+        assert context_override[_FLOOR_CHANNEL_KEY] == 128000
+        assert "_transaction_kernel_retry_output_budget_bounded" not in context_override
+        assert "_transaction_kernel_retry_output_budget_reason" not in context_override
 
 
 class TestTransactionKernelTaskRuntimeGuard:

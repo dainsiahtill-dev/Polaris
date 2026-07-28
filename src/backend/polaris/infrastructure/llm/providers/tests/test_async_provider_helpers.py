@@ -49,6 +49,7 @@ from polaris.infrastructure.llm.providers.async_provider_helpers import (
     async_invoke_with_retry,
 )
 from polaris.infrastructure.llm.providers.provider_helpers import (
+    _bounded_provider_stream_error_chunk_prefix,
     invoke_stream_with_retry,
     invoke_stream_with_retry_and_handler,
 )
@@ -63,7 +64,41 @@ class ClientResponseError(RuntimeError):
     """Retry-shaped aiohttp error without constructing a real response."""
 
 
+class _WholeStringEncodeForbidden(str):
+    def encode(self, *_args: Any, **_kwargs: Any) -> bytes:
+        raise AssertionError("whole provider string chunk must not be encoded")
+
+
+class _WholeBytearrayCopyForbidden(bytearray):
+    def __bytes__(self) -> bytes:
+        raise AssertionError("whole provider bytearray chunk must not be copied")
+
+
 class _StreamContent:
+    def __init__(self, chunks: tuple[bytes | str, ...]) -> None:
+        self._chunks = chunks
+        self._read_buffer = b"".join(chunk if isinstance(chunk, bytes) else chunk.encode("utf-8") for chunk in chunks)
+        self.read_sizes: list[int] = []
+
+    def __aiter__(self) -> AsyncIterator[bytes | str]:
+        return self._iterate()
+
+    async def _iterate(self) -> AsyncIterator[bytes | str]:
+        for chunk in self._chunks:
+            yield chunk
+
+    async def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        if size < 0:
+            result = self._read_buffer
+            self._read_buffer = b""
+            return result
+        result = self._read_buffer[:size]
+        self._read_buffer = self._read_buffer[size:]
+        return result
+
+
+class _IterOnlyStreamContent:
     def __init__(self, chunks: tuple[bytes | str, ...]) -> None:
         self._chunks = chunks
 
@@ -82,15 +117,22 @@ class _FakeResponse:
         status: int = 200,
         chunks: tuple[bytes | str, ...] = (),
         json_body: dict[str, Any] | None = None,
+        text_body: str | None = None,
     ) -> None:
         self.status = status
         self.ok = status < 400
         self.headers = {"Content-Type": "application/json" if json_body is not None else "text/event-stream"}
-        self.content = _StreamContent(chunks)
+        content_chunks = chunks
+        if not content_chunks and text_body is not None:
+            content_chunks = (text_body.encode("utf-8"),)
+        self.content = _StreamContent(content_chunks)
         self._json_body = json_body
+        self._text_body = text_body
+        self.text_calls = 0
 
     async def text(self) -> str:
-        return f"HTTP {self.status}"
+        self.text_calls += 1
+        return self._text_body if self._text_body is not None else f"HTTP {self.status}"
 
     async def json(self) -> dict[str, Any]:
         assert self._json_body is not None
@@ -133,6 +175,16 @@ class _FakeSession:
     async def close(self) -> None:
         self.closed = True
         self._events.append("session_close")
+
+
+def test_provider_stream_error_chunk_prefix_slices_before_conversion() -> None:
+    chunks: tuple[bytes | bytearray | memoryview | str, ...] = (
+        _WholeStringEncodeForbidden("x" * 100_000),
+        _WholeBytearrayCopyForbidden(b"x" * 100_000),
+        memoryview(b"x" * 100_000),
+    )
+    for chunk in chunks:
+        assert _bounded_provider_stream_error_chunk_prefix(chunk, 17) == b"x" * 17
 
 
 class _PassthroughPhysicalStreamPort:
@@ -1540,6 +1592,160 @@ async def test_governed_stream_retries_each_failed_post_through_separate_dispatc
         "response_exit",
         "session_close",
     ]
+
+
+@pytest.mark.asyncio
+async def test_governed_stream_does_not_retry_non_transient_400_and_preserves_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    sessions = [
+        _FakeSession(
+            _FakeResponse(
+                status=400,
+                text_body='{"error":{"message":"Thinking mode does not support this tool_choice"}}',
+            ),
+            events,
+        ),
+        _FakeSession(_FakeResponse(json_body={"must_not": "run"}), events),
+    ]
+    create_session = AsyncMock(side_effect=sessions)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        create_session,
+    )
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers.asyncio.sleep",
+        AsyncMock(),
+    )
+    port = _PassthroughPhysicalStreamPort()
+
+    with pytest.raises(RuntimeError, match="Thinking mode does not support this tool_choice"):
+        async for _ in invoke_stream_with_retry(
+            "https://example.test/stream",
+            {},
+            {"messages": [], "max_tokens": 300},
+            5,
+            max_attempts=3,
+            retry_delay_seconds=0,
+            governance_mode="governed_required",
+            physical_dispatch_port=port,
+        ):
+            pass
+
+    assert create_session.await_count == 1
+    assert len(port.wire_requests) == 1
+    assert sessions[0].closed is True
+    assert sessions[1].closed is False
+
+
+@pytest.mark.parametrize("status", [408, 425, 429])
+@pytest.mark.asyncio
+async def test_governed_stream_retries_each_transient_http_status_through_physical_dispatch(
+    status: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    sessions = [
+        _FakeSession(_FakeResponse(status=status), events),
+        _FakeSession(_FakeResponse(json_body={"ok": True}), events),
+    ]
+    create_session = AsyncMock(side_effect=sessions)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        create_session,
+    )
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers.asyncio.sleep",
+        AsyncMock(),
+    )
+    port = _PassthroughPhysicalStreamPort()
+
+    result = [
+        item
+        async for item in invoke_stream_with_retry(
+            "https://example.test/stream",
+            {},
+            {"messages": [], "max_tokens": 300},
+            5,
+            max_attempts=2,
+            retry_delay_seconds=0,
+            governance_mode="governed_required",
+            physical_dispatch_port=port,
+        )
+    ]
+
+    assert result == [{"ok": True}]
+    assert create_session.await_count == 2
+    assert len(port.wire_requests) == 2
+    assert all(session.closed for session in sessions)
+
+
+@pytest.mark.asyncio
+async def test_governed_stream_reads_error_body_with_a_hard_byte_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    oversized_body = ("provider-detail-" * 1_000) + "must-not-be-buffered"
+    response = _FakeResponse(status=400, text_body=oversized_body)
+    session = _FakeSession(response, events)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(return_value=session),
+    )
+    port = _PassthroughPhysicalStreamPort()
+
+    with pytest.raises(RuntimeError) as captured:
+        async for _ in invoke_stream_with_retry(
+            "https://example.test/stream",
+            {},
+            {"messages": []},
+            5,
+            max_attempts=1,
+            governance_mode="governed_required",
+            physical_dispatch_port=port,
+        ):
+            pass
+
+    error = captured.value
+    assert response.text_calls == 0
+    assert response.content.read_sizes == [501]
+    assert getattr(error, "body_truncated", False) is True
+    assert len(getattr(error, "error_body", "").encode("utf-8")) <= 500
+    assert "[truncated]" in str(error)
+    assert "must-not-be-buffered" not in str(error)
+
+
+@pytest.mark.asyncio
+async def test_governed_stream_bounds_iter_only_error_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    response = _FakeResponse(status=400)
+    response.content = _IterOnlyStreamContent(("x" * 10_000,))
+    session = _FakeSession(response, events)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(return_value=session),
+    )
+    port = _PassthroughPhysicalStreamPort()
+
+    with pytest.raises(RuntimeError) as captured:
+        async for _ in invoke_stream_with_retry(
+            "https://example.test/stream",
+            {},
+            {"messages": []},
+            5,
+            max_attempts=1,
+            governance_mode="governed_required",
+            physical_dispatch_port=port,
+        ):
+            pass
+
+    error = captured.value
+    assert getattr(error, "body_truncated", False) is True
+    assert len(getattr(error, "error_body", "").encode("utf-8")) <= 500
+    assert "[truncated]" in str(error)
 
 
 @pytest.mark.asyncio

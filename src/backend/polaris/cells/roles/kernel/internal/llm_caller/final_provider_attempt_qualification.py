@@ -14,6 +14,10 @@ from polaris.cells.events.fact_stream.public import (
     append_fact_event,
     enroll_fact_stream_streams,
 )
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    STRUCTURED_OUTPUT_TOOL_NAME,
+    STRUCTURED_OUTPUT_TRANSPORT_SCHEMA,
+)
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleFrozenSemanticRequestV1,
 )
@@ -524,10 +528,7 @@ def _rebind_context_quality_to_factory_authority(
     findings = [
         item
         for item in raw_findings
-        if not (
-            isinstance(item, dict)
-            and str(item.get("code") or "") in _FACTORY_AUTHORITY_SUPERSEDED_FINDING_CODES
-        )
+        if not (isinstance(item, dict) and str(item.get("code") or "") in _FACTORY_AUTHORITY_SUPERSEDED_FINDING_CODES)
     ]
     missing_required_refs = list(coverage["missing_required_refs"])
     missing_required_tools = list(coverage["missing_required_tools"])
@@ -631,9 +632,13 @@ def bind_final_request_context_audit_to_frozen(
         coverage_sources = _factory_authority_coverage_sources(binding)
         total_required = len(required_refs) + len(required_tools)
         total_missing = len(missing_required_refs) + len(missing_required_tools)
-        coverage_ratio = 1.0 if total_required == 0 else max(
-            0.0,
-            (total_required - total_missing) / total_required,
+        coverage_ratio = (
+            1.0
+            if total_required == 0
+            else max(
+                0.0,
+                (total_required - total_missing) / total_required,
+            )
         )
         coverage["observed_included_refs"] = list(observed_included_refs)
         coverage["included_refs_authority"] = "factory_role_evidence_cutoff"
@@ -713,21 +718,138 @@ def _validate_registry_property_contract(
         raise FinalProviderAttemptQualificationError("tool_registry_scoped_enum_invalid")
 
 
-def _validate_tool_registry_contract(tools: object, audit: Mapping[str, Any]) -> None:
+def _provider_protocol_digest(value: object) -> str:
+    try:
+        payload = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise FinalProviderAttemptQualificationError("provider_protocol_not_canonical_json") from exc
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _validate_provider_protocol_contract(
+    *,
+    tools: list[Any],
+    tool_choice: object,
+    coverage: Mapping[str, Any],
+) -> list[Any]:
+    """Remove one exact non-executable result protocol from registry validation."""
+
+    protocol = coverage.get("provider_protocol_schema_coverage")
+    if protocol is None:
+        return list(tools)
+    if not isinstance(protocol, Mapping):
+        raise FinalProviderAttemptQualificationError("provider_protocol_coverage_invalid")
+    if protocol.get("schema_version") != "polaris.provider_protocol_schema_coverage.v1":
+        raise FinalProviderAttemptQualificationError("provider_protocol_coverage_schema_invalid")
+    if protocol.get("active") is not True:
+        if protocol.get("active") is not False or protocol.get("valid") is not True:
+            raise FinalProviderAttemptQualificationError("provider_protocol_coverage_invalid")
+        return list(tools)
+
+    failure_code = str(protocol.get("failure_code") or "")
+    if protocol.get("valid") is not True:
+        if failure_code not in {
+            "provider_protocol_tool_missing",
+            "provider_protocol_tool_surface_mixed",
+            "provider_protocol_tool_schema_drift",
+            "provider_protocol_tool_choice_drift",
+        }:
+            failure_code = "provider_protocol_contract_invalid"
+        raise FinalProviderAttemptQualificationError(failure_code)
+    if (
+        protocol.get("protocol_source") != "roles.kernel.structured_output_transport"
+        or protocol.get("transport_schema") != STRUCTURED_OUTPUT_TRANSPORT_SCHEMA
+        or protocol.get("tool_name") != STRUCTURED_OUTPUT_TOOL_NAME
+        or protocol.get("transport") != "provider_tool"
+        or protocol.get("strict") is not True
+        or protocol.get("executable_tool") is not False
+        or protocol.get("side_effect") is not False
+        or protocol.get("tool_lifecycle") is not False
+    ):
+        raise FinalProviderAttemptQualificationError("provider_protocol_authority_drift")
+    schema_name = str(protocol.get("schema_name") or "")
+    contract_hash = str(protocol.get("contract_hash") or "")
+    if not schema_name or CONTEXT_HASH_PATTERN.fullmatch(contract_hash) is None:
+        raise FinalProviderAttemptQualificationError("provider_protocol_contract_identity_invalid")
+
+    if len(tools) != 1:
+        raise FinalProviderAttemptQualificationError(
+            "provider_protocol_tool_missing" if not tools else "provider_protocol_tool_surface_mixed"
+        )
+    tool = tools[0]
+    if type(tool) is not dict or set(tool) != {"type", "function"} or tool.get("type") != "function":
+        raise FinalProviderAttemptQualificationError("provider_protocol_tool_schema_drift")
+    function = tool.get("function")
+    if not isinstance(function, Mapping) or set(function) != {"name", "description", "parameters", "strict"}:
+        raise FinalProviderAttemptQualificationError("provider_protocol_tool_schema_drift")
+    description = str(function.get("description") or "")
+    parameters = function.get("parameters")
+    if (
+        function.get("name") != STRUCTURED_OUTPUT_TOOL_NAME
+        or function.get("strict") is not True
+        or not description.endswith(
+            "Call this result-submission tool exactly once. "
+            "It records no side effect and is not an executable workspace tool."
+        )
+        or not isinstance(parameters, Mapping)
+        or parameters.get("type") != "object"
+    ):
+        raise FinalProviderAttemptQualificationError("provider_protocol_tool_schema_drift")
+    expected_choice = {
+        "type": "function",
+        "function": {"name": STRUCTURED_OUTPUT_TOOL_NAME},
+    }
+    if tool_choice != expected_choice:
+        raise FinalProviderAttemptQualificationError("provider_protocol_tool_choice_drift")
+    tool_hash = _provider_protocol_digest(tool)
+    choice_hash = _provider_protocol_digest(tool_choice)
+    if protocol.get("tool_schema_hash") != tool_hash or protocol.get("observed_tool_schema_hash") != tool_hash:
+        raise FinalProviderAttemptQualificationError("provider_protocol_tool_schema_drift")
+    if protocol.get("tool_choice_hash") != choice_hash or protocol.get("observed_tool_choice_hash") != choice_hash:
+        raise FinalProviderAttemptQualificationError("provider_protocol_tool_choice_drift")
+    try:
+        registered = ToolSpecRegistry.get_llm_schema(
+            STRUCTURED_OUTPUT_TOOL_NAME,
+            include_arg_aliases=True,
+            deterministic=True,
+        )
+    except (RuntimeError, TypeError, ValueError) as exc:
+        raise FinalProviderAttemptQualificationError("provider_protocol_registry_lookup_failed") from exc
+    if registered is not None:
+        raise FinalProviderAttemptQualificationError("provider_protocol_execution_authority_conflict")
+    return []
+
+
+def _validate_tool_registry_contract(
+    tools: object,
+    tool_choice: object,
+    audit: Mapping[str, Any],
+) -> None:
     if type(tools) is not list:
         raise FinalProviderAttemptQualificationError("final_request_tools_invalid")
     coverage = audit.get("final_request_evidence_coverage")
     if not isinstance(coverage, Mapping):
         raise FinalProviderAttemptQualificationError("final_request_evidence_coverage_missing")
+    executable_tools = _validate_provider_protocol_contract(
+        tools=tools,
+        tool_choice=tool_choice,
+        coverage=coverage,
+    )
     registry = coverage.get("tool_schema_registry_coverage")
     if not isinstance(registry, Mapping):
         raise FinalProviderAttemptQualificationError("tool_registry_coverage_missing")
     if registry.get("missing_schema_tools"):
         raise FinalProviderAttemptQualificationError("tool_registry_schema_missing")
-    if not tools:
+    if not executable_tools:
         return
     observed_names: set[str] = set()
-    for tool in tools:
+    for tool in executable_tools:
         if type(tool) is not dict:
             raise FinalProviderAttemptQualificationError("tool_registry_contract_drift")
         name = _tool_schema_name(tool)
@@ -790,7 +912,7 @@ def _validate_tool_registry_contract(tools: object, audit: Mapping[str, Any]) ->
     if CONTEXT_HASH_PATTERN.fullmatch(schema_hash) is None:
         raise FinalProviderAttemptQualificationError("tool_registry_schema_hash_invalid")
     expected_schema_hash = hashlib.sha256(
-        json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(executable_tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()[:24]
     if schema_hash != expected_schema_hash:
         raise FinalProviderAttemptQualificationError("tool_registry_schema_hash_mismatch")
@@ -1044,6 +1166,7 @@ def _stable_snapshot_audit_projection(audit: Mapping[str, Any]) -> dict[str, Any
         "native_protocol",
         "final_semantic_request_hash",
         "request_identity",
+        "context_os_audit",
     )
     projection = {key: audit.get(key) for key in stable_keys}
     coverage = audit.get("final_request_evidence_coverage")
@@ -1143,6 +1266,21 @@ def qualify_final_provider_request(
     expected_identity = final_request_snapshot_evidence(frozen)["request_identity"]
     if audit.get("request_identity") != expected_identity:
         raise FinalProviderAttemptQualificationError("final_request_audit_identity_mismatch")
+    context_quality = audit.get("context_quality")
+    if isinstance(context_quality, Mapping):
+        findings = context_quality.get("findings")
+        if isinstance(findings, list) and any(
+            isinstance(finding, Mapping) and str(finding.get("severity") or "").strip().lower() == "error"
+            for finding in findings
+        ):
+            raise FinalProviderAttemptQualificationError("final_request_context_quality_failed")
+    context_os_audit = audit.get("context_os_audit")
+    if (
+        isinstance(context_os_audit, Mapping)
+        and context_os_audit.get("expected") is True
+        and context_os_audit.get("ok") is not True
+    ):
+        raise FinalProviderAttemptQualificationError("final_request_context_os_audit_failed")
     snapshot = _read_context_snapshot(workspace=workspace, context_snapshot_ref=context_snapshot_ref)
     snapshot_provider_request = snapshot.get("provider_request")
     if audit.get("audit_scope") == "provider_native_wire":
@@ -1193,7 +1331,11 @@ def qualify_final_provider_request(
     expected_block = f"{_EVIDENCE_BEGIN}\n{expected_policy_line}\n{_EVIDENCE_END}"
     if expected_block not in content or not content.endswith(expected_block):
         raise FinalProviderAttemptQualificationError("final_request_evidence_slots_drift")
-    _validate_tool_registry_contract(payload.get("tools"), audit)
+    _validate_tool_registry_contract(
+        payload.get("tools"),
+        payload.get("tool_choice"),
+        audit,
+    )
 
     if snapshot.get("trace_id") != frozen.identity.run_id or snapshot.get("call_id") != frozen.identity.call_id:
         raise FinalProviderAttemptQualificationError("context_snapshot_attempt_mismatch")

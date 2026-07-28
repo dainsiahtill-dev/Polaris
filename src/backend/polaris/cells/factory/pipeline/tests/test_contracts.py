@@ -100,15 +100,14 @@ class TestStartFactoryRunCommandV1:
         assert cmd.run_name == "test"
         assert cmd.stages == ("stage1",)
 
-    def test_command_stages_whitespace_preserved(self) -> None:
-        """Test that stages whitespace is preserved (only empty filtered)."""
+    def test_command_stages_whitespace_normalized(self) -> None:
+        """Stage identifiers are canonicalized at the public command boundary."""
         cmd = StartFactoryRunCommandV1(
             workspace="/ws",
             run_name="test",
             stages=("  stage1  ", "stage2"),
         )
-        # stages are not normalized, only empty/whitespace-only values are filtered
-        assert cmd.stages == ("  stage1  ", "stage2")
+        assert cmd.stages == ("stage1", "stage2")
 
 
 class TestCancelFactoryRunCommandV1:

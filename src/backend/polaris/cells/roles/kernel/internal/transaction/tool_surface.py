@@ -27,6 +27,9 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     restrict_tool_definitions_to_write,
     should_use_weak_director_slim_tool_schema,
 )
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    resolve_structured_output_transport,
+)
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest
 
 logger = logging.getLogger(__name__)
@@ -206,10 +209,27 @@ def plan_transaction_tool_surface(
             removed_required = ", ".join(tool_filter_audit.get("removed_prompt_required_tool_names") or [])
             conflict_error = f"Tool schema filter conflict: removed prompt-required tools: {removed_required}"
 
+    tool_choice_override = resolve_transaction_tool_choice_override(context_override)
+    structured_output_transport = resolve_structured_output_transport(context_override)
+    if structured_output_transport is not None:
+        if isinstance(context_override, dict) and (
+            "_transaction_kernel_forced_tool_definitions" in context_override
+            or "_transaction_kernel_forced_tool_choice" in context_override
+        ):
+            conflict_error = conflict_error or (
+                "Structured output contract conflicts with caller-forced transaction tools"
+            )
+        tool_definitions = [structured_output_transport.tool_definition]
+        tool_choice_override = structured_output_transport.tool_choice
+        runtime_tool_policy_audit = dict(runtime_tool_policy_audit)
+        runtime_tool_policy_audit["structured_output_transport"] = dict(
+            structured_output_transport.audit
+        )
+
     return TransactionToolSurfacePlan(
         tool_definitions=tool_definitions,
         runtime_tool_policy_audit=runtime_tool_policy_audit,
-        tool_choice_override=resolve_transaction_tool_choice_override(context_override),
+        tool_choice_override=tool_choice_override,
         tool_filter_audit=tool_filter_audit,
         conflict_error=conflict_error,
     )

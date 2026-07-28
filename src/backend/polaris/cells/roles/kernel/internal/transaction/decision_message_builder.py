@@ -22,6 +22,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    STRUCTURED_OUTPUT_TOOL_NAME,
+    require_exact_structured_output_tool_surface,
+)
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
@@ -252,6 +256,47 @@ def build_decision_messages(
     if not tool_definitions:
         return messages
 
+    physical_tool_names = _physical_tool_names(tool_definitions)
+    if require_exact_structured_output_tool_surface(tool_definitions):
+        # The reserved structured-result tool is a Provider response protocol:
+        # it has no side effect and never enters Tool Lifecycle or workspace
+        # mutation. Do not contaminate this turn with the generic Director
+        # mutation/task-contract templates merely because PM target files are
+        # present in the role context.
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "SYSTEM CONSTRAINT (Structured Result): This turn produces a typed role result, "
+                    "not a workspace mutation. Call submit_structured_role_output exactly once with "
+                    "the complete object required by its schema. This Provider result protocol records "
+                    "no side effect and is not an executable workspace tool. Do not inspect, edit, "
+                    "write, execute, or verify project files in this turn; downstream execution roles "
+                    "own those effects. Do not ask for confirmation or clarification."
+                ),
+                "metadata": {
+                    "plane": "control",
+                    "kind": "structured_result_protocol_constraint",
+                },
+            }
+        )
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "CURRENT TURN PHYSICAL TOOL SCHEMA: "
+                    + STRUCTURED_OUTPUT_TOOL_NAME
+                    + ". Only this Provider result protocol is callable in this request. "
+                    "It is non-executable and supersedes broader role-capability or mutation guidance."
+                ),
+                "metadata": {
+                    "plane": "control",
+                    "kind": "physical_tool_schema_truth",
+                },
+            }
+        )
+        return messages
+
     # Single-batch execution is driven by platform contract metadata or delivery
     # mode. The multi-turn wording must not be used for a single-turn contract
     # because it gives the model permission to defer writes to a non-existent
@@ -343,7 +388,6 @@ def build_decision_messages(
             "严禁请求用户确认或等待批准——用户已授权执行，请立即调用工具实施修改。"
         )
     messages.append({"role": "system", "content": single_batch_guard, "metadata": {"plane": "control"}})
-    physical_tool_names = _physical_tool_names(tool_definitions)
     if physical_tool_names:
         messages.append(
             {

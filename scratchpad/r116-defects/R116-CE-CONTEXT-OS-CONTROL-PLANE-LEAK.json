@@ -1,0 +1,53 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "R116-CE-CONTEXT-OS-CONTROL-PLANE-LEAK",
+  "status": "FIX_IMPLEMENTED_FOCUSED_GREEN",
+  "severity": "P0",
+  "project_id": "L1-05",
+  "bench_run_id": "829b6431bad9",
+  "factory_run_id": "factory_3e76c0db79b0",
+  "source_head": "e11a86db623a0babcd713e3d32b97341b6cad1b8",
+  "backend_fingerprint": "46562cb0fd37568f",
+  "symptom": "The exact Chief Engineer final Provider request contains control-plane deadline and timeout fields while its nested ContextOS audit reports isolation failure; the top-level final context-quality verdict still reports no review required.",
+  "final_provider_request_evidence": {
+    "context_snapshot_ref": "ae725bf62d2db5883a0f72de",
+    "role": "chief_engineer",
+    "role_identity_ok": true,
+    "structured_output_tool": "submit_structured_role_output",
+    "content_hits": [
+      "chief_engineer_llm_timeout_seconds:",
+      "chief_engineer_deadline_decision:"
+    ],
+    "context_os_audit_ok": false,
+    "context_os_control_plane_isolated": false,
+    "final_context_needs_review": false
+  },
+  "runtime_evidence": {
+    "factory_audit": "/tmp/factory-bench-l1-05-r116/factory_audits.json",
+    "workspace": "/tmp/factory-bench-l1-05-r116/workspaces/829b6431bad9-d9346f677f02bcd7/L1-05-e561a0dcdada9554/f8846f49600b6917260592a8",
+    "runtime_root": "/home/dains/.cache/kernelone/.polaris/projects/f8846f49600b6917260592a8-96e12bba4716/runtime",
+    "llm_audit": ".polaris/audit/chief_engineer.llm_call.json"
+  },
+  "root_cause_class": "context_plane_isolation_and_final_request_qualification",
+  "root_cause_status": "CONFIRMED",
+  "repair_contract": [
+    "Do not project execution deadline or timeout control-plane fields into prompt-visible Chief Engineer ContextOS payloads.",
+    "Preserve the same fields in runtime-only authority and scheduling state.",
+    "Propagate context_os_audit.ok=false into final context_quality.context_needs_review=true with explicit findings.",
+    "Do not weaken role identity, structured-output, token, tool, or evidence coverage gates."
+  ],
+  "required_tests": [
+    "A Chief Engineer final request containing deadline or timeout control-plane keys is isolated before Provider transport.",
+    "Runtime deadline authority remains available to the execution layer after prompt projection removes it.",
+    "context_os_audit.ok=false forces context_quality.context_needs_review=true.",
+    "A clean Chief Engineer request remains qualified and unchanged."
+  ],
+  "implementation_files": [
+    "src/backend/polaris/kernelone/audit/context_os_prompt.py",
+    "src/backend/polaris/cells/roles/kernel/internal/llm_caller/context_audit.py",
+    "src/backend/polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+  ],
+  "focused_test_result": "318 passed across ContextOS, final provider qualification, retry budget, final request sampling, and TransactionKernel suites",
+  "bench_authorization_consumed": true,
+  "next_bench_authorized": false
+}

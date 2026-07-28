@@ -11,6 +11,9 @@ from importlib import import_module
 from typing import Any
 
 _EXPORT_TO_MODULE: dict[str, str] = {
+    "ROLE_STRUCTURED_OUTPUT_CONTRACT_SCHEMA": "polaris.cells.roles.kernel.public.structured_output_contracts",
+    "STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY": "polaris.cells.roles.kernel.public.structured_output_contracts",
+    "RoleStructuredOutputContractV1": "polaris.cells.roles.kernel.public.structured_output_contracts",
     "FACTORY_ROLE_EVIDENCE_CUTOFF_ACK_SCHEMA": "polaris.cells.roles.kernel.public.final_request_evidence_cutoff",
     "FACTORY_ROLE_EVIDENCE_CUTOFF_PROOF_SCHEMA": "polaris.cells.roles.kernel.public.final_request_evidence_cutoff",
     "FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA": "polaris.cells.roles.kernel.public.final_request_evidence_cutoff",

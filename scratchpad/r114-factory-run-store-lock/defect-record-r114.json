@@ -1,0 +1,107 @@
+{
+  "schema_version": "polaris.main_agent.defect.v1",
+  "defect_id": "R114_FACTORY_RUN_SNAPSHOT_LOCK_INVERSION",
+  "severity": "P0",
+  "status": "CLOSED_REQUALIFIED",
+  "project_id": "L1-05",
+  "bench_run_id": "e1d224038e20",
+  "factory_run_id": "factory_c378ec731d8a",
+  "source": {
+    "work_dir": "/tmp/factory-bench-l1-05-r114",
+    "backend_log": "/home/dains/.polaris/instances/factory-bench-l1-05-r114-l1-05-run-e1d224038e20-d0b72bc40a5182ba/logs/backend.log",
+    "runtime_root": "/home/dains/.cache/kernelone/.polaris/projects/b5eaece0eb1449701f99982a-6cc6201c0f60/runtime"
+  },
+  "symptom": {
+    "stage": "director_dispatch",
+    "physical_materialization_observed": true,
+    "run_snapshot_queries_timed_out": true,
+    "heartbeat_projection_failed": true,
+    "stage_commit_failed": true,
+    "quarantine_terminalize_failed": true,
+    "false_run_not_found_projection_observed": true,
+    "decisive_error": "Failed to acquire file lock for run.json within 5.0s"
+  },
+  "final_provider_request_evidence": {
+    "r113_fix_live_proven": true,
+    "pm_qualified": true,
+    "chief_engineer_qualified": true,
+    "director_physical_calls_observed": 2,
+    "provider_failure_is_root_cause": false
+  },
+  "root_cause": {
+    "classification": "factory_store_thread_pool_lock_inversion",
+    "mechanism": [
+      "_acquire_file_lock acquires a threading.Lock in the default executor",
+      "the coroutine retains that lock after returning to the event loop",
+      "protected read or write I/O is submitted as a second job to the same default executor",
+      "concurrent same-file readers can occupy all workers waiting for the retained lock",
+      "the lock owner's I/O remains queued behind those waiters"
+    ],
+    "false_404_mechanism": "FileLockTimeoutError inherits TimeoutError/OSError and FactoryStore.get_run catches OSError as corrupt or missing, returning None"
+  },
+  "red_tests": [
+    {
+      "test": "TestFactoryStore::test_save_run_does_not_queue_protected_io_behind_same_lock_waiters",
+      "result": "FAILED_AS_EXPECTED",
+      "proof": "small two-worker executor reproduces owner I/O queued behind twelve same-lock readers"
+    },
+    {
+      "test": "TestFactoryStore::test_get_run_propagates_snapshot_lock_contention",
+      "result": "FAILED_AS_EXPECTED",
+      "proof": "get_run swallowed typed contention and returned None"
+    }
+  ],
+  "green_proof": {
+    "factory_store_unit": "30 passed",
+    "factory_store_compatibility": "17 passed",
+    "factory_http_and_store_combined": "77 passed, 4 deselected, 2 warnings",
+    "factory_http_contention": "1 passed",
+    "cancellation_semantics": "CancelledError remains authoritative; late worker failure is retained only as __cause__; worker completed and lock released before cancellation propagated",
+    "lockless_snapshot_reader": "raw Path.read_text readers observed only complete old/new JSON snapshots",
+    "factory_stage_persistence": "25 passed",
+    "factory_run_service": "95 passed",
+    "factory_pipeline_full_final_source": "1266 passed, 2 warnings in 738.98s",
+    "ruff": "passed",
+    "format": "passed",
+    "mypy": "passed",
+    "diff_check": "passed",
+    "contention_projection": "503 FACTORY_RUN_SNAPSHOT_BUSY",
+    "kernelone_release_gate": "ok=true; mode=all; suite_size=51; tests=415 passed, 1 skipped, 2 warnings",
+    "independent_review": "CLEAR; Critical=0 Important=0 Minor=0",
+    "source_fingerprint_a": "3f7783799617aa97",
+    "source_fingerprint_b": "3f7783799617aa97",
+    "source_fingerprints_identical": true
+  },
+  "authorized_fix_scope": [
+    "src/backend/polaris/cells/factory/pipeline/internal/factory_store.py",
+    "src/backend/polaris/tests/unit/cells/factory/pipeline/internal/test_factory_store.py",
+    "Factory store and router contention regression tests",
+    "governance blueprint and verification card"
+  ],
+  "forbidden_fixes": [
+    "increase lock timeout",
+    "modify target project",
+    "weaken atomic snapshot persistence",
+    "convert contention to missing run",
+    "run another bench before requalification"
+  ],
+  "required_fix": [
+    "run lock acquisition, synchronous file operation, and release in one worker callback",
+    "never retain the per-file threading.Lock across an async await",
+    "propagate FileLockTimeoutError distinctly from corrupt JSON or missing files",
+    "preserve atomic replace and cross-loop lock identity"
+  ],
+  "required_gates": [
+    "two red tests turn green",
+    "FactoryStore full unit file",
+    "Factory stage persistence tests",
+    "full Factory pipeline",
+    "Ruff check and format",
+    "mypy",
+    "git diff --check",
+    "release gate",
+    "independent review",
+    "stable source fingerprint"
+  ],
+  "next_action": "Consume exactly one R115 fresh isolated L1-05 bench, audit every role's final Provider request, and require physical artifact, dependency, verifier, entrypoint, Run Ledger, QA, and COMPLETED_VERIFIED evidence."
+}

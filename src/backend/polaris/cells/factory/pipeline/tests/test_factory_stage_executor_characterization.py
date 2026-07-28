@@ -18,11 +18,12 @@ import inspect
 import json
 import logging
 import os
+import shutil
 import sys
 import textwrap
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -44,7 +45,10 @@ from polaris.cells.events.fact_stream.public.service import (
     QueryFactEventsV1,
     query_fact_events,
 )
-from polaris.cells.factory.pipeline.internal import factory_stage_executor as stage_executor_module
+from polaris.cells.factory.pipeline.internal import (
+    factory_stage_executor as stage_executor_module,
+    factory_workspace_quality as workspace_quality_module,
+)
 from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
     FactoryDeadlineBudgetPolicyV1,
     FactoryDeadlineDispositionV1,
@@ -325,6 +329,25 @@ def _thinking_only_chief_engineer_result() -> SimpleNamespace:
         error_message="model returned thinking-only response; awaiting user clarification",
         error_code="model_thinking_only_response",
         error_category="output_contract_failure",
+        metadata={
+            "provider_id": "test-provider",
+            "model": "test-model",
+            "final_request_context_audit": {"context_window_utilization": 0.25},
+            "context_snapshot_ref": "abcdef123456abcdef123456",
+        },
+        usage={},
+    )
+
+
+def _invalid_structured_transport_chief_engineer_result() -> SimpleNamespace:
+    error = "structured_output_payload_schema_mismatch:$:'scope_for_apply' is a required property"
+    return SimpleNamespace(
+        ok=False,
+        status="failed",
+        output="",
+        error_message=error,
+        error_code="call_error",
+        error_category="unknown",
         metadata={
             "provider_id": "test-provider",
             "model": "test-model",
@@ -703,6 +726,38 @@ def test_run_completion_conflict_matrix_prefers_failure(tmp_path: Path) -> None:
     assert result.metadata["canonical_conflict"] is True
 
 
+def test_run_completion_does_not_promote_turn_outcome_over_active_task_runtime(
+    tmp_path: Path,
+) -> None:
+    waiter = RunCompletionWaiter(tmp_path)
+    projection = _authoritative_task_projection(
+        tmp_path,
+        (
+            {
+                "id": "TASK-1",
+                "workflow_run_id": "run-1",
+                "execution_state": "in_progress",
+                "fact_event_seq": 12,
+                "metadata": {
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                },
+            },
+        ),
+    )
+    waiter._observable_task_rows_projection = lambda: projection  # type: ignore[method-assign]
+    waiter._committed_turn_outcome_result = lambda **_kwargs: CommandResult(  # type: ignore[method-assign]
+        run_id="run-1",
+        status="completed",
+        message="one role turn completed",
+        metadata={"canonical_authoritative": True, "fact_event_seq": 13},
+    )
+
+    result = waiter.canonical_terminal_result(run_id="run-1", process_terminal=True)
+
+    assert result is None
+
+
 @pytest.mark.asyncio
 async def test_run_completion_cancel_during_dispatch_waits_for_canonical_terminal(
     monkeypatch: pytest.MonkeyPatch,
@@ -737,6 +792,7 @@ async def test_run_completion_cancel_during_dispatch_waits_for_canonical_termina
         nonlocal reads
         reads += 1
         status = "in_execution" if reads < 4 else "completed"
+        now = datetime.now(timezone.utc)
         return _authoritative_task_projection(
             tmp_path,
             (
@@ -747,6 +803,8 @@ async def test_run_completion_cancel_during_dispatch_waits_for_canonical_termina
                     "execution_state": status,
                     "running": status == "in_execution",
                     "fact_event_seq": reads,
+                    "last_heartbeat_at": (now - timedelta(seconds=1)).isoformat(),
+                    "lease_expires_at": (now + timedelta(seconds=30)).isoformat(),
                     "metadata": {
                         "source": "task_runtime.execution_fact",
                         "status_source": "task_runtime.execution_fact",
@@ -1696,6 +1754,23 @@ class TestChiefEngineerHandoffGuards:
         assert command.context["temperature"] == 0.2
         assert command.context["response_format_mode"] == "json"
         assert command.context["chief_engineer_json_contract_required"] is True
+        assert "_transaction_kernel_forced_tool_definitions" not in command.context
+        assert "_transaction_kernel_forced_tool_choice" not in command.context
+        assert command.structured_output_contract is not None
+        assert command.structured_output_contract.schema_name == "chief_engineer_blueprint_portfolio"
+        task_plans_schema = command.structured_output_contract.json_schema["properties"]["construction_plan"][
+            "properties"
+        ]["task_plans"]
+        assert task_plans_schema["required"] == ["TASK-1"]
+        assert task_plans_schema["additionalProperties"] is False
+        project_interface_schema = command.structured_output_contract.json_schema["properties"]["construction_plan"][
+            "properties"
+        ]["project_interface_contract"]
+        assert set(project_interface_schema["properties"]) == {
+            "provider_declarations",
+            "consumer_declarations",
+        }
+        assert project_interface_schema["additionalProperties"] is False
         assert command.metadata["max_retries"] == 0
         assert command.metadata["temperature"] == 0.2
         assert command.metadata["reasoning_budget_tokens"] == 4_096
@@ -1707,6 +1782,69 @@ class TestChiefEngineerHandoffGuards:
         assert command.execution_attempt.external_task_id == f"CE-PORTFOLIO-{run.id}"
         assert command.execution_attempt.role_id == "chief_engineer"
         assert command.execution_attempt.run_id == run.id
+
+    def test_chief_engineer_review_accepts_omitted_advisory_scope_with_audit_signal(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Missing CE scope advice must not discard an otherwise valid portfolio.
+
+        ``scope_for_apply`` is advisory only: PM target/scope paths remain the
+        authority and the blueprint projection already rejects scope expansion.
+        The omission must stay visible as an audit warning rather than being
+        synthesized or treated as a fatal provider-schema defect.
+        """
+
+        executor = _executor(tmp_path)
+        _write_minimal_chief_engineer_plan(executor)
+        captured_commands: list[Any] = []
+
+        class _ScopeOmittingRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                captured_commands.append(command)
+                result = _single_task_chief_engineer_result()
+                payload = dict(result.metadata["structured_output"])
+                payload.pop("scope_for_apply")
+                result.output = json.dumps(payload)
+                result.metadata["structured_output"] = payload
+                return result
+
+        monkeypatch.setattr(
+            stage_executor_module,
+            "RoleRuntimeService",
+            _ScopeOmittingRoleRuntimeService,
+        )
+        run = FactoryRun(
+            id="factory-run-scope-advisory-omitted",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-07-27T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success"
+        assert len(captured_commands) == 1
+        contract = captured_commands[0].structured_output_contract
+        assert contract is not None
+        assert "scope_for_apply" in contract.json_schema["properties"]
+        assert "scope_for_apply" not in contract.json_schema["required"]
+
+        review_path = Path(
+            resolve_logical_path(
+                tmp_path,
+                f"runtime/state/blueprints/{run.id}.review.json",
+            )
+        )
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        assert review["generated_blueprints"] == 1
+        omission_signal = next(
+            signal for signal in review["signals"] if signal["code"] == "chief_engineer.scope_advisory_omitted"
+        )
+        assert omission_signal["severity"] == "warning"
+        assert omission_signal["pm_authority_preserved"] is True
+        assert omission_signal["scope_expansion_allowed"] is False
 
     def test_chief_engineer_schema_repair_uses_separate_claim_and_closes_stage(
         self,
@@ -1751,6 +1889,12 @@ class TestChiefEngineerHandoffGuards:
         assert repair_command.context["chief_engineer_schema_repair"] is True
         assert repair_command.context["llm_max_tokens"] == 8_192
         assert repair_command.context["reasoning_budget_tokens"] == 2_048
+        assert repair_command.structured_output_contract is not None
+        repair_task_plans_schema = repair_command.structured_output_contract.json_schema["properties"][
+            "construction_plan"
+        ]["properties"]["task_plans"]
+        assert repair_task_plans_schema["required"] == ["TASK-CANCEL"]
+        assert repair_task_plans_schema["additionalProperties"] is False
         assert repair_command.context["failure_feedback"] == {
             "schema_version": "factory.chief_engineer_schema_repair.failure_evidence.v1",
             "failure_class": "output_validation_failed",
@@ -1847,6 +1991,58 @@ class TestChiefEngineerHandoffGuards:
         assert review["generated_blueprints"] == 1
         assert review["llm_call_count"] == 2
         assert review["signals"][0]["prior_failure_class"] == "thinking_only_response"
+        assert len(keepers) == 2
+        assert all(keeper.is_alive is False for keeper in keepers)
+        _assert_no_chief_engineer_lease_keeper_threads()
+
+    def test_chief_engineer_structured_result_mismatch_uses_bounded_schema_repair(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
+        _write_minimal_chief_engineer_plan(executor)
+        results = [
+            _invalid_structured_transport_chief_engineer_result(),
+            _single_task_chief_engineer_result(),
+        ]
+        commands: list[Any] = []
+
+        class _RepairingRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                commands.append(command)
+                return results.pop(0)
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _RepairingRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-structured-result-repair",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+
+        assert result.status == "success"
+        assert [command.task_id for command in commands] == [
+            f"CE-PORTFOLIO-{run.id}",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+        ]
+        repair_command = commands[1]
+        assert repair_command.context["failure_feedback"]["failure_class"] == "output_validation_failed"
+        assert repair_command.context["failure_feedback"]["detail"].startswith(
+            "structured_output_payload_schema_mismatch:$:"
+        )
+        review = json.loads(
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert review["generated_blueprints"] == 1
+        assert review["llm_call_count"] == 2
+        assert review["signals"][0]["code"] == "chief_engineer.output_schema_repair_started"
+        assert review["signals"][0]["prior_failure_class"] == "output_validation_failed"
         assert len(keepers) == 2
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
@@ -4375,11 +4571,33 @@ class TestArtifactStore:
             "context_snapshot_ref",
         ]
 
+    def test_chief_engineer_portfolio_rejects_present_invalid_advisory_scope(self) -> None:
+        payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
+        payload["scope_for_apply"] = "src/cancel.py"
+
+        errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+            payload,
+            task_ids=("TASK-CANCEL",),
+        )
+
+        assert "scope_for_apply must be an array" in errors
+
     @pytest.mark.parametrize(
         ("ce_result", "expected"),
         [
             (_invalid_chief_engineer_stream_result(), True),
             (_thinking_only_chief_engineer_result(), True),
+            (
+                SimpleNamespace(
+                    error_category="unknown",
+                    error_code="call_error",
+                    error_message=(
+                        "structured_output_payload_schema_mismatch:$:'scope_for_apply' is a required property"
+                    ),
+                    status="failed",
+                ),
+                True,
+            ),
             (
                 SimpleNamespace(
                     error_category="provider_backend_failure",
@@ -4406,6 +4624,14 @@ class TestArtifactStore:
         expected: bool,
     ) -> None:
         assert OrchestrationStageExecutor._ce_portfolio_result_allows_schema_repair(ce_result) is expected
+
+    def test_chief_engineer_structured_result_schema_mismatch_is_output_validation_failure(self) -> None:
+        ce_result = SimpleNamespace(
+            error_code="call_error",
+            error_message=("structured_output_payload_schema_mismatch:$:'scope_for_apply' is a required property"),
+        )
+
+        assert OrchestrationStageExecutor._ce_schema_repair_failure_class(ce_result) == "output_validation_failed"
 
     def test_emit_audit_event_appends(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -5668,13 +5894,13 @@ class TestPackageJsonParsing:
         assert "g++" in commands[0][2]
         assert "unittest" not in commands[0][2]
 
-    def test_workspace_quality_commands_rust_project_include_cargo_check(self, tmp_path: Path) -> None:
+    def test_workspace_quality_commands_rust_project_include_cargo_test(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "lib.rs").write_text("pub fn ok() {}\n", encoding="utf-8")
 
-        assert executor._workspace_quality_commands({}) == [["cargo", "check", "--quiet"]]
+        assert executor._workspace_quality_commands({}) == [["cargo", "test", "--quiet"]]
 
     def test_workspace_quality_commands_go_project_include_go_verify_and_entrypoint(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -5698,7 +5924,7 @@ class TestPackageJsonParsing:
 
         assert commands == [["go", "test", "./..."], ["go", "run", "."]]
 
-    def test_workspace_quality_commands_mixed_rust_python_keep_cargo_check_first(self, tmp_path: Path) -> None:
+    def test_workspace_quality_commands_mixed_rust_python_keep_native_cargo_test(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
         (tmp_path / "src").mkdir()
@@ -5708,7 +5934,83 @@ class TestPackageJsonParsing:
 
         commands = executor._workspace_quality_commands({})
 
-        assert commands == [["cargo", "check", "--quiet"]]
+        assert commands == [["cargo", "test", "--quiet"]]
+
+    def test_workspace_quality_rust_test_cannot_mutate_target_workspace(self, tmp_path: Path) -> None:
+        if not shutil.which("cargo"):
+            pytest.skip("cargo unavailable")
+        executor = _executor(tmp_path)
+        (tmp_path / "Cargo.toml").write_text(
+            '[package]\nname = "factory-rust-sandbox"\nversion = "0.1.0"\nedition = "2021"\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        source = tmp_path / "src" / "lib.rs"
+        source.write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "product.rs").write_text(
+            "#[test]\nfn product_works() {\n"
+            "    assert_eq!(factory_rust_sandbox::answer(), 42);\n"
+            '    std::fs::write("src/lib.rs", "pub fn answer() -> u8 { 7 }\\n").unwrap();\n'
+            f'    assert!(std::fs::write({json.dumps(source.as_posix())}, b"host mutation").is_err());\n'
+            "}\n",
+            encoding="utf-8",
+        )
+
+        result = executor._run_workspace_quality_command(["cargo", "test", "--quiet"], 30)
+
+        assert result["passed"] is True
+        assert result["sandboxed"] is True
+        assert result["native_test_count"] >= 1
+        assert source.read_text(encoding="utf-8") == "pub fn answer() -> u8 { 42 }\n"
+
+    def test_workspace_quality_rust_test_rejects_zero_tests(self, tmp_path: Path) -> None:
+        if not shutil.which("cargo"):
+            pytest.skip("cargo unavailable")
+        executor = _executor(tmp_path)
+        (tmp_path / "Cargo.toml").write_text(
+            '[package]\nname = "factory-rust-zero"\nversion = "0.1.0"\nedition = "2021"\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+
+        result = executor._run_workspace_quality_command(["cargo", "test", "--quiet"], 30)
+
+        assert result["exit_code"] == 0
+        assert result["passed"] is False
+        assert result["native_test_count"] == 0
+        assert result["error"] == "cargo_test_zero_tests"
+
+    def test_workspace_quality_rust_test_fails_closed_without_sandbox(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        if not shutil.which("cargo"):
+            pytest.skip("cargo unavailable")
+        executor = _executor(tmp_path)
+        (tmp_path / "Cargo.toml").write_text(
+            '[package]\nname = "factory-rust-no-sandbox"\nversion = "0.1.0"\nedition = "2021"\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+
+        def unavailable_sandbox(**_kwargs: Any) -> Any:
+            raise workspace_quality_module.NativeValidationSandboxError("bubblewrap unavailable")
+
+        monkeypatch.setattr(
+            workspace_quality_module,
+            "sandboxed_cargo_test_command",
+            unavailable_sandbox,
+        )
+
+        result = executor._run_workspace_quality_command(["cargo", "test", "--quiet"], 30)
+
+        assert result["passed"] is False
+        assert result["sandboxed"] is False
+        assert str(result["error"]).startswith("native_validation_sandbox_unavailable:")
 
     def test_declared_delivery_targets_extract_explicit_file_tokens_from_task_text(self) -> None:
         targets = OrchestrationStageExecutor._collect_declared_delivery_targets(
@@ -9529,6 +9831,162 @@ class TestDirectorDispatchLoop:
         assert "director.no_claimable_tasks_after_progress" in codes
         assert "director.taskboard_not_converged" in codes
         assert "director.run_status_non_success" not in codes
+
+    @pytest.mark.asyncio
+    async def test_no_claimable_followup_settlement_consumes_previous_execution_lease(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """An active child keeps the unused prior execution lease, not only 5s settle."""
+
+        class _ActiveChildAfterLifecycleFailureExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.stats = [
+                    {
+                        "total": 1,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 1,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 1,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 1,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 1,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 1,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 1,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 1,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                ]
+                self.execute_calls = 0
+                self.settlement_grace_seconds: list[int] = []
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
+                del limit, factory_run_id
+                return ["TASK-1"] if self.execute_calls == 0 else []
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                executor = self
+
+                class _Service:
+                    async def execute_director_run(self, **_kwargs: object) -> CommandResult:
+                        executor.execute_calls += 1
+                        return CommandResult(run_id="director-active-child", status="running", message="submitted")
+
+                return _Service()
+
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+                cancel_on_timeout: bool = True,
+            ) -> CommandResult:
+                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                return CommandResult(
+                    run_id=initial_result.run_id,
+                    status="failed",
+                    message="orchestration lifecycle ended before TaskRuntime child",
+                )
+
+            async def _settle_inflight_director_run_after_timeout(
+                self,
+                service: Any,
+                *,
+                run_id: str,
+                grace_seconds: int,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+            ) -> CommandResult:
+                del service, cancel_event, abort_checker
+                self.settlement_grace_seconds.append(grace_seconds)
+                return CommandResult(
+                    run_id=run_id,
+                    status="completed",
+                    message="TaskRuntime child settled inside carried execution lease",
+                    metadata={"canonical_authoritative": True},
+                )
+
+            def _active_director_execution_progress_marker(
+                self,
+                *,
+                run_id: str,
+            ) -> tuple[tuple[str, str, str, str], ...]:
+                assert run_id == "director-active-child"
+                return (("TASK-1", "7", "heartbeat-7", "in_progress"),)
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _ActiveChildAfterLifecycleFailureExecutor(tmp_path)
+        tasks = [{"id": "TASK-1", "target_files": ["src/main.rs"]}]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
+        run = FactoryRun(
+            id="factory-carry-previous-director-lease",
+            config=FactoryConfig(name="carry-previous-director-lease"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-07-27T00:00:00+00:00",
+        )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+
+        await executor._execute_director_dispatch(
+            run,
+            _factory_stage_context(
+                {
+                    "director_max_rounds": 2,
+                    "director_dispatch_timeout_seconds": 60,
+                    "director_first_materialization_min_budget_seconds": 10,
+                    "director_timeout_settle_grace_seconds": 5,
+                    "execution_mode": "serial",
+                    "max_workers": 1,
+                }
+            ),
+        )
+
+        assert executor.execute_calls == 1
+        assert len(executor.settlement_grace_seconds) == 1
+        assert 55 <= executor.settlement_grace_seconds[0] <= 60
 
     @pytest.mark.asyncio
     async def test_missing_write_receipt_with_artifacts_stays_failed(

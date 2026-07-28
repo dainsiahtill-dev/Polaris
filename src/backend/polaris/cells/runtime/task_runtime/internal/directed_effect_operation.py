@@ -43,14 +43,17 @@ from ..public.contracts import (
     DIRECTED_EFFECT_OPERATION_SCHEMA_V1,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V2,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V3,
+    DIRECTED_EFFECT_OPERATION_SCHEMA_V4,
     DIRECTED_EFFECT_OPERATION_SNAPSHOT_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_BINDING_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_READINESS_PROJECTION_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_REGISTRY_PROJECTION_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2,
+    DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3,
     AbortDirectedEffectOperationCommandV1,
     AdmitDirectedEffectOperationCommandV1,
+    AdmitDirectedEffectParentBatchCommandV1,
     AdmitDirectedEffectParentCommandV1,
     ClaimDirectedEffectCommandV1,
     CommitDirectedEffectReceiptCommandV1,
@@ -121,6 +124,23 @@ class _CloseDirectedEffectByParentCommandV1:
     actor: str = "runtime.task_runtime.settlement"
 
 
+@dataclass(frozen=True, slots=True)
+class _CloseDirectedEffectByParentForBatchCommandV1:
+    workspace: str
+    task_id: int
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    parent_binding: DirectedEffectParentBindingV1
+    tool_call_id: str
+    effect_id: str
+    expected_version: int
+    expected_seq: int
+    intended_effect_fingerprint: str
+    policy_verdict_hash: str
+    expected_receipt_binding_hash: str
+    batch_rollover_hash: str
+    actor: str = "runtime.task_runtime.batch_rollover"
+
+
 _Command: TypeAlias = (
     AdmitDirectedEffectOperationCommandV1
     | ClaimDirectedEffectCommandV1
@@ -129,6 +149,7 @@ _Command: TypeAlias = (
     | MarkDirectedEffectRecoveryPendingCommandV1
     | DeadLetterDirectedEffectOperationCommandV1
     | _CloseDirectedEffectByParentCommandV1
+    | _CloseDirectedEffectByParentForBatchCommandV1
 )
 _ReadyGatedCommand: TypeAlias = ClaimDirectedEffectCommandV1 | AbortDirectedEffectOperationCommandV1
 _InventoryGuardedCommand: TypeAlias = (
@@ -286,6 +307,7 @@ class _ParentRegistry:
     sealed_inventories_by_binding_id: Mapping[str, _SealedDirectedEffectInventory]
     ready_inventories_by_binding_id: Mapping[str, _ReadyDirectedEffectInventory]
     settlement_close_proof: Mapping[str, object] | None = None
+    batch_rollover_close_proof: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,6 +343,7 @@ class _NormalizedDirectedEffectReplayDescriptorV1:
     resolution_evidence_hash: str
     terminal_intent_hash: str
     settlement_outcome: str
+    batch_rollover_hash: str
 
     def to_record(self) -> dict[str, str]:
         return {
@@ -340,6 +363,7 @@ class _NormalizedDirectedEffectReplayDescriptorV1:
             "resolution_evidence_hash": self.resolution_evidence_hash,
             "terminal_intent_hash": self.terminal_intent_hash,
             "settlement_outcome": self.settlement_outcome,
+            "batch_rollover_hash": self.batch_rollover_hash,
         }
 
 
@@ -949,6 +973,18 @@ class DirectedEffectOperationRepository:
                 },
             )
         if registry.bindings_by_id:
+            if registry.batch_rollover_close_proof is not None:
+                return DirectedEffectSettlementPreBarrierVerdictV1(
+                    allowed=True,
+                    code="settlement_parent_registry_clear",
+                    evidence={
+                        "registry_state": "CLOSED_WITH_BATCH_ROLLOVER_PROOF",
+                        "registry_identity": identity.to_record(),
+                        "registry_version": registry.registry_version,
+                        "source_head_seq": registry.source_head_seq,
+                        "close_proof": dict(registry.batch_rollover_close_proof),
+                    },
+                )
             return DirectedEffectSettlementPreBarrierVerdictV1(
                 allowed=False,
                 code="settlement_parent_close_proof_required",
@@ -1121,6 +1157,15 @@ class DirectedEffectOperationRepository:
             return registry
         proof = registry.settlement_close_proof
         if proof is None:
+            if registry.batch_rollover_close_proof is not None:
+                return verdict(
+                    True,
+                    "settlement_parent_registry_clear",
+                    {
+                        "registry_state": "CLOSED_WITH_BATCH_ROLLOVER_PROOF",
+                        "close_proof": dict(registry.batch_rollover_close_proof),
+                    },
+                )
             return verdict(
                 False, "settlement_parent_close_proof_required", {"registry_state": "CLOSED_WITHOUT_OUTCOME_PROOF"}
             )
@@ -1352,6 +1397,15 @@ class DirectedEffectOperationRepository:
         terminal_intent_hash: str,
     ) -> DirectedEffectSettlementPreBarrierVerdictV1:
         proof = registry.settlement_close_proof
+        if proof is None and registry.batch_rollover_close_proof is not None:
+            return self._parent_settlement_verdict(
+                True,
+                "settlement_parent_registry_clear",
+                {
+                    "registry_state": "CLOSED_WITH_BATCH_ROLLOVER_PROOF",
+                    "close_proof": dict(registry.batch_rollover_close_proof),
+                },
+            )
         matches = (
             proof is not None
             and proof.get("terminal_intent_hash") == terminal_intent_hash
@@ -1483,6 +1537,333 @@ class DirectedEffectOperationRepository:
             "settlement_parent_close_failed",
             {"fact_stream_code": error.code, "fact_stream_details": dict(error.details)},
         )
+
+    @staticmethod
+    def _after_batch_rollover_parent_close(
+        *,
+        batch_rollover_hash: str,
+        binding_id: str,
+    ) -> None:
+        """Deterministic crash seam after durable close and before successor admission."""
+
+        del batch_rollover_hash, binding_id
+
+    @staticmethod
+    def _after_batch_rollover_child_close(
+        result: DirectedEffectOperationResultV1,
+        close_index: int,
+    ) -> None:
+        """Deterministic crash seam between durable child-close appends."""
+
+        del result, close_index
+
+    def admit_parent_batch_with_validated_authority(
+        self,
+        command: AdmitDirectedEffectParentBatchCommandV1,
+    ) -> DirectedEffectOperationResultV1:
+        """Close one completed predecessor batch and admit its canonical successor."""
+
+        identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(command.execution_attempt)
+        registry = self._load_registry(command.workspace, identity)
+        if isinstance(registry, DirectedEffectOperationResultV1):
+            return registry
+        existing = registry.admissions_by_idempotency_key.get(command.admission_idempotency_key)
+        if existing is not None:
+            if registry.open_binding != existing.binding:
+                return self._parent_registry_conflict(
+                    "parent_closed",
+                    registry,
+                    {
+                        "reason": "batch_admission_replay_targets_closed_parent",
+                        "admission_idempotency_key": command.admission_idempotency_key,
+                        "binding_id": existing.binding.binding_id,
+                    },
+                    binding=existing.binding,
+                )
+            replay_command = AdmitDirectedEffectParentCommandV1(
+                workspace=command.workspace,
+                task_id=command.task_id,
+                execution_attempt=command.execution_attempt,
+                correlation=command.correlation,
+                admission_idempotency_key=command.admission_idempotency_key,
+                expected_version=existing.binding.registry_version - 1,
+                expected_seq=existing.binding.source_event_seq,
+                actor=command.actor,
+            )
+            return self._parent_replay_result(replay_command, registry, existing)
+
+        if registry.open_binding is not None:
+            closed = self._close_parent_for_batch_rollover(
+                command,
+                registry=registry,
+            )
+            if isinstance(closed, DirectedEffectOperationResultV1):
+                return closed
+            registry = closed
+            close_proof = registry.batch_rollover_close_proof
+            if close_proof is None:
+                return self._parent_registry_conflict(
+                    "parent_open_conflict",
+                    registry,
+                    {"reason": "batch_rollover_close_proof_missing"},
+                )
+            self._after_batch_rollover_parent_close(
+                batch_rollover_hash=cast(str, close_proof["batch_rollover_hash"]),
+                binding_id=cast(str, close_proof["binding_id"]),
+            )
+        elif registry.bindings_by_id and registry.batch_rollover_close_proof is None:
+            return self._parent_registry_conflict(
+                "parent_closed",
+                registry,
+                {
+                    "reason": (
+                        "terminal_parent_close_blocks_new_batch"
+                        if registry.settlement_close_proof is not None
+                        else "parent_close_proof_not_batch_eligible"
+                    )
+                },
+            )
+
+        return self.admit_parent_with_validated_authority(
+            AdmitDirectedEffectParentCommandV1(
+                workspace=command.workspace,
+                task_id=command.task_id,
+                execution_attempt=command.execution_attempt,
+                correlation=command.correlation,
+                admission_idempotency_key=command.admission_idempotency_key,
+                expected_version=registry.registry_version,
+                expected_seq=registry.next_expected_seq,
+                actor=command.actor,
+            )
+        )
+
+    def _close_parent_for_batch_rollover(
+        self,
+        command: AdmitDirectedEffectParentBatchCommandV1,
+        *,
+        registry: _ParentRegistry,
+    ) -> _ParentRegistry | DirectedEffectOperationResultV1:
+        binding = registry.open_binding
+        if binding is None:
+            return registry
+        prepared = self._prepare_parent_settlement_operations(
+            command.execution_attempt,
+            identity=registry.identity,
+            registry=registry,
+            binding=binding,
+            outcome="completed",
+        )
+        if isinstance(prepared, DirectedEffectSettlementPreBarrierVerdictV1):
+            reason_by_code = {
+                "settlement_parent_close_required": "batch_rollover_inventory_not_ready",
+                "settlement_directed_effect_unresolved": "batch_rollover_operation_unresolved",
+                "settlement_effect_outcome_conflict": "batch_rollover_effect_outcome_conflict",
+            }
+            return self._parent_registry_conflict(
+                "parent_open_conflict",
+                registry,
+                {
+                    "reason": reason_by_code.get(prepared.code, "batch_rollover_precondition_failed"),
+                    "rollover_verdict_code": prepared.code,
+                    "rollover_verdict_evidence": dict(prepared.evidence),
+                },
+                binding=binding,
+            )
+        receipt_summary_hash = _hash_token(
+            tuple(sorted(prepared.receipt_records, key=lambda item: str(item["operation_id"])))
+        )
+        final_operation_source_head_seq = prepared.reduced.source_head_seq + len(prepared.close_candidates)
+        batch_rollover_hash = _hash_token(
+            {
+                "schema_version": DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3,
+                "stable_registry_identity": registry.identity.to_record(),
+                "binding_id": binding.binding_id,
+                "parent_sequence": binding.parent_sequence,
+                "operation_source_head_seq": final_operation_source_head_seq,
+                "receipt_summary_hash": receipt_summary_hash,
+            }
+        )
+        child_close = self._close_parent_batch_children(
+            prepared,
+            execution_attempt=command.execution_attempt,
+            batch_rollover_hash=batch_rollover_hash,
+        )
+        if child_close is not None:
+            return child_close
+        return self._append_parent_batch_rollover_close(
+            prepared,
+            execution_attempt=command.execution_attempt,
+            batch_rollover_hash=batch_rollover_hash,
+            receipt_summary_hash=receipt_summary_hash,
+        )
+
+    def _close_parent_batch_children(
+        self,
+        prepared: _ParentSettlementPreparation,
+        *,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        batch_rollover_hash: str,
+    ) -> DirectedEffectOperationResultV1 | None:
+        next_expected_seq = prepared.reduced.source_head_seq + 1
+        for close_index, aggregate in enumerate(prepared.close_candidates, start=1):
+            closed = self._close_by_parent(
+                _CloseDirectedEffectByParentForBatchCommandV1(
+                    workspace=execution_attempt.workspace,
+                    task_id=execution_attempt.task_id,
+                    execution_attempt=execution_attempt,
+                    parent_binding=prepared.binding,
+                    tool_call_id=aggregate.operation.tool_call_id,
+                    effect_id=aggregate.operation.effect_id,
+                    expected_version=aggregate.version,
+                    expected_seq=next_expected_seq,
+                    intended_effect_fingerprint=aggregate.intended_effect_fingerprint,
+                    policy_verdict_hash=aggregate.policy_verdict_hash,
+                    expected_receipt_binding_hash=aggregate.expected_receipt_binding_hash,
+                    batch_rollover_hash=batch_rollover_hash,
+                )
+            )
+            if not closed.ok or closed.state != "CLOSED_BY_PARENT":
+                return self._parent_registry_conflict(
+                    "parent_open_conflict",
+                    prepared.registry,
+                    {
+                        "reason": "batch_rollover_child_close_failed",
+                        "operation_id": aggregate.operation.operation_id,
+                        "operation_result_code": closed.code,
+                    },
+                    binding=prepared.binding,
+                )
+            self._after_batch_rollover_child_close(closed, close_index)
+            next_expected_seq += 1
+        return None
+
+    def _append_parent_batch_rollover_close(
+        self,
+        prepared: _ParentSettlementPreparation,
+        *,
+        execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
+        batch_rollover_hash: str,
+        receipt_summary_hash: str,
+    ) -> _ParentRegistry | DirectedEffectOperationResultV1:
+        guarded = self._prepare_parent_batch_guarded_close(prepared)
+        if isinstance(guarded, DirectedEffectOperationResultV1):
+            return guarded
+        close_evidence_hash = _hash_token(
+            {
+                "batch_rollover_hash": batch_rollover_hash,
+                "operation_source_head_seq": guarded.prepared.proof.guard_head_seq,
+                "receipt_summary_hash": receipt_summary_hash,
+            }
+        )
+        payload: dict[str, object] = {
+            "schema_version": DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3,
+            "stable_registry_identity": prepared.identity.to_record(),
+            "previous_version": guarded.final_registry.registry_version,
+            "version": guarded.final_registry.registry_version + 1,
+            "parent_sequence": prepared.binding.parent_sequence,
+            "binding_id": prepared.binding.binding_id,
+            "close_evidence_ref": f"batch-rollover://{batch_rollover_hash}",
+            "close_evidence_hash": close_evidence_hash,
+            "actor": "runtime.task_runtime.batch_rollover",
+            "close_kind": "batch_rollover",
+            "batch_rollover_hash": batch_rollover_hash,
+            "operation_source_head_seq": guarded.prepared.proof.guard_head_seq,
+            "receipt_summary_hash": receipt_summary_hash,
+            "receipt_count": len(prepared.receipt_records),
+            "failed_receipt_count": 0,
+            "dead_letter_count": 0,
+            "aborted_count": sum(1 for aggregate in guarded.final_reduced.aggregates if aggregate.state == "ABORTED"),
+        }
+        close_command = AppendIfGuardedSnapshotCommandV1(
+            snapshot_proof=guarded.prepared.proof,
+            event=GuardedFactEventV1(
+                event_type=_PARENT_CLOSED_EVENT_TYPE,
+                source="runtime.task_runtime",
+                payload=payload,
+                aggregate_id=str(execution_attempt.task_id),
+                correlation_id=batch_rollover_hash,
+            ),
+            idempotency_key=batch_rollover_hash,
+        )
+        try:
+            append_if_guarded_snapshot(close_command)
+        except FactStreamError as exc:
+            refreshed = self._load_registry(execution_attempt.workspace, prepared.identity)
+            proof = (
+                None if isinstance(refreshed, DirectedEffectOperationResultV1) else refreshed.batch_rollover_close_proof
+            )
+            if proof is None or proof.get("batch_rollover_hash") != batch_rollover_hash:
+                return self._parent_registry_conflict(
+                    "parent_open_conflict",
+                    prepared.registry,
+                    {
+                        "reason": "batch_rollover_parent_close_failed",
+                        "fact_stream_code": exc.code,
+                        "fact_stream_details": dict(exc.details),
+                    },
+                    binding=prepared.binding,
+                )
+            return refreshed
+        refreshed = self._load_registry(execution_attempt.workspace, prepared.identity)
+        if isinstance(refreshed, DirectedEffectOperationResultV1):
+            return refreshed
+        proof = refreshed.batch_rollover_close_proof
+        if proof is None or proof.get("batch_rollover_hash") != batch_rollover_hash:
+            return self._parent_registry_conflict(
+                "parent_open_conflict",
+                refreshed,
+                {"reason": "batch_rollover_parent_close_not_reconstructable"},
+                binding=prepared.binding,
+            )
+        return refreshed
+
+    def _prepare_parent_batch_guarded_close(
+        self,
+        prepared: _ParentSettlementPreparation,
+    ) -> _ParentSettlementGuardedClose | DirectedEffectOperationResultV1:
+        try:
+            snapshot = read_guarded_fact_snapshot(
+                ReadGuardedFactSnapshotCommandV1(
+                    workspace=prepared.identity.workspace,
+                    target_stream=prepared.binding.registry_stream_token,
+                    guard_stream=prepared.binding.operation_stream_token,
+                )
+            )
+        except FactStreamError as exc:
+            return self._parent_registry_conflict(
+                self._fact_failure_code(exc.code, operation="read"),
+                prepared.registry,
+                {"fact_stream_code": exc.code, "fact_stream_details": dict(exc.details)},
+                binding=prepared.binding,
+            )
+        registry = self._reduce_registry_from_read(
+            prepared.identity,
+            _StreamRead(snapshot.target_records(), snapshot.proof.target_head_seq),
+        )
+        if isinstance(registry, DirectedEffectOperationResultV1):
+            return registry
+        if registry.open_binding != prepared.binding:
+            return self._parent_registry_conflict(
+                "parent_open_conflict",
+                registry,
+                {"reason": "batch_rollover_parent_binding_changed"},
+                binding=prepared.binding,
+            )
+        reduced = self._reduce_operation_stream(
+            _StreamRead(snapshot.guard_records(), snapshot.proof.guard_head_seq),
+            prepared.binding,
+            target=None,
+        )
+        if isinstance(reduced, DirectedEffectOperationResultV1):
+            return reduced
+        if any(aggregate.state not in _TERMINAL_STATES for aggregate in reduced.aggregates):
+            return self._parent_registry_conflict(
+                "parent_open_conflict",
+                registry,
+                {"reason": "batch_rollover_non_terminal_operation_after_child_close"},
+                binding=prepared.binding,
+            )
+        return _ParentSettlementGuardedClose(snapshot, registry, reduced)
 
     def admit_parent_with_validated_authority(
         self,
@@ -2169,7 +2550,7 @@ class DirectedEffectOperationRepository:
 
     def _close_by_parent(
         self,
-        command: _CloseDirectedEffectByParentCommandV1,
+        command: _CloseDirectedEffectByParentCommandV1 | _CloseDirectedEffectByParentForBatchCommandV1,
     ) -> DirectedEffectOperationResultV1:
         # TaskRuntime owns this private transition and calls it while holding
         # both execution-session locks. Re-entering the public attempt
@@ -4133,6 +4514,16 @@ class DirectedEffectOperationRepository:
             "dead_letter_count",
             "aborted_count",
         }
+        v3_fields = (v1_fields - {"recorded_at"}) | {
+            "close_kind",
+            "batch_rollover_hash",
+            "operation_source_head_seq",
+            "receipt_summary_hash",
+            "receipt_count",
+            "failed_receipt_count",
+            "dead_letter_count",
+            "aborted_count",
+        }
         if not isinstance(payload, dict):
             return self._parent_registry_failure(
                 "strict_stream_corruption",
@@ -4143,13 +4534,18 @@ class DirectedEffectOperationRepository:
         if close_schema not in {
             DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
             DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2,
+            DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3,
         }:
             return self._parent_registry_failure(
                 "strict_stream_unknown_schema",
                 registry,
                 {"observed_schema_version": close_schema},
             )
-        expected_payload_fields = v1_fields if close_schema == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1 else v2_fields
+        expected_payload_fields = {
+            DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1: v1_fields,
+            DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2: v2_fields,
+            DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3: v3_fields,
+        }[close_schema]
         if set(payload) != expected_payload_fields:
             return self._parent_registry_failure(
                 "strict_stream_corruption",
@@ -4302,6 +4698,83 @@ class DirectedEffectOperationRepository:
                     registry,
                     {"reason": "parent_closed_settlement_evidence_binding_invalid"},
                 )
+        if close_schema == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3:
+            if payload.get("close_kind") != "batch_rollover":
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_batch_kind_invalid"},
+                )
+            if not _is_canonical_sha256(payload.get("batch_rollover_hash")) or not _is_canonical_sha256(
+                payload.get("receipt_summary_hash")
+            ):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_batch_hash_invalid"},
+                )
+            count_fields = (
+                "operation_source_head_seq",
+                "receipt_count",
+                "failed_receipt_count",
+                "dead_letter_count",
+                "aborted_count",
+            )
+            if any(
+                isinstance(payload.get(field), bool)
+                or not isinstance(payload.get(field), int)
+                or cast(int, payload[field]) < 0
+                for field in count_fields
+            ):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_batch_counts_invalid"},
+                )
+            receipt_count = cast(int, payload["receipt_count"])
+            failed_receipt_count = cast(int, payload["failed_receipt_count"])
+            dead_letter_count = cast(int, payload["dead_letter_count"])
+            aborted_count = cast(int, payload["aborted_count"])
+            ready = registry.ready_inventories_by_binding_id.get(str(payload.get("binding_id") or ""))
+            if (
+                ready is None
+                or failed_receipt_count != 0
+                or dead_letter_count != 0
+                or receipt_count + aborted_count != len(ready.ordered_operation_ids)
+            ):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_batch_inventory_counts_invalid"},
+                )
+            batch_rollover_hash = cast(str, payload["batch_rollover_hash"])
+            expected_batch_rollover_hash = _hash_token(
+                {
+                    "schema_version": DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3,
+                    "stable_registry_identity": registry.identity.to_record(),
+                    "binding_id": payload["binding_id"],
+                    "parent_sequence": parent_sequence,
+                    "operation_source_head_seq": payload["operation_source_head_seq"],
+                    "receipt_summary_hash": payload["receipt_summary_hash"],
+                }
+            )
+            expected_close_evidence_hash = _hash_token(
+                {
+                    "batch_rollover_hash": batch_rollover_hash,
+                    "operation_source_head_seq": payload["operation_source_head_seq"],
+                    "receipt_summary_hash": payload["receipt_summary_hash"],
+                }
+            )
+            if (
+                batch_rollover_hash != expected_batch_rollover_hash
+                or payload.get("close_evidence_ref") != f"batch-rollover://{batch_rollover_hash}"
+                or payload.get("close_evidence_hash") != expected_close_evidence_hash
+            ):
+                return self._parent_registry_failure(
+                    "strict_stream_corruption",
+                    registry,
+                    {"reason": "parent_closed_batch_evidence_binding_invalid"},
+                )
         event_id = record.get("event_id")
         if not isinstance(event_id, str) or not event_id.strip():
             return self._parent_registry_failure(
@@ -4350,6 +4823,9 @@ class DirectedEffectOperationRepository:
             ready_inventories_by_binding_id=registry.ready_inventories_by_binding_id,
             settlement_close_proof=(
                 dict(payload) if close_schema == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2 else None
+            ),
+            batch_rollover_close_proof=(
+                dict(payload) if close_schema == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3 else None
             ),
         )
 
@@ -5257,6 +5733,13 @@ class DirectedEffectOperationRepository:
                     binding=binding,
                     evidence={"reason": "operation_v3_payload_fields_invalid"},
                 )
+        elif schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V4:
+            if set(payload) != common_payload_fields:
+                return self._parent_failure(
+                    "strict_stream_corruption",
+                    binding=binding,
+                    evidence={"reason": "operation_v4_payload_fields_invalid"},
+                )
         else:
             return self._parent_failure(
                 "strict_stream_unknown_schema",
@@ -5430,14 +5913,25 @@ class DirectedEffectOperationRepository:
             "terminal_intent_hash",
             "settlement_outcome",
         }
-        expected_fields = v3_fields if schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V3 else base_fields
+        v4_fields = v3_fields | {"batch_rollover_hash"}
+        expected_fields = {
+            DIRECTED_EFFECT_OPERATION_SCHEMA_V1: base_fields,
+            DIRECTED_EFFECT_OPERATION_SCHEMA_V2: base_fields,
+            DIRECTED_EFFECT_OPERATION_SCHEMA_V3: v3_fields,
+            DIRECTED_EFFECT_OPERATION_SCHEMA_V4: v4_fields,
+        }[schema_version]
         if set(descriptor) != expected_fields:
             return {"reason": "replay_descriptor_fields_invalid"}
         command = descriptor.get("command")
         reason = descriptor.get("reason")
         legacy_commands = {"admit", "claim", "abort"}
         v3_commands = {"commit_receipt", "mark_recovery_pending", "dead_letter", "close_by_parent"}
-        allowed_commands = v3_commands if schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V3 else legacy_commands
+        if schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V3:
+            allowed_commands = v3_commands
+        elif schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V4:
+            allowed_commands = {"close_by_parent"}
+        else:
+            allowed_commands = legacy_commands
         if command not in allowed_commands:
             return {"reason": "replay_descriptor_command_invalid"}
         expected_version = descriptor.get("expected_version")
@@ -5495,6 +5989,14 @@ class DirectedEffectOperationRepository:
                 value = descriptor.get(hash_field)
                 if isinstance(value, str) and value and not _is_canonical_sha256(value):
                     return {"reason": "replay_descriptor_hash_invalid", "field": hash_field}
+        if schema_version == DIRECTED_EFFECT_OPERATION_SCHEMA_V4:
+            required = {"batch_rollover_hash"}
+            for field in v4_fields - base_fields:
+                value = descriptor.get(field)
+                if not isinstance(value, str) or (field in required) != bool(value.strip()):
+                    return {"reason": "replay_descriptor_evidence_invalid", "field": field}
+            if not _is_canonical_sha256(descriptor.get("batch_rollover_hash")):
+                return {"reason": "replay_descriptor_hash_invalid", "field": "batch_rollover_hash"}
         return None
 
     def _strict_operation_projection(
@@ -6023,6 +6525,7 @@ class DirectedEffectOperationRepository:
             "resolution_evidence_hash",
             "terminal_intent_hash",
             "settlement_outcome",
+            "batch_rollover_hash",
         ):
             value = transition.descriptor.get(field)
             if isinstance(value, str) and value:
@@ -6123,6 +6626,8 @@ class DirectedEffectOperationRepository:
                     else "",
                 }
             )
+            if isinstance(command, _CloseDirectedEffectByParentForBatchCommandV1):
+                descriptor["batch_rollover_hash"] = command.batch_rollover_hash
         return descriptor
 
     @staticmethod
@@ -6134,10 +6639,16 @@ class DirectedEffectOperationRepository:
         descriptor: Mapping[str, object],
     ) -> dict[str, object]:
         return {
-            "schema_version": DIRECTED_EFFECT_OPERATION_SCHEMA_V3
-            if descriptor.get("command")
-            in {"commit_receipt", "mark_recovery_pending", "dead_letter", "close_by_parent"}
-            else DIRECTED_EFFECT_OPERATION_SCHEMA_V2,
+            "schema_version": (
+                DIRECTED_EFFECT_OPERATION_SCHEMA_V4
+                if descriptor.get("batch_rollover_hash")
+                else (
+                    DIRECTED_EFFECT_OPERATION_SCHEMA_V3
+                    if descriptor.get("command")
+                    in {"commit_receipt", "mark_recovery_pending", "dead_letter", "close_by_parent"}
+                    else DIRECTED_EFFECT_OPERATION_SCHEMA_V2
+                )
+            ),
             "operation": operation.to_record(),
             "parent_binding_id": operation.parent_binding_id,
             "state": state,
@@ -6169,6 +6680,7 @@ class DirectedEffectOperationRepository:
             resolution_evidence_hash=cast(str, descriptor.get("resolution_evidence_hash") or ""),
             terminal_intent_hash=cast(str, descriptor.get("terminal_intent_hash") or ""),
             settlement_outcome=cast(str, descriptor.get("settlement_outcome") or ""),
+            batch_rollover_hash=cast(str, descriptor.get("batch_rollover_hash") or ""),
         )
 
     def _normalized_transition(

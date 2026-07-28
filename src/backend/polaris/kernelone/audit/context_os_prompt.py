@@ -8,70 +8,134 @@ derived from ContextOS projection, not from control-plane runtime state.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-_CONTROL_PLANE_KEYS = frozenset(
+CONTROL_PLANE_PROMPT_KEYS = frozenset(
     {
         "_transaction_kernel_forced_tool_choice",
         "_transaction_kernel_forced_tool_definitions",
         "_transaction_kernel_prebuilt_messages",
         "allowed_provider_ids",
         "allowed_provider_types",
+        "allowed_scope",
+        "backlog_ref",
         "blocked_provider_ids",
         "blocked_provider_types",
+        "blueprint_hash",
+        "blueprint_id",
+        "blueprint_path",
+        "budget_status",
+        "capability_token",
+        "capability_token_id",
+        "chief_engineer_deadline_decision",
+        "chief_engineer_blueprint_id",
+        "chief_engineer_handoff_id",
+        "chief_engineer_llm_timeout_seconds",
+        "cognitive_guidance",
         "cognitive_runtime_enabled",
         "cognitive_runtime_mode",
         "cognitive_runtime_required",
         "cognitive_strategy_override",
+        "construction_step",
+        "consumed_interfaces",
+        "contract_hash",
+        "control_plane_job_token",
         "context_os_expected",
         "context_os_snapshot",
+        "current_task_write_boundary",
+        "delivery_mode",
+        "director_language_identity",
+        "director_quality_repair",
+        "director_role_call_timeout_budget",
+        "director_role_subinvocation",
+        "disable_internal_tool_rounds",
+        "domain",
+        "execution_envelope_hash",
+        "external_task_id",
+        "factory_bench_level",
+        "factory_bench_project_id",
+        "factory_bench_project_workspace",
+        "factory_bench_title",
         "factory_run_id",
+        "handoff_source",
         "host_kind",
+        "job_token",
+        "job_token_id",
+        "last_failure",
+        "llm_call_timeout_ceiling_seconds",
+        "llm_call_timeout_seconds",
+        "llm_max_tokens",
         "llm_provider_policy",
+        "max_output_tokens",
         "metadata",
+        "metrics",
         "model_allowlist",
         "model_blocklist",
+        "pm_contract_hash",
+        "pm_task_id",
+        "parent_token_id",
+        "policy_verdict",
+        "pre_state_verify",
+        "prompt_profile",
+        "prompt_profile_appendix",
+        "prompt_profile_audit",
+        "prompt_profile_id",
+        "prompt_profile_ids",
+        "prompt_profiles",
         "provider_allowlist",
         "provider_blocklist",
         "provider_policy",
+        "raw_output",
+        "request_timeout_ceiling_seconds",
+        "request_timeout_seconds",
         "role_runtime_required",
+        "run_card",
+        "run_id",
         "runtime_session_id",
+        "runtime_blueprint_path",
+        "selected_prompt_profile_ids",
         "session_context_config",
         "session_id",
+        "session_turn_events",
+        "source_task_id",
         "state_first_context_os",
         "strategy_override",
         "stream_options",
-        "task_id",
-        "workspace_root",
-    }
-)
-
-_TURN_BLOCKED_KEYS = frozenset(
-    {
-        "budget_status",
-        "metrics",
-        "policy_verdict",
-        "raw_output",
         "system_warnings",
+        "task_id",
+        "task_execution_context_budget_policy",
+        "task_execution_min_context_utilization",
+        "task_execution_prompt_max_chars",
+        "task_runtime_execution_attempt",
+        "task_runtime_execution_attempt_authority",
+        "task_runtime_guard",
+        "task_runtime_internal_task_id",
+        "task_runtime_session_id",
+        "target_task_id",
         "telemetry",
         "telemetry_events",
         "thinking",
         "thinking_content",
+        "timeout_ceiling_seconds",
+        "timeout_seconds",
+        "token_id",
+        "turn_request_id",
+        "workspace",
+        "workspace_root",
     }
 )
-
-_FIELD_LEAK_KEYS = frozenset(_CONTROL_PLANE_KEYS | _TURN_BLOCKED_KEYS)
 # ``task_id`` is authoritative domain evidence inside PM contracts and CE
 # portfolio plans. It remains forbidden in message metadata, where it denotes
 # control-plane leakage, but a bare occurrence in prompt content is ambiguous
 # and must not make a valid structured contract fail isolation auditing.
-_CONTENT_AMBIGUOUS_DATA_KEYS = frozenset({"task_id"})
+CONTROL_PLANE_PROMPT_CONTENT_KEYS = CONTROL_PLANE_PROMPT_KEYS - {"task_id"}
 _CONTROL_CONTENT_TOKENS = tuple(
     sorted(
         {
             pattern
-            for key in _FIELD_LEAK_KEYS - _CONTENT_AMBIGUOUS_DATA_KEYS
+            for key in CONTROL_PLANE_PROMPT_CONTENT_KEYS
             for pattern in (
                 f'"{key}"',
                 f"'{key}'",
@@ -82,6 +146,25 @@ _CONTROL_CONTENT_TOKENS = tuple(
         }
     )
 )
+CONTROL_PLANE_PROMPT_VALUE_TOKENS = (
+    "capabilitytoken(",
+    "capability_token(",
+    "jobtoken(",
+    "job_token(",
+    "taskruntimeexecutionattempt(",
+    "task_runtime_execution_attempt(",
+    "taskruntimeexecutionattemptauthority(",
+    "task_runtime_execution_attempt_authority(",
+)
+_CONTROL_PLANE_QUOTED_KEY_CANDIDATE = re.compile(r"""(?P<quote>['"])(?P<key>[^'"\r\n]{1,128})(?P=quote)\s*[:=]""")
+_CONTROL_PLANE_BARE_KEY_CANDIDATE = re.compile(
+    r"""(?<![A-Za-z0-9_])(?P<key>_?[A-Za-z][A-Za-z0-9_./\\-]{1,127})\s*[:=]"""
+)
+_CONTROL_PLANE_SPACED_KEY_CANDIDATE = re.compile(
+    r"""(?<![A-Za-z0-9_])(?P<key>_?[A-Za-z][A-Za-z0-9]*(?:[ \t]+[A-Za-z0-9]+){1,7})\s*[:=]"""
+)
+_CAMEL_ACRONYM_BOUNDARY = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_CAMEL_WORD_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
 
 _RAW_TOOL_FAILURE_RECEIPT_TOKENS = (
     "director_policy",
@@ -116,13 +199,45 @@ def _dedupe(values: Iterable[str]) -> list[str]:
     return result
 
 
+def normalize_control_plane_prompt_key(key: Any) -> str:
+    """Normalize snake/camel/Pascal/kebab key spellings to one taxonomy."""
+    raw = str(key or "").strip()
+    if not raw:
+        return ""
+    private_prefix = raw.startswith("_")
+    separated = _CAMEL_ACRONYM_BOUNDARY.sub(r"\1_\2", raw.lstrip("_"))
+    separated = _CAMEL_WORD_BOUNDARY.sub(r"\1_\2", separated)
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", separated).strip("_").lower()
+    collapsed = re.sub(r"_+", "_", normalized)
+    return f"_{collapsed}" if private_prefix and collapsed else collapsed
+
+
+def find_control_plane_prompt_content_hits(content: Any) -> list[str]:
+    """Return canonical control-plane signatures found in prompt content."""
+    normalized = str(content or "").lower()
+    if not normalized:
+        return []
+    hits = [token for token in (*_CONTROL_CONTENT_TOKENS, *CONTROL_PLANE_PROMPT_VALUE_TOKENS) if token in normalized]
+    raw_content = str(content or "")
+    for pattern in (
+        _CONTROL_PLANE_QUOTED_KEY_CANDIDATE,
+        _CONTROL_PLANE_BARE_KEY_CANDIDATE,
+        _CONTROL_PLANE_SPACED_KEY_CANDIDATE,
+    ):
+        for match in pattern.finditer(raw_content):
+            normalized_key = normalize_control_plane_prompt_key(match.group("key"))
+            if normalized_key in CONTROL_PLANE_PROMPT_CONTENT_KEYS:
+                hits.append(normalized_key)
+    return _dedupe(hits)
+
+
 def _find_metadata_key_hits(messages: Sequence[Mapping[str, Any]]) -> list[str]:
     hits: list[str] = []
     for message in messages:
         metadata = _message_metadata(message)
         for key in metadata:
-            key_text = str(key or "").strip()
-            if key_text in _CONTROL_PLANE_KEYS or key_text in _TURN_BLOCKED_KEYS:
+            key_text = normalize_control_plane_prompt_key(key)
+            if key_text in CONTROL_PLANE_PROMPT_KEYS:
                 hits.append(key_text)
     return _dedupe(hits)
 
@@ -140,17 +255,15 @@ def _find_content_hits(
 ) -> list[str]:
     hits: list[str] = []
     for message in messages:
-        content = _message_content(message).lower()
+        content = _message_content(message)
         if not content:
             continue
         if _message_role(message) == "user" and _looks_like_current_user_instruction(
             content,
-            current_user_instruction.lower(),
+            current_user_instruction,
         ):
             continue
-        for token in _CONTROL_CONTENT_TOKENS:
-            if str(token).lower() in content:
-                hits.append(str(token))
+        hits.extend(find_control_plane_prompt_content_hits(content))
     return _dedupe(hits)
 
 
@@ -365,8 +478,13 @@ def audit_context_os_prompt_messages(
 
 
 __all__ = [
+    "CONTROL_PLANE_PROMPT_CONTENT_KEYS",
+    "CONTROL_PLANE_PROMPT_KEYS",
+    "CONTROL_PLANE_PROMPT_VALUE_TOKENS",
     "audit_context_os_prompt_messages",
     "compact_context_os_audit",
+    "find_control_plane_prompt_content_hits",
+    "normalize_control_plane_prompt_key",
     "summarize_context_os_audit_from_ledger",
     "summarize_context_os_audits",
 ]

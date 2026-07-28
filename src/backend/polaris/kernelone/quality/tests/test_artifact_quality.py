@@ -2002,6 +2002,33 @@ path = "src/lib.rs"
     assert issue.metadata["missing_bin_reason"] == "no_usable_binary_target"
 
 
+def test_rust_missing_bin_display_string_rehydrates_typed_issue_and_relative_path() -> None:
+    """execute_method only threads display strings; rehydrate code/path for DEO allowlist."""
+
+    from polaris.kernelone.quality import artifact_quality_issues_from_errors
+
+    error = "error: can't find bin `kitchen_flavor_palette` at path `/tmp/ws/src/main.rs`"
+    issues = artifact_quality_issues_from_errors([error])
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["code"] == "rust_missing_binary_entrypoint"
+    assert issue["path"] == "src/main.rs"
+    assert issue["metadata"]["bin_name"] == "kitchen_flavor_palette"
+    assert issue["metadata"]["bin_path"] == "src/main.rs"
+    assert issue["metadata"]["diagnostic_kind"] == "rust_missing_binary_entrypoint"
+
+
+def test_rust_missing_bin_display_string_rejects_external_absolute_path() -> None:
+    from polaris.kernelone.quality import artifact_quality_issues_from_errors
+
+    error = "error: can't find bin `escape` at path `/tmp/elsewhere/escape.rs`"
+    issues = artifact_quality_issues_from_errors([error])
+    assert len(issues) == 1
+    assert issues[0]["code"] == "rust_missing_binary_entrypoint"
+    assert issues[0]["path"] is None
+    assert "bin_path" not in issues[0]["metadata"]
+
+
 def test_cargo_manifest_pure_library_without_runnable_signal_stays_silent(tmp_path: Path) -> None:
     """Pure library crates must not be forced to grow a binary without signal."""
 

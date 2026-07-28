@@ -14,6 +14,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.context_gateway.context_override_processor import ContextOverrideProcessor
+from polaris.cells.roles.kernel.internal.context_gateway.gateway_helpers import _CONTROL_PLANE_CONTEXT_KEYS
+from polaris.kernelone.audit.context_os_prompt import (
+    CONTROL_PLANE_PROMPT_KEYS,
+    audit_context_os_prompt_messages,
+)
 
 
 def _gateway_profile(*, max_context_tokens: int = 128000) -> MagicMock:
@@ -270,6 +275,9 @@ class TestBlueprintStepCard:
 class TestProcessContextOverride:
     """Test ContextOverrideProcessor.process_context_override."""
 
+    def test_context_override_and_context_os_audit_share_control_plane_taxonomy(self) -> None:
+        assert _CONTROL_PLANE_CONTEXT_KEYS is CONTROL_PLANE_PROMPT_KEYS
+
     def test_process_empty_context_override(self) -> None:
         assert _override_processor().process_context_override({}) is None
 
@@ -320,6 +328,11 @@ class TestProcessContextOverride:
             "llm_call_timeout_seconds": 300,
             "request_timeout_seconds": 180,
             "timeout_seconds": 180,
+            "chief_engineer_llm_timeout_seconds": 600,
+            "chief_engineer_deadline_decision": {
+                "requested_timeout_seconds": 600,
+                "remaining_seconds": 5360,
+            },
             "target_task_id": "2",
             "pm_task_id": "TASK-2",
             "task_runtime_guard": True,
@@ -335,6 +348,10 @@ class TestProcessContextOverride:
         assert "llm_call_timeout_seconds" not in result["content"]
         assert "request_timeout_seconds" not in result["content"]
         assert "timeout_seconds" not in result["content"]
+        assert "chief_engineer_llm_timeout_seconds" not in result["content"]
+        assert "chief_engineer_deadline_decision" not in result["content"]
+        assert "requested_timeout_seconds" not in result["content"]
+        assert "remaining_seconds" not in result["content"]
         assert "target_task_id" not in result["content"]
         assert "pm_task_id" not in result["content"]
         assert "task_runtime_guard" not in result["content"]
@@ -343,6 +360,359 @@ class TestProcessContextOverride:
         assert "director_quality_repair" not in result["content"]
         assert "delivery_mode" not in result["content"]
         assert "keep_me: real context" in result["content"]
+
+    def test_control_plane_capability_and_execution_attempt_authority_excluded(self) -> None:
+        """JobToken and TaskRuntime authority stay available to runtime consumers
+        without being serialized into the LLM data plane."""
+        token = {
+            "token_id": "job-1",
+            "factory_run_id": "factory-1",
+            "project_id": "L1-05",
+            "stage": "pending_exec",
+            "allowed_scope": ["src/main.rs"],
+        }
+        override = {
+            "job_token": token,
+            "control_plane_job_token": token,
+            "capability_token": token,
+            "task_runtime_execution_attempt": {
+                "run_id": "director-1",
+                "session_id": "session-1",
+            },
+            "task_runtime_execution_attempt_authority": {
+                "identity": "attempt-1",
+            },
+            "llm_call_timeout_ceiling_seconds": 180,
+            "request_timeout_ceiling_seconds": 180,
+            "timeout_ceiling_seconds": 180,
+            "director_role_call_timeout_budget": {"seconds": 180},
+            "turn_request_id": "turn-1",
+            "task_runtime_internal_task_id": "runtime-task-1",
+            "factory_bench_project_id": "L1-05",
+            "factory_bench_project_workspace": "/tmp/internal-bench-workspace",
+            "blueprint_path": "runtime/blueprints/task-1.json",
+            "execution_envelope_hash": "envelope-hash-1",
+            "current_task_write_boundary": ["src/main.rs"],
+            "llm_max_tokens": 128000,
+            "director_execution_envelope": {
+                "authorization": {
+                    "capability_token_ref": "job-1",
+                    "capability_token_hash": "hash-1",
+                }
+            },
+            "keep_me": "real context",
+        }
+
+        result = _override_processor().process_context_override(override)
+
+        assert result is not None
+        content = result["content"]
+        serialized_keys = {line.partition(":")[0] for line in content.splitlines() if ":" in line}
+        assert {
+            "job_token",
+            "control_plane_job_token",
+            "capability_token",
+            "task_runtime_execution_attempt",
+            "task_runtime_execution_attempt_authority",
+            "llm_call_timeout_ceiling_seconds",
+            "request_timeout_ceiling_seconds",
+            "timeout_ceiling_seconds",
+            "director_role_call_timeout_budget",
+            "turn_request_id",
+            "task_runtime_internal_task_id",
+            "factory_bench_project_id",
+            "factory_bench_project_workspace",
+            "blueprint_path",
+            "execution_envelope_hash",
+            "current_task_write_boundary",
+            "llm_max_tokens",
+        }.isdisjoint(serialized_keys)
+        assert "factory_run_id" not in content
+        assert "director_execution_envelope" in content
+        assert "capability_token_ref" in content
+        assert "keep_me: real context" in content
+        assert override["capability_token"]["token_id"] == "job-1"
+        audit = audit_context_os_prompt_messages(
+            messages=[
+                result,
+                {"role": "user", "content": "materialize the declared Rust targets"},
+            ],
+            context_sources=("state_first_context_os",),
+            current_user_instruction="materialize the declared Rust targets",
+            expected=True,
+        )
+        assert audit["ok"] is True
+        assert audit["control_plane"]["isolated"] is True
+
+    def test_nested_control_plane_identity_is_projected_out_without_mutating_source(self) -> None:
+        """Mixed data/control structures keep useful blueprint content while
+        nested runtime identities are excluded from the provider request."""
+        blueprint = {
+            "schema_version": "chief_engineer.blueprint.v1",
+            "role": "ChiefEngineer",
+            "blueprint_id": "ce-task-1",
+            "task_id": "TASK-1",
+            "run_id": "factory-1",
+            "workspace": "/tmp/internal-workspace",
+            "title": "Implement the declared Rust crate",
+            "target_files": ["Cargo.toml", "src/main.rs"],
+            "module_interface_contract": {
+                "src/main.rs": {
+                    "public_symbols": ["main"],
+                    "run_id": "nested-runtime-id",
+                }
+            },
+        }
+        override = {
+            "ce_blueprint": blueprint,
+            "handoff_decision": {
+                "allowed": True,
+                "blueprint_id": "ce-task-1",
+                "task_id": "TASK-1",
+                "reason": "handoff_ready",
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "run_id": "director-1",
+                "workspace": "/tmp/internal-workspace",
+                "authorization": {
+                    "capability_token_ref": "job-1",
+                    "capability_token_hash": "hash-1",
+                },
+            },
+        }
+
+        result = _override_processor().process_context_override(override)
+
+        assert result is not None
+        content = result["content"]
+        assert "ce_blueprint" in content
+        assert "Implement the declared Rust crate" in content
+        assert "Cargo.toml" in content
+        assert "src/main.rs" in content
+        assert "public_symbols" in content
+        assert "handoff_ready" in content
+        assert "capability_token_ref" in content
+        assert "capability_token_hash" in content
+        assert "'blueprint_id'" not in content
+        assert "'run_id'" not in content
+        assert "'workspace'" not in content
+        # Domain task identity remains usable and is explicitly treated as
+        # ambiguous prompt data by the ContextOS audit.
+        assert "'task_id': 'TASK-1'" in content
+        # Runtime consumers retain the original, authoritative objects.
+        assert blueprint["blueprint_id"] == "ce-task-1"
+        assert blueprint["module_interface_contract"]["src/main.rs"]["run_id"] == "nested-runtime-id"
+        audit = audit_context_os_prompt_messages(
+            messages=[
+                result,
+                {"role": "user", "content": "materialize the declared Rust targets"},
+            ],
+            context_sources=("state_first_context_os",),
+            current_user_instruction="materialize the declared Rust targets",
+            expected=True,
+        )
+        assert audit["ok"] is True
+        assert audit["control_plane"]["isolated"] is True
+
+    def test_opaque_and_serialized_authority_values_fail_closed(self) -> None:
+        class CapabilityCarrier:
+            def __str__(self) -> str:
+                return "CapabilityToken(token_id='job-1', allowed_scope=['src/main.rs'])"
+
+        result = _override_processor().process_context_override(
+            {
+                "opaque_payload": CapabilityCarrier(),
+                "serialized_payload": "{'capability_token': {'token_id': 'job-1'}}",
+                "keep_me": "real context",
+            }
+        )
+
+        assert result is not None
+        content = result["content"]
+        assert content.count("[FILTERED_CONTROL_PLANE_CONTENT]") == 1
+        assert content.count("[FILTERED_UNPROJECTABLE_CONTEXT_OBJECT]") == 1
+        assert "CapabilityToken" not in content
+        assert "token_id" not in content
+        assert "allowed_scope" not in content
+        assert "keep_me: real context" in content
+        audit = audit_context_os_prompt_messages(
+            messages=[
+                result,
+                {"role": "user", "content": "materialize the declared Rust targets"},
+            ],
+            context_sources=("state_first_context_os",),
+            current_user_instruction="materialize the declared Rust targets",
+            expected=True,
+        )
+        assert audit["ok"] is True
+        assert audit["control_plane"]["isolated"] is True
+
+    def test_authority_after_default_scan_window_is_filtered_when_value_cap_is_raised(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_CONTEXT_OVERRIDE_VALUE_CHAR_CAP", "8000")
+        payload = ("x" * 5000) + " capability_token: {'token_id': 'job-late', " + "'allowed_scope': ['src/late.rs']}"
+
+        result = _override_processor().process_context_override({"payload": payload})
+
+        assert result is not None
+        content = result["content"]
+        assert "[FILTERED_CONTROL_PLANE_CONTENT]" in content
+        assert "job-late" not in content
+        assert "src/late.rs" not in content
+
+    def test_camel_case_authority_and_hostile_builtin_subclasses_fail_closed(self) -> None:
+        class AuthorityInt(int):
+            def __str__(self) -> str:
+                return "CapabilityToken(token_id='job-int')"
+
+        class AuthorityFloat(float):
+            def __str__(self) -> str:
+                return "JobToken(token_id='job-float')"
+
+        result = _override_processor().process_context_override(
+            {
+                "camel_payload": ("capabilityToken: {'tokenId': 'job-2', 'allowedScope': ['src/camel.rs']}"),
+                "int_payload": AuthorityInt(1),
+                "float_payload": AuthorityFloat(1.0),
+                "keep_me": "real context",
+            }
+        )
+
+        assert result is not None
+        content = result["content"]
+        assert content.count("[FILTERED_CONTROL_PLANE_CONTENT]") == 1
+        assert content.count("[FILTERED_UNPROJECTABLE_CONTEXT_OBJECT]") == 2
+        assert "job-2" not in content
+        assert "job-int" not in content
+        assert "job-float" not in content
+        assert "src/camel.rs" not in content
+        assert "keep_me: real context" in content
+
+    @pytest.mark.parametrize(
+        "authority_key",
+        (
+            "capabilityToken",
+            "CapabilityToken",
+            "capability-token",
+            "_transactionKernelPrebuiltMessages",
+        ),
+    )
+    def test_control_plane_key_spelling_variants_are_excluded(self, authority_key: str) -> None:
+        result = _override_processor().process_context_override(
+            {
+                authority_key: {"tokenId": "job-variant"},
+                "nested": {
+                    "runId": "runtime-variant",
+                    "taskId": "TASK-1",
+                    "capabilityTokenRef": "job-ref",
+                    "targetFiles": ["src/main.rs"],
+                },
+            }
+        )
+
+        assert result is not None
+        content = result["content"]
+        assert "job-variant" not in content
+        assert "runtime-variant" not in content
+        assert "job-ref" in content
+        assert "TASK-1" in content
+        assert "src/main.rs" in content
+
+    def test_non_string_mapping_key_cannot_serialize_authority(self) -> None:
+        class OpaqueAuthority:
+            def __repr__(self) -> str:
+                return "OpaqueAuthority(token_id='job-key', allowed_scope=['src/key.rs'])"
+
+        opaque_key = OpaqueAuthority()
+        payload = {
+            opaque_key: "must be dropped",
+            "target_files": ["src/main.rs"],
+        }
+
+        result = _override_processor().process_context_override({"blueprint_projection": payload})
+
+        assert result is not None
+        content = result["content"]
+        assert "src/main.rs" in content
+        assert "OpaqueAuthority" not in content
+        assert "job-key" not in content
+        assert "src/key.rs" not in content
+        assert opaque_key in payload
+
+    def test_raw_authority_shape_is_removed_but_prompt_safe_references_remain(self) -> None:
+        authority = {
+            "token_id": "job-shape",
+            "run_id": "director-shape",
+            "factory_run_id": "factory-shape",
+            "project_id": "L1-05",
+            "stage": "pending_exec",
+            "allowed_scope": ["src/private.rs"],
+            "capability_token_ref": "job-ref",
+            "capability_token_hash": "hash-ref",
+            "scope": ["src/main.rs"],
+        }
+
+        result = _override_processor().process_context_override(
+            {
+                "payload": {
+                    "authorization": authority,
+                    "target_files": ["src/main.rs"],
+                }
+            }
+        )
+
+        assert result is not None
+        content = result["content"]
+        assert "job-shape" not in content
+        assert "director-shape" not in content
+        assert "factory-shape" not in content
+        assert "src/private.rs" not in content
+        assert "job-ref" in content
+        assert "hash-ref" in content
+        assert "src/main.rs" in content
+        assert authority["token_id"] == "job-shape"
+
+    def test_recursive_context_value_is_bounded_without_mutating_source(self) -> None:
+        recursive: dict[str, object] = {"target_files": ["src/main.rs"]}
+        recursive["self"] = recursive
+
+        result = _override_processor().process_context_override({"blueprint_projection": recursive})
+
+        assert result is not None
+        assert "src/main.rs" in result["content"]
+        assert "[FILTERED_RECURSIVE_CONTEXT_VALUE]" in result["content"]
+        assert recursive["self"] is recursive
+
+    def test_excessively_deep_context_value_is_bounded(self) -> None:
+        payload: object = "leaf"
+        for _ in range(1200):
+            payload = [payload]
+
+        result = _override_processor().process_context_override({"blueprint_projection": payload})
+
+        assert result is not None
+        assert "[FILTERED_CONTEXT_PROJECTION_LIMIT]" in result["content"]
+
+    def test_excessively_wide_context_value_is_node_bounded(self) -> None:
+        projected = _override_processor()._project_prompt_safe_value([0] * 5000)
+
+        assert isinstance(projected, list)
+        assert "[FILTERED_CONTEXT_PROJECTION_LIMIT]" in projected
+        assert len(projected) <= 4096
+
+    def test_excessively_wide_mapping_and_top_level_override_are_bounded(self) -> None:
+        projected = _override_processor()._project_prompt_safe_value({f"field_{index}": index for index in range(5000)})
+        result = _override_processor().process_context_override({f"context_{index}": "value" for index in range(1000)})
+
+        assert isinstance(projected, dict)
+        assert "[FILTERED_CONTEXT_PROJECTION_LIMIT]" in projected.values()
+        assert len(projected) <= 4096
+        assert result is not None
+        assert "[FILTERED_CONTEXT_PROJECTION_LIMIT]" in result["content"]
+        assert len(result["content"].splitlines()) <= 257
 
     def test_prompt_profile_audit_fields_excluded_from_context_override_message(self) -> None:
         """Prompt profile selection is already appended to the system prompt and
@@ -400,6 +770,15 @@ class TestProcessContextOverride:
         assert "…[truncated]" in result["content"]
         # Bounded well under the original 50k chars (default cap 1500 + marker).
         assert len(result["content"]) < 2000
+
+    def test_environment_value_cap_has_a_hard_upper_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KERNELONE_CONTEXT_OVERRIDE_VALUE_CHAR_CAP", "999999")
+
+        result = _override_processor().process_context_override({"payload": "x" * 50000})
+
+        assert result is not None
+        assert "…[truncated]" in result["content"]
+        assert len(result["content"]) < 17000
 
     def test_process_context_override_filters_prompt_injection(self) -> None:
         override = {

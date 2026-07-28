@@ -1091,6 +1091,8 @@ def test_every_active_to_inactive_writer_blocks_on_open_parent_without_writes(
 
 def _director_materialization_attempt(
     workspace: Path,
+    *,
+    include_adapter_result: bool = True,
 ) -> tuple[
     TaskRuntimeService,
     int,
@@ -1105,17 +1107,19 @@ def _director_materialization_attempt(
     _bootstrap_task_runtime_fact_stream(workspace)
     (workspace / "main.go").write_text("package main\n", encoding="utf-8")
     service = TaskRuntimeService(str(workspace))
+    metadata: dict[str, Any] = {
+        "target_files": ["main.go"],
+        "scope_paths": ["main.go"],
+    }
+    if include_adapter_result:
+        metadata["adapter_result"] = {
+            "write_tool_evidence": True,
+            "new_files": ["main.go"],
+            "modified_files": [],
+        }
     parent = service.create_task_row(
         subject="materialized Director parent",
-        metadata={
-            "target_files": ["main.go"],
-            "scope_paths": ["main.go"],
-            "adapter_result": {
-                "write_tool_evidence": True,
-                "new_files": ["main.go"],
-                "modified_files": [],
-            },
-        },
+        metadata=metadata,
     )
     parent_id = int(parent["id"])
     child = service.create_task_row(subject="downstream repair task", blocked_by=[parent_id])
@@ -1320,6 +1324,209 @@ def test_real_deo_failed_materialization_settlement_releases_only_dependency(
     assert result["success"] is True
     assert result["code"] == "settled"
     assert result["dependency_satisfaction"]["receipt_count"] == 1
+    assert result["dependency_satisfaction"]["materialized_paths"] == ["main.go"]
+    parent = service.get_task(parent_id)
+    child = service.get_task(child_id)
+    assert parent is not None
+    assert parent["status"] == "failed"
+    assert child is not None
+    assert child["status"] == "pending"
+    assert child["blocked_by"] == []
+
+
+def test_failed_materialization_dependency_release_survives_stale_runtime_cache(
+    tmp_path: Path,
+) -> None:
+    """A stale Director runtime must not undo TaskRuntime-owned satisfaction.
+
+    Factory and the reused Director adapter hold separate TaskRuntimeService
+    instances.  The Director instance may have cached the child while it was
+    blocked.  Once the settlement owner records hash-bound materialization
+    satisfaction and unblocks that child, the stale instance must consume the
+    same durable proof instead of re-blocking it because the parent row remains
+    terminal-failed.
+    """
+
+    service, parent_id, child_id, identity, _task, _session = _director_materialization_attempt(tmp_path)
+    stale_director_runtime = TaskRuntimeService(str(tmp_path))
+    stale_child = stale_director_runtime._board.get(child_id)
+    assert stale_child is not None
+    assert stale_child.status.value == "blocked"
+    assert stale_child.blocked_by == [parent_id]
+
+    _commit_one_succeeded_directed_effect(identity)
+    settled = service.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="failed",
+            summary="quality failed after committed writes",
+        )
+    )
+    assert settled["success"] is True
+    released = service.get_task(child_id)
+    assert released is not None
+    assert released["status"] == "pending"
+    assert released["blocked_by"] == []
+
+    claimed = stale_director_runtime.claim_execution(
+        child_id,
+        worker_id="director",
+        role_id="director",
+        run_id="director-second-round",
+        selection_source="factory_claimable_projection",
+        external_task_id="TASK-2",
+    )
+
+    assert claimed["success"] is True, claimed
+    assert claimed["reason"] == "claimed"
+    assert claimed["task"]["id"] == child_id
+    assert claimed["task"]["status"] == "in_progress"
+
+
+def test_forged_dependency_satisfaction_cannot_release_stale_runtime_cache(
+    tmp_path: Path,
+) -> None:
+    """Hash-invalid materialization evidence must keep the child blocked."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_task_runtime_fact_stream(workspace)
+    service = TaskRuntimeService(str(workspace))
+    parent = service.create_task_row(subject="failed parent")
+    parent_id = int(parent["id"])
+    child = service.create_task_row(subject="blocked child", blocked_by=[parent_id])
+    child_id = int(child["id"])
+    stale_director_runtime = TaskRuntimeService(str(workspace))
+
+    forged: dict[str, Any] = {
+        "schema_version": service_module._DEPENDENCY_SATISFACTION_SCHEMA_V1,
+        "kind": "failed_director_materialization",
+        "task_id": parent_id,
+        "terminal_transition_id": "task-transition-forged",
+        "materialized_paths": ["main.go"],
+        "adapter_result_hash": "a" * 64,
+        "close_evidence_hash": "b" * 64,
+        "receipt_summary_hash": "c" * 64,
+        "receipt_count": 1,
+        "failed_receipt_count": 0,
+        "dead_letter_count": 0,
+        "aborted_count": 0,
+    }
+    forged["evidence_hash"] = service_module._canonical_sha256(forged)
+    forged["materialized_paths"] = ["forged.go"]
+    failed_parent = service._board.update(
+        parent_id,
+        status=service_module.TaskStatus.FAILED,
+        metadata={service_module._DEPENDENCY_SATISFACTION_METADATA_KEY: forged},
+        allow_terminal_status=True,
+        allow_execution_status=True,
+    )
+    assert failed_parent is not None
+
+    claimed = stale_director_runtime.claim_execution(
+        child_id,
+        worker_id="director",
+        role_id="director",
+        run_id="director-second-round",
+        selection_source="factory_claimable_projection",
+        external_task_id="TASK-2",
+    )
+
+    assert claimed["success"] is False
+    assert claimed["reason"] == "task_blocked"
+
+
+def test_failed_materialization_uses_projection_locked_latest_task_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adapter evidence arriving after the phase-A read still qualifies.
+
+    The live Director path can publish ``adapter_result`` after settlement has
+    captured its phase-A Task snapshot but before the projection lock is
+    acquired. The projection already reads the current Task row under that
+    lock for idempotence, so dependency proof must use that exact current row
+    rather than the stale pre-settlement snapshot.
+    """
+
+    service, parent_id, child_id, identity, _task, _session = _director_materialization_attempt(
+        tmp_path,
+        include_adapter_result=False,
+    )
+    _commit_one_succeeded_directed_effect(identity)
+
+    original_project = service._project_settled_execution_attempt
+
+    def _publish_then_project(command: Any, *, task: Any, session: Any) -> dict[str, Any]:
+        updated = service._board.update(
+            parent_id,
+            metadata={
+                "adapter_result": {
+                    "write_tool_evidence": True,
+                    "new_files": ["main.go"],
+                    "modified_files": [],
+                }
+            },
+            allow_execution_status=True,
+        )
+        assert updated is not None
+        return original_project(command, task=task, session=session)
+
+    monkeypatch.setattr(service, "_project_settled_execution_attempt", _publish_then_project)
+    result = service.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="failed",
+            summary="quality failed after adapter evidence arrived",
+        )
+    )
+
+    assert result["success"] is True
+    assert result["dependency_satisfaction"]["materialized_paths"] == ["main.go"]
+    assert service.get_task(parent_id)["status"] == "failed"
+    child = service.get_task(child_id)
+    assert child is not None
+    assert child["status"] == "pending"
+    assert child["blocked_by"] == []
+
+
+def test_failed_materialization_uses_adapter_result_from_settlement_metadata(
+    tmp_path: Path,
+) -> None:
+    """The live Director settlement carries adapter evidence in the command.
+
+    Director does not pre-write ``adapter_result`` to the Task row.  It passes
+    that evidence to ``authority.settle(metadata=...)``, and TaskRuntime owns
+    the atomic row projection.  Dependency proof therefore must evaluate the
+    settlement metadata that is about to be committed together with the
+    existing task contract.
+    """
+
+    service, parent_id, child_id, identity, _task, _session = _director_materialization_attempt(
+        tmp_path,
+        include_adapter_result=False,
+    )
+    _commit_one_succeeded_directed_effect(identity)
+
+    result = service.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="failed",
+            summary="quality failed after committed writes",
+            metadata={
+                "adapter_result": {
+                    "write_tool_evidence": True,
+                    "new_files": ["main.go"],
+                    "modified_files": [],
+                }
+            },
+        )
+    )
+
+    assert result["success"] is True
     assert result["dependency_satisfaction"]["materialized_paths"] == ["main.go"]
     parent = service.get_task(parent_id)
     child = service.get_task(child_id)

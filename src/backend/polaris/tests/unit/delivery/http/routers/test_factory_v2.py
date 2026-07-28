@@ -875,6 +875,28 @@ async def test_get_factory_run_status_not_found(client: AsyncClient) -> None:
         assert data["error"]["code"] == "RUN_NOT_FOUND"
 
 
+@pytest.mark.asyncio
+async def test_get_factory_run_status_reports_snapshot_contention_as_503(client: AsyncClient) -> None:
+    """An existing run with a busy snapshot must never be projected as 404."""
+
+    from polaris.cells.factory.pipeline.internal.factory_store import FileLockTimeoutError
+
+    with patch(
+        "polaris.delivery.http.routers.factory.FactoryRunService",
+    ) as mock_svc_cls:
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.get_run = AsyncMock(
+            side_effect=FileLockTimeoutError(Path("/runtime/factory/factory_busy/run.json"), 5.0)
+        )
+
+        response = await client.get("/v2/factory/runs/factory_busy")
+
+    assert response.status_code == 503
+    data = response.json()
+    assert data["error"]["code"] == "FACTORY_RUN_SNAPSHOT_BUSY"
+
+
 # ---------------------------------------------------------------------------
 # GET /v2/factory/runs/{run_id}/events
 # ---------------------------------------------------------------------------

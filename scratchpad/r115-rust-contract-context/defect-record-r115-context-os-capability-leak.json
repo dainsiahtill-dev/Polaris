@@ -1,0 +1,97 @@
+{
+  "schema_version": "polaris.main_agent_defect.v1",
+  "defect_id": "R115-CONTEXT-OS-CAPABILITY-LEAK",
+  "status": "CLOSED_REQUALIFIED",
+  "severity": "P0",
+  "project_id": "L1-05",
+  "factory_run_id": "factory_5ea5c947530e",
+  "bench_run_id": "9ae82d7111f6",
+  "symptom": {
+    "stage": "director_final_provider_request",
+    "context_snapshot_ref": "f2baa1080fcf2c1c75a03a8d",
+    "actual": "context_os_audit.ok=false and control_plane.isolated=false; the Director final Provider request system message serialized a complete capability_token containing factory_run_id, JobToken identity, stage, project, and mutation scope.",
+    "expected": "Capability and execution-attempt authority remain in the control plane and tool gateway. The LLM data plane receives only prompt-safe execution/evidence projections."
+  },
+  "final_provider_request_evidence": {
+    "snapshot_path": "/home/dains/.cache/kernelone/.polaris/projects/678d99053b85c836103992be-39b59ae78135/runtime/contexts/f2/f2baa1080fcf2c1c75a03a8d",
+    "message_index": 1,
+    "message_role": "system",
+    "context_os_audit_content_hits": [
+      "'factory_run_id'"
+    ],
+    "leaked_context_key": "capability_token",
+    "role_identity_ok": true,
+    "required_refs_tools_tokens_ok": true
+  },
+  "root_cause": {
+    "classification": "CONTROL_PLANE_TAXONOMY_DRIFT_AND_SHALLOW_CONTEXT_PROJECTION",
+    "sources": [
+      "src/backend/polaris/kernelone/audit/context_os_prompt.py",
+      "src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway_helpers.py",
+      "src/backend/polaris/cells/roles/kernel/internal/context_gateway/context_override_processor.py"
+    ],
+    "mechanism": "ContextOverrideProcessor and the ContextOS audit owned separate control-plane key sets, so capability and execution-attempt keys drifted out of the prompt deny-set. After top-level filtering, mixed data/control structures such as CE blueprints, handoff decisions, and execution envelopes were stringified without recursive prompt-safe projection. Opaque objects, serialized strings, hostile builtin subclasses, non-string mapping keys, spelling variants, and unbounded recursive/wide structures created additional authority-leak or request-assembly DoS paths.",
+    "general_impact": "Any Director request carrying JobToken or TaskRuntime attempt authority can leak control-plane identifiers and scopes to the model, fail ContextOS isolation auditing, waste context, and confuse authority with model-visible instructions."
+  },
+  "fix_contract": {
+    "required": "Use one canonical control-plane prompt taxonomy for ContextOS audit and context override filtering. Recursively copy and filter mixed data/control mappings before provider-request serialization while preserving prompt-safe references and leaving the original context_override untouched for ToolGateway/DEO.",
+    "forbidden": [
+      "remove capability checks from ToolGateway or DEO",
+      "redact prompt-safe execution envelope references",
+      "weaken ContextOS control-plane isolation audit",
+      "modify target project code"
+    ]
+  },
+  "verification": {
+    "red_required": true,
+    "red_evidence": "The nested mixed-structure regression failed before implementation because blueprint_id, run_id, and workspace were present in the generated context_override system message.",
+    "focused_tests": "74 passed (ContextOS audit + context gateway fallback)",
+    "roles_kernel_tests": "2791 passed, 1 warning",
+    "static_gates": {
+      "ruff": "pass",
+      "ruff_format": "pass",
+      "mypy": "pass"
+    },
+    "broader_audit_suite_note": "Combined roles-kernel + kernelone/audit run: 2911 passed and 8 unrelated HEAD-baseline failures in audit contracts/validators tests; none of those production/test files are modified by this defect fix.",
+    "context_os_audit_replay": {
+      "artifact": "/tmp/factory-bench-l1-05-r115/workspaces/9ae82d7111f6-5f89fd839c489dbd/L1-05-e561a0dcdada9554/678d99053b85c836103992be/.polaris/blueprints/ce_TASK-1_20260727201602961253.json",
+      "original_blueprint_id_preserved": "ce_TASK-1_20260727201602961253",
+      "message_chars": 6522,
+      "target_files_preserved": true,
+      "task_id_preserved": true,
+      "prompt_safe_capability_refs_preserved": true,
+      "prompt_safe_scope_paths_commands_preserved": true,
+      "ok": true,
+      "control_plane_isolated": true,
+      "metadata_key_hits": [],
+      "content_hits": []
+    },
+    "independent_review": {
+      "status": "CLEAR",
+      "verdict": "Critical 0; Important 0; Minor 0",
+      "integration_tests": "244 passed (gateway, transaction, and ToolGateway)",
+      "findings_closed": [
+        "opaque custom object authority serialization",
+        "serialized authority string false-green",
+        "recursive and deep/wide projection DoS",
+        "camel/Pascal/kebab/private key normalization",
+        "non-string mapping key repr execution",
+        "int/float subclass authority serialization",
+        "raw JobToken shape under generic authorization",
+        "spaced/dot/slash/tab quoted-key detector bypass",
+        "raised value-cap late-signature bypass",
+        "configured value-cap unbounded growth"
+      ]
+    },
+    "provider_calls_after_fix": 0,
+    "bench_runs_after_fix": 0
+  },
+  "stable_source_hashes": {
+    "context_os_prompt_py": "7a1f7dda2c8ad26bf15bfe3e9d7ca9bb9714a2168bdec7d09b88101352394f2a",
+    "gateway_helpers_py": "3c99d73c4cdbf99cc90d8b7271796afbd6c41a7989c510b9d933b096176b4d34",
+    "context_override_processor_py": "40645dd4be4f922c8fd38f85e2aea90fe86c1b5e5b31a538de2eb94484b15d39",
+    "test_context_os_prompt_py": "dc44d49ad242c0ac95071c7eeaccc01127af317971fe2def11d6a546ae1932e0",
+    "test_context_gateway_fallback_py": "fa6a5cc93792a57d2a10611701c04ccf875eb654bf1c1db21c0fd1247eb69453"
+  },
+  "next_action": "Keep Provider/Bench frozen. Audit the separate Rust tests/test_product.py validation harness and close the unrelated KernelOne audit contracts/validators baseline drift before any R116 authorization."
+}

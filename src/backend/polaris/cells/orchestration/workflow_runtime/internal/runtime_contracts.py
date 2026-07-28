@@ -333,6 +333,7 @@ class TaskSnapshot:
     # 错误信息
     error_category: str | None = None
     error_message: str | None = None
+    result_evidence: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -350,6 +351,7 @@ class TaskSnapshot:
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "error_category": self.error_category,
             "error_message": self.error_message,
+            "result_evidence": dict(self.result_evidence),
         }
 
 

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -17,6 +19,9 @@ def _require_non_empty(name: str, value: str) -> str:
 
 def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
+
+
+FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY = "factory_terminal_task_runtime_projection"
 
 
 class FactoryWorkspaceRunLeaseStateV1(str, Enum):
@@ -169,6 +174,104 @@ class FactoryWorkspaceReleaseEvidenceV1:
             conflict_count=int(payload.get("conflict_count") or 0),
             fenced_session_ids=(tuple(str(value) for value in fenced) if isinstance(fenced, (list, tuple)) else ()),
             details=details,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FactoryTerminalTaskRuntimeProjectionV1:
+    """Run-bound authority snapshot captured before destructive TaskRuntime reset.
+
+    The snapshot is a frozen read model, not a second execution fact source.
+    It preserves TaskRuntime's own compact authority projection so terminal
+    audit consumers can still prove the run after live task/session files are
+    deliberately drained.
+    """
+
+    workspace: str
+    factory_run_id: str
+    captured_at: str
+    projection: Mapping[str, Any]
+    schema_version: str = "factory.terminal-task-runtime-projection.v1"
+
+    def __post_init__(self) -> None:
+        workspace = _require_non_empty("workspace", self.workspace)
+        factory_run_id = _require_non_empty("factory_run_id", self.factory_run_id)
+        object.__setattr__(self, "workspace", workspace)
+        object.__setattr__(self, "factory_run_id", factory_run_id)
+        object.__setattr__(self, "captured_at", _require_non_empty("captured_at", self.captured_at))
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        if self.schema_version != "factory.terminal-task-runtime-projection.v1":
+            raise ValueError("unsupported terminal TaskRuntime projection schema_version")
+
+        projection = copy.deepcopy(dict(self.projection))
+        if projection.get("schema_version") != "task_runtime.observable_task_rows_authority.v1":
+            raise ValueError("terminal projection must use TaskRuntime authority schema")
+        if str(projection.get("source") or "").strip() != "task_runtime.execution_fact":
+            raise ValueError("terminal projection source must be task_runtime.execution_fact")
+        if projection.get("authoritative") is not True or projection.get("degraded") is not False:
+            raise ValueError("terminal projection must be authoritative and non-degraded")
+        if str(projection.get("requested_factory_run_id") or "").strip() != factory_run_id:
+            raise ValueError("terminal projection requested_factory_run_id must match factory_run_id")
+
+        projection_workspace = _require_non_empty("projection.workspace", str(projection.get("workspace") or ""))
+        if Path(projection_workspace).expanduser().resolve() != Path(workspace).expanduser().resolve():
+            raise ValueError("terminal projection workspace must match snapshot workspace")
+
+        rows_payload = projection.get("rows")
+        if not isinstance(rows_payload, list):
+            raise ValueError("terminal projection rows must be a list")
+
+        def _projection_count(field_name: str) -> int:
+            value = projection.get(field_name)
+            if isinstance(value, bool):
+                raise ValueError("terminal projection row counts must be integers")
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.strip().isdigit():
+                return int(value.strip())
+            raise ValueError("terminal projection row counts must be integers")
+
+        row_count = _projection_count("row_count")
+        total_row_count = _projection_count("total_row_count")
+        if row_count != len(rows_payload) or total_row_count < row_count:
+            raise ValueError("terminal projection row counts are inconsistent")
+        for row in rows_payload:
+            if not isinstance(row, Mapping):
+                raise ValueError("terminal projection rows must be mappings")
+            if str(row.get("factory_run_id") or "").strip() != factory_run_id:
+                raise ValueError("terminal projection row factory_run_id must match snapshot")
+            if not str(row.get("task_id") or "").strip():
+                raise ValueError("terminal projection row task_id must be non-empty")
+            if str(row.get("source") or "").strip() != "task_runtime.execution_fact":
+                raise ValueError("terminal projection row source must be task_runtime.execution_fact")
+            if str(row.get("status_source") or "").strip() != "task_runtime.execution_fact":
+                raise ValueError("terminal projection row status_source must be task_runtime.execution_fact")
+            fact_event_seq = row.get("fact_event_seq")
+            if not isinstance(fact_event_seq, int) or isinstance(fact_event_seq, bool) or fact_event_seq < 1:
+                raise ValueError("terminal projection row fact_event_seq must be a positive integer")
+        if not isinstance(projection.get("readiness"), Mapping):
+            raise ValueError("terminal projection readiness must be a mapping")
+        object.__setattr__(self, "projection", projection)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "workspace": self.workspace,
+            "factory_run_id": self.factory_run_id,
+            "captured_at": self.captured_at,
+            "projection": copy.deepcopy(dict(self.projection)),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> FactoryTerminalTaskRuntimeProjectionV1:
+        projection_payload = payload.get("projection")
+        projection = projection_payload if isinstance(projection_payload, Mapping) else {}
+        return cls(
+            schema_version=str(payload.get("schema_version") or ""),
+            workspace=str(payload.get("workspace") or ""),
+            factory_run_id=str(payload.get("factory_run_id") or ""),
+            captured_at=str(payload.get("captured_at") or ""),
+            projection=projection,
         )
 
 
@@ -388,7 +491,7 @@ class StartFactoryRunCommandV1:
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "run_name", _require_non_empty("run_name", self.run_name))
-        object.__setattr__(self, "stages", tuple(str(v) for v in self.stages if str(v).strip()))
+        object.__setattr__(self, "stages", tuple(str(v).strip() for v in self.stages if str(v).strip()))
         if not self.stages:
             raise ValueError("stages must not be empty")
         object.__setattr__(self, "options", _to_dict_copy(self.options))
@@ -520,8 +623,16 @@ class FactoryRunResultV1:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "run_id", _require_non_empty("run_id", self.run_id))
         object.__setattr__(self, "status", _require_non_empty("status", self.status))
-        object.__setattr__(self, "completed_stages", tuple(str(v) for v in self.completed_stages if str(v).strip()))
-        object.__setattr__(self, "artifact_paths", tuple(str(v) for v in self.artifact_paths if str(v).strip()))
+        object.__setattr__(
+            self,
+            "completed_stages",
+            tuple(str(v).strip() for v in self.completed_stages if str(v).strip()),
+        )
+        object.__setattr__(
+            self,
+            "artifact_paths",
+            tuple(str(v).strip() for v in self.artifact_paths if str(v).strip()),
+        )
 
 
 @dataclass(frozen=True)

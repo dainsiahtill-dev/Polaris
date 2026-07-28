@@ -78,3 +78,64 @@ sign_off:
   owner: Codex /root
   closed_at: "2026-07-22"
 next_action: refreeze_pre_bench_source_snapshot_then_authorize_exactly_one_fresh_isolated_run
+regression_r94:
+  status: offline_verified
+  bench_status: eligible_for_pre_bench_refreeze
+  observed_at: "2026-07-27"
+  symptom: >-
+    Director orchestration returned director_no_materialized_changes while the
+    same Director run still owned an active TaskRuntime execution session with
+    a fresh heartbeat and an unexpired 1795-second execution lease. The
+    lifecycle failure returned before the owner-cell fact settled, so Factory
+    later spent only the five-second settlement reserve.
+  authority_conflict:
+    non_authoritative_hint: orchestration_lifecycle_failure
+    authoritative_owner: task_runtime.execution_fact
+    active_task_id: TASK-2
+    active_run_id: director-beefc52e667c
+  assumptions:
+    - id: R94-A1
+      statement: >-
+        TaskRuntime active execution facts outrank an orchestration lifecycle
+        failure for liveness, but cannot authorize success.
+      status: verified_by_red_green_and_independent_review
+    - id: R94-A2
+      statement: >-
+        The already-admitted execution deadline must be preserved; the
+        five-second settlement reserve must not be enlarged.
+      status: verified_by_red_green_and_independent_review
+  pre_mortem:
+    - risk: treating every lifecycle failure as active and hiding real failures
+      mitigation: require a matching typed TaskRuntime active row for the exact run_id
+    - risk: creating an unbounded wait
+      mitigation: retain the original admitted execution deadline unchanged
+    - risk: allowing a second Director writer
+      mitigation: wait for canonical terminal settlement before another round
+    - risk: lifecycle failure overwrites an explicit Factory cancel window
+      mitigation: deferred cancel keeps its fixed window and disables progress extension
+  verification_plan:
+    - red test reproduces lifecycle failed plus matching active TaskRuntime row
+    - green test proves later canonical terminal fact wins inside original lease
+    - existing no-active lifecycle failure remains fail-closed
+    - focused Factory tests, Ruff, mypy, Cell and architecture gates pass
+    - independent review reports no Critical or Important findings
+  verification_results:
+    red:
+      lifecycle_failure_before_active_fact: reproduced
+      active_to_terminal_projection_gap: reproduced
+      lifecycle_failure_active_child_explicit_cancel: "1.0006s with 0.05s window before fix"
+    green:
+      related_factory_tests: "290 passed"
+      factory_pipeline_full: "1262 passed, 2 warnings"
+      taskruntime_full: "914 passed, 10 warnings"
+      architecture_full: "1411 passed, 8 skipped"
+      explicit_cancel_probe: "0.0528s with 0.05s window"
+      ruff: pass
+      format: pass
+      mypy: pass
+      compileall: pass
+      diff_check: pass
+      independent_review: "CLEAR; Critical=0 Important=0 Minor=0"
+    provider_calls: 0
+    target_project_effects: 0
+  next_action: refreeze stable source twice and authorize exactly one fresh isolated L1-05

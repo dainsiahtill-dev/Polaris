@@ -23,7 +23,7 @@ from ..internal.architecture_decisions import (
     selected_libraries_from_decisions,
 )
 from ..internal.blueprint_persistence import BlueprintPersistence
-from ..internal.ce_consumer import CEConsumer
+from ..internal.ce_consumer import CEConsumer, _control_plane_job_token
 from ..internal.chief_engineer_agent import ChiefEngineerAgent
 from ..internal.chief_engineer_preflight import run_pre_dispatch_chief_engineer
 from ..internal.handoff import build_handoff_decision
@@ -2693,6 +2693,30 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         )
     blueprint_hash = _blueprint_hash(payload)
     payload["blueprint_hash"] = blueprint_hash
+    if bool(payload.get("handoff_ready")):
+        job_token = _control_plane_job_token(
+            workspace=command.workspace,
+            task_id=command.task_id,
+            payload={
+                **context,
+                "run_id": command.run_id,
+                "factory_run_id": str(context.get("factory_run_id") or command.run_id).strip(),
+                "project_id": str(
+                    context.get("project_id") or context.get("factory_bench_project_id") or command.task_id
+                ).strip(),
+            },
+            blueprint_id=blueprint_id,
+            blueprint_path=_blueprint_path(blueprint_id),
+            blueprint_hash=blueprint_hash,
+            contract_hash=pm_contract_hash,
+            target_files=target_files,
+            scope_paths=scope_paths,
+            acceptance_criteria=acceptance_criteria,
+            project_type=str(director_execution_profile.get("project_type") or "").strip(),
+            language=str(director_execution_profile.get("language") or "").strip(),
+        )
+        payload["job_token"] = job_token
+        payload["capability_token"] = job_token
     BlueprintPersistence(command.workspace).save(blueprint_id, payload)
 
     return TaskBlueprintResultV1(

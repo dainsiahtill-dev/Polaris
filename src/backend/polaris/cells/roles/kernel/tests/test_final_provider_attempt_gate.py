@@ -821,6 +821,78 @@ def test_native_metric_tamper_fails_closed_for_every_factory_role(
         )
 
 
+def test_context_os_prompt_audit_failure_blocks_physical_qualification(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    proof, _semantic, _wire, frozen, dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+        role="chief_engineer",
+    )
+    failed_context_audit = proof.audit()
+    failed_context_audit["context_os_audit"] = {
+        "ok": False,
+        "expected": True,
+        "control_plane": {
+            "isolated": False,
+            "metadata_key_hits": [],
+            "content_hits": ["chief_engineer_deadline_decision:"],
+        },
+    }
+
+    with pytest.raises(
+        qualification_module.FinalProviderAttemptQualificationError,
+        match="final_request_context_os_audit_failed",
+    ):
+        qualification_module.qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=failed_context_audit,
+            context_snapshot_ref=proof.context_snapshot_ref,
+        )
+
+
+def test_context_quality_error_blocks_physical_qualification(tmp_path: Path) -> None:
+    _bootstrap(tmp_path)
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    proof, _semantic, _wire, frozen, dispatch_port = _qualified_factory_fixture(
+        workspace=tmp_path,
+        physical_attempt_control_port=control,
+        role="director",
+    )
+    failed_quality_audit = proof.audit()
+    failed_quality_audit["context_quality"] = {
+        "context_needs_review": True,
+        "findings": [
+            {
+                "code": "execution_strategy_output_budget_under_applied",
+                "severity": "error",
+                "expected_max_tokens": 128000,
+                "actual_max_tokens": 7000,
+            }
+        ],
+    }
+
+    with pytest.raises(
+        qualification_module.FinalProviderAttemptQualificationError,
+        match="final_request_context_quality_failed",
+    ):
+        qualification_module.qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=dispatch_port._binding,
+            final_request_context_audit=failed_quality_audit,
+            context_snapshot_ref=proof.context_snapshot_ref,
+        )
+
+
 def test_sync_terminal_event_uses_one_physical_ref_and_native_audit(tmp_path: Path) -> None:
     _bootstrap(tmp_path)
     control = FactoryPhysicalAttemptLiveControlPort(

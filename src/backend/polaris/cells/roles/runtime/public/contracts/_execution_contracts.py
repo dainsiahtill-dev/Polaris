@@ -12,6 +12,9 @@ from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    RoleStructuredOutputContractV1,
+)
 from polaris.cells.roles.runtime.public.contracts._validation import (
     _normalize_history,
     _normalize_optional_domain,
@@ -45,6 +48,7 @@ class ExecuteRoleTaskCommandV1:
     stream: bool = False
     host_kind: str | None = None  # Task #2: unified host protocol
     execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
+    structured_output_contract: RoleStructuredOutputContractV1 | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "role", _require_non_empty("role", self.role))
@@ -69,6 +73,13 @@ class ExecuteRoleTaskCommandV1:
             TaskRuntimeExecutionAttemptIdentityV1,
         ):
             raise TypeError("execution_attempt must be TaskRuntimeExecutionAttemptIdentityV1 or None")
+        if self.structured_output_contract is not None and not isinstance(
+            self.structured_output_contract,
+            RoleStructuredOutputContractV1,
+        ):
+            raise TypeError(
+                "structured_output_contract must be RoleStructuredOutputContractV1 or None"
+            )
         if self.execution_attempt is not None:
             supplied_session_id = (
                 _require_non_empty("session_id", self.session_id) if self.session_id is not None else None

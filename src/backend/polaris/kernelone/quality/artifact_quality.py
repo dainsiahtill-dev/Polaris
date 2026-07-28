@@ -552,6 +552,12 @@ _ARTIFACT_QUALITY_COMPILER_PATH_RE = re.compile(
 _ARTIFACT_QUALITY_TYPESCRIPT_ERROR_RE = re.compile(r"\berror\s+(?P<code>TS\d+):", re.IGNORECASE)
 _ARTIFACT_QUALITY_RUST_ERROR_RE = re.compile(r"\berror\[(?P<code>E\d+)\]:", re.IGNORECASE)
 _ARTIFACT_QUALITY_RUST_LOCATION_RE = re.compile(r"(?m)^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):(?P<column>\d+)")
+# Cargo-shaped missing-bin display strings use backticks and often absolute paths.
+# execute_method historically only threads error strings; rehydrate typed identity.
+_ARTIFACT_QUALITY_RUST_MISSING_BIN_RE = re.compile(
+    r"can'?t find bin\s+[`'\"](?P<bin>[^`'\"]+)[`'\"]\s+at path\s+[`'\"](?P<path>[^`'\"]+)[`'\"]",
+    re.IGNORECASE,
+)
 _ARTIFACT_QUALITY_JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"(?P<message>The requested module\s+['\"]?[^'\"\s]+['\"]?\s+"
     r"does not provide an export named\s+(?:['\"][^'\"]+['\"]|[A-Za-z_$][\w$]*)|"
@@ -738,6 +744,32 @@ def _legacy_compiler_issue_code_from_explicit_code(message: str, _normalized_mes
     return ""
 
 
+def _legacy_rust_missing_binary_issue_code(message: str, _normalized_message: str) -> str:
+    """Classify cargo-shaped missing binary entrypoint display diagnostics."""
+
+    if _ARTIFACT_QUALITY_RUST_MISSING_BIN_RE.search(message):
+        return "rust_missing_binary_entrypoint"
+    return ""
+
+
+def _relative_rust_bin_path_from_cargo_message(path: str) -> str:
+    """Project absolute or relative cargo bin paths to workspace-relative form."""
+
+    normalized = str(path or "").strip().replace("\\", "/")
+    if not normalized:
+        return ""
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    is_absolute = normalized.startswith("/") or bool(re.match(r"^[A-Za-z]:/", normalized))
+    if is_absolute:
+        return "src/main.rs" if normalized.lower().endswith("/src/main.rs") else ""
+    if normalized.startswith("src/"):
+        return normalized
+    if any(part == ".." for part in normalized.split("/")):
+        return ""
+    return normalized
+
+
 def _legacy_compiler_issue_code_from_path(message: str, normalized_message: str) -> str:
     """Classify legacy compiler diagnostics that only expose a source path."""
 
@@ -756,6 +788,7 @@ def _legacy_compiler_issue_code_from_path(message: str, normalized_message: str)
 
 _LEGACY_ARTIFACT_QUALITY_ISSUE_CODE_CLASSIFIERS: tuple[_LegacyIssueCodeClassifier, ...] = (
     _legacy_target_or_import_issue_code,
+    _legacy_rust_missing_binary_issue_code,
     _legacy_compiler_issue_code_from_explicit_code,
     _legacy_compiler_issue_code_from_path,
     _legacy_language_or_syntax_issue_code,
@@ -765,6 +798,11 @@ _LEGACY_ARTIFACT_QUALITY_ISSUE_CODE_CLASSIFIERS: tuple[_LegacyIssueCodeClassifie
 
 
 def _artifact_quality_issue_path(message: str) -> str | None:
+    rust_missing_bin = _ARTIFACT_QUALITY_RUST_MISSING_BIN_RE.search(message)
+    if rust_missing_bin:
+        relative = _relative_rust_bin_path_from_cargo_message(str(rust_missing_bin.group("path") or ""))
+        if relative:
+            return relative
     rust_location = _ARTIFACT_QUALITY_RUST_LOCATION_RE.search(message)
     if rust_location:
         return str(rust_location.group("path") or "").strip().replace("\\", "/")
@@ -816,6 +854,20 @@ def _artifact_quality_issue_metadata(text: str, message: str, code: str) -> dict
     metadata: dict[str, Any] = {"raw": text}
     if code == "declared_target_missing":
         metadata.update(_legacy_declared_target_missing_metadata(message))
+    elif code == "rust_missing_binary_entrypoint":
+        match = _ARTIFACT_QUALITY_RUST_MISSING_BIN_RE.search(message)
+        bin_name = str(match.group("bin") if match else "").strip()
+        bin_path = _relative_rust_bin_path_from_cargo_message(
+            str(match.group("path") if match else "") or "src/main.rs"
+        )
+        metadata["diagnostic_kind"] = "rust_missing_binary_entrypoint"
+        if bin_name:
+            metadata["bin_name"] = bin_name
+        if bin_path:
+            metadata["bin_path"] = bin_path
+            metadata["path"] = bin_path
+        metadata.setdefault("missing_bin_reason", "legacy_display_rehydration")
+        metadata.setdefault("manifest_path", "Cargo.toml")
     elif code == "npm_manifest_invalid":
         metadata["manifest_path"] = "package.json"
         metadata.update(_legacy_npm_manifest_issue_metadata(message))

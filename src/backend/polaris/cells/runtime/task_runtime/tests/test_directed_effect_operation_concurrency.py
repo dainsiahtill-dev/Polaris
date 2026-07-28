@@ -25,6 +25,7 @@ from polaris.cells.runtime.task_runtime.public import (
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
     AbortDirectedEffectOperationCommandV1,
     AdmitDirectedEffectOperationCommandV1,
+    AdmitDirectedEffectParentBatchCommandV1,
     AdmitDirectedEffectParentCommandV1,
     ClaimDirectedEffectCommandV1,
     CommitDirectedEffectReceiptCommandV1,
@@ -44,6 +45,7 @@ from polaris.cells.runtime.task_runtime.public import (
     abort_directed_effect_operation,
     admit_directed_effect_operation,
     admit_directed_effect_parent,
+    admit_directed_effect_parent_batch,
     claim_directed_effect,
     commit_directed_effect_receipt,
     enroll_directed_effect_operation_stream,
@@ -159,6 +161,83 @@ def _setup(
             expected_receipt_binding_hash=member.expected_receipt_binding_hash,
         ),
     )
+
+
+def _setup_receipt_complete_parent(
+    workspace: str,
+) -> tuple[
+    TaskRuntimeExecutionAttemptIdentityV1,
+    DirectedEffectParentBindingV1,
+]:
+    identity, binding, admission = _setup(workspace)
+    assert admit_directed_effect_operation(admission).code == "admitted"
+    inventory = get_directed_effect_inventory(
+        GetDirectedEffectInventoryQueryV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+        )
+    )
+    assert inventory.projection is not None
+    assert (
+        finalize_directed_effect_inventory_admission(
+            FinalizeDirectedEffectInventoryAdmissionCommandV1(
+                workspace=identity.workspace,
+                task_id=identity.task_id,
+                execution_attempt=identity,
+                parent_binding=binding,
+                inventory_hash=inventory.projection.inventory_hash,
+                expected_registry_version=2,
+                expected_registry_seq=3,
+                expected_operation_head_seq=1,
+            )
+        ).code
+        == "inventory_ready"
+    )
+    assert (
+        claim_directed_effect(
+            ClaimDirectedEffectCommandV1(
+                workspace=identity.workspace,
+                task_id=identity.task_id,
+                execution_attempt=identity,
+                parent_binding=binding,
+                tool_call_id=admission.tool_call_id,
+                effect_id=admission.effect_id,
+                expected_version=1,
+                expected_seq=2,
+                actor="test",
+                intended_effect_fingerprint=admission.intended_effect_fingerprint,
+                policy_verdict_hash=admission.policy_verdict_hash,
+                expected_receipt_binding_hash=admission.expected_receipt_binding_hash,
+            )
+        ).code
+        == "effect_claimed"
+    )
+    assert (
+        commit_directed_effect_receipt(
+            CommitDirectedEffectReceiptCommandV1(
+                workspace=identity.workspace,
+                task_id=identity.task_id,
+                execution_attempt=identity,
+                parent_binding=binding,
+                tool_call_id=admission.tool_call_id,
+                effect_id=admission.effect_id,
+                expected_version=2,
+                expected_seq=3,
+                actor="test",
+                intended_effect_fingerprint=admission.intended_effect_fingerprint,
+                policy_verdict_hash=admission.policy_verdict_hash,
+                expected_receipt_binding_hash=admission.expected_receipt_binding_hash,
+                receipt_ref="receipt://concurrency/batch-rollover",
+                receipt_hash="7" * 64,
+                receipt_binding_hash=admission.expected_receipt_binding_hash,
+                receipt_outcome="succeeded",
+            )
+        ).code
+        == "receipt_committed"
+    )
+    return identity, binding
 
 
 def _command(
@@ -1301,6 +1380,118 @@ def test_real_thread_parent_admission_and_settlement_linearize_without_split_wri
         assert session.status == "completed"
         assert row["status"] == "completed"
         assert _parent_registry_events(identity) == ()
+        assert len(_terminal_execution_events(identity)) == 1
+
+
+@pytest.mark.parametrize("winner", ("parent_batch_admission", "settlement"))
+def test_real_thread_parent_batch_rollover_and_settlement_linearize_without_split_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    winner: str,
+) -> None:
+    identity, first_binding = _setup_receipt_complete_parent(str(tmp_path.resolve()))
+    winner_locked = Event()
+    release_winner = Event()
+    loser_started = Event()
+
+    def hold_winner(operation: str, observed_identity: object) -> None:
+        del observed_identity
+        if operation != winner:
+            return
+        winner_locked.set()
+        assert release_winner.wait(timeout=15)
+
+    monkeypatch.setattr(
+        TaskRuntimeService,
+        "_after_directed_effect_linearization_lock",
+        staticmethod(hold_winner),
+    )
+    results: dict[str, Any] = {}
+
+    def admit_parent_batch() -> None:
+        results["parent_batch_admission"] = admit_directed_effect_parent_batch(
+            AdmitDirectedEffectParentBatchCommandV1(
+                workspace=identity.workspace,
+                task_id=identity.task_id,
+                execution_attempt=identity,
+                correlation=ParentCorrelationV1(turn_id="turn-2", batch_id="batch-2"),
+                admission_idempotency_key="parent-2",
+                actor="test",
+            )
+        )
+
+    def settle() -> None:
+        results["settlement"] = settle_task_runtime_execution_attempt(
+            SettleTaskRuntimeExecutionAttemptCommandV1(
+                workspace=identity.workspace,
+                identity=identity,
+                outcome="completed",
+                summary="thread parent batch rollover race",
+                lock_timeout_seconds=10.0,
+            )
+        )
+
+    operations = {
+        "parent_batch_admission": admit_parent_batch,
+        "settlement": settle,
+    }
+    loser = "settlement" if winner == "parent_batch_admission" else "parent_batch_admission"
+    winner_thread = Thread(target=operations[winner])
+
+    def run_loser() -> None:
+        loser_started.set()
+        operations[loser]()
+
+    loser_thread = Thread(target=run_loser)
+    winner_thread.start()
+    assert winner_locked.wait(timeout=15)
+    loser_thread.start()
+    assert loser_started.wait(timeout=5)
+    release_winner.set()
+    for thread in (winner_thread, loser_thread):
+        thread.join(timeout=20)
+        assert not thread.is_alive()
+
+    batch_admission = results["parent_batch_admission"]
+    settlement = results["settlement"]
+    service = TaskRuntimeService(identity.workspace)
+    session = service._read_session(identity.task_id)
+    assert session is not None
+    row = service.get_task(identity.task_id)
+    assert row is not None
+    registry_events = _parent_registry_events(identity)
+    first_operation_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=first_binding.operation_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+
+    if winner == "parent_batch_admission":
+        assert batch_admission.code == "parent_admitted"
+        assert batch_admission.parent_binding is not None
+        assert batch_admission.parent_binding.parent_sequence == 2
+        assert batch_admission.parent_binding.registry_version == 5
+        assert settlement["success"] is False
+        assert settlement["code"] == "settlement_parent_close_required"
+        assert session.status == "active"
+        assert row["status"] == "in_progress"
+        assert len(registry_events) == 5
+        assert registry_events[-2]["event_type"] == "task_runtime.deo_parent_registry.v1.closed"
+        assert registry_events[-1]["event_type"] == "task_runtime.directed_effect_parent_registry.v1.parent_admitted"
+        assert first_operation_events[-1]["event_type"] == "task_runtime.directed_effect_operation.v1.closed_by_parent"
+        assert _terminal_execution_events(identity) == ()
+    else:
+        assert settlement["success"] is True
+        assert settlement["code"] == "settled"
+        assert batch_admission.code in {"lease_version_mismatch", "session_not_active"}
+        assert batch_admission.parent_binding is None
+        assert session.status == "completed"
+        assert row["status"] == "completed"
+        assert len(registry_events) == 4
+        assert registry_events[-1]["event_type"] == "task_runtime.deo_parent_registry.v1.closed"
+        assert first_operation_events[-1]["event_type"] == "task_runtime.directed_effect_operation.v1.closed_by_parent"
         assert len(_terminal_execution_events(identity)) == 1
 
 

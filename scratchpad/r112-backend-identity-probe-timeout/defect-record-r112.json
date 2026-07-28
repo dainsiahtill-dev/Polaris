@@ -1,0 +1,81 @@
+{
+  "schema_version": "polaris.main_agent_defect_manifest.v1",
+  "defect_id": "P0-R112-BACKEND-IDENTITY-PROBE-TIMEOUT",
+  "status": "FIXED_VERIFIED_R113_IN_PROGRESS",
+  "severity": "P0",
+  "bench_state": "not_schedulable",
+  "project_id": "L1-05",
+  "bench_run_id": "8ba888c4f31a",
+  "instance_id": "factory-bench-l1-05-r112-l1-05-run-8ba888c4f31a-6fbf39e181b40fd6",
+  "work_dir": "/tmp/factory-bench-l1-05-r112",
+  "source_head": "e11a86db623a0babcd713e3d32b97341b6cad1b8",
+  "expected_source_fingerprint": "dc785b78532e9ca1",
+  "symptom": {
+    "runner_result": "0/1 passed",
+    "chain_started": false,
+    "plan_present": false,
+    "provider_calls": 0,
+    "backend_start_attempts": 3,
+    "backend_ports": [
+      49978,
+      49979,
+      49980
+    ],
+    "error": "backend identity check timed out",
+    "stale_backend_gate": "backend unreachable"
+  },
+  "runtime_evidence": {
+    "backend_startup_complete": true,
+    "fingerprint_endpoint_status": 200,
+    "fingerprint": "dc785b78532e9ca1",
+    "current_source_fingerprint": "dc785b78532e9ca1",
+    "stale_since_startup": false,
+    "fingerprint_request_latency_ms_observed": [
+      1092.8,
+      1112.4,
+      1707.7
+    ],
+    "identity_request_timeout_seconds": 1.0,
+    "instance_total_identity_timeout_seconds": 75.0,
+    "backend_log": "/home/dains/.polaris/instances/factory-bench-l1-05-r112-l1-05-run-8ba888c4f31a-6fbf39e181b40fd6/logs/backend.log",
+    "runner_audit": "/tmp/factory-bench-l1-05-r112/factory_audits.json"
+  },
+  "root_cause": {
+    "classification": "instance_supervisor_identity_probe_timeout_contract",
+    "detail": "The expanded production-source fingerprint correctly hashes the full runtime surface, but InstanceSupervisor._read_backend_identity_payload still gives the local /v2/runtime/fingerprint request only 1.0 second. Correct responses take about 1.1-1.7 seconds, so every probe times out before reading a valid identity and the supervisor destroys a healthy backend."
+  },
+  "authorized_fix_scope": [
+    "src/backend/polaris/cells/instances/internal/service.py",
+    "src/backend/polaris/cells/instances/tests/test_instance_service.py",
+    "src/backend/docs/governance/templates/verification-cards/vc-20260720-pre-bench-execution-fact-chain-gate.yaml",
+    "scratchpad/r112-backend-identity-probe-timeout/defect-record-r112.json"
+  ],
+  "required_tests": [
+    "A local identity endpoint responding after more than 1.0 second but before the bounded per-request timeout must be accepted.",
+    "Identity PID, instance_id, workspace, backend_root, and source mismatches must remain fail-closed.",
+    "Auto-port retries and reservation ownership tests must remain green.",
+    "The full instances Cell suite, static gates, independent review, stable source fingerprint, and KernelOne release gate must pass before another bench authorization."
+  ],
+  "fix": {
+    "behavior": "InstanceSupervisor now gives the local backend identity endpoint a bounded 5.0-second request budget instead of the stale 1.0-second magic value. The outer identity loop remains capped at 75 seconds and every PID, instance, workspace, backend-root, and source attestation check remains fail-closed.",
+    "files": [
+      "src/backend/polaris/cells/instances/internal/service.py",
+      "src/backend/polaris/cells/instances/tests/test_instance_service.py"
+    ]
+  },
+  "verification": {
+    "regression_red": "1 failed: backend identity check timed out",
+    "focused_green": "6 passed",
+    "instances_cell_full": "51 passed",
+    "factory_bench_runner": "4 passed",
+    "ruff": "pass",
+    "format": "pass",
+    "mypy": "Success: no issues found in 1 source file",
+    "post_edit_codegraph_review": "pass",
+    "independent_review": "CLEAR; Critical 0, Important 0, Minor 0",
+    "kernelone_release_gate": "ok=true; mode=all; suite_size=51; tests=415 passed, 1 skipped, 2 warnings",
+    "source_fingerprint_stability": "cbfd3d7a6acc793a == cbfd3d7a6acc793a"
+  },
+  "target_project_edits": 0,
+  "next_action": "Audit the consumed, in-progress R113 isolated instance startup and complete Factory fact chain; no second run is authorized."
+}

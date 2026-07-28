@@ -965,17 +965,28 @@ def _execution_attempt_authority_from_context(
 def _execution_attempt_identity_from_context(
     context: dict[str, Any],
 ) -> TaskRuntimeExecutionAttemptIdentityV1 | None:
-    """Snapshot the exact live TaskRuntime attempt for deferred repair planning."""
+    """Resolve the TaskRuntime attempt identity for deferred repair planning/commit.
 
+    Prefer the immutable claim-time identity stored on context so planning can
+    preserve the exact TaskRuntime binding across a long turn. Physical commit
+    still receives the live authority and must revalidate that attempt.
+    """
+
+    if not isinstance(context, dict):
+        return None
+    cached = context.get("task_runtime_execution_attempt")
+    if type(cached) is TaskRuntimeExecutionAttemptIdentityV1:
+        return cached
     authority = _execution_attempt_authority_from_context(context)
     if authority is None:
         return None
-    snapshot = authority.snapshot(lock_timeout_seconds=5.0)
-    if snapshot.success is not True or snapshot.closed:
+    try:
+        snapshot = authority.snapshot(lock_timeout_seconds=5.0)
+    except (OSError, RuntimeError, TypeError, ValueError):
         return None
-    if type(snapshot.identity) is not TaskRuntimeExecutionAttemptIdentityV1:
-        return None
-    return snapshot.identity
+    if type(snapshot.identity) is TaskRuntimeExecutionAttemptIdentityV1:
+        return snapshot.identity
+    return None
 
 
 def _project_deferred_followup_receipts_as_tool_results(
@@ -1032,10 +1043,16 @@ async def _commit_deferred_materialization_quality_results(
 
     from .deferred_repair_commit_bridge import commit_materialization_deferred_repairs
 
+    execution_attempt = _execution_attempt_identity_from_context(context)
+    workspace = str(getattr(adapter, "workspace", "") or "").strip()
+    if execution_attempt is not None and str(execution_attempt.workspace or "").strip():
+        # Prefer the attempt's canonical workspace so DEO commit does not fail-closed
+        # on non-canonical adapter.workspace path mismatch (L1-05 r89).
+        workspace = str(execution_attempt.workspace).strip()
     followup_receipts = await commit_materialization_deferred_repairs(
-        workspace=str(getattr(adapter, "workspace", "") or ""),
+        workspace=workspace,
         tool_results=tool_results,
-        execution_attempt=_execution_attempt_identity_from_context(context),
+        execution_attempt=execution_attempt,
         execution_attempt_authority=_execution_attempt_authority_from_context(context),
         turn_id=f"materialization-quality-{task_id}",
         context=context,
@@ -1519,6 +1536,9 @@ async def execute_director_task(
         context["session_id"] = task_claim_session_id
         context["task_runtime_session_id"] = task_claim_session_id
         context["task_runtime_guard"] = True
+        # Preserve the immutable claim identity for deferred planning. Commit still
+        # consumes the live attempt authority and therefore remains fail-closed.
+        context["task_runtime_execution_attempt"] = task_execution_attempt
         context["task_runtime_execution_attempt_authority"] = task_execution_attempt_authority
         metadata = dict(context.get("metadata") or {})
         metadata.setdefault("session_id", task_claim_session_id)

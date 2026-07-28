@@ -546,6 +546,7 @@ cells:
         - EnrollDirectedEffectParentRegistryStreamCommandV1
         - EnrollDirectedEffectOperationStreamCommandV1
         - AdmitDirectedEffectParentCommandV1
+        - AdmitDirectedEffectParentBatchCommandV1
         - SealDirectedEffectInventoryCommandV1
         - AdmitDirectedEffectOperationCommandV1
         - FinalizeDirectedEffectInventoryAdmissionCommandV1
@@ -1908,6 +1909,7 @@ cells:
       retry, budget, and tool-gateway primitives used by all role flows.
     current_modules:
       - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
+      - polaris.cells.roles.kernel.public.structured_output_contracts
       - polaris.cells.roles.kernel.public.directed_effect_contracts
       - polaris.cells.roles.kernel.public.directed_effect_service
       - polaris.cells.roles.kernel.internal
@@ -1917,6 +1919,7 @@ cells:
       - polaris.cells.roles.kernel.internal.kernel
       - polaris.cells.roles.kernel.internal.tool_gateway
       - polaris.cells.roles.kernel.internal.context_gateway
+      - polaris.cells.roles.kernel.internal.structured_output_transport
       - polaris.cells.roles.kernel.internal.llm_caller.factory_dispatch_propagation
       - polaris.cells.roles.kernel.internal.constitution_rules
       - polaris.cells.roles.kernel.internal.constitution_adaptor
@@ -1933,6 +1936,7 @@ cells:
       modules:
         - polaris.cells.roles.kernel.public.contracts
         - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
+        - polaris.cells.roles.kernel.public.structured_output_contracts
         - polaris.cells.roles.kernel.public.directed_effect_contracts
         - polaris.cells.roles.kernel.public.directed_effect_service
       commands:

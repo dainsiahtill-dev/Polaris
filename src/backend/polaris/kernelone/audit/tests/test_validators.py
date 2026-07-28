@@ -98,16 +98,15 @@ class TestRequireValidRunId:
         result = require_valid_run_id("  run123  ")
         assert result == "run123"
 
-    def test_empty_run_id_returns_empty(self) -> None:
-        """Test that empty run_id is returned as-is (no raise for empty)."""
-        # Empty string returns empty string, doesn't raise
-        result = require_valid_run_id("")
-        assert result == ""
+    def test_empty_run_id_raises(self) -> None:
+        """Audit writes and queries require explicit run identity."""
+        with pytest.raises(ValueError, match="invalid run_id"):
+            require_valid_run_id("")
 
-    def test_whitespace_only_returns_empty(self) -> None:
-        """Test that whitespace-only run_id is returned as empty string."""
-        result = require_valid_run_id("   ")
-        assert result == ""
+    def test_whitespace_only_raises(self) -> None:
+        """Whitespace cannot become an anonymous audit run."""
+        with pytest.raises(ValueError, match="invalid run_id"):
+            require_valid_run_id("   ")
 
     def test_invalid_run_id_raises(self) -> None:
         """Test invalid non-empty run_id raises ValueError."""
@@ -115,10 +114,9 @@ class TestRequireValidRunId:
             require_valid_run_id("invalid@run")
 
     def test_invalid_run_id_raises_with_none(self) -> None:
-        """Test None run_id returns empty string (not raises)."""
-        # None is converted to empty string
-        result = require_valid_run_id(None)  # type: ignore[arg-type]
-        assert result == ""
+        """None cannot become an anonymous audit run."""
+        with pytest.raises(ValueError, match="invalid run_id"):
+            require_valid_run_id(None)  # type: ignore[arg-type]
 
     def test_strips_whitespace(self) -> None:
         """Test that whitespace is stripped."""

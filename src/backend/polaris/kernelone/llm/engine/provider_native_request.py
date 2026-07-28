@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
+from urllib.parse import urlsplit
 
 FactoryProviderDispatchMode = Literal["invoke", "stream"]
 FactoryProviderNativeProtocol = Literal[
@@ -167,8 +168,23 @@ def _semantic_payload(final_payload: Mapping[str, Any], *, mode: FactoryProvider
             raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_message_fields_invalid")
     if type(payload["tools"]) is not list or any(type(item) is not dict for item in payload["tools"]):
         raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_tools_invalid")
-    if payload["tool_choice"] is not None and type(payload["tool_choice"]) not in {str, dict}:
-        raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_tool_choice_invalid")
+    tool_choice = payload["tool_choice"]
+    if tool_choice is not None:
+        if type(tool_choice) is str:
+            valid_tool_choice = bool(tool_choice.strip())
+        elif type(tool_choice) is dict:
+            choice_type = str(tool_choice.get("type") or "").strip().lower()
+            if choice_type == "function":
+                function = tool_choice.get("function")
+                valid_tool_choice = type(function) is dict and bool(str(function.get("name") or "").strip())
+            elif choice_type == "tool":
+                valid_tool_choice = bool(str(tool_choice.get("name") or "").strip())
+            else:
+                valid_tool_choice = choice_type in {"auto", "any", "none"}
+        else:
+            valid_tool_choice = False
+        if not valid_tool_choice:
+            raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_tool_choice_invalid")
     if payload["response_format"] is not None and type(payload["response_format"]) is not dict:
         raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_response_format_invalid")
     if type(payload["temperature"]) not in {int, float}:
@@ -314,9 +330,10 @@ def convert_tools_to_anthropic(tools: object) -> list[dict[str, Any]]:
             parameters = function.get("parameters")
             tool: dict[str, Any] = {
                 "name": name,
-                "description": str(function.get("description") or ""),
                 "input_schema": parameters if type(parameters) is dict else {"type": "object", "properties": {}},
             }
+            if "description" in function:
+                tool["description"] = function["description"]
             for key in ("cache_control", "defer_loading", "strict"):
                 if function.get(key) is not None:
                     tool[key] = function[key]
@@ -330,14 +347,122 @@ def convert_tools_to_anthropic(tools: object) -> list[dict[str, Any]]:
         parameters = item.get("parameters")
         tool = {
             "name": name,
-            "description": str(item.get("description") or ""),
             "input_schema": parameters if type(parameters) is dict else {"type": "object", "properties": {}},
         }
+        if "description" in item:
+            tool["description"] = item["description"]
         for key in ("cache_control", "defer_loading", "strict"):
             if item.get(key) is not None:
                 tool[key] = item[key]
         converted.append(tool)
     return converted
+
+
+_ANTHROPIC_NATIVE_TOOL_KEYS = frozenset(
+    {
+        "name",
+        "description",
+        "input_schema",
+        "cache_control",
+        "defer_loading",
+        "strict",
+    }
+)
+_OPENAI_TOOL_WRAPPER_KEYS = frozenset(
+    {
+        "type",
+        "function",
+        "cache_control",
+        "defer_loading",
+        "strict",
+    }
+)
+_OPENAI_FUNCTION_TOOL_KEYS = frozenset(
+    {
+        "name",
+        "description",
+        "parameters",
+        "cache_control",
+        "defer_loading",
+        "strict",
+    }
+)
+_PORTABLE_FUNCTION_TOOL_KEYS = frozenset(
+    {
+        "name",
+        "description",
+        "parameters",
+        "cache_control",
+        "defer_loading",
+        "strict",
+    }
+)
+_TOOL_OPTION_KEYS = ("cache_control", "defer_loading", "strict")
+_ANTHROPIC_TOOL_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+
+def _is_canonical_anthropic_tool_name(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and len(value) <= 64
+        and all(character in _ANTHROPIC_TOOL_NAME_CHARS for character in value)
+    )
+
+
+def _raise_unrepresentable_anthropic_tools() -> NoReturn:
+    raise FactoryProviderNativeRequestProjectionError(
+        "factory_provider_native_request_tools_unrepresentable:anthropic_messages"
+    )
+
+
+def _validate_lossless_anthropic_tool_definitions(raw_tools: list[object]) -> None:
+    """Reject tool definitions whose semantics conversion would drop or invent."""
+
+    for item in raw_tools:
+        if type(item) is not dict:
+            _raise_unrepresentable_anthropic_tools()
+
+        item_keys = frozenset(item)
+        name = item.get("name")
+        description = item.get("description")
+
+        if "input_schema" in item:
+            if (
+                not item_keys.issubset(_ANTHROPIC_NATIVE_TOOL_KEYS)
+                or not _is_canonical_anthropic_tool_name(name)
+                or type(item.get("input_schema")) is not dict
+                or ("description" in item and not isinstance(description, str))
+            ):
+                _raise_unrepresentable_anthropic_tools()
+            continue
+
+        if str(item.get("type") or "").strip().lower() == "function":
+            function = item.get("function")
+            if type(function) is not dict:
+                _raise_unrepresentable_anthropic_tools()
+            function_keys = frozenset(function)
+            function_name = function.get("name")
+            function_description = function.get("description")
+            if (
+                not item_keys.issubset(_OPENAI_TOOL_WRAPPER_KEYS)
+                or not function_keys.issubset(_OPENAI_FUNCTION_TOOL_KEYS)
+                or not _is_canonical_anthropic_tool_name(function_name)
+                or type(function.get("parameters")) is not dict
+                or ("description" in function and not isinstance(function_description, str))
+                or any(key in item and key in function for key in _TOOL_OPTION_KEYS)
+            ):
+                _raise_unrepresentable_anthropic_tools()
+            continue
+
+        if (
+            not item_keys.issubset(_PORTABLE_FUNCTION_TOOL_KEYS)
+            or not _is_canonical_anthropic_tool_name(name)
+            or type(item.get("parameters")) is not dict
+            or ("description" in item and not isinstance(description, str))
+        ):
+            _raise_unrepresentable_anthropic_tools()
 
 
 def convert_tool_choice_to_anthropic(
@@ -347,36 +472,79 @@ def convert_tool_choice_to_anthropic(
 ) -> dict[str, Any] | None:
     """Convert one OpenAI/portable tool choice to Anthropic-native shape."""
 
-    def with_parallel_flag(value: dict[str, Any]) -> dict[str, Any]:
-        if disable_parallel_tool_use is not None and value.get("type") in {"auto", "any", "tool"}:
-            value = dict(value)
-            value["disable_parallel_tool_use"] = disable_parallel_tool_use
-        return value
-
+    normalized: dict[str, Any]
+    choice_parallel: bool | None = None
+    choice_parallel_present = False
     if type(tool_choice) is dict:
-        if str(tool_choice.get("type") or "").strip().lower() == "function":
+        choice_type_raw = tool_choice.get("type")
+        if not isinstance(choice_type_raw, str):
+            return None
+        choice_type = choice_type_raw.strip().lower()
+        if choice_type == "function":
+            if not frozenset(tool_choice).issubset({"type", "function", "disable_parallel_tool_use"}):
+                return None
             function = tool_choice.get("function")
-            if type(function) is dict:
-                name = str(function.get("name") or "").strip()
-                if name:
-                    return with_parallel_flag({"type": "tool", "name": name})
-        choice_type = tool_choice.get("type")
-        if isinstance(choice_type, str):
-            converted = dict(tool_choice)
-            if choice_type.strip().lower() == "function":
-                converted["type"] = "tool"
-            return with_parallel_flag(converted)
+            if type(function) is not dict or frozenset(function) != {"name"}:
+                return None
+            name = function.get("name")
+            if not _is_canonical_anthropic_tool_name(name):
+                return None
+            normalized = {"type": "tool", "name": name}
+        elif choice_type in {"auto", "any", "required"}:
+            if not frozenset(tool_choice).issubset({"type", "disable_parallel_tool_use"}):
+                return None
+            normalized = {"type": "any" if choice_type == "required" else choice_type}
+        elif choice_type == "none":
+            if frozenset(tool_choice) != {"type"}:
+                return None
+            return {"type": "none"}
+        elif choice_type == "tool":
+            if not frozenset(tool_choice).issubset({"type", "name", "disable_parallel_tool_use"}):
+                return None
+            name = tool_choice.get("name")
+            if not _is_canonical_anthropic_tool_name(name):
+                return None
+            normalized = {"type": "tool", "name": name}
+        else:
+            return None
+
+        if "disable_parallel_tool_use" in tool_choice:
+            raw_parallel = tool_choice["disable_parallel_tool_use"]
+            if not isinstance(raw_parallel, bool):
+                return None
+            choice_parallel = raw_parallel
+            choice_parallel_present = True
+    elif isinstance(tool_choice, str):
+        if tool_choice != tool_choice.strip():
+            return None
+        token = tool_choice.strip().lower()
+        if not token:
+            return None
+        if token == "none":
+            return {"type": "none"}
+        if token == "auto":
+            normalized = {"type": "auto"}
+        elif token in {"any", "required"}:
+            normalized = {"type": "any"}
+        else:
+            if not _is_canonical_anthropic_tool_name(tool_choice):
+                return None
+            normalized = {"type": "tool", "name": tool_choice}
+    elif tool_choice is None:
         return None
-    token = str(tool_choice or "").strip().lower()
-    if not token:
+    else:
         return None
-    if token == "none":
-        return {"type": "none"}
-    if token == "auto":
-        return with_parallel_flag({"type": "auto"})
-    if token == "required":
-        return with_parallel_flag({"type": "any"})
-    return with_parallel_flag({"type": "tool", "name": str(tool_choice)})
+
+    if (
+        choice_parallel_present
+        and disable_parallel_tool_use is not None
+        and choice_parallel != disable_parallel_tool_use
+    ):
+        return None
+    effective_parallel = choice_parallel if choice_parallel_present else disable_parallel_tool_use
+    if effective_parallel is not None:
+        normalized["disable_parallel_tool_use"] = effective_parallel
+    return normalized
 
 
 def _disable_parallel_tool_use(provider_config: Mapping[str, Any]) -> bool | None:
@@ -391,13 +559,8 @@ def _disable_parallel_tool_use(provider_config: Mapping[str, Any]) -> bool | Non
     return None
 
 
-def _anthropic_supports_tool_choice(provider_config: Mapping[str, Any], model: str) -> bool:
-    disabled = provider_config.get("disable_tool_choice")
-    if isinstance(disabled, bool):
-        return not disabled
-    if str(disabled or "").strip().lower() in {"1", "true", "yes", "on", "disabled", "disable"}:
-        return False
-    route = " ".join(
+def _anthropic_route_identity(provider_config: Mapping[str, Any], model: str) -> str:
+    return " ".join(
         (
             str(provider_config.get("base_url") or ""),
             str(provider_config.get("api_path") or ""),
@@ -406,7 +569,154 @@ def _anthropic_supports_tool_choice(provider_config: Mapping[str, Any], model: s
             model,
         )
     ).lower()
-    return "deepseek" not in route and "api.kimi.com/coding" not in route and "kimi-for-coding" not in route
+
+
+def _anthropic_supports_tool_choice(provider_config: Mapping[str, Any], model: str) -> bool:
+    disabled = provider_config.get("disable_tool_choice")
+    if disabled is True:
+        return False
+    if str(disabled or "").strip().lower() in {"1", "true", "yes", "on", "disabled", "disable"}:
+        return False
+    route = _anthropic_route_identity(provider_config, model)
+    return "api.kimi.com/coding" not in route and "kimi-for-coding" not in route
+
+
+def _is_deepseek_anthropic_route(provider_config: Mapping[str, Any], model: str) -> bool:
+    _ = model
+    base_url = str(provider_config.get("base_url") or "").strip().rstrip("/")
+    raw_api_path = str(provider_config.get("api_path") or "").strip()
+    api_path = raw_api_path.lstrip("/")
+    parsed_api_path = urlsplit(raw_api_path)
+    if parsed_api_path.scheme in {"http", "https"} and parsed_api_path.netloc:
+        endpoint = raw_api_path
+    else:
+        endpoint = f"{base_url}/{api_path}"
+    parsed_endpoint = urlsplit(endpoint)
+    endpoint_host = str(parsed_endpoint.hostname or "").lower()
+    endpoint_path = "/" + str(parsed_endpoint.path or "").strip("/")
+    is_official_endpoint = endpoint_host == "api.deepseek.com" and (
+        endpoint_path == "/anthropic" or endpoint_path.startswith("/anthropic/")
+    )
+    provider_identities = (
+        str(provider_config.get("name") or ""),
+        str(provider_config.get("provider_id") or ""),
+    )
+    declares_deepseek = any(
+        "deepseek" in identity.strip().lower().replace("-", " ").replace("_", " ").split()
+        for identity in provider_identities
+    )
+    return is_official_endpoint or declares_deepseek
+
+
+def reconcile_anthropic_thinking_for_wire(
+    *,
+    thinking: Mapping[str, Any] | None,
+    requested_thinking: object,
+    tool_choice: Mapping[str, Any] | None,
+    provider_config: Mapping[str, Any],
+    model: str,
+) -> dict[str, Any] | None:
+    """Make DeepSeek thinking and explicit tool choice wire-compatible.
+
+    DeepSeek's official Anthropic route enables thinking by default, while its
+    thinking mode rejects the ``tool_choice`` field.  When Polaris needs an
+    explicit choice (notably the singleton structured-result protocol), keep
+    that semantic guarantee and explicitly disable thinking.  An explicitly
+    enabled thinking request is a real capability conflict and therefore fails
+    before transport instead of being silently weakened.
+    """
+
+    normalized = dict(thinking) if thinking is not None else None
+    if not _is_deepseek_anthropic_route(provider_config, model) or tool_choice is None:
+        return normalized
+
+    requested_type = ""
+    if isinstance(requested_thinking, Mapping):
+        requested_type = str(requested_thinking.get("type") or "").strip().lower()
+    if requested_type == "enabled":
+        raise FactoryProviderNativeRequestProjectionError(
+            "factory_provider_native_request_thinking_tool_choice_conflict:anthropic_messages"
+        )
+    return {"type": "disabled"}
+
+
+def normalize_anthropic_tool_surface_for_wire(
+    *,
+    tools: object,
+    tool_choice: object,
+    provider_config: Mapping[str, Any],
+    model: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Return one lossless Anthropic tool surface or fail before transport."""
+
+    if tools is None:
+        raw_tools: list[object] = []
+    elif type(tools) is list:
+        raw_tools = tools
+    else:
+        raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_tools_invalid")
+
+    _validate_lossless_anthropic_tool_definitions(raw_tools)
+    converted_tools = convert_tools_to_anthropic(raw_tools)
+    if len(converted_tools) != len(raw_tools):
+        raise FactoryProviderNativeRequestProjectionError(
+            "factory_provider_native_request_tools_unrepresentable:anthropic_messages"
+        )
+
+    disable_parallel = _disable_parallel_tool_use(provider_config)
+    raw_disable_parallel = provider_config.get("disable_parallel_tool_use")
+    if raw_disable_parallel is not None and disable_parallel is None:
+        raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_tool_choice_invalid")
+
+    converted_choice = convert_tool_choice_to_anthropic(
+        tool_choice,
+        disable_parallel_tool_use=disable_parallel,
+    )
+    if tool_choice is not None and converted_choice is None:
+        raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_tool_choice_invalid")
+    if converted_tools and tool_choice is None and disable_parallel is True:
+        converted_choice = {
+            "type": "auto",
+            "disable_parallel_tool_use": True,
+        }
+    if converted_choice is not None and converted_choice.get("disable_parallel_tool_use") is False:
+        converted_choice = dict(converted_choice)
+        converted_choice.pop("disable_parallel_tool_use", None)
+
+    if not converted_tools:
+        if converted_choice in (None, {"type": "none"}):
+            return converted_tools, None
+        raise FactoryProviderNativeRequestProjectionError(
+            "factory_provider_native_request_tool_choice_without_tools:anthropic_messages"
+        )
+
+    if _is_deepseek_anthropic_route(provider_config, model):
+        if disable_parallel is True or (
+            converted_choice is not None and converted_choice.get("disable_parallel_tool_use") is True
+        ):
+            raise FactoryProviderNativeRequestProjectionError(
+                "factory_provider_native_request_parallel_tool_choice_unsupported:anthropic_messages"
+            )
+        if converted_choice is not None and "disable_parallel_tool_use" in converted_choice:
+            converted_choice = dict(converted_choice)
+            converted_choice.pop("disable_parallel_tool_use", None)
+
+    if converted_choice is None:
+        return converted_tools, None
+    if converted_choice.get("type") == "tool":
+        forced_name = converted_choice.get("name")
+        advertised_names = {tool.get("name") for tool in converted_tools}
+        if forced_name not in advertised_names:
+            raise FactoryProviderNativeRequestProjectionError(
+                "factory_provider_native_request_tool_choice_unknown_tool:anthropic_messages"
+            )
+    if _anthropic_supports_tool_choice(provider_config, model):
+        return converted_tools, converted_choice
+    if converted_choice == {"type": "auto"}:
+        return converted_tools, None
+    raise FactoryProviderNativeRequestProjectionError(
+        "factory_provider_native_request_tool_choice_unsupported:anthropic_messages"
+    )
 
 
 def _anthropic_reasoning_budget_tokens(
@@ -518,24 +828,34 @@ def _project_anthropic_body(
     for key in _ANTHROPIC_OPTION_KEYS:
         if provider_config.get(key) is not None:
             body[key] = provider_config[key]
-    thinking = _anthropic_thinking(
-        provider_config,
-        str(semantic["model"]),
-        max_tokens=int(semantic["max_tokens"]),
+    if system:
+        body["system"] = system
+    tools, choice = normalize_anthropic_tool_surface_for_wire(
+        tools=semantic["tools"],
+        tool_choice=semantic["tool_choice"],
+        provider_config=provider_config,
+        model=str(semantic["model"]),
+    )
+    thinking = reconcile_anthropic_thinking_for_wire(
+        thinking=_anthropic_thinking(
+            provider_config,
+            str(semantic["model"]),
+            max_tokens=int(semantic["max_tokens"]),
+        ),
+        requested_thinking=provider_config.get("thinking"),
+        tool_choice=choice,
+        provider_config=provider_config,
+        model=str(semantic["model"]),
     )
     if thinking is not None:
         body["thinking"] = thinking
-    if system:
-        body["system"] = system
-    tools = convert_tools_to_anthropic(semantic["tools"])
-    if tools:
-        body["tools"] = tools
-        choice = convert_tool_choice_to_anthropic(
-            semantic["tool_choice"],
-            disable_parallel_tool_use=_disable_parallel_tool_use(provider_config),
-        )
-        if choice and _anthropic_supports_tool_choice(provider_config, str(semantic["model"])):
-            body["tool_choice"] = choice
+    if not tools:
+        if stream:
+            body["stream"] = True
+        return body
+    body["tools"] = tools
+    if choice is not None:
+        body["tool_choice"] = choice
     if stream:
         body["stream"] = True
     return body
@@ -669,6 +989,8 @@ __all__ = [
     "build_openai_native_messages",
     "convert_tool_choice_to_anthropic",
     "convert_tools_to_anthropic",
+    "normalize_anthropic_tool_surface_for_wire",
     "project_factory_provider_native_request",
+    "reconcile_anthropic_thinking_for_wire",
     "supports_factory_provider_native_projection",
 ]

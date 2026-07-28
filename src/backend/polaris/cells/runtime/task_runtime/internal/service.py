@@ -37,6 +37,7 @@ from polaris.cells.runtime.task_runtime.internal.task_board import (
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TASK_RUNTIME_EXECUTION_SOURCE_V1,
     TASK_RUNTIME_EXECUTION_STREAM_V1,
+    AdmitDirectedEffectParentBatchCommandV1,
     AdmitDirectedEffectParentCommandV1,
     DirectedEffectOperationResultV1,
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
@@ -459,7 +460,7 @@ class TaskRuntimeService:
 
     @staticmethod
     def _after_directed_effect_linearization_lock(
-        operation: Literal["parent_admission", "settlement"],
+        operation: Literal["parent_admission", "parent_batch_admission", "settlement"],
         identity: TaskRuntimeExecutionAttemptIdentityV1,
     ) -> None:
         """Deterministic test seam after the cooperative session lock is held."""
@@ -498,6 +499,90 @@ class TaskRuntimeService:
             scanned_session_count=scanned_session_count,
             failures=(failure,),
         )
+
+    def admit_directed_effect_parent_batch(
+        self,
+        command: AdmitDirectedEffectParentBatchCommandV1,
+    ) -> DirectedEffectOperationResultV1:
+        """Atomically roll over one completed batch and admit its successor."""
+
+        identity = command.execution_attempt
+        if command.workspace != self.workspace or identity.workspace != command.workspace:
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="workspace_mismatch",
+                evidence={
+                    "command_workspace": command.workspace,
+                    "service_workspace": self.workspace,
+                    "identity_workspace": identity.workspace,
+                },
+            )
+        if command.task_id != identity.task_id:
+            return DirectedEffectOperationResultV1(
+                ok=False,
+                code="task_mismatch",
+                evidence={
+                    "command_task_id": command.task_id,
+                    "identity_task_id": identity.task_id,
+                },
+            )
+
+        repository = DirectedEffectOperationRepository()
+        timeout = _EXECUTION_ATTEMPT_SETTLEMENT_LOCK_TIMEOUT_SECONDS
+        started_at = time.monotonic()
+        session_lock = self._get_session_lock(identity.task_id)
+        if not session_lock.acquire(timeout=timeout):
+            return self._directed_effect_attempt_validation_failure(
+                repository,
+                identity,
+                code="file_lock_timeout",
+                evidence={"lock_scope": "local_session", "lock_timeout_seconds": timeout},
+            )
+        try:
+            remaining = timeout - (time.monotonic() - started_at)
+            if remaining < 0:
+                return self._directed_effect_attempt_validation_failure(
+                    repository,
+                    identity,
+                    code="file_lock_timeout",
+                    evidence={"lock_scope": "local_session", "lock_timeout_seconds": timeout},
+                )
+            try:
+                with self._board._file_lock(
+                    self._session_file_lock_path(identity.task_id),
+                    timeout_seconds=remaining,
+                ):
+                    self._after_directed_effect_linearization_lock(
+                        "parent_batch_admission",
+                        identity,
+                    )
+                    return self._admit_directed_effect_parent_batch_locked(
+                        command,
+                        repository=repository,
+                    )
+            except TaskBoardFileLockTimeoutError:
+                return self._directed_effect_attempt_validation_failure(
+                    repository,
+                    identity,
+                    code="file_lock_timeout",
+                    evidence={
+                        "lock_scope": "cooperative_session_file",
+                        "lock_timeout_seconds": timeout,
+                    },
+                )
+            except OSError as exc:
+                return self._directed_effect_attempt_validation_failure(
+                    repository,
+                    identity,
+                    code="session_corrupt",
+                    evidence={
+                        "stage": "cooperative_session_file_lock",
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    },
+                )
+        finally:
+            session_lock.release()
 
     def admit_directed_effect_parent(
         self,
@@ -597,6 +682,39 @@ class TaskRuntimeService:
         """Validate the locked session and invoke the registry-only repository."""
 
         identity = command.execution_attempt
+        failure = self._directed_effect_active_attempt_failure_locked(
+            identity,
+            repository=repository,
+        )
+        if failure is not None:
+            return failure
+        return repository.admit_parent_with_validated_authority(command)
+
+    def _admit_directed_effect_parent_batch_locked(
+        self,
+        command: AdmitDirectedEffectParentBatchCommandV1,
+        *,
+        repository: DirectedEffectOperationRepository,
+    ) -> DirectedEffectOperationResultV1:
+        """Validate the locked session and invoke TaskRuntime-owned rollover."""
+
+        identity = command.execution_attempt
+        failure = self._directed_effect_active_attempt_failure_locked(
+            identity,
+            repository=repository,
+        )
+        if failure is not None:
+            return failure
+        return repository.admit_parent_batch_with_validated_authority(command)
+
+    def _directed_effect_active_attempt_failure_locked(
+        self,
+        identity: TaskRuntimeExecutionAttemptIdentityV1,
+        *,
+        repository: DirectedEffectOperationRepository,
+    ) -> DirectedEffectOperationResultV1 | None:
+        """Return a typed refusal unless the caller-held session is the active attempt."""
+
         try:
             session = self._read_session_locked(
                 identity.task_id,
@@ -644,7 +762,7 @@ class TaskRuntimeService:
                 code="session_lease_expired",
                 evidence=evidence,
             )
-        return repository.admit_parent_with_validated_authority(command)
+        return None
 
     def _directed_effect_attempt_validation_failure(
         self,
@@ -3611,9 +3729,7 @@ class TaskRuntimeService:
                 # Ownership: task/session factory_run_id first. session.run_id is the
                 # Director child workflow id (director-*), NOT the Factory authority.
                 owned_factory_run_id = str(
-                    task_metadata.get("factory_run_id")
-                    or session_metadata.get("factory_run_id")
-                    or ""
+                    task_metadata.get("factory_run_id") or session_metadata.get("factory_run_id") or ""
                 ).strip()
                 if owned_factory_run_id and owned_factory_run_id != authority:
                     return {
@@ -4271,7 +4387,12 @@ class TaskRuntimeService:
 
         Unknown or non-terminal fact statuses fall back to the file-backed
         status so that the dependency decision matches what a downstream
-        caller would observe.
+        caller would observe.  A terminal-failed Director row remains failed
+        everywhere else, but counts as dependency-complete here when its
+        TaskRuntime-owned, hash-bound materialization-satisfaction receipt is
+        valid.  This preserves the narrower capability decision made by
+        settlement instead of letting another process-local TaskBoard cache
+        re-block the released child.
         """
 
         overlay_source = self._dependency_status_read_model_rows()
@@ -4285,7 +4406,7 @@ class TaskRuntimeService:
             if not status_token:
                 continue
             try:
-                status_by_id[task_id] = TaskStatus(status_token)
+                status = TaskStatus(status_token)
             except ValueError:
                 logger.debug(
                     "Skipping unknown dependency status token from overlay for task_id=%s: %r",
@@ -4293,6 +4414,12 @@ class TaskRuntimeService:
                     status_token,
                 )
                 continue
+            if status == TaskStatus.FAILED and self._dependency_satisfaction_receipt_for_status_projection(
+                row,
+                expected_task_id=task_id,
+            ):
+                status = TaskStatus.COMPLETED
+            status_by_id[task_id] = status
         return status_by_id
 
     def _project_execution_fact_event_row(self, event: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -5617,7 +5744,9 @@ class TaskRuntimeService:
 
         Lock order is session locks, then no lock, then projection locks.  This
         phase must never acquire a session lock or call ``_augment_task_row``;
-        it uses the phase-A snapshot exclusively.  A process crash after
+        it uses the phase-A session snapshot exclusively. The current Task row
+        is read only under the projection lock for idempotence and owner-cell
+        metadata that may have landed after phase A. A process crash after
         session persistence leaves the canonical winner recoverable: the
         terminal transition id deduplicates the fact and the TaskBoard receipt
         identifies a completed projection.
@@ -5689,7 +5818,14 @@ class TaskRuntimeService:
         if command.outcome != "failed" or session.role_id != "director":
             return None
 
-        task_metadata = task.metadata if isinstance(task.metadata, Mapping) else {}
+        task_metadata = dict(task.metadata) if isinstance(task.metadata, Mapping) else {}
+        # The Director's live path carries ``adapter_result`` on the settlement
+        # command; TaskRuntime commits it atomically with the terminal row.  It
+        # is therefore not necessarily present on the pre-projection Task
+        # snapshot yet.  Evaluate the same merged metadata that the row update
+        # below will persist, while retaining the task-owned contract fields.
+        if isinstance(command.metadata, Mapping):
+            task_metadata.update(dict(command.metadata))
         adapter_result_raw = task_metadata.get("adapter_result")
         if not isinstance(adapter_result_raw, Mapping):
             return None
@@ -5845,6 +5981,88 @@ class TaskRuntimeService:
         evidence["evidence_hash"] = evidence_hash
         return evidence
 
+    @staticmethod
+    def _dependency_satisfaction_receipt_for_status_projection(
+        row: Mapping[str, Any],
+        *,
+        expected_task_id: int,
+    ) -> dict[str, Any]:
+        """Validate failed-materialization evidence for dependency decisions.
+
+        This does not convert the parent task to completed.  It validates only
+        the narrower TaskRuntime-owned capability receipt consumed by
+        dependency refresh and claim policy.  Every field used to qualify the
+        failed output is hash-bound; malformed, forged, partial, or unrelated
+        evidence fails closed.
+        """
+
+        metadata_raw = row.get("metadata")
+        metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+        evidence_raw = metadata.get(_DEPENDENCY_SATISFACTION_METADATA_KEY)
+        if not isinstance(evidence_raw, Mapping):
+            return {}
+        evidence = dict(evidence_raw)
+        if (
+            evidence.get("schema_version") != _DEPENDENCY_SATISFACTION_SCHEMA_V1
+            or evidence.get("kind") != "failed_director_materialization"
+        ):
+            return {}
+
+        def _evidence_int(field_name: str) -> int | None:
+            value = evidence.get(field_name)
+            if isinstance(value, bool):
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str):
+                try:
+                    return int(value.strip())
+                except ValueError:
+                    return None
+            return None
+
+        evidence_task_id = _evidence_int("task_id")
+        receipt_count = _evidence_int("receipt_count")
+        failed_receipt_count = _evidence_int("failed_receipt_count")
+        dead_letter_count = _evidence_int("dead_letter_count")
+        aborted_count = _evidence_int("aborted_count")
+        if None in (
+            evidence_task_id,
+            receipt_count,
+            failed_receipt_count,
+            dead_letter_count,
+            aborted_count,
+        ):
+            return {}
+        if (
+            evidence_task_id != expected_task_id
+            or receipt_count is None
+            or receipt_count <= 0
+            or failed_receipt_count != 0
+            or dead_letter_count != 0
+            or aborted_count != 0
+        ):
+            return {}
+        materialized_paths = evidence.get("materialized_paths")
+        if not isinstance(materialized_paths, list) or not any(str(path or "").strip() for path in materialized_paths):
+            return {}
+        if not str(evidence.get("terminal_transition_id") or "").strip():
+            return {}
+        for digest_field in (
+            "adapter_result_hash",
+            "close_evidence_hash",
+            "receipt_summary_hash",
+        ):
+            if not re.fullmatch(r"[0-9a-f]{64}", str(evidence.get(digest_field) or "").strip().lower()):
+                return {}
+        evidence_hash = str(evidence.pop("evidence_hash", "") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", evidence_hash):
+            return {}
+        if _canonical_sha256(evidence) != evidence_hash:
+            return {}
+        evidence["evidence_hash"] = evidence_hash
+        return evidence
+
     def _project_settled_execution_attempt_locked(
         self,
         command: SettleTaskRuntimeExecutionAttemptCommandV1,
@@ -5854,11 +6072,6 @@ class TaskRuntimeService:
     ) -> dict[str, Any]:
         """Project one settled snapshot while the independent projection lock is held."""
 
-        dependency_decision = self._failed_materialization_dependency_satisfaction(
-            command=command,
-            task=task,
-            session=session,
-        )
         projected_row = self._board.get(command.identity.task_id)
         if projected_row is not None:
             projected_record = projected_row.to_dict()
@@ -5888,6 +6101,11 @@ class TaskRuntimeService:
                     )
                 return result
 
+        dependency_decision = self._failed_materialization_dependency_satisfaction(
+            command=command,
+            task=projected_row or task,
+            session=session,
+        )
         details: dict[str, Any]
         if command.outcome == "completed":
             status = TaskStatus.COMPLETED
@@ -8196,6 +8414,21 @@ class TaskRuntimeService:
             )
 
             event_payload = dict(payload)
+            if "task_row_snapshot" in event_payload:
+                # The complete row snapshot is authoritative durable evidence
+                # in ``task_runtime.execution``.  Re-sending it through the
+                # realtime Factory channel duplicates potentially multi-MB
+                # adapter/provider evidence and can exceed NATS max_payload.
+                # Runtime consumers can resolve the fact by the immutable
+                # event/stream/sequence receipt carried here.
+                event_payload.pop("task_row_snapshot", None)
+                event_payload["task_row_snapshot_projection"] = {
+                    "schema_version": "task-runtime.realtime-row-snapshot-projection/1",
+                    "status": "durable_fact_only",
+                    "fact_event_id": fact_event_id,
+                    "fact_event_seq": fact_event_seq,
+                    "fact_stream": str(event_payload.get("fact_stream") or TASK_RUNTIME_EXECUTION_STREAM_V1),
+                }
             director_run_id = str(event_payload.get("run_id") or "").strip()
             if director_run_id and director_run_id != factory_run_id:
                 event_payload["director_run_id"] = director_run_id

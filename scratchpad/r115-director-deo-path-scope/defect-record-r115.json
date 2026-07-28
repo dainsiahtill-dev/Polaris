@@ -1,0 +1,213 @@
+{
+  "schema_version": "polaris.main_agent_defect.v1",
+  "defect_id": "R115-DIRECTOR-DEO-PATH-SCOPE",
+  "status": "CLOSED_REQUALIFIED",
+  "severity": "P0",
+  "project_id": "L1-05",
+  "factory_run_id": "factory_5ea5c947530e",
+  "bench_run_id": "9ae82d7111f6",
+  "head": "e11a86db623a0babcd713e3d32b97341b6cad1b8",
+  "symptom": {
+    "chain_status": "fail",
+    "stage": "director_dispatch",
+    "error_code": "deo_path_scope_denied",
+    "artifacts": {
+      "scaffold_files": 1,
+      "source_files": 0
+    },
+    "provider_result": "Director MiniMax-M3 returned 7 native write_file calls successfully, but TransactionKernel rejected the atomic batch before effects."
+  },
+  "final_provider_request": {
+    "context_snapshot_ref": "f2baa1080fcf2c1c75a03a8d",
+    "final_request_tokens": 17210,
+    "window_utilization": 0.0172,
+    "role_identity_ok": true,
+    "tools_ok": true,
+    "pm_contract_coverage_ok": true,
+    "chief_engineer_blueprint_coverage_ok": true,
+    "target_files_coverage_ok": true
+  },
+  "all_role_final_provider_requests": {
+    "audit_scope": "provider_native_wire",
+    "pm": [
+      {
+        "context_snapshot_ref": "3ba8d07ee06f16c958f5899a",
+        "final_request_tokens": 2233,
+        "window_utilization": 0.0022,
+        "role_identity_ok": true,
+        "included_refs": [
+          "pm_raw_intent"
+        ],
+        "missing_required_refs": [],
+        "offered_tools": [],
+        "missing_required_tools": [],
+        "pass": true
+      }
+    ],
+    "chief_engineer": [
+      {
+        "context_snapshot_ref": "8970e321997784adca62b5de",
+        "final_request_tokens": 4701,
+        "window_utilization": 0.0047,
+        "role_identity_ok": true,
+        "included_refs": [
+          "pm_contract",
+          "target_files"
+        ],
+        "offered_tools": [
+          "submit_structured_role_output"
+        ],
+        "missing_required_refs": [],
+        "missing_required_tools": [],
+        "pass": true
+      },
+      {
+        "context_snapshot_ref": "e11b50315638c8cffa90a035",
+        "final_request_tokens": 4825,
+        "window_utilization": 0.0048,
+        "role_identity_ok": true,
+        "included_refs": [
+          "pm_contract",
+          "target_files"
+        ],
+        "offered_tools": [
+          "submit_structured_role_output"
+        ],
+        "missing_required_refs": [],
+        "missing_required_tools": [],
+        "pass": true
+      }
+    ],
+    "director": [
+      {
+        "context_snapshot_ref": "f2baa1080fcf2c1c75a03a8d",
+        "final_request_tokens": 17210,
+        "window_utilization": 0.0172,
+        "role_identity_ok": true,
+        "included_refs": [
+          "pm_contract",
+          "ce_blueprint",
+          "target_files"
+        ],
+        "offered_tools": [
+          "write_file"
+        ],
+        "missing_required_refs": [],
+        "missing_required_tools": [],
+        "pass": true
+      }
+    ],
+    "qa": {
+      "provider_requests": 0,
+      "reason": "Director failed before QA admission"
+    }
+  },
+  "runtime_evidence": {
+    "task_id": "TASK-1",
+    "target_files": [
+      "Cargo.toml",
+      "src/lib.rs",
+      "src/models/mod.rs",
+      "src/models/flavor.rs",
+      "src/models/palette.rs",
+      "src/models/ingredient.rs",
+      "src/models/recipe.rs"
+    ],
+    "scope_paths": [
+      "Cargo.toml",
+      "src/lib.rs",
+      "src/models/mod.rs",
+      "src/models/flavor.rs",
+      "src/models/palette.rs",
+      "src/models/ingredient.rs"
+    ],
+    "unauthorized_declared_target": "src/models/recipe.rs",
+    "task_runtime_events": "/home/dains/.cache/kernelone/.polaris/projects/678d99053b85c836103992be-39b59ae78135/runtime/events/task_runtime.execution.jsonl",
+    "backend_log": "/home/dains/.polaris/instances/factory-bench-l1-05-r115-l1-05-run-9ae82d7111f6-e1834d6bdd08faab/logs/backend.log"
+  },
+  "root_cause": {
+    "classification": "PM_CONTRACT_CAPABILITY_SCOPE_TRUNCATION_AND_POST_AUTOFIX_DRIFT",
+    "source": "src/backend/polaris/cells/roles/adapters/internal/pm/normalization.py",
+    "mechanism": "_normalize_task_contract preserved every concrete target_file but truncated merged scope_items to _PM_CONTRACT_SCOPE_PATH_LIMIT=6, so R115's seventh declared Rust target lost authority. Independent review then found the same invariant could drift again after autofix_pm_contract_for_quality added task-local target_files without updating scope_paths. The Director gateway and JobToken correctly derive write authority from the final scope_paths; atomic batch preflight correctly denied the unauthorized target and prevented all seven writes.",
+    "security_boundary": "The DEO policy and atomic batch behavior are correct and must not be weakened.",
+    "required_invariant": "At the final PM contract boundary, every task-local concrete target_file must be covered by an exact or parent scope_path from that same task. The six-item compact limit may constrain only supplementary non-target scopes, never declared or autofix-added mutation targets."
+  },
+  "fix": {
+    "initial_normalization": "Retain every task-local concrete target_file in scope_paths; apply the compact budget only to supplementary scopes.",
+    "final_contract_boundary": "After quality autofix, reconcile every task independently using the same exact-or-parent path semantics as DEO and append only uncovered task-local targets.",
+    "least_privilege": "No project-level target union, no DEO relaxation, no partial batch application, and an existing parent directory scope remains sufficient without redundant widening."
+  },
+  "authorized_fix_scope": [
+    "src/backend/polaris/cells/roles/adapters/internal/pm/normalization.py",
+    "src/backend/polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
+    "scratchpad/r115-director-deo-path-scope/"
+  ],
+  "forbidden_fixes": [
+    "broaden authority to all project_declared_target_files",
+    "disable deo_path_scope_denied",
+    "allow partial application of an invalid atomic tool batch",
+    "modify generated L1-05 project files",
+    "silently drop target_files beyond the scope limit"
+  ],
+  "required_tests": [
+    "A normalized task with more than six target_files retains all targets in scope_paths.",
+    "Supplementary non-target scopes remain bounded.",
+    "A real Card3D quality autofix that adds build/test targets leaves every final target covered by the same task's exact-or-parent scope.",
+    "An existing parent directory scope remains sufficient and is not expanded to project-wide authority.",
+    "A real wrong-path write remains denied by DEO policy.",
+    "Existing PM adapter suite remains green."
+  ],
+  "verification": {
+    "red_test": {
+      "command": "PYTHONPATH=src/backend python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py::TestFrontendTestRepairContracts::test_rust_root_workspace_directive_prefers_cargo_contracts -q",
+      "result_before_fix": "1 failed: every declared task target must remain inside that task's capability scope"
+    },
+    "focused_after_fix": [
+      "2 passed: explicit >6 target regression plus real Card3D post-autofix reconciliation",
+      "137 passed: complete PM adapter pure suite",
+      "242 passed: directed-effect public authorization/policy plus adapter production wiring, policy snapshot, and mutation port"
+    ],
+    "wide_after_fix": [
+      "1291 passed: complete roles.adapters suite",
+      "1266 passed: complete factory.pipeline suite",
+      "KernelOne release gate ok=true: 415 passed, 1 skipped, 2 warnings"
+    ],
+    "static_after_fix": [
+      "ruff: all checks passed",
+      "ruff format: two touched files already formatted",
+      "mypy: success",
+      "compileall: passed",
+      "JSON parse: passed",
+      "git diff --check: passed"
+    ],
+    "post_edit_codegraph_review": {
+      "status": "completed",
+      "observed_flow": "_normalize_task_contract -> quality autofix -> final exact-or-parent target/scope reconciliation -> role request metadata/context -> derive_role_turn_capability_scope -> RoleToolGateway/JobToken -> directed-effect policy",
+      "blast_radius_gates_run": [
+        "complete roles.adapters",
+        "directed-effect policy snapshot/guard/public contracts",
+        "complete factory.pipeline",
+        "KernelOne release gate"
+      ]
+    },
+    "stable_source_fingerprint": [
+      "761ac2eca355b946",
+      "761ac2eca355b946"
+    ],
+    "provider_calls_after_fix": 0,
+    "bench_runs_after_fix": 0
+  },
+  "independent_review": {
+    "verdict": "CLEAR",
+    "critical": 0,
+    "important": 0,
+    "minor": 0,
+    "summary": "Final boundary covers all post-autofix tasks, appends only task-local targets not already covered by exact or parent scope, matches DEO directory semantics, and does not broaden project authority or weaken fail-closed behavior."
+  },
+  "secondary_findings": [
+    "Rust task acceptance incorrectly includes html.",
+    "Rust verification context mentions Python unittest instead of cargo test.",
+    "ContextOS control-plane audit reports all_ok=false and isolated=false."
+  ],
+  "next_action": "Sync governance evidence, close the R115 bucket, and audit the already-observed Rust contract/context secondary findings before deciding whether a fresh isolated R116 is schedulable."
+}

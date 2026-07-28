@@ -149,6 +149,50 @@ class TestComputeSourceFingerprint(unittest.TestCase):
             # data.txt is not a .py file but is a direct file source, so it IS included
             self.assertTrue(len(fp) > 0)
 
+    def test_default_sources_cover_all_production_polaris_modules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _mark_backend_root(root)
+            production_files = (
+                root / "polaris" / "infrastructure" / "llm" / "providers" / "provider.py",
+                root / "polaris" / "kernelone" / "llm" / "engine" / "request.py",
+                root / "polaris" / "future_cell" / "runtime.py",
+            )
+            for production_file in production_files:
+                with self.subTest(path=production_file.relative_to(root)):
+                    production_file.parent.mkdir(parents=True, exist_ok=True)
+                    production_file.write_text("VALUE = 1\n", encoding="utf-8")
+                    before = compute_source_fingerprint(root)
+                    production_file.write_text("VALUE = 2\n", encoding="utf-8")
+                    after = compute_source_fingerprint(root)
+                    self.assertNotEqual(before, after)
+
+    def test_default_sources_cover_factory_bench_runtime_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _mark_backend_root(root)
+            helper = root / "scripts" / "factory_bench" / "runtime_helper.py"
+            helper.write_text("VALUE = 1\n", encoding="utf-8")
+            before = compute_source_fingerprint(root)
+            helper.write_text("VALUE = 2\n", encoding="utf-8")
+            after = compute_source_fingerprint(root)
+            self.assertNotEqual(before, after)
+
+    def test_default_sources_ignore_test_only_python_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _mark_backend_root(root)
+            production_file = root / "polaris" / "cells" / "factory" / "service.py"
+            production_file.parent.mkdir(parents=True, exist_ok=True)
+            production_file.write_text("VALUE = 1\n", encoding="utf-8")
+            test_file = root / "polaris" / "cells" / "factory" / "tests" / "test_service.py"
+            test_file.parent.mkdir(parents=True, exist_ok=True)
+            test_file.write_text("TEST_VALUE = 1\n", encoding="utf-8")
+            before = compute_source_fingerprint(root)
+            test_file.write_text("TEST_VALUE = 2\n", encoding="utf-8")
+            after = compute_source_fingerprint(root)
+            self.assertEqual(before, after)
+
 
 # ---------------------------------------------------------------------------
 # Tests: resolve_backend_fingerprint

@@ -110,30 +110,29 @@ def _normalize_capability_token(
     *,
     execution_attempt: TaskRuntimeExecutionAttemptIdentityV1,
 ) -> dict[str, Any]:
-    """Build minimal authoritative JobToken evidence for DEO policy capture."""
+    """Validate authoritative JobToken evidence for DEO policy capture.
 
-    raw = dict(capability_token or {})
+    An execution-attempt identity is not a capability token.  Missing or
+    incomplete control-plane evidence must therefore fail closed instead of
+    minting a synthetic token/envelope from the attempt.
+    """
+
+    if not isinstance(capability_token, Mapping):
+        return {}
+    raw = dict(capability_token)
     token_id = str(raw.get("token_id") or "").strip()
     if not token_id:
-        token_id = (
-            f"deo-materialization:{execution_attempt.run_id}:"
-            f"{execution_attempt.external_task_id}:{execution_attempt.attempt}"
-        )
+        return {}
     envelope_hash = str(raw.get("execution_envelope_hash") or "").strip().lower()
     if len(envelope_hash) != 64 or any(ch not in "0123456789abcdef" for ch in envelope_hash):
-        # Stable pseudo-envelope for materialization deferred commits when the
-        # control-plane JobToken omits execution_envelope_hash. Policy capture
-        # requires a 64-hex field; path scope still comes from capability_scope.
-        from hashlib import sha256
-
-        envelope_hash = sha256(
-            f"{token_id}|{execution_attempt.workspace}|{execution_attempt.external_task_id}".encode()
-        ).hexdigest()
+        return {}
     capability_audit = raw.get("capability_audit")
     if isinstance(capability_audit, Mapping) and capability_audit.get("ok") is True:
         capability_audit_ok = True
     else:
-        capability_audit_ok = raw.get("capability_audit_ok") is True or not capability_token
+        capability_audit_ok = raw.get("capability_audit_ok") is True
+    if not capability_audit_ok:
+        return {}
     allowed_commands = raw.get("allowed_commands") or ()
     if isinstance(allowed_commands, str):
         allowed_commands = (allowed_commands,)
@@ -220,9 +219,9 @@ async def commit_deferred_director_repair_tool_results(
         return []
 
     token = _normalize_capability_token(capability_token, execution_attempt=execution_attempt)
-    if token.get("capability_audit_ok") is not True:
+    if not token or token.get("capability_audit_ok") is not True:
         logger.warning(
-            "Skipping deferred director repair commit: JobToken capability_audit not ok workspace=%s",
+            "Skipping deferred director repair commit: authoritative JobToken unavailable workspace=%s",
             workspace_token,
         )
         return []
@@ -260,7 +259,7 @@ async def commit_deferred_director_repair_tool_results(
         directed_effect_execution_attempt_authority=execution_attempt_authority,
     )
     ledger = TurnLedger(turn_id=turn)
-    followup_receipts = await executor._execute_deferred_repair_followup(  # noqa: SLF001
+    followup_receipts = await executor._execute_deferred_repair_followup(
         receipts_as_dicts=[dict(item) for item in receipts],
         primary_batch_id=batch_id,
         workspace=workspace_token,

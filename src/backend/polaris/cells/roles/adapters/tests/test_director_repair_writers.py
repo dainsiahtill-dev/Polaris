@@ -295,6 +295,34 @@ def test_runtime_repair_bridge_binds_external_task_id_when_caller_passes_private
     assert "must match execution_attempt" not in str(results[0])
 
 
+@pytest.mark.parametrize("requested_task_id", ["TASK-1", "task-1"])
+def test_runtime_repair_bridge_accepts_only_bound_task_aliases(
+    tmp_path: Path,
+    requested_task_id: str,
+) -> None:
+    workspace = tmp_path.resolve()
+    attempt = _attempt(workspace, task_id="1")
+    results = run_runtime_repair_with_director_tools(
+        object(),
+        workspace_path=workspace,
+        task_id=requested_task_id,
+        source_tool=_typescript_import_specifier_source_tool(),
+        execution_attempt=attempt,
+        base_files={
+            "src/models/Market.ts": ('import {\n  Reputation,\n  export type ReputationTier,\n} from "./Reputation";\n')
+        },
+        artifact_quality_errors=("src/models/Market.ts(3,3): error TS1003: Identifier expected.",),
+        allowed_paths=("src/models/Market.ts",),
+        max_rounds=1,
+    )
+
+    assert len(results) == 1
+    assert results[0]["success"] is True
+    request = results[0]["result"]["deferred_request"]
+    assert type(request) is DeferredDirectorRepairRequestV1
+    assert request.task_id == attempt.external_task_id == "1"
+
+
 def test_runtime_repair_bridge_mismatched_task_id_is_structured_failure_not_raise(
     tmp_path: Path,
 ) -> None:

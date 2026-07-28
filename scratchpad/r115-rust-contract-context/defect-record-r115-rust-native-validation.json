@@ -1,0 +1,149 @@
+{
+  "schema_version": "polaris.main_agent_defect.v1",
+  "defect_id": "R115-RUST-NATIVE-VALIDATION-CONTRACT-DRIFT",
+  "status": "CLOSED_REQUALIFIED",
+  "severity": "P0",
+  "project_id": "L1-05",
+  "symptom": {
+    "actual": "The production PM Rust contract required a Python test harness while Factory and Bench skipped that harness and reported cargo check as test evidence. The first native-test correction then executed untrusted Rust tests directly in the target workspace, accepted cargo exit-zero with zero discovered tests, and mislabeled rustc fallback evidence.",
+    "expected": "Rust contracts declare native tests; every physical quality projection executes cargo test in an isolated disposable workspace, requires at least one discovered native test, and reports compile-only fallback evidence accurately without mutating target artifacts."
+  },
+  "root_cause": {
+    "classification": "PRODUCTION_CONTRACT_AND_VALIDATION_AUTHORITY_SPLIT_BRAIN",
+    "mechanisms": [
+      "An internal Bench Python verifier convention leaked into the production PM Rust contract.",
+      "Factory and Bench validation gates executed generated Rust test binaries with the target workspace as writable cwd, bypassing Director mutation authority.",
+      "Cargo exit status was treated as sufficient evidence even when libtest reported zero tests.",
+      "Generic rustc metadata compilation was reported as cargo test and wrote .rmeta output into the target workspace.",
+      "Rust TASK-3 lacked read-only context_files required to author tests against the crate's public API."
+    ],
+    "architectural_violation": "Bench may consume platform evidence but may not define production project semantics. Factory/Bench quality gates are measurement authorities, not target-project mutation authorities."
+  },
+  "final_request_and_runtime_evidence": {
+    "r115_pm_contract_source": "src/backend/polaris/cells/roles/adapters/internal/pm/synthesis.py:_synthesize_rust_workspace_contracts",
+    "old_declared_target": "tests/test_product.py",
+    "old_declared_command": "python -m unittest discover -s tests -p 'test_*.py' -v",
+    "old_factory_and_bench_command": "cargo check --quiet",
+    "authority_exploit": "A generated tests/product.rs overwrote src/lib.rs while Factory returned passed=true before sandboxing.",
+    "zero_test_false_green": "A Cargo crate with no native tests returned exit 0 and was previously reported as cargo test passed.",
+    "rustc_evidence_drift": "A non-Cargo Rust file was reported as cargo test passed and left libmain.rmeta in the workspace."
+  },
+  "fix_contract": {
+    "producer": "Rust PM synthesis declares tests/product.rs, cargo test, and read-only model/engine context_files while keeping write targets limited to tests/product.rs and README.md.",
+    "consumers": [
+      "Factory workspace quality executes cargo test --quiet in a bubblewrap-isolated disposable workspace copy.",
+      "Internal real-run gate consumes the same isolated native validation primitive.",
+      "Both consumers require native_test_count >= 1 for cargo-test evidence.",
+      "Generic rustc fallback writes only to a temporary out-dir and is labeled rustc compile evidence."
+    ],
+    "sandbox": {
+      "backend": "bubblewrap_copy_v1",
+      "target_workspace_mounted": false,
+      "sandbox_support_directories_outside_project_copy": true,
+      "network_unshared": true,
+      "environment_cleared": true,
+      "cargo_target_dir": "/workspace/target",
+      "native_test_count_authority": "paired standard-libtest stdout records only",
+      "forged_evidence_guards": [
+        "reject project rustc/rustc-wrapper/rustc-workspace-wrapper",
+        "reject project target linker/runner/rustflags/rustdocflags and test alias overrides",
+        "reject build and environment overrides that can replace or inject rustc, rustdoc, the linker, flags, loader, target, or executable path",
+        "reject harness=false custom lib/bin/example/test/bench targets across the root package and the recursive Cargo workspace closure, including explicit members and in-root path dependencies",
+        "ignore stderr for native test count"
+      ],
+      "unsafe_fallback": "forbidden; bubblewrap absence fails closed"
+    },
+    "preserved": [
+      "Cargo build and entrypoint requirements",
+      "PM target/write scope authority",
+      "language-specific runnability checks",
+      "real native compile failure detection"
+    ],
+    "forbidden": [
+      "target-project mutation by Factory or Bench gates",
+      "Python as a mandatory Rust project dependency",
+      "cargo check presented as executed test evidence",
+      "zero-test cargo success presented as test evidence",
+      "sample-specific L1-05 code in Polaris"
+    ]
+  },
+  "verification": {
+    "red_evidence": "Six initial focused regressions failed before the authority, zero-test, context, and rustc-evidence fixes. Nine additional adversarial cases failed before closing root Cargo target custom-harness and linker/rustflags paths. Two further cases failed before closing build.rustdoc and declared workspace-member paths. One final case failed before closing Cargo's implicit in-root path-dependency member closure.",
+    "focused_green": "18 passed, including absolute original-workspace write denial, support-directory symlink escape denial, every Cargo target custom-harness class across root and recursive workspace manifests, compiler/rustdoc/linker/rustflags override forgery rejection, and sandbox-unavailable fail-closed cases.",
+    "pm_adapter": "156 passed",
+    "bench_gates": "210 passed",
+    "factory_characterization_scope": "11 Rust-selected passed after the second adversarial remediation; 23 passed before it",
+    "roles_adapters": "1310 passed, 2 pre-existing warnings",
+    "factory_pipeline": "Final current-source rerun: 1289 passed, 2 pre-existing multiprocessing warnings",
+    "kernelone_release_gate": "Final rerun after all Rust and KernelOne audit changes: ok=true; mode=all; suite_size=51; 415 passed, 1 skipped, 2 pre-existing warnings",
+    "ruff": "passed",
+    "mypy": "passed for 4 production files",
+    "provider_calls_after_fix": 0,
+    "bench_runs_after_fix": 0
+  },
+  "independent_review_round_1": {
+    "verdict": "FAIL",
+    "critical": 2,
+    "findings": [
+      "Project-controlled .cargo-home symlink was followed during host-side support-directory preparation.",
+      "Native test count trusted forgeable stderr/custom-harness text."
+    ],
+    "remediation": "Support directories moved outside the copied project; dangerous Cargo execution hooks and harness=false are rejected; count requires paired standard-libtest stdout.",
+    "follow_up_status": "pending"
+  },
+  "independent_review_round_2": {
+    "verdict": "FAIL",
+    "critical": 2,
+    "important": 1,
+    "findings": [
+      "Only [[test]] harness=false was rejected; [lib], [[bin]], [[example]], and [[bench]] custom harness targets could forge standard-libtest output.",
+      "Project Cargo target linker and rustflags overrides could replace the test executable and forge standard-libtest output.",
+      "Regression coverage omitted the corresponding Cargo target and execution-override classes."
+    ],
+    "remediation": "All Cargo target kinds now reject harness=false. Cargo build/target/env execution overrides that can replace the compiler, linker, flags, loader, target, or executable path now fail closed. Nine adversarial red-to-green cases cover the bypasses.",
+    "follow_up_status": "pending"
+  },
+  "independent_review_round_3": {
+    "verdict": "FAIL",
+    "critical": 2,
+    "important": 1,
+    "findings": [
+      "Cargo build.rustdoc could replace the doctest executable and forge paired standard-libtest output.",
+      "Only the root Cargo.toml was audited, so a declared workspace member could retain a harness=false target and forge test output.",
+      "Regression coverage and the defect record omitted both bypass classes."
+    ],
+    "remediation": "build.rustdoc and its environment equivalent now fail closed. Declared workspace member manifests are resolved within the validation root and receive the same all-target custom-harness audit as the root manifest; unsafe or escaping member patterns fail closed. Two red-to-green cases preserve both bypasses.",
+    "follow_up_status": "pending"
+  },
+  "independent_review_round_4": {
+    "verdict": "FAIL",
+    "critical": 1,
+    "important": 1,
+    "findings": [
+      "Cargo automatically adds in-root path dependencies to a workspace, but only explicit workspace.members were audited.",
+      "The workspace regression and defect record omitted the implicit path-dependency member closure."
+    ],
+    "remediation": "The workspace manifest resolver now computes a recursive closure over explicit members and Cargo dependency tables, including target/workspace/patch/replace path dependencies, rejects workspace escapes, and applies the same target-harness contract to every discovered member. A virtual-workspace red-to-green regression covers an explicit app whose implicit path dependency declares a custom binary harness.",
+    "follow_up_status": "CLEAR"
+  },
+  "final_independent_review": {
+    "verdict": "CLEAR",
+    "critical": 0,
+    "important": 0,
+    "minor": 0,
+    "confirmed_scope": [
+      "ordinary, dev, build, target, workspace, patch, and replace path-dependency tables",
+      "workspace escapes, missing manifests, symlink manifests, and dependency cycles fail closed",
+      "root, explicit member, and implicit path-dependency member manifests share one target validator",
+      "18 focused, 210 full Bench-gate, 415 KernelOne release, Ruff, format, and mypy evidence is consistent"
+    ]
+  },
+  "remaining_review_questions": [
+    "Can a generated test mutate the original workspace through an absolute path or symlink?",
+    "Does sandbox unavailability always fail closed in both Factory and Bench consumers?",
+    "Can cargo exit-zero with zero native tests pass any projection?",
+    "Are PM context_files read-only and disjoint from TASK-3 write targets?",
+    "Does non-Cargo rustc leave no output in the target workspace and remain compile-only evidence?"
+  ],
+  "next_action": "Closed. Synchronize the blueprint and pre-bench verification card, then run the non-Provider preflight. Only a clean, stable preflight may authorize one fresh isolated R116."
+}

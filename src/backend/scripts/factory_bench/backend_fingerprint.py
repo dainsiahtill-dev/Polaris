@@ -33,17 +33,8 @@ _BACKEND_ROOT_MARKERS = (
     Path("polaris/__init__.py"),
     Path("scripts/factory_bench/backend_fingerprint.py"),
 )
-_FINGERPRINT_SOURCES = (
-    "polaris/delivery",
-    "polaris/kernelone/runtime",
-    "polaris/cells/factory",
-    "polaris/cells/orchestration",
-    "polaris/cells/director",
-    "polaris/cells/roles",
-    "polaris/domain/director",
-    "scripts/factory_bench/run_factory_bench.py",
-    "scripts/factory_bench/factory_http_client.py",
-)
+_FINGERPRINT_SOURCES = ("polaris", "scripts/factory_bench")
+_FINGERPRINT_EXCLUDED_DIRECTORY_NAMES = frozenset({"__pycache__", "tests"})
 _FINGERPRINT_HASH_ALGO = "sha256"
 _FINGERPRINT_TRUNCATE = 16
 
@@ -63,16 +54,26 @@ def resolve_backend_source_root(backend_root: Path | str | None = None) -> Path:
 _BACKEND_ROOT = resolve_backend_source_root()
 
 
+def _is_production_python_source(path: Path) -> bool:
+    """Return whether a discovered Python file belongs to the runtime surface."""
+
+    if any(part in _FINGERPRINT_EXCLUDED_DIRECTORY_NAMES for part in path.parts):
+        return False
+    return path.name != "conftest.py" and not path.name.startswith("test_") and not path.name.endswith("_test.py")
+
+
 def compute_source_fingerprint(
     backend_root: Path | str | None = None,
     *,
     sources: tuple[str, ...] = _FINGERPRINT_SOURCES,
 ) -> str:
-    """Compute a deterministic hash of key backend source files.
+    """Compute a deterministic hash of the production backend source surface.
 
-    Hashes the content of all ``*.py`` files under each source directory/file
-    (sorted by relative path) and returns a truncated hex digest. Explicit roots
-    are canonicalized and must contain the Polaris backend markers.
+    Default discovery covers every production ``*.py`` file under ``polaris``
+    and the factory-bench runtime helpers. Test-only modules are excluded so a
+    concurrent test edit cannot make an otherwise identical backend look stale.
+    Explicit file sources remain hashable regardless of suffix for compatibility.
+    Roots are canonicalized and must contain the Polaris backend markers.
     """
     root = resolve_backend_source_root(backend_root)
 
@@ -92,7 +93,10 @@ def compute_source_fingerprint(
         elif candidate.is_dir():
             for py_file in sorted(candidate.rglob("*.py")):
                 try:
-                    rel = str(py_file.relative_to(root))
+                    relative_path = py_file.relative_to(root)
+                    if not _is_production_python_source(relative_path):
+                        continue
+                    rel = str(relative_path)
                     content = py_file.read_bytes()
                     h.update(rel.encode("utf-8"))
                     h.update(content)

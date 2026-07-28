@@ -29,6 +29,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 )
 from polaris.cells.factory.pipeline.public.types import FactoryStartRequest
 from polaris.cells.runtime.task_runtime.public.contracts import (
+    BindRuntimeTaskToFactoryRunCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
@@ -183,7 +184,7 @@ class QualityReworkStageExecutor(FakeStageExecutor):
         self.director_calls = 0
         self.qa_calls = 0
 
-    def _request_taskboard_rework(self) -> None:
+    def _request_taskboard_rework(self, factory_run_id: str) -> None:
         task_board = TaskRuntimeService(str(self.workspace))
         row = task_board.ensure_task_row(
             external_task_id="TASK-1",
@@ -201,15 +202,23 @@ class QualityReworkStageExecutor(FakeStageExecutor):
                 "qa_rework_reason": "qa_score_below_threshold",
             },
         )
+        binding = task_board.bind_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(
+                workspace=str(self.workspace),
+                task_id=str(row["id"]),
+                factory_run_id=factory_run_id,
+            )
+        )
+        assert binding.ok is True
 
     async def execute(self, stage, run, context):
-        del run, context
+        del context
         if stage == "director_dispatch":
             self.director_calls += 1
         if stage == "quality_gate":
             self.qa_calls += 1
             if self.qa_calls == 1:
-                self._request_taskboard_rework()
+                self._request_taskboard_rework(run.id)
                 return StageResult(
                     stage=stage,
                     status="failed",
@@ -271,7 +280,7 @@ class TaskBoundaryQualityReworkStageExecutor(FakeStageExecutor):
             encoding="utf-8",
         )
 
-    def _materialize_failed_director_task(self) -> None:
+    def _materialize_failed_director_task(self, factory_run_id: str | None = None) -> None:
         task_board = TaskRuntimeService(str(self.workspace))
         row = task_board.ensure_task_row(
             external_task_id="TASK-1",
@@ -293,6 +302,15 @@ class TaskBoundaryQualityReworkStageExecutor(FakeStageExecutor):
             },
             priority=1,
         )
+        if factory_run_id:
+            binding = task_board.bind_task_to_factory_run(
+                BindRuntimeTaskToFactoryRunCommandV1(
+                    workspace=str(self.workspace),
+                    task_id=str(row["id"]),
+                    factory_run_id=factory_run_id,
+                )
+            )
+            assert binding.ok is True
         _fail_task_row(
             task_board,
             row["id"],
@@ -301,13 +319,13 @@ class TaskBoundaryQualityReworkStageExecutor(FakeStageExecutor):
         )
 
     async def execute(self, stage, run, context):
-        del run, context
+        del context
         if stage == "director_dispatch":
             self.director_calls += 1
         if stage == "quality_gate":
             self.qa_calls += 1
             if self.qa_calls == 1:
-                self._materialize_failed_director_task()
+                self._materialize_failed_director_task(run.id)
                 self._write_workspace_validation()
                 return StageResult(
                     stage=stage,

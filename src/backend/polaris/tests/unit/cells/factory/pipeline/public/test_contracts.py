@@ -9,13 +9,13 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from polaris.cells.factory.pipeline.public.contracts import (
     CancelFactoryRunCommandV1,
     FactoryPipelineError,
     FactoryRunCompletedEventV1,
     FactoryRunResultV1,
     FactoryRunStartedEventV1,
+    FactoryTerminalTaskRuntimeProjectionV1,
     GetFactoryRunStatusQueryV1,
     ListFactoryRunsQueryV1,
     ProjectionBackMappingRefreshResultV1,
@@ -26,6 +26,60 @@ from polaris.cells.factory.pipeline.public.contracts import (
     RunProjectionExperimentCommandV1,
     StartFactoryRunCommandV1,
 )
+
+
+class TestFactoryTerminalTaskRuntimeProjectionV1:
+    """Tests for the immutable run-bound TaskRuntime terminal snapshot."""
+
+    @staticmethod
+    def _projection() -> dict[str, Any]:
+        return {
+            "schema_version": "task_runtime.observable_task_rows_authority.v1",
+            "workspace": "/ws",
+            "source": "task_runtime.execution_fact",
+            "authoritative": True,
+            "degraded": False,
+            "requested_factory_run_id": "factory-r1",
+            "total_row_count": 1,
+            "row_count": 1,
+            "rows": [
+                {
+                    "task_id": "TASK-1",
+                    "factory_run_id": "factory-r1",
+                    "status": "failed",
+                    "execution_state": "failed",
+                    "fact_event_seq": 7,
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                }
+            ],
+            "readiness": {"ready": True, "blocking_reasons": []},
+        }
+
+    def test_round_trip_preserves_authoritative_projection(self) -> None:
+        snapshot = FactoryTerminalTaskRuntimeProjectionV1(
+            workspace="/ws",
+            factory_run_id="factory-r1",
+            captured_at="2026-07-27T00:00:00+00:00",
+            projection=self._projection(),
+        )
+
+        restored = FactoryTerminalTaskRuntimeProjectionV1.from_dict(snapshot.to_dict())
+
+        assert restored == snapshot
+        assert restored.projection["row_count"] == 1
+
+    def test_rejects_foreign_run_row(self) -> None:
+        projection = self._projection()
+        projection["rows"][0]["factory_run_id"] = "factory-foreign"
+
+        with pytest.raises(ValueError, match="row factory_run_id"):
+            FactoryTerminalTaskRuntimeProjectionV1(
+                workspace="/ws",
+                factory_run_id="factory-r1",
+                captured_at="2026-07-27T00:00:00+00:00",
+                projection=projection,
+            )
 
 
 class TestStartFactoryRunCommandV1:
@@ -162,9 +216,7 @@ class TestFactoryRunCompletedEventV1:
     """Tests for FactoryRunCompletedEventV1."""
 
     def test_valid(self) -> None:
-        evt = FactoryRunCompletedEventV1(
-            event_id="e1", workspace="/ws", run_id="r1", status="done", completed_at="ts"
-        )
+        evt = FactoryRunCompletedEventV1(event_id="e1", workspace="/ws", run_id="r1", status="done", completed_at="ts")
         assert evt.status == "done"
         assert evt.error_message is None
 
@@ -184,15 +236,11 @@ class TestFactoryRunResultV1:
         assert res.artifact_paths == ()
 
     def test_tuple_coercion(self) -> None:
-        res = FactoryRunResultV1(
-            ok=True, workspace="/ws", run_id="r1", status="done", completed_stages=["a", "b"]
-        )
+        res = FactoryRunResultV1(ok=True, workspace="/ws", run_id="r1", status="done", completed_stages=["a", "b"])
         assert res.completed_stages == ("a", "b")
 
     def test_empty_strings_filtered(self) -> None:
-        res = FactoryRunResultV1(
-            ok=True, workspace="/ws", run_id="r1", status="done", artifact_paths=["a", "", " b "]
-        )
+        res = FactoryRunResultV1(ok=True, workspace="/ws", run_id="r1", status="done", artifact_paths=["a", "", " b "])
         assert res.artifact_paths == ("a", "b")
 
 
@@ -224,9 +272,7 @@ class TestProjectionBackMappingRefreshResultV1:
     """Tests for ProjectionBackMappingRefreshResultV1."""
 
     def test_to_dict(self) -> None:
-        res = ProjectionBackMappingRefreshResultV1(
-            workspace="/ws", experiment_id="e1", project_root="/prj"
-        )
+        res = ProjectionBackMappingRefreshResultV1(workspace="/ws", experiment_id="e1", project_root="/prj")
         d = res.to_dict()
         assert d["workspace"] == "/ws"
         assert d["changed_files"] == []

@@ -6,6 +6,7 @@ import os
 import queue
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -572,12 +573,16 @@ def _backend_identity_payload(record: InstanceRecord) -> dict[str, Any]:
 
 def _start_backend_identity_endpoint(
     payload: dict[str, Any],
+    *,
+    response_delay_seconds: float = 0.0,
 ) -> tuple[HTTPServer, threading.Thread, list[tuple[str, str]]]:
     requests: list[tuple[str, str]] = []
 
     class IdentityHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             requests.append((self.path, str(self.headers.get("Authorization") or "")))
+            if response_delay_seconds > 0:
+                time.sleep(response_delay_seconds)
             body = json.dumps(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -617,6 +622,33 @@ def test_backend_process_identity_probe_matches_and_persists_attestation(
     assert attestation["backend_root"] == payload["backend_root"]
     assert attestation["source"] == instance_service.BACKEND_PROCESS_IDENTITY_SOURCE
     assert "token" not in attestation
+
+
+def test_backend_process_identity_probe_accepts_bounded_slow_fingerprint_response(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """A full-source fingerprint may take over one second without being stale."""
+
+    record = _backend_identity_record(tmp_path)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda _pid: True)
+    payload = _backend_identity_payload(record)
+    server, thread, requests = _start_backend_identity_endpoint(
+        payload,
+        response_delay_seconds=1.1,
+    )
+    record.backend_port = int(server.server_port)
+    record.backend_url = f"http://{instance_service.DEFAULT_HOST}:{record.backend_port}"
+    try:
+        _WAIT_FOR_BACKEND_IDENTITY(InstanceSupervisor(), record, timeout_seconds=3.0)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+    assert requests == [("/v2/runtime/fingerprint", "Bearer identity-probe-token")]
+    attestation = record.metadata[instance_service.BACKEND_PROCESS_IDENTITY_METADATA_KEY]
+    assert attestation["fingerprint"] == "startup-source-fingerprint"
 
 
 @pytest.mark.parametrize("mismatched_field", ["pid", "instance_id", "workspace", "backend_root"])

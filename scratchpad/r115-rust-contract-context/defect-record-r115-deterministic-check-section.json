@@ -1,0 +1,64 @@
+{
+  "schema_version": "polaris.main_agent_defect.v1",
+  "defect_id": "R115-DETERMINISTIC-CHECK-SECTION-LEAK",
+  "status": "CLOSED_REQUALIFIED",
+  "severity": "P1",
+  "project_id": "L1-05",
+  "factory_run_id": "factory_5ea5c947530e",
+  "bench_run_id": "9ae82d7111f6",
+  "symptom": {
+    "stage": "pm_contract",
+    "artifact": "/home/dains/.cache/kernelone/.polaris/projects/678d99053b85c836103992be-39b59ae78135/runtime/tasks/plan.json",
+    "actual": "Rust task acceptance and delivery contracts contained the deterministic check 'html'.",
+    "expected": "Only checks declared under the requirement's Markdown Deterministic Checks section are authoritative when that section exists."
+  },
+  "final_provider_request_evidence": {
+    "pm_context_snapshot_ref": "3ba8d07ee06f16c958f5899a",
+    "chief_engineer_context_snapshot_refs": [
+      "8970e321997784adca62b5de",
+      "e11b50315638c8cffa90a035"
+    ],
+    "director_context_snapshot_ref": "f2baa1080fcf2c1c75a03a8d",
+    "all_physical_requests_role_identity_ok": true,
+    "all_required_refs_and_tools_present": true,
+    "propagation": "The malformed PM contract was faithfully carried into CE and Director final physical requests; the defect is contract extraction, not request-context omission."
+  },
+  "root_cause": {
+    "classification": "UNSCOPED_DETERMINISTIC_CHECK_EXTRACTION",
+    "source": "src/backend/polaris/cells/roles/adapters/internal/pm/synthesis.py",
+    "mechanism": "_extract_deterministic_checks_from_directive scanned the complete requirement text. It matched '<html>' inside a conditional acceptance explanation for Web projects even though L1-05 is Rust CLI and the authoritative Deterministic Checks section lists only rust_compile, min_files, content_any, and source_target_coverage.",
+    "general_impact": "Any language or artifact can inherit verifier checks mentioned only in examples, conditional prose, or unrelated sections."
+  },
+  "fix": {
+    "behavior": "When a Markdown Deterministic Checks or 确定性检查 heading exists, scope extraction until the next same-or-higher-level heading and accept only fence-external explicit bullet, ordered-list, or exact bare-token declarations. Nested headings remain inside the section. Preserve the legacy whole-text fallback when no section exists, with identifier boundaries preventing substring matches such as no_html_for_cli.",
+    "compatibility": "An explicit html item inside the authoritative section remains supported.",
+    "forbidden": [
+      "hard-code a Rust-only html filter",
+      "drop explicitly declared html checks",
+      "change target project files",
+      "weaken downstream verifier gates"
+    ]
+  },
+  "verification": {
+    "red": "1 failed: the real L1-05 Rust synthesis serialized 'html' from conditional acceptance prose.",
+    "review_red": "Independent review reproduced closing-hash fallback leakage, nested-heading truncation, Go explicit-html deletion, fenced-example leakage, Notes prose leakage, underscore/hyphen identifier substring leakage, indented code leakage, list-item fenced-block leakage, invalid fence closure by list/content markers, missing container minimum indentation, invalid backtick info strings, list-continuation indent loss, missing fence termination on container dedent, task-checkbox indent inflation, nested-list outer-container loss, lazy list/blockquote continuation leakage, and missing bare-declaration reset after a nested heading.",
+    "focused_green": "20 passed: section scoping, explicit html plus legacy fallback, closing hashes, nested/fenced headings, bare declarations after nested headings, fence/Notes/identifier-boundary filtering, indented/list-item/list-continuation fenced blocks, container-valid close ranges and dedent termination, task-list and nested-list stack semantics, lazy list/blockquote/plain-paragraph continuation filtering, backtick info validation, Go explicit-html preservation, and real L1-05 Rust synthesis.",
+    "pm_adapter_suite": "156 passed",
+    "roles_adapters_suite": "1310 passed, 2 warnings",
+    "factory_pipeline_suite": "1266 passed, 2 warnings",
+    "kernelone_release_gate": "ok=true; 415 passed, 1 skipped, 2 warnings",
+    "static_gates": "Ruff check/format, mypy, compileall, JSON parse, and targeted git diff --check passed",
+    "independent_review": "CLEAR after 11 bounded CommonMark review rounds",
+    "stable_source_hashes": {
+      "synthesis.py": "66eb0b56e0befab540654dfbdca93f1e143ee6e5dc98b65782a2b44df3eaf8ed",
+      "normalization.py": "c85e51b6759955da63a383ff24d464d6d1bb8b86595dcc4304b32e6857788fa2",
+      "test_pm_adapter_pure.py": "f3b34b7e4c06fb43a035e9bc7b0ffe3e7667e5fab2b2191505df13656871b848"
+    },
+    "provider_calls_after_fix": 0,
+    "bench_runs_after_fix": 0
+  },
+  "out_of_scope_observation": {
+    "python_unittest_harness": "The Rust synthesis intentionally creates tests/test_product.py as a cross-language validation harness. This is a separate architectural decision and is not silently classified as the same parser defect."
+  },
+  "next_action": "Keep Provider/Bench frozen and audit the separate Rust tests/test_product.py plus ContextOS all_ok=false/isolated=false bucket before any R116 authorization."
+}

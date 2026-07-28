@@ -1465,6 +1465,17 @@ async def test_failed_settled_stage_auto_releases_workspace_lease_on_terminal(
     )
     run = await service.create_run(FactoryConfig(name="failed-settled", stages=["director_dispatch"]))
     await service.start_run(run.id)
+    runtime, _task_id, identity = _create_active_factory_child(
+        workspace,
+        factory_run_id=run.id,
+    )
+    completed = _settle_factory_child(
+        runtime,
+        identity,
+        outcome="completed",
+        summary="fixture child settled",
+    )
+    assert completed["success"] is True
 
     def query_canonical_settlement(factory_run_id: str) -> dict[str, object]:
         assert factory_run_id == run.id
@@ -1538,6 +1549,17 @@ async def test_failed_settled_stage_complete_run_is_idempotent_after_auto_releas
     )
     run = await service.create_run(FactoryConfig(name="failed-complete-release", stages=["director_dispatch"]))
     await service.start_run(run.id)
+    runtime, _task_id, identity = _create_active_factory_child(
+        workspace,
+        factory_run_id=run.id,
+    )
+    completed = _settle_factory_child(
+        runtime,
+        identity,
+        outcome="completed",
+        summary="fixture child settled",
+    )
+    assert completed["success"] is True
 
     monkeypatch.setattr(
         service,
@@ -1826,6 +1848,15 @@ async def test_terminal_drain_reacts_to_child_terminal_fact_and_queries_remain_p
     assert released.metadata["factory_workspace_run_lease"]["state"] == "released"
     assert released.metadata.get("factory_task_runtime_abort", {}).get("force_active_sessions") is True
     assert "factory_workspace_run_drain_conflict" not in released.metadata
+    snapshot = released.metadata["factory_terminal_task_runtime_projection"]
+    assert snapshot["schema_version"] == "factory.terminal-task-runtime-projection.v1"
+    assert snapshot["factory_run_id"] == run.id
+    assert snapshot["projection"]["source"] == "task_runtime.execution_fact"
+    assert snapshot["projection"]["authoritative"] is True
+    assert snapshot["projection"]["degraded"] is False
+    assert snapshot["projection"]["requested_factory_run_id"] == run.id
+    assert snapshot["projection"]["row_count"] == 1
+    assert snapshot["projection"]["rows"][0]["factory_run_id"] == run.id
     # Reset after release removes task/session files under factory authority.
     assert not task_path.exists()
     assert not session_path.exists()
@@ -1843,6 +1874,66 @@ async def test_terminal_drain_reacts_to_child_terminal_fact_and_queries_remain_p
     again = await service.settle_terminal_run(run.id)
     assert again is not None
     assert again.metadata["factory_workspace_run_lease"]["state"] == "released"
+
+
+@pytest.mark.asyncio
+async def test_terminal_drain_retry_reuses_snapshot_after_reset_before_release_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry must not replace the pre-reset authority snapshot with zero rows."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = FactoryRunService(
+        workspace,
+        cache_root=tmp_path / "runtime",
+        executor=_InflightStageExecutor(),
+    )
+    run = await service.create_run(FactoryConfig(name="terminal-snapshot-crash", stages=["director_dispatch"]))
+    await service.start_run(run.id)
+    _create_active_factory_child(workspace, factory_run_id=run.id)
+    await service.execute_stage(
+        run.id,
+        "director_dispatch",
+        {"heartbeat_interval_seconds": 0},
+    )
+
+    real_task_runtime = TaskRuntimeService
+    crash_once = True
+
+    class _CrashAfterResetTaskRuntime:
+        def __init__(self, requested_workspace: str) -> None:
+            self._delegate = real_task_runtime(requested_workspace)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._delegate, name)
+
+        def reset_records(self, *, keep_plan: bool, factory_run_id: str | None = None) -> dict[str, object]:
+            nonlocal crash_once
+            result = self._delegate.reset_records(
+                keep_plan=keep_plan,
+                factory_run_id=factory_run_id,
+            )
+            if crash_once:
+                crash_once = False
+                raise RuntimeError("simulated crash after TaskRuntime reset")
+            return result
+
+    monkeypatch.setattr(factory_run_service_module, "TaskRuntimeService", _CrashAfterResetTaskRuntime)
+
+    with pytest.raises(RuntimeError, match="simulated crash after TaskRuntime reset"):
+        await service.complete_run(run.id, success=False)
+
+    after_crash = await service.get_run(run.id)
+    assert after_crash is not None
+    frozen = after_crash.metadata["factory_terminal_task_runtime_projection"]
+    assert frozen["projection"]["row_count"] == 1
+
+    released = await service.settle_terminal_run(run.id)
+
+    assert released.metadata["factory_workspace_run_lease"]["state"] == "released"
+    assert released.metadata["factory_terminal_task_runtime_projection"] == frozen
 
 
 @pytest.mark.asyncio

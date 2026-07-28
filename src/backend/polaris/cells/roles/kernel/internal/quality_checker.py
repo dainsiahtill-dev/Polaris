@@ -436,6 +436,57 @@ class QualityChecker:
 
         return results
 
+    @staticmethod
+    def _normalize_chief_engineer_blueprint_candidate(candidate: dict[str, Any]) -> dict[str, Any] | None:
+        """Normalize Chief Engineer blueprint variants.
+
+        Supported shapes:
+        - canonical top-level object: ``{"construction_plan": {...}, ...}``
+        - wrapped object: ``{"llm_blueprint": {...}}``
+
+        Explicit ``scope_for_apply`` / ``risk_flags`` fields may be lifted from
+        ``construction_plan`` for the wrapped shape. Missing contract fields
+        are never synthesized: quality validation must remain fail-closed.
+        """
+
+        if not isinstance(candidate, dict):
+            return None
+        if "construction_plan" in candidate:
+            payload: dict[str, Any] = candidate
+        else:
+            wrapped = candidate.get("llm_blueprint")
+            if not isinstance(wrapped, dict):
+                return None
+            if "construction_plan" not in wrapped:
+                return None
+            payload = wrapped
+
+        plan = payload.get("construction_plan")
+        plan_map = plan if isinstance(plan, dict) else {}
+        normalized = dict(payload)
+
+        scope = normalized.get("scope_for_apply")
+        if not isinstance(scope, list):
+            nested_scope = plan_map.get("scope_for_apply")
+            if not isinstance(nested_scope, list):
+                return None
+            normalized["scope_for_apply"] = list(nested_scope)
+
+        risks = normalized.get("risk_flags")
+        if not isinstance(risks, list):
+            nested_risks = plan_map.get("risk_flags")
+            if not isinstance(nested_risks, list):
+                return None
+            normalized["risk_flags"] = list(nested_risks)
+
+        if not all(key in normalized for key in ("construction_plan", "scope_for_apply", "risk_flags")):
+            return None
+        if not isinstance(normalized.get("scope_for_apply"), list):
+            return None
+        if not isinstance(normalized.get("risk_flags"), list):
+            return None
+        return normalized
+
     def _select_json_candidate(
         self,
         candidates: list[dict[str, Any]],
@@ -455,6 +506,10 @@ class QualityChecker:
                 return candidate, []
 
         if normalized == "chief_engineer":
+            for candidate in candidates:
+                lifted = self._normalize_chief_engineer_blueprint_candidate(candidate)
+                if lifted is not None and all(key in lifted for key in required_keys):
+                    return lifted, []
             return (
                 None,
                 ["No JSON object matched chief_engineer blueprint keys: " + ", ".join(required_keys)],

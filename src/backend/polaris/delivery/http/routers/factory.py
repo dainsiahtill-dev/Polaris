@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import traceback
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,13 +25,16 @@ from polaris.cells.control_plane.run_ledger.public.service import read_run_ledge
 from polaris.cells.factory.pipeline.internal.bench_service import (
     FactoryBenchService,
 )
+from polaris.cells.factory.pipeline.internal.factory_store import FileLockTimeoutError
 from polaris.cells.factory.pipeline.public import (
+    FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
     TERMINAL_RUN_STATUSES,
     FactoryConfig,
     FactoryPipelineError,
     FactoryRun,
     FactoryRunService,
     FactoryRunStatus as ServiceRunStatus,
+    FactoryTerminalTaskRuntimeProjectionV1,
     RecoverStaleFactoryWorkspaceOwnerCommandV1,
     RecoverStaleFactoryWorkspaceOwnerResultV1,
     recover_stale_factory_workspace_owner,
@@ -1944,18 +1948,39 @@ def _attach_control_plane_projection(
         bundle["control_plane_projection"] = projection
         bundle["run_ledger_projection"] = projection
 
-    try:
-        task_runtime_projection = TaskRuntimeService(str(workspace)).query_observable_task_rows_projection()
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        projection_errors.append(
-            {
-                "code": "TASK_RUNTIME_PROJECTION_UNAVAILABLE",
-                "message": str(exc)[:300],
-                "exception_type": type(exc).__name__,
-            }
-        )
-    else:
-        bundle["task_runtime_projection"] = task_runtime_projection.to_authority_dict()
+    terminal_snapshot_payload = run.metadata.get(FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY)
+    terminal_snapshot: FactoryTerminalTaskRuntimeProjectionV1 | None = None
+    if isinstance(terminal_snapshot_payload, Mapping):
+        try:
+            terminal_snapshot = FactoryTerminalTaskRuntimeProjectionV1.from_dict(terminal_snapshot_payload)
+            if terminal_snapshot.factory_run_id != run.id:
+                raise ValueError("terminal TaskRuntime snapshot factory_run_id mismatch")
+            if Path(terminal_snapshot.workspace).expanduser().resolve() != Path(workspace).expanduser().resolve():
+                raise ValueError("terminal TaskRuntime snapshot workspace mismatch")
+        except (OSError, TypeError, ValueError) as exc:
+            projection_errors.append(
+                {
+                    "code": "TASK_RUNTIME_TERMINAL_PROJECTION_INVALID",
+                    "message": str(exc)[:300],
+                    "exception_type": type(exc).__name__,
+                }
+            )
+        else:
+            bundle["task_runtime_projection"] = dict(terminal_snapshot.projection)
+
+    if terminal_snapshot is None:
+        try:
+            task_runtime_projection = TaskRuntimeService(str(workspace)).query_observable_task_rows_projection()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            projection_errors.append(
+                {
+                    "code": "TASK_RUNTIME_PROJECTION_UNAVAILABLE",
+                    "message": str(exc)[:300],
+                    "exception_type": type(exc).__name__,
+                }
+            )
+        else:
+            bundle["task_runtime_projection"] = task_runtime_projection.to_authority_dict(factory_run_id=run.id)
 
     if projection_errors:
         bundle["control_plane_projection_error"] = {
@@ -2020,8 +2045,8 @@ def _classify_factory_failure_code(*, stage: str, detail: str) -> str:
         'message="forbidden"',
         "clientresponseerror: 403",
         "clientresponseerror: 429",
-        "status_code\": 403",
-        "status_code\": 429",
+        'status_code": 403',
+        'status_code": 429',
         "status=403",
         "status=429",
         "http 403",
@@ -2601,6 +2626,19 @@ async def _start_factory_run_core(
     return _map_service_run_to_contract(run)
 
 
+async def _load_factory_run_for_http(service: FactoryRunService, run_id: str) -> FactoryRun | None:
+    """Keep snapshot contention distinct from a genuinely absent run."""
+
+    try:
+        return await service.get_run(run_id)
+    except FileLockTimeoutError as exc:
+        raise StructuredHTTPException(
+            status_code=503,
+            code="FACTORY_RUN_SNAPSHOT_BUSY",
+            message=f"Run {run_id} snapshot is temporarily busy",
+        ) from exc
+
+
 async def _get_factory_run_status_core(
     run_id: str,
     state: AppState,
@@ -2608,7 +2646,7 @@ async def _get_factory_run_status_core(
 ) -> FactoryRunStatusContract:
     effective_workspace = _resolve_workspace(state, workspace)
     service = _get_service(effective_workspace)
-    run = await service.get_run(run_id)
+    run = await _load_factory_run_for_http(service, run_id)
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
     return _map_service_run_to_contract(run)
@@ -2621,7 +2659,7 @@ async def _get_factory_run_events_core(
     workspace: str | None = None,
 ) -> FactoryRunEventsResponse:
     service = _get_service(_resolve_workspace(state, workspace))
-    run = await service.get_run(run_id)
+    run = await _load_factory_run_for_http(service, run_id)
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
@@ -2637,7 +2675,7 @@ async def _get_factory_run_audit_bundle_core(
 ) -> FactoryRunAuditBundleResponse:
     effective_workspace = _resolve_workspace(state, workspace)
     service = _get_service(effective_workspace)
-    run = await service.get_run(run_id)
+    run = await _load_factory_run_for_http(service, run_id)
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
@@ -2664,7 +2702,7 @@ async def _control_factory_run_core(
 ) -> FactoryRunStatusContract:
     effective_workspace = _resolve_workspace(state, workspace)
     service = _get_service(effective_workspace)
-    run = await service.get_run(run_id)
+    run = await _load_factory_run_for_http(service, run_id)
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
@@ -2762,7 +2800,7 @@ async def _get_factory_run_artifacts_core(
 ) -> FactoryRunArtifactsResponse:
     effective_workspace = _resolve_workspace(state, workspace)
     service = _get_service(effective_workspace)
-    run = await service.get_run(run_id)
+    run = await _load_factory_run_for_http(service, run_id)
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 

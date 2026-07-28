@@ -111,8 +111,9 @@ class TestNormalizeEventType:
     def test_string_converted(self) -> None:
         assert normalize_event_type("task_start") == KernelAuditEventType.TASK_START
 
-    def test_empty_defaults(self) -> None:
-        assert normalize_event_type("") == KernelAuditEventType.TASK_START
+    def test_empty_raises(self) -> None:
+        with pytest.raises(ValueError, match="not a valid KernelAuditEventType"):
+            normalize_event_type("")
 
 
 class TestNormalizeRole:

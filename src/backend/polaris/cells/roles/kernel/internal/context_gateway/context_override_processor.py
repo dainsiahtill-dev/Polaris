@@ -20,6 +20,11 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from polaris.kernelone.audit.context_os_prompt import (
+    CONTROL_PLANE_PROMPT_CONTENT_KEYS,
+    find_control_plane_prompt_content_hits,
+    normalize_control_plane_prompt_key,
+)
 from polaris.kernelone.context.prompt_safety import prompt_safe_tool_failure_summary
 
 from .gateway_helpers import _CONTROL_PLANE_CONTEXT_KEYS, _context_override_value_char_cap
@@ -43,6 +48,37 @@ _CONTEXT_OVERRIDE_TOOL_FAILURE_KEYS = frozenset(
         "transcript",
     }
 )
+_PROMPT_PROJECTION_MAX_DEPTH = 64
+_PROMPT_PROJECTION_MAX_NODES = 4096
+_PROMPT_PROJECTION_MAX_TOP_LEVEL_ITEMS = 256
+_PROMPT_PROJECTION_DEFAULT_STRING_SCAN_CHARS = 1500
+_PROMPT_PROJECTION_LIMIT_MARKER = "[FILTERED_CONTEXT_PROJECTION_LIMIT]"
+_RAW_AUTHORITY_MARKER_KEYS = frozenset(
+    {
+        "capability_token_id",
+        "job_token_id",
+        "parent_token_id",
+        "token_id",
+    }
+)
+_RAW_AUTHORITY_SHAPE_KEYS = frozenset(
+    {
+        "allowed_commands",
+        "allowed_paths",
+        "allowed_read_paths",
+        "allowed_scope",
+        "allowed_write_paths",
+        "capability_audit",
+        "factory_run_id",
+        "gate_policy",
+        "parent_token_id",
+        "project_id",
+        "repair_lineage",
+        "run_id",
+        "stage",
+        "token_id",
+    }
+)
 
 
 class ContextOverrideProcessor:
@@ -64,21 +100,28 @@ class ContextOverrideProcessor:
         Returns:
             Message dict with filtered content, or None if empty.
         """
-        if not context_override or not isinstance(context_override, dict):
+        if not context_override or type(context_override) is not dict:
             return None
 
         filtered_items: list[str] = []
         has_injection = False
         value_char_cap = _context_override_value_char_cap()
 
-        for key, value in context_override.items():
-            if not isinstance(key, str):
+        for item_index, (key, value) in enumerate(context_override.items()):
+            if item_index >= _PROMPT_PROJECTION_MAX_TOP_LEVEL_ITEMS:
+                filtered_items.append(_PROMPT_PROJECTION_LIMIT_MARKER)
+                break
+            if type(key) is not str:
                 continue
-            normalized_key = key.strip().lower()
+            normalized_key = normalize_control_plane_prompt_key(key)
             if normalized_key.startswith("_") or normalized_key in _CONTROL_PLANE_CONTEXT_KEYS:
                 continue
 
-            str_value = str(value) if value is not None else ""
+            prompt_value = self._project_prompt_safe_value(
+                value,
+                _string_scan_chars=value_char_cap,
+            )
+            str_value = str(prompt_value) if prompt_value is not None else ""
             str_value = self._prompt_safe_context_value(normalized_key, str_value)
             # Bound each value so no single oversized payload can blow the window
             # (order-4): the weak model cannot use multi-thousand-token metadata.
@@ -118,6 +161,114 @@ class ContextOverrideProcessor:
             content = "⚠️ CONTEXT_OVERRIDE_WITH_FILTERED_CONTENT:\n" + content
 
         return {"role": "system", "name": "context_override", "content": content}
+
+    @classmethod
+    def _project_prompt_safe_value(
+        cls,
+        value: Any,
+        *,
+        _active_ids: set[int] | None = None,
+        _depth: int = 0,
+        _node_count: list[int] | None = None,
+        _string_scan_chars: int = _PROMPT_PROJECTION_DEFAULT_STRING_SCAN_CHARS,
+    ) -> Any:
+        """Copy mixed data/control structures without nested runtime authority.
+
+        ``context_override`` remains the authoritative runtime mapping consumed
+        by ToolGateway/DEO. Only its provider-request projection is copied and
+        filtered here. Domain ``task_id`` values remain available because the
+        ContextOS audit explicitly treats them as valid contract evidence.
+        """
+        node_count = _node_count if _node_count is not None else [0]
+        node_count[0] += 1
+        if _depth >= _PROMPT_PROJECTION_MAX_DEPTH or node_count[0] > _PROMPT_PROJECTION_MAX_NODES:
+            return _PROMPT_PROJECTION_LIMIT_MARKER
+
+        value_type = type(value)
+        if value is None or value_type in {bool, int, float}:
+            return value
+        if value_type is str:
+            if find_control_plane_prompt_content_hits(value[:_string_scan_chars]):
+                return "[FILTERED_CONTROL_PLANE_CONTENT]"
+            return value
+
+        if value_type in {dict, list, tuple}:
+            active_ids = _active_ids if _active_ids is not None else set()
+            identity = id(value)
+            if identity in active_ids:
+                return "[FILTERED_RECURSIVE_CONTEXT_VALUE]"
+            active_ids.add(identity)
+            try:
+                if value_type is dict:
+                    projected: dict[Any, Any] = {}
+                    normalized_keys: set[str] = set()
+                    remaining_budget = max(0, _PROMPT_PROJECTION_MAX_NODES - node_count[0])
+                    for key_index, key in enumerate(value):
+                        if key_index >= remaining_budget:
+                            break
+                        if type(key) is str:
+                            normalized_keys.add(normalize_control_plane_prompt_key(key))
+                    raw_authority_shape = bool(normalized_keys.intersection(_RAW_AUTHORITY_MARKER_KEYS))
+                    for key, child in value.items():
+                        node_count[0] += 1
+                        if node_count[0] > _PROMPT_PROJECTION_MAX_NODES:
+                            projected["projection_limit"] = _PROMPT_PROJECTION_LIMIT_MARKER
+                            break
+                        if type(key) is not str:
+                            continue
+                        normalized_key = normalize_control_plane_prompt_key(key)
+                        if (
+                            normalized_key.startswith("_")
+                            or normalized_key in CONTROL_PLANE_PROMPT_CONTENT_KEYS
+                            or (raw_authority_shape and normalized_key in _RAW_AUTHORITY_SHAPE_KEYS)
+                        ):
+                            continue
+                        projected[key] = cls._project_prompt_safe_value(
+                            child,
+                            _active_ids=active_ids,
+                            _depth=_depth + 1,
+                            _node_count=node_count,
+                            _string_scan_chars=_string_scan_chars,
+                        )
+                        if node_count[0] > _PROMPT_PROJECTION_MAX_NODES:
+                            break
+                    return projected
+                if value_type is list:
+                    projected_list: list[Any] = []
+                    for item in value:
+                        projected_list.append(
+                            cls._project_prompt_safe_value(
+                                item,
+                                _active_ids=active_ids,
+                                _depth=_depth + 1,
+                                _node_count=node_count,
+                                _string_scan_chars=_string_scan_chars,
+                            )
+                        )
+                        if node_count[0] > _PROMPT_PROJECTION_MAX_NODES:
+                            break
+                    return projected_list
+                projected_tuple: list[Any] = []
+                for item in value:
+                    projected_tuple.append(
+                        cls._project_prompt_safe_value(
+                            item,
+                            _active_ids=active_ids,
+                            _depth=_depth + 1,
+                            _node_count=node_count,
+                            _string_scan_chars=_string_scan_chars,
+                        )
+                    )
+                    if node_count[0] > _PROMPT_PROJECTION_MAX_NODES:
+                        break
+                return tuple(projected_tuple)
+            finally:
+                active_ids.remove(identity)
+
+        # Context overrides are a JSON-like contract. Never call arbitrary
+        # ``__str__`` methods in the Provider request projection: opaque objects
+        # can serialize complete capability or execution-attempt authority.
+        return "[FILTERED_UNPROJECTABLE_CONTEXT_OBJECT]"
 
     def extract_tool_messages_from_history(
         self, history: Sequence[tuple[str, str] | dict[str, str]]

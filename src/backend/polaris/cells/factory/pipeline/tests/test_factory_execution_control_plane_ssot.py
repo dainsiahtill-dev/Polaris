@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +120,15 @@ def _canonical_projection(
 class _CompletedCommandService:
     async def query_run_status(self, run_id: str) -> CommandResult:
         return CommandResult(run_id=run_id, status="completed", message="session completed")
+
+
+class _FailedCommandService:
+    async def query_run_status(self, run_id: str) -> CommandResult:
+        return CommandResult(
+            run_id=run_id,
+            status="failed",
+            message="director_no_materialized_changes",
+        )
 
 
 class _QaCommandService:
@@ -355,6 +365,484 @@ async def test_waiter_rejects_completed_session_without_canonical_outcome(
     assert result.reason_code == "canonical_terminal_projection_missing"
     assert result.metadata is not None
     assert result.metadata["canonical_authoritative"] is False
+
+
+@pytest.mark.asyncio
+async def test_waiter_extends_settlement_for_active_execution_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _Lifecycle:
+        _active_runs: dict[str, asyncio.Task[Any]] = {}
+
+    async def get_lifecycle() -> _Lifecycle:
+        return _Lifecycle()
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+        get_lifecycle,
+    )
+    monkeypatch.setattr(
+        completion_module,
+        "_CANONICAL_OUTCOME_SETTLEMENT_SECONDS",
+        0.2,
+    )
+
+    waiter = RunCompletionWaiter(tmp_path)
+    canonical_calls = 0
+    progress_calls = 0
+
+    def canonical_result(**_kwargs: Any) -> CommandResult | None:
+        nonlocal canonical_calls
+        canonical_calls += 1
+        # succeed only after several poll cycles, beyond the base 0.2s settlement.
+        if canonical_calls < 5:
+            return None
+        return CommandResult(
+            run_id="run-progress",
+            status="completed",
+            message="TaskRuntime canonical projection reached completed",
+            metadata={
+                "canonical_authoritative": True,
+                "terminal_source": "task_runtime.execution_fact",
+                "fact_event_seq": 99,
+            },
+        )
+
+    def progress_marker(**_kwargs: Any) -> tuple[tuple[str, str, str, str], ...]:
+        nonlocal progress_calls
+        progress_calls += 1
+        if progress_calls < 2:
+            return (("task-1", "1", "hb-1", "in_progress"),)
+        return (("task-1", "2", "hb-2", "in_progress"),)
+
+    monkeypatch.setattr(waiter, "canonical_terminal_result", canonical_result)
+    monkeypatch.setattr(waiter, "active_execution_progress_marker", progress_marker)
+
+    result = await waiter.wait(
+        _CompletedCommandService(),
+        CommandResult(run_id="run-progress", status="running", message="submitted"),
+        timeout_seconds=1,
+    )
+
+    assert result.status == "completed"
+    assert result.metadata is not None
+    assert result.metadata["canonical_authoritative"] is True
+    assert result.metadata["fact_event_seq"] == 99
+    assert canonical_calls >= 5
+
+
+@pytest.mark.asyncio
+async def test_waiter_preserves_execution_lease_when_lifecycle_fails_before_active_task_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """R94: a lifecycle failure cannot outrank the active execution owner."""
+
+    class _Lifecycle:
+        _active_runs: dict[str, asyncio.Task[Any]] = {}
+
+    async def get_lifecycle() -> _Lifecycle:
+        return _Lifecycle()
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+        get_lifecycle,
+    )
+    waiter = RunCompletionWaiter(tmp_path)
+    state = {"committed": False}
+
+    def task_runtime_projection() -> ObservableTaskRowsProjectionV1:
+        now = datetime.now(timezone.utc)
+        status = "completed" if state["committed"] else "in_progress"
+        return ObservableTaskRowsProjectionV1(
+            workspace=str(tmp_path),
+            source="task_runtime.execution_fact",
+            authoritative=True,
+            degraded=False,
+            rows=(
+                {
+                    "id": "TASK-2",
+                    "status": status,
+                    "execution_state": status,
+                    "running": not state["committed"],
+                    "workflow_run_id": "director-r94",
+                    "fact_event_seq": 93 if state["committed"] else 92,
+                    "last_heartbeat_at": (now - timedelta(seconds=1)).isoformat(),
+                    "lease_expires_at": (now + timedelta(seconds=30)).isoformat(),
+                    "metadata": {
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                        "task_runtime_execution_fact": {"run_id": "director-r94"},
+                    },
+                },
+            ),
+            readiness={"ready": True, "blocking_reasons": []},
+        )
+
+    monkeypatch.setattr(
+        waiter,
+        "_observable_task_rows_projection",
+        task_runtime_projection,
+    )
+
+    def canonical_result(**_kwargs: Any) -> CommandResult | None:
+        if not state["committed"]:
+            return None
+        return CommandResult(
+            run_id="director-r94",
+            status="completed",
+            message="TaskRuntime canonical projection reached completed",
+            metadata={
+                "canonical_authoritative": True,
+                "terminal_source": "task_runtime.execution_fact",
+                "fact_event_seq": 94,
+            },
+        )
+
+    monkeypatch.setattr(waiter, "canonical_terminal_result", canonical_result)
+
+    async def commit_task_runtime_fact() -> None:
+        await asyncio.sleep(0.02)
+        state["committed"] = True
+
+    commit_task = asyncio.create_task(commit_task_runtime_fact())
+    result = await waiter.wait(
+        _FailedCommandService(),
+        CommandResult(
+            run_id="director-r94",
+            status="failed",
+            message="director_no_materialized_changes",
+        ),
+        timeout_seconds=1,
+    )
+    await commit_task
+
+    assert result.status == "completed"
+    assert result.metadata is not None
+    assert result.metadata["canonical_authoritative"] is True
+    assert result.metadata["terminal_source"] == "task_runtime.execution_fact"
+    assert result.metadata["fact_event_seq"] == 94
+
+
+@pytest.mark.asyncio
+async def test_waiter_explicit_cancel_keeps_fixed_window_after_lifecycle_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Explicit cancel outranks lease waiting without mutating the active child."""
+
+    class _Lifecycle:
+        _active_runs: dict[str, asyncio.Task[Any]] = {}
+
+        def __init__(self) -> None:
+            self.cancelled: list[str] = []
+
+        async def cancel_run(self, run_id: str, force: bool = False) -> None:
+            del force
+            self.cancelled.append(run_id)
+
+    lifecycle = _Lifecycle()
+
+    async def get_lifecycle() -> _Lifecycle:
+        return lifecycle
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+        get_lifecycle,
+    )
+    monkeypatch.setattr(completion_module, "_CANONICAL_OUTCOME_SETTLEMENT_SECONDS", 0.05)
+    monkeypatch.setattr(completion_module, "_CANONICAL_POLL_SECONDS", 0.005)
+    waiter = RunCompletionWaiter(tmp_path)
+    projection_calls = 0
+
+    def task_runtime_projection() -> ObservableTaskRowsProjectionV1:
+        nonlocal projection_calls
+        projection_calls += 1
+        now = datetime.now(timezone.utc)
+        return ObservableTaskRowsProjectionV1(
+            workspace=str(tmp_path),
+            source="task_runtime.execution_fact",
+            authoritative=True,
+            degraded=False,
+            rows=(
+                {
+                    "id": "TASK-2",
+                    "status": "in_progress",
+                    "execution_state": "in_progress",
+                    "running": True,
+                    "workflow_run_id": "director-r94-cancel",
+                    "fact_event_seq": projection_calls,
+                    "last_heartbeat_at": (now - timedelta(seconds=1)).isoformat(),
+                    "lease_expires_at": (now + timedelta(seconds=30)).isoformat(),
+                    "metadata": {
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                        "task_runtime_execution_fact": {"run_id": "director-r94-cancel"},
+                    },
+                },
+            ),
+            readiness={"ready": True, "blocking_reasons": []},
+        )
+
+    monkeypatch.setattr(waiter, "_observable_task_rows_projection", task_runtime_projection)
+    monkeypatch.setattr(waiter, "canonical_terminal_result", lambda **_kwargs: None)
+    cancel_event = asyncio.Event()
+    cancel_event.set()
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+
+    result = await waiter.wait(
+        _FailedCommandService(),
+        CommandResult(
+            run_id="director-r94-cancel",
+            status="failed",
+            message="director_no_materialized_changes",
+        ),
+        timeout_seconds=1,
+        cancel_event=cancel_event,
+    )
+
+    assert loop.time() - started_at < 0.25
+    assert result.status == "cancelled"
+    assert result.metadata is not None
+    assert result.metadata["terminal_source"] == "task_runtime_active_execution_barrier"
+    assert result.metadata["cancel_reason"] == "factory_cancelled"
+    assert result.metadata["barrier_cancel_deferred"] is True
+    assert result.metadata["deferred_cancel_reason"] == "factory_cancelled"
+    assert lifecycle.cancelled == []
+
+
+@pytest.mark.asyncio
+async def test_waiter_allows_terminal_projection_to_catch_up_after_active_row_disappears(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """R94: active-to-terminal projection lag gets the fixed settlement window."""
+
+    class _Lifecycle:
+        _active_runs: dict[str, asyncio.Task[Any]] = {}
+
+    async def get_lifecycle() -> _Lifecycle:
+        return _Lifecycle()
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+        get_lifecycle,
+    )
+    monkeypatch.setattr(completion_module, "_CANONICAL_OUTCOME_SETTLEMENT_SECONDS", 0.1)
+    monkeypatch.setattr(completion_module, "_CANONICAL_POLL_SECONDS", 0.005)
+    waiter = RunCompletionWaiter(tmp_path)
+    projection_calls = 0
+    canonical_calls = 0
+
+    def task_runtime_projection() -> ObservableTaskRowsProjectionV1:
+        nonlocal projection_calls
+        projection_calls += 1
+        now = datetime.now(timezone.utc)
+        rows: tuple[dict[str, Any], ...] = ()
+        if projection_calls <= 2:
+            rows = (
+                {
+                    "id": "TASK-2",
+                    "status": "in_progress",
+                    "execution_state": "in_progress",
+                    "running": True,
+                    "workflow_run_id": "director-r94-gap",
+                    "fact_event_seq": 95,
+                    "last_heartbeat_at": (now - timedelta(seconds=1)).isoformat(),
+                    "lease_expires_at": (now + timedelta(seconds=30)).isoformat(),
+                    "metadata": {
+                        "source": "task_runtime.execution_fact",
+                        "status_source": "task_runtime.execution_fact",
+                        "task_runtime_execution_fact": {"run_id": "director-r94-gap"},
+                    },
+                },
+            )
+        return ObservableTaskRowsProjectionV1(
+            workspace=str(tmp_path),
+            source="task_runtime.execution_fact",
+            authoritative=True,
+            degraded=False,
+            rows=rows,
+            readiness={"ready": True, "blocking_reasons": []},
+        )
+
+    monkeypatch.setattr(waiter, "_observable_task_rows_projection", task_runtime_projection)
+
+    def canonical_result(**_kwargs: Any) -> CommandResult | None:
+        nonlocal canonical_calls
+        canonical_calls += 1
+        if canonical_calls < 3:
+            return None
+        return CommandResult(
+            run_id="director-r94-gap",
+            status="completed",
+            message="terminal fact visible after active-row projection",
+            metadata={
+                "canonical_authoritative": True,
+                "terminal_source": "task_runtime.execution_fact",
+                "fact_event_seq": 96,
+            },
+        )
+
+    monkeypatch.setattr(waiter, "canonical_terminal_result", canonical_result)
+
+    result = await waiter.wait(
+        _FailedCommandService(),
+        CommandResult(
+            run_id="director-r94-gap",
+            status="failed",
+            message="director_no_materialized_changes",
+        ),
+        timeout_seconds=1,
+    )
+
+    assert result.status == "completed"
+    assert result.metadata is not None
+    assert result.metadata["fact_event_seq"] == 96
+    assert projection_calls >= 3
+    assert canonical_calls >= 3
+
+
+def test_active_execution_barrier_rejects_degraded_transitional_projection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    waiter = RunCompletionWaiter(tmp_path)
+    now = datetime.now(timezone.utc)
+    projection = ObservableTaskRowsProjectionV1(
+        workspace=str(tmp_path),
+        source="task_runtime.transitional_file_fallback",
+        authoritative=False,
+        degraded=True,
+        rows=(
+            {
+                "id": "TASK-2",
+                "status": "in_progress",
+                "workflow_run_id": "director-r94",
+                "fact_event_seq": 97,
+                "last_heartbeat_at": (now - timedelta(seconds=1)).isoformat(),
+                "lease_expires_at": (now + timedelta(seconds=30)).isoformat(),
+                "metadata": {
+                    "source": "task_runtime.transitional_file_fallback",
+                    "status_source": "task_runtime.transitional_file_fallback",
+                },
+            },
+        ),
+        readiness={"ready": False, "blocking_reasons": ["fact_cutover_not_ready"]},
+    )
+    monkeypatch.setattr(waiter, "_observable_task_rows_projection", lambda: projection)
+
+    assert (
+        waiter.active_execution_barrier_result(
+            run_id="director-r94",
+            reason="orchestration_lifecycle_failure",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("row_overrides", "reason"),
+    [
+        (
+            {
+                "workflow_run_id": "director-other",
+                "factory_run_id": "director-r94",
+                "metadata": {
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                    "task_runtime_execution_fact": {"run_id": "director-third"},
+                },
+            },
+            "ambiguous child run identities",
+        ),
+        ({"fact_event_seq": 0}, "missing positive fact sequence"),
+        ({"lease_expires_at": "2000-01-01T00:00:00+00:00"}, "expired execution lease"),
+        ({"last_heartbeat_at": ""}, "missing heartbeat"),
+    ],
+)
+def test_active_execution_barrier_rejects_noncanonical_or_stale_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    row_overrides: dict[str, Any],
+    reason: str,
+) -> None:
+    del reason
+    waiter = RunCompletionWaiter(tmp_path)
+    now = datetime.now(timezone.utc)
+    row: dict[str, Any] = {
+        "id": "TASK-2",
+        "status": "in_progress",
+        "execution_state": "in_progress",
+        "running": True,
+        "workflow_run_id": "director-r94",
+        "fact_event_seq": 98,
+        "last_heartbeat_at": (now - timedelta(seconds=1)).isoformat(),
+        "lease_expires_at": (now + timedelta(seconds=30)).isoformat(),
+        "metadata": {
+            "source": "task_runtime.execution_fact",
+            "status_source": "task_runtime.execution_fact",
+            "task_runtime_execution_fact": {"run_id": "director-r94"},
+        },
+    }
+    row.update(row_overrides)
+    projection = ObservableTaskRowsProjectionV1(
+        workspace=str(tmp_path),
+        source="task_runtime.execution_fact",
+        authoritative=True,
+        degraded=False,
+        rows=(row,),
+        readiness={"ready": True, "blocking_reasons": []},
+    )
+    monkeypatch.setattr(waiter, "_observable_task_rows_projection", lambda: projection)
+
+    assert (
+        waiter.active_execution_barrier_result(
+            run_id="director-r94",
+            reason="orchestration_lifecycle_failure",
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_waiter_keeps_lifecycle_failure_when_task_runtime_is_not_active(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The R94 liveness exception must not hide a genuine lifecycle failure."""
+
+    class _Lifecycle:
+        _active_runs: dict[str, asyncio.Task[Any]] = {}
+
+    async def get_lifecycle() -> _Lifecycle:
+        return _Lifecycle()
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+        get_lifecycle,
+    )
+    waiter = RunCompletionWaiter(tmp_path)
+    monkeypatch.setattr(waiter, "canonical_terminal_result", lambda **_kwargs: None)
+    monkeypatch.setattr(waiter, "_active_execution_rows", lambda **_kwargs: [])
+
+    result = await waiter.wait(
+        _CompletedCommandService(),
+        CommandResult(
+            run_id="director-real-failure",
+            status="failed",
+            message="director_no_materialized_changes",
+        ),
+        timeout_seconds=1,
+    )
+
+    assert result.status == "failed"
+    assert result.message == "director_no_materialized_changes"
+    assert result.metadata is not None
+    assert result.metadata["canonical_authoritative"] is False
+    assert result.metadata["terminal_source"] == "orchestration_lifecycle_failure"
 
 
 @pytest.mark.asyncio

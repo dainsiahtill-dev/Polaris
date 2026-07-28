@@ -881,15 +881,23 @@ class FactoryRunService:
                 nonce=nonce,
                 reason=reason,
             )
-            self._attach_workspace_lease(run, lease)
+            # The lifecycle body may have durably persisted newer run metadata
+            # before failing (for example, a terminal TaskRuntime snapshot
+            # immediately before a destructive reset). Never save the stale
+            # pre-operation object over those facts during rollback.
+            latest = await self.store.get_run(run.id)
+            target_run = latest or run
+            self._attach_workspace_lease(target_run, lease)
             if lease.state.value == "draining" and operation in {
                 "recover_run",
                 "recover_stale_workspace_owner",
             }:
-                run.metadata["factory_physical_attempt_admission_dead"] = True
+                target_run.metadata["factory_physical_attempt_admission_dead"] = True
             if persist_run:
-                run.updated_at = self._now()
-                await self.store.save_run(run)
+                target_run.updated_at = self._now()
+                await self.store.save_run(target_run)
+            if target_run is not run:
+                self._copy_run_state(run, target_run)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.error(
                 "Factory lifecycle rollback failed run_id=%s operation=%s: %s",
@@ -1251,10 +1259,10 @@ class FactoryRunService:
         # pin child-session settlement forever. On FAILED/CANCELLED factory drain,
         # force-fail those owned active sessions (not foreign ones) so lease release
         # can complete. Live success paths never take this branch.
-        if (
-            settlement.get("settled") is not True
-            and target_run.status in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}
-        ):
+        if settlement.get("settled") is not True and target_run.status in {
+            FactoryRunStatus.FAILED,
+            FactoryRunStatus.CANCELLED,
+        }:
             abort_summary = TaskRuntimeService(str(self.workspace)).terminalize_open_tasks_for_factory_abort(
                 factory_run_id=target_run.id,
                 reason=f"factory_{target_run.status.value}",
@@ -1282,7 +1290,50 @@ class FactoryRunService:
         if reconciled_lease is not None:
             lease = reconciled_lease
 
-        task_count = int(str(settlement.get("observable_row_count") or 0))
+        from polaris.cells.factory.pipeline.public.contracts import (
+            FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+            FactoryTerminalTaskRuntimeProjectionV1,
+        )
+
+        terminal_snapshot_payload = target_run.metadata.get(
+            FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
+        )
+        terminal_snapshot: FactoryTerminalTaskRuntimeProjectionV1 | None = None
+        if terminal_snapshot_payload is not None:
+            if not isinstance(terminal_snapshot_payload, Mapping):
+                return await self._record_drain_conflict(
+                    target_run,
+                    lease,
+                    code="factory_task_runtime_terminal_projection_invalid",
+                    message="Factory workspace drain found an invalid frozen TaskRuntime projection",
+                    details={
+                        "error_type": "TypeError",
+                        "error_message": "terminal projection payload must be a mapping",
+                        "factory_run_id": target_run.id,
+                    },
+                )
+            try:
+                terminal_snapshot = FactoryTerminalTaskRuntimeProjectionV1.from_dict(
+                    terminal_snapshot_payload,
+                )
+            except (OSError, TypeError, ValueError) as exc:
+                return await self._record_drain_conflict(
+                    target_run,
+                    lease,
+                    code="factory_task_runtime_terminal_projection_invalid",
+                    message="Factory workspace drain found an invalid frozen TaskRuntime projection",
+                    details={
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc)[:300],
+                        "factory_run_id": target_run.id,
+                    },
+                )
+
+        live_task_count = int(str(settlement.get("observable_row_count") or 0))
+        frozen_task_count = (
+            int(str(terminal_snapshot.projection.get("row_count") or 0)) if terminal_snapshot is not None else 0
+        )
+        task_count = max(live_task_count, frozen_task_count)
         barrier_evidence: dict[str, Any] = {
             "required": task_count > 0,
             "factory_run_id": target_run.id,
@@ -1350,6 +1401,45 @@ class FactoryRunService:
                 )
         else:
             target_run.metadata["factory_run_ledger_settlement_barrier"] = barrier_evidence
+
+        if terminal_snapshot is None:
+            try:
+                task_runtime_projection = TaskRuntimeService(
+                    str(self.workspace)
+                ).query_observable_task_rows_projection()
+                terminal_projection = task_runtime_projection.to_authority_dict(
+                    factory_run_id=target_run.id,
+                )
+                if task_count > 0 and int(str(terminal_projection.get("row_count") or 0)) < 1:
+                    raise ValueError("terminal TaskRuntime projection omitted factory-bound rows")
+                terminal_snapshot = FactoryTerminalTaskRuntimeProjectionV1(
+                    workspace=str(self.workspace),
+                    factory_run_id=target_run.id,
+                    captured_at=self._now(),
+                    projection=terminal_projection,
+                )
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                target_run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = False
+                return await self._record_drain_conflict(
+                    target_run,
+                    lease,
+                    code="factory_task_runtime_terminal_projection_unavailable",
+                    message=(
+                        "Factory workspace drain could not freeze authoritative TaskRuntime evidence before reset"
+                    ),
+                    details={
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc)[:300],
+                        "factory_run_id": target_run.id,
+                        "expected_row_count": task_count,
+                    },
+                )
+
+            # Persist before reset. A crash after this save can safely retry
+            # drain from the exact frozen authority; a crash before it leaves
+            # the live TaskRuntime rows intact.
+            target_run.metadata[FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY] = terminal_snapshot.to_dict()
+            await self.store.save_run(target_run)
 
         reset_summary = TaskRuntimeService(str(self.workspace)).reset_records(
             keep_plan=True,
@@ -1602,6 +1692,16 @@ class FactoryRunService:
 
         result.started_at = result.started_at or started_at
         result.completed_at = result.completed_at or self._now()
+        quality_rework_decision_pending = (
+            str(result.stage or "").strip() == "quality_gate" and str(result.status or "").strip().lower() == "failed"
+        )
+        if quality_rework_decision_pending:
+            result.metadata = dict(result.metadata or {})
+            result.metadata["factory_terminal_drain_deferred"] = {
+                "schema_version": "factory.terminal-drain-deferred.v1",
+                "reason": "quality_rework_decision_pending",
+                "decision_owner": "factory_orchestration",
+            }
         terminal_after_stage = False
         async with run_lock:
             self._renew_workspace_lease(run, require_active=False)
@@ -1627,7 +1727,13 @@ class FactoryRunService:
         # FAILED/CANCELLED must still drain the workspace lease here so a missed
         # or timed-out router complete_run cannot leave lease state=active forever
         # (L1-05 r82: director_dispatch failed, completed_at=null, lease stuck active).
-        if terminal_after_stage:
+        # A failed quality gate is the one terminal-looking stage result that
+        # can authoritatively request another Director wave. Preserve live
+        # TaskRuntime rows until the synchronous orchestration caller reads and
+        # records that decision. If no rework is requested, the caller's normal
+        # failure closeout invokes complete_run() and drains immediately. All
+        # other failed stages retain the service-owned auto-drain guarantee.
+        if terminal_after_stage and not quality_rework_decision_pending:
             try:
                 if self._stage_result_releases_execution_claim(result):
                     await self.settle_terminal_run(run_id)

@@ -191,19 +191,33 @@ def run_runtime_repair_with_director_tools(
 
     typed_execution_attempt = cast(TaskRuntimeExecutionAttemptIdentityV1, execution_attempt)
     requested_task_id = str(task_id or "").strip()
-    bound_external_task_id = typed_execution_attempt.external_task_id
+    bound_external_task_id = str(typed_execution_attempt.external_task_id or "").strip()
     bound_private_task_id = str(typed_execution_attempt.task_id)
     # Callers may pass board/pm/private row ids; DeferredDirectorRepairRequestV1
     # binds only to external_task_id. Never raise into Director runtime — return
     # a structured failure (R78: numeric "1" vs external form killed tools_executed=0).
-    if requested_task_id not in {bound_external_task_id, bound_private_task_id}:
+    # Also accept TASK-N / task-N aliases of digit-only private or external ids.
+    accepted_task_ids = {bound_external_task_id, bound_private_task_id}
+    for candidate in (bound_external_task_id, bound_private_task_id):
+        token = str(candidate or "").strip()
+        if not token:
+            continue
+        accepted_task_ids.add(token)
+        upper = token.upper()
+        if upper.startswith("TASK-"):
+            accepted_task_ids.add(token[5:])
+            accepted_task_ids.add(upper)
+            accepted_task_ids.add(f"TASK-{token[5:]}")
+        elif token.isdigit():
+            accepted_task_ids.add(f"TASK-{token}")
+            accepted_task_ids.add(f"task-{token}")
+    if requested_task_id not in accepted_task_ids:
         return [
             _failure(
                 source_tool=source_tool,
                 error_code="deo_deferred_repair_task_mismatch",
                 error_message=(
-                    "task_id must match the execution attempt's external task id "
-                    "or exact private TaskRuntime row id"
+                    "task_id must match the execution attempt's external task id or exact private TaskRuntime row id"
                 ),
             )
         ]

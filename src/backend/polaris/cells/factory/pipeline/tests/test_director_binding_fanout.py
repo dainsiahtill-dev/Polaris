@@ -7,6 +7,7 @@ through per-binding dispatch fanout.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +17,24 @@ from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority imp
     FactoryRoleEvidenceAuthorityPort,
 )
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+
+@pytest.fixture(autouse=True)
+def _isolate_role_binding_runtime_state() -> Generator[None]:
+    """Prevent this module's direct ContextVar writes from leaking across tests."""
+
+    from polaris.kernelone.llm.runtime_config import (
+        clear_role_binding_health,
+        clear_role_provider_override,
+    )
+
+    clear_role_provider_override()
+    clear_role_binding_health()
+    try:
+        yield
+    finally:
+        clear_role_provider_override()
+        clear_role_binding_health()
 
 
 def _fanout_authority_port() -> FactoryRoleEvidenceAuthorityPort:

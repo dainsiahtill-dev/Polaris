@@ -1,0 +1,126 @@
+{
+  "schema_version": "polaris.main_agent_defect_manifest.v1",
+  "defect_id": "P0-R111-DEEPSEEK-THINKING-TOOL-CHOICE",
+  "status": "FIXED_VERIFIED_R113_IN_PROGRESS",
+  "severity": "P0",
+  "bench_state": "not_schedulable",
+  "project_id": "L1-05",
+  "bench_run_id": "5a62d23c31f4",
+  "factory_run_id": "factory_04a6a08b970e",
+  "instance_id": "factory-bench-l1-05-r111-l1-05-run-5a62d23c31f4-f239f454b31fd01a",
+  "wall_clock_seconds": 21.4,
+  "stage": "chief_engineer_review",
+  "symptom": {
+    "plan_present": true,
+    "deterministic_blueprint_present": true,
+    "chief_engineer_portfolio_generated": 0,
+    "chief_engineer_portfolio_expected": 3,
+    "director_reached": false,
+    "qa_reached": false,
+    "source_files": 0
+  },
+  "final_provider_request_evidence": {
+    "semantic_context_snapshot_ref": "a3b2589bc4029ff92f9ce504",
+    "physical_context_snapshot_refs": [
+      "4cd33eeaf303cc63adb52c52",
+      "46f48a97d000b23bfcc27641",
+      "0c12f8eb7d11fdb9b6f66d42",
+      "1237e7395ca140e167954450"
+    ],
+    "call_id": "f7e982ae3ed54d9db043f6408c9a9dc3",
+    "provider_id": "anthropic_compat-1779808433822",
+    "provider_type": "anthropic_compat",
+    "model": "deepseek-v4-pro",
+    "endpoint": "https://api.deepseek.com/anthropic/v1/messages",
+    "tool_names": [
+      "submit_structured_role_output"
+    ],
+    "tool_choice": {
+      "type": "tool",
+      "name": "submit_structured_role_output"
+    },
+    "thinking_field_sent": false,
+    "provider_default_thinking": "enabled",
+    "provider_error_body": {
+      "error": {
+        "message": "Thinking mode does not support this tool_choice",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_request_error"
+      }
+    },
+    "context_audit": {
+      "role_identity": "pass",
+      "pm_contract": "present",
+      "target_files_count": 13,
+      "tool_schema": "present_and_singleton",
+      "structured_result_prompt_isolation": "pass",
+      "final_request_tokens": 4711,
+      "window_utilization": 0.0047
+    }
+  },
+  "root_causes": [
+    {
+      "code": "deepseek_default_thinking_conflicts_with_explicit_tool_choice",
+      "classification": "provider_capability_projection",
+      "detail": "DeepSeek V4 enables thinking by default even when the request omits the thinking field. Its thinking mode rejects the tool_choice field, while Polaris emitted a forced singleton structured-result choice."
+    },
+    {
+      "code": "stream_http_400_misclassified_as_network_jitter",
+      "classification": "provider_transport_retry",
+      "detail": "The stream retry classifier treated every aiohttp ClientResponseError as transient, retried the deterministic 400 three times, and propagated an exception without the already-read Provider response body."
+    },
+    {
+      "code": "backend_fingerprint_omitted_llm_execution_sources",
+      "classification": "bench_source_identity",
+      "detail": "The freshness fingerprint used a hand-maintained list that omitted polaris/kernelone/llm and polaris/infrastructure/llm, so the R111 production fixes did not change the alleged source identity."
+    }
+  ],
+  "fix": {
+    "files": [
+      "src/backend/polaris/kernelone/llm/engine/provider_native_request.py",
+      "src/backend/polaris/infrastructure/llm/providers/anthropic_provider.py",
+      "src/backend/polaris/infrastructure/llm/providers/provider_helpers.py"
+    ],
+    "behavior": [
+      "On the official DeepSeek Anthropic route, an explicit tool_choice now emits thinking.type=disabled so the forced structured-result protocol remains authoritative.",
+      "An explicitly enabled thinking request combined with tool_choice now fails before transport with factory_provider_native_request_thinking_tool_choice_conflict:anthropic_messages.",
+      "DeepSeek requests without tool_choice retain the Provider default thinking behavior.",
+      "Streaming HTTP retries are now status-aware: 408, 425, 429, and 5xx are retryable; deterministic 4xx failures are not.",
+      "Streaming HTTP failures now read at most 501 bytes, preserve at most 500 bytes with a truncation marker, and support both aiohttp read() and iterator-only stream bodies.",
+      "Official DeepSeek detection now requires the exact api.deepseek.com host and /anthropic path boundary, while explicit DeepSeek provider identity remains supported.",
+      "Backend freshness now fingerprints every production Python source under polaris and factory_bench runtime helpers while excluding test-only modules."
+    ],
+    "target_project_edits": 0
+  },
+  "verification": {
+    "red_tests_before_fix": "5 failed, 1 passed",
+    "focused_after_fix": "6 passed",
+    "provider_native_anthropic_async_fingerprint_full": "183 passed",
+    "factory_governed_structured_transport_focused": "96 passed",
+    "roles_kernel_pre_followup_full": "4201 passed, 2 warnings",
+    "roles_kernel_post_followup_full": "2774 passed, 1 warning",
+    "factory_pipeline_full": "1264 passed, 2 warnings",
+    "broad_test_discovered_compatibility_regression": "iterator-only error content lacked read(); runtime aiohttp name was unavailable",
+    "broad_regression_after_fix": "46 passed",
+    "independent_review": "CLEAR; Critical 0, Important 0, Minor 0; reviewer focused suite 184 passed",
+    "source_fingerprint_before_coverage_fix": "4d35e3706d2e0a26",
+    "source_fingerprint_after_coverage_fix": "dc785b78532e9ca1",
+    "source_fingerprint_stability": "dc785b78532e9ca1 == dc785b78532e9ca1",
+    "kernelone_release_gate": "ok=true; mode=all; suite_size=51; tests=415 passed, 1 skipped, 2 warnings",
+    "ruff": "pass",
+    "format": "pass",
+    "mypy": "Success: no issues found in 4 source files",
+    "compileall": "pass"
+  },
+  "authoritative_sources": [
+    "https://api-docs.deepseek.com/guides/thinking_mode",
+    "https://api-docs.deepseek.com/guides/anthropic_api",
+    "https://api-docs.deepseek.com/quick_start/agent_integrations/oh_my_pi/"
+  ],
+  "residual_risks": [
+    "R112 was consumed before Provider transport by the independently closed backend identity-probe timeout. Exactly one requalified R113 run is authorized.",
+    "DeepSeek Anthropic handling of the non-standard tool strict field remains live-unverified; any subsequent Provider rejection must be attributed from the preserved response body rather than guessed."
+  ],
+  "next_action": "Audit the consumed, in-progress R113 DeepSeek final Provider Request and every reached runnable-product gate."
+}

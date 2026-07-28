@@ -39,6 +39,7 @@ public_contracts:
   - EnrollDirectedEffectParentRegistryStreamCommandV1
   - EnrollDirectedEffectOperationStreamCommandV1
   - AdmitDirectedEffectParentCommandV1
+  - AdmitDirectedEffectParentBatchCommandV1
   - SealDirectedEffectInventoryCommandV1
   - AdmitDirectedEffectOperationCommandV1
   - FinalizeDirectedEffectInventoryAdmissionCommandV1

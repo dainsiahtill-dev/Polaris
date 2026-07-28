@@ -1925,15 +1925,24 @@ def _filter_missing_workspace_file_errors_to_task_write_scope(
     retained: list[str] = []
     deferred_errors: list[str] = []
     deferred_targets: list[str] = []
-    task_touches_rust = _task_write_scope_touches_rust(task, workspace_name=workspace_name)
+    project_declared_targets = _dedupe_preserve_order(
+        [
+            normalized
+            for candidate in (
+                *_extract_project_declared_target_path_candidates(context),
+                *_extract_project_declared_target_path_candidates(task),
+            )
+            if (
+                normalized := _normalize_declared_task_path(
+                    candidate,
+                    workspace_name=workspace_name,
+                )
+            )
+        ]
+    )
     for error in errors:
         text = str(error or "")
-        # Cargo-declared missing binaries are project-topology repairs: any task
-        # that already materializes Rust sources / Cargo.toml must retain them
-        # so materialization quality can create src/main.rs (R71/R73).
-        if task_touches_rust and _is_rust_missing_binary_quality_error(text, issue_payloads):
-            retained.append(text)
-            continue
+        rust_missing_binary = _is_rust_missing_binary_quality_error(text, issue_payloads)
         missing_targets = _dedupe_preserve_order(
             [
                 *_missing_workspace_file_quality_repair_target_files(
@@ -1960,6 +1969,22 @@ def _filter_missing_workspace_file_errors_to_task_write_scope(
             workspace_name=workspace_name,
         )
         if defer_candidates and not in_scope:
+            if rust_missing_binary:
+                if not project_declared_targets:
+                    retained.append(text)
+                    continue
+                project_owned, project_unowned = partition_paths_by_declared_scope(
+                    out_of_scope,
+                    project_declared_targets,
+                    workspace_name=workspace_name,
+                )
+                # Missing Cargo binaries are repairable by the current task only
+                # when they are in its write scope. Deferral is safe only when
+                # the project contract explicitly assigns every missing path to
+                # another task; absent/ambiguous ownership remains fail-closed.
+                if not project_owned or project_unowned:
+                    retained.append(text)
+                    continue
             deferred_errors.append(text)
             deferred_targets.extend(out_of_scope)
             continue
@@ -2652,12 +2677,8 @@ async def _run_materialization_quality_repair_retry(
     # Missing declared Cargo [[bin]] entrypoints are plannable create-file repairs
     # (R71+). They must not be excluded from the runtime materialization schedule
     # just because they also appear in missing_repair_target_files (LLM write path).
-    rust_missing_bin_present = any(
-        _is_rust_missing_binary_quality_error(error, ()) for error in repair_quality_errors
-    )
-    if (
-        not missing_repair_target_files or rust_missing_bin_present
-    ) and (
+    rust_missing_bin_present = any(_is_rust_missing_binary_quality_error(error, ()) for error in repair_quality_errors)
+    if (not missing_repair_target_files or rust_missing_bin_present) and (
         _has_scaffold_marker_quality_error(repair_quality_errors)
         or has_materialization_quality_runtime_repair_coverage(repair_quality_errors)
         or rust_missing_bin_present

@@ -43,6 +43,7 @@ from polaris.cells.roles.engine.public.service import (
     register_engine,
 )
 from polaris.cells.roles.kernel.public import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
     DirectedEffectAttemptValidationResultV1,
     DirectedEffectRuntimeDependenciesV1,
 )
@@ -541,6 +542,13 @@ class RoleRuntimeService(
     def _build_task_request(command: ExecuteRoleTaskCommandV1) -> RoleTurnRequest:
         metadata = dict(command.metadata)
         context = dict(command.context)
+        structured_output_contract = command.structured_output_contract
+        if structured_output_contract is not None:
+            projection = structured_output_contract.to_context_projection()
+            existing_projection = context.get(STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY)
+            if existing_projection is not None and existing_projection != projection:
+                raise ValueError("structured_output_contract_context_drift")
+            context[STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY] = projection
         execution_attempt = command.execution_attempt
         if execution_attempt is not None:
             metadata["task_runtime_session_id"] = execution_attempt.session_id

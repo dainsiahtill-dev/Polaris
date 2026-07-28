@@ -19,6 +19,7 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
 - `ClassifyKernelErrorQueryV1`
 - `ResolveRetryPolicyQueryV1`
 - `FactoryRoleEvidenceCutoffRequestV1`
+- `RoleStructuredOutputContractV1`
 - `FactoryRoleEvidenceCutoffPort.acquire_cutoff`
 - `FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof`
 
@@ -67,6 +68,15 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
 - kernel turn execution must not import `roles.runtime`; `roles.runtime` is the
   composition/lifecycle caller of the kernel, not a dependency of it
 - runtime events must be emitted explicitly
+- caller-owned structured result schemas must enter through
+  `RoleStructuredOutputContractV1`; the reserved provider result tool is
+  normalized into validated JSON before TransactionKernel tool decoding and
+  must never enter authorization, Tool Lifecycle, effect receipts, or mutation
+  ports
+- final-request audit and B3.5 qualification must classify that exact reserved
+  result tool as a caller-owned, non-executable provider protocol; every
+  executable or unknown tool remains subject to exact `ToolSpecRegistry`
+  provenance, alias, schema, and hash validation
 - assistant turn handling must separate raw parser input from sanitized transcript output
 - `FactoryRoleEvidenceCutoffAckV1` is locator-only; only
   `FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof` may reconstruct the
@@ -88,6 +98,7 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
 - `public/contracts.py`
 - `public/service.py`
 - `public/final_request_evidence_cutoff.py`
+- `public/structured_output_contracts.py`
 - `internal/kernel.py`
 - `internal/turn_engine/`
 - `internal/prompt_builder.py`
@@ -95,6 +106,7 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
 - `internal/quality_checker.py`
 - `internal/llm_caller/`
 - `internal/llm_caller/factory_dispatch_propagation.py`
+- `internal/structured_output_transport.py`
 - `internal/retry_policy_engine.py`
 - `internal/error_category.py`
 - `generated/verify.pack.json`
@@ -110,6 +122,7 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
 - `tests/test_llm_invoker_role_binding_fallback.py`
 - `tests/test_llm_invoker_final_request_receipt.py`
 - `tests/test_llm_caller_capability_profile.py`
+- `tests/test_structured_output_transport.py`
 - `tests/test_role_kernel_write_budget.py`
 - `tests/test_turn_engine_semantic_stages.py`
 - `tests/test_turn_engine_policy_convergence.py`

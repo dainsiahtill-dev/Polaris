@@ -237,6 +237,41 @@ class TestSchemaAwareJsonExtraction:
         assert "scope_for_apply" in data
         assert errors == []
 
+    def test_ce_accepts_wrapped_llm_blueprint_object(self) -> None:
+        """L1-05 regression: CE may wrap blueprint in ``llm_blueprint``."""
+        checker = QualityChecker()
+        content = (
+            '{"llm_blueprint": {\n'
+            '  "construction_plan": {"steps": [1]},\n'
+            '  "scope_for_apply": ["src/main.rs"],\n'
+            '  "risk_flags": ["low"]\n'
+            "}}\n"
+        )
+        data, errors = checker._extract_json(content, role="chief_engineer")
+        assert data is not None
+        assert "construction_plan" in data
+        assert data["scope_for_apply"] == ["src/main.rs"]
+        assert data["risk_flags"] == ["low"]
+        assert errors == []
+
+    def test_ce_rejects_wrapped_blueprint_missing_explicit_scope(self) -> None:
+        """Task target files cannot be promoted into an absent CE scope contract."""
+        checker = QualityChecker()
+        content = (
+            '{"llm_blueprint": {\n'
+            '  "construction_plan": {\n'
+            '    "task_plans": {\n'
+            '      "TASK-1": {"target_files": ["src/lib.rs"]}\n'
+            "    },\n"
+            '    "risk_flags": ["elevated"]\n'
+            "  }\n"
+            "}}\n"
+        )
+        data, errors = checker._extract_json(content, role="chief_engineer")
+        assert data is None
+        assert errors
+        assert any("blueprint keys" in error for error in errors)
+
     def test_ce_recovers_unquoted_angle_bracket_actions_array(self) -> None:
         """R68: CE emitted unquoted ``<Type>`` soup after ``actions`` colon.
 

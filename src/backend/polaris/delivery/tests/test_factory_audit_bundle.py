@@ -200,7 +200,7 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
             "TaskRuntimeService",
             lambda _workspace: SimpleNamespace(
                 query_observable_task_rows_projection=lambda: SimpleNamespace(
-                    to_authority_dict=lambda: dict(task_runtime_projection)
+                    to_authority_dict=lambda **_kwargs: dict(task_runtime_projection)
                 )
             ),
         )
@@ -234,6 +234,62 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
     assert payload["run_identity"]["instance_id"] == "bench-instance-1"
     assert payload["run_identity"]["backend_port"] == 51001
     assert payload["run_identity"]["frontend_port"] == 52001
+
+
+def test_control_plane_projection_prefers_valid_terminal_task_runtime_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _make_failed_run()
+    run.metadata["factory_terminal_task_runtime_projection"] = {
+        "schema_version": "factory.terminal-task-runtime-projection.v1",
+        "workspace": "/ws",
+        "factory_run_id": run.id,
+        "captured_at": "2026-07-27T00:00:00+00:00",
+        "projection": {
+            "schema_version": "task_runtime.observable_task_rows_authority.v1",
+            "workspace": "/ws",
+            "source": "task_runtime.execution_fact",
+            "authoritative": True,
+            "degraded": False,
+            "requested_factory_run_id": run.id,
+            "total_row_count": 1,
+            "row_count": 1,
+            "rows": [
+                {
+                    "task_id": "TASK-1",
+                    "workflow_run_id": "director-terminal",
+                    "factory_run_id": run.id,
+                    "status": "failed",
+                    "execution_state": "failed",
+                    "fact_event_seq": 76,
+                    "source": "task_runtime.execution_fact",
+                    "status_source": "task_runtime.execution_fact",
+                }
+            ],
+            "readiness": {"ready": True, "blocking_reasons": []},
+        },
+    }
+    monkeypatch.setattr(
+        factory_router_module,
+        "read_run_ledger_projection",
+        lambda query: SimpleNamespace(projection={"run_id": query.run_id}),
+    )
+
+    class _UnexpectedLiveProjectionRead:
+        def __init__(self, _workspace: str) -> None:
+            raise AssertionError("terminal audit must not read the reset live projection")
+
+    monkeypatch.setattr(factory_router_module, "TaskRuntimeService", _UnexpectedLiveProjectionRead)
+    bundle: dict[str, Any] = {}
+
+    factory_router_module._attach_control_plane_projection(
+        bundle=bundle,
+        run=run,
+        workspace="/ws",
+    )
+
+    assert bundle["task_runtime_projection"] == run.metadata["factory_terminal_task_runtime_projection"]["projection"]
+    assert "control_plane_projection_error" not in bundle
 
 
 def test_get_factory_run_audit_bundle_missing_run_returns_404(

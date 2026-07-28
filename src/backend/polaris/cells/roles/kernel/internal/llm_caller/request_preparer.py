@@ -18,6 +18,9 @@ from polaris.cells.roles.kernel.internal.interaction_contract import (
     ProviderCapabilities,
     build_interaction_contract,
 )
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    resolve_structured_output_transport,
+)
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
     FactoryRoleEvidenceAuthorityBindingV1,
@@ -1091,7 +1094,14 @@ class LLMRequestPreparer:
         native_tool_schemas: list[dict[str, Any]] = []
         native_tool_mode = "disabled"
         native_response_format: dict[str, Any] | None = None
-        response_format_mode = "text_json_fallback" if _json_response_contract_requested(override) else "plain_text"
+        structured_output_transport = resolve_structured_output_transport(override)
+        response_format_mode = (
+            "provider_tool_json_schema"
+            if structured_output_transport is not None
+            else "text_json_fallback"
+            if _json_response_contract_requested(override)
+            else "plain_text"
+        )
         provider_id = str(getattr(profile, "provider_id", "") or "")
         role_native_tool_schemas: list[dict[str, Any]] | None = None
 
@@ -1139,7 +1149,11 @@ class LLMRequestPreparer:
             elif contract.tool_whitelist and not forced_tools_disabled:
                 native_tool_schemas = _role_native_tools()
                 native_tool_mode = "native_tools_unavailable"
-            if contract.structured_output_enabled and response_model is not None:
+            if (
+                structured_output_transport is None
+                and contract.structured_output_enabled
+                and response_model is not None
+            ):
                 native_response_format = build_native_response_format(response_model)
                 if native_response_format:
                     request_options["response_format"] = native_response_format
@@ -1448,6 +1462,7 @@ class LLMRequestPreparer:
             response_format_mode=response_format_mode,
             context_os_audit=context_os_audit,
             capability_profile=capability_profile,
+            structured_output_transport=structured_output_transport,
             factory_semantic_request=frozen_factory_request,
             factory_dispatch_port=factory_dispatch_port,
         )

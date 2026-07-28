@@ -11,38 +11,12 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import logging
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Isolated module load
-# ---------------------------------------------------------------------------
-# The package __init__.py chain pulls in diff_tracker.py which has a
-# SyntaxError on Python 3.14.  We bypass that by loading the .py file
-# directly so only factory_store's own direct imports are resolved.
-
-
-def _load_factory_store_module():
-    """Load factory_store.py without triggering the full package __init__ chain."""
-    module_path = Path(__file__).parent.parent / "cells/factory/pipeline/internal/factory_store.py"
-    spec = importlib.util.spec_from_file_location(
-        "polaris.cells.factory.pipeline.internal.factory_store",
-        module_path,
-    )
-    if spec is None or spec.loader is None:  # pragma: no cover
-        raise ImportError(f"Cannot load spec from {module_path}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod
-
-
-_fs_mod = _load_factory_store_module()
+from polaris.cells.factory.pipeline.internal import factory_store as _fs_mod
 
 _MAX = _fs_mod._MAX_LOCK_ENTRIES
 
@@ -214,7 +188,7 @@ class TestAppendEventFailureObservable:
                 logger.warning(...)
             raise last_error
 
-        We simulate this by patching _replace_with_retry to replay that exact
+        We simulate this by patching _replace_with_retry_sync to replay that exact
         branching with a real unlink failure, and verify the logger.warning fires.
         """
         store = _fs_mod.FactoryStore(base_dir=tmp_path)
@@ -224,7 +198,7 @@ class TestAppendEventFailureObservable:
 
         permission_err = PermissionError("locked by OS")
 
-        async def fake_replace_with_retry(temp_file: Path, run_file: Path) -> None:
+        def fake_replace_with_retry(temp_file: Path, run_file: Path) -> None:
             # Replay the cleanup branch: unlink raises OSError, warning is emitted,
             # then the original replace error is re-raised.
             try:
@@ -238,7 +212,7 @@ class TestAppendEventFailureObservable:
             raise permission_err
 
         with (
-            patch.object(store, "_replace_with_retry", side_effect=fake_replace_with_retry),
+            patch.object(store, "_replace_with_retry_sync", side_effect=fake_replace_with_retry),
             caplog.at_level(logging.WARNING, logger=_fs_mod.logger.name),
             pytest.raises(PermissionError),
         ):
@@ -295,14 +269,14 @@ class TestFileLockTimeout:
         assert issubclass(_fs_mod.FileLockTimeoutError, TimeoutError)
 
     @pytest.mark.asyncio
-    async def test_acquire_file_lock_succeeds_when_free(self, tmp_path: Path) -> None:
-        """Async context manager should acquire lock immediately when free."""
-        async with _fs_mod._acquire_file_lock(tmp_path / "run.json"):
-            pass  # Lock should be acquired and released without error
+    async def test_file_operation_succeeds_when_free(self, tmp_path: Path) -> None:
+        """One-worker file operation should acquire and release immediately."""
+        result = await _fs_mod._run_file_operation(tmp_path / "run.json", lambda: "ok")
+        assert result == "ok"
 
     @pytest.mark.asyncio
-    async def test_acquire_file_lock_raises_on_timeout(self, tmp_path: Path) -> None:
-        """Async context manager must raise FileLockTimeoutError on timeout."""
+    async def test_file_operation_raises_on_timeout(self, tmp_path: Path) -> None:
+        """One-worker file operation must raise FileLockTimeoutError on timeout."""
         file_path = tmp_path / "run.json"
         lock = _fs_mod._get_run_file_lock(file_path)
 
@@ -326,9 +300,7 @@ class TestFileLockTimeout:
 
         try:
             with pytest.raises(_fs_mod.FileLockTimeoutError) as exc_info:
-                # Use async with context manager, not await directly
-                async with _fs_mod._acquire_file_lock(file_path, timeout=0.2):
-                    pass
+                await _fs_mod._run_file_operation(file_path, lambda: None, timeout=0.2)
 
             assert exc_info.value.file_path == file_path
             assert exc_info.value.timeout == 0.2
@@ -345,9 +317,7 @@ class TestFileLockTimeout:
         lock.acquire()
         try:
             with pytest.raises(_fs_mod.FileLockTimeoutError) as exc_info:
-                # Use async with context manager, not await directly
-                async with _fs_mod._acquire_file_lock(file_path, timeout=2.5):
-                    pass
+                await _fs_mod._run_file_operation(file_path, lambda: None, timeout=2.5)
 
             assert exc_info.value.timeout == 2.5
         finally:
@@ -389,8 +359,8 @@ class TestDeadlockPrevention:
 
         async def attempt_with_timeout() -> bool:
             try:
-                async with _fs_mod._acquire_file_lock(file_path, timeout=0.3):
-                    return True
+                await _fs_mod._run_file_operation(file_path, lambda: None, timeout=0.3)
+                return True
             except _fs_mod.FileLockTimeoutError:
                 return False
 
@@ -427,10 +397,10 @@ class TestDeadlockPrevention:
 
         # Should acquire immediately now that lock is free
         start = time.monotonic()
-        async with _fs_mod._acquire_file_lock(file_path, timeout=5.0):
-            elapsed = time.monotonic() - start
-            # Should complete well under 1 second if lock was released
-            assert elapsed < 0.5, f"Acquisition took {elapsed}s, unexpected delay"
+        await _fs_mod._run_file_operation(file_path, lambda: None, timeout=5.0)
+        elapsed = time.monotonic() - start
+        # Should complete well under 1 second if lock was released
+        assert elapsed < 0.5, f"Acquisition took {elapsed}s, unexpected delay"
 
     def test_lock_table_preserves_timeout_behavior_after_lru_eviction(self, tmp_path: Path) -> None:
         """LRU eviction must not affect timeout mechanism on surviving locks."""

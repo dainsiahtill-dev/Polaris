@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 from polaris.cells.control_plane.verifier_policy.public import (
     UpdateVerifierPolicyCommandV1,
     update_verifier_policy,
@@ -4370,6 +4371,399 @@ class TestGoCommandNoMutation:
 # ---------------------------------------------------------------------------
 # Test: Go project skips Python test path (F2)
 # ---------------------------------------------------------------------------
+
+
+def test_rust_cargo_project_uses_native_test_gate(monkeypatch: Any, tmp_path: Path) -> None:
+    """Rust delivery must execute native tests instead of a skipped Python harness."""
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-test"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "product.rs").write_text(
+        "use native_rust_test::answer;\n#[test]\nfn product_works() { assert_eq!(answer(), 42); }\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bench_gates.shutil, "which", lambda name: "/usr/bin/cargo" if name == "cargo" else None)
+
+    command = bench_gates._rust_compile_command(
+        tmp_path,
+        ["src/lib.rs", "tests/product.rs"],
+    )
+
+    assert command == ["/usr/bin/cargo", "test", "--quiet"]
+
+
+def test_rust_native_gate_physically_executes_integration_test(tmp_path: Path) -> None:
+    """The real-run gate executes Rust tests in isolation from target sources."""
+    if not bench_gates.shutil.which("cargo"):
+        pytest.skip("cargo unavailable")
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-physical"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    source = tmp_path / "src" / "lib.rs"
+    source.write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "product.rs").write_text(
+        "#[test]\nfn product_works() {\n"
+        "    assert_eq!(native_rust_physical::answer(), 42);\n"
+        '    std::fs::write("src/lib.rs", "pub fn answer() -> u8 { 7 }\\n").unwrap();\n'
+        f'    assert!(std::fs::write({json.dumps(source.as_posix())}, b"host mutation").is_err());\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    ok, detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        ["src/lib.rs", "tests/product.rs"],
+        timeout_s=30,
+    )
+
+    assert ok is True
+    assert detail == "cargo test passed"
+    assert commands[0]["command"][1:] == ["test", "--quiet"]
+    assert commands[0]["sandboxed"] is True
+    assert commands[0]["native_test_count"] >= 1
+    assert source.read_text(encoding="utf-8") == "pub fn answer() -> u8 { 42 }\n"
+
+
+def test_rust_native_gate_rejects_zero_tests(tmp_path: Path) -> None:
+    """Cargo's exit-zero/zero-tests result is not valid native test evidence."""
+    if not bench_gates.shutil.which("cargo"):
+        pytest.skip("cargo unavailable")
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-zero"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+
+    ok, detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        ["src/lib.rs"],
+        timeout_s=30,
+    )
+
+    assert ok is False
+    assert detail == "cargo test executed zero tests"
+    assert commands[0]["returncode"] == 0
+    assert commands[0]["native_test_count"] == 0
+
+
+def test_rust_native_gate_fails_closed_without_sandbox(monkeypatch: Any, tmp_path: Path) -> None:
+    """Native tests never fall back to direct target-workspace execution."""
+    if not bench_gates.shutil.which("cargo"):
+        pytest.skip("cargo unavailable")
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-no-sandbox"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+
+    def unavailable_sandbox(**_kwargs: Any) -> Any:
+        raise bench_gates.NativeValidationSandboxError("bubblewrap unavailable")
+
+    monkeypatch.setattr(bench_gates, "sandboxed_cargo_test_command", unavailable_sandbox)
+
+    ok, detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        ["src/lib.rs"],
+        timeout_s=30,
+    )
+
+    assert ok is False
+    assert detail == "cargo test failed"
+    assert commands[0]["sandboxed"] is False
+    assert str(commands[0]["error"]).startswith("native_validation_sandbox_unavailable:")
+
+
+def test_rust_native_sandbox_setup_does_not_follow_project_support_symlink(tmp_path: Path) -> None:
+    """Host-side sandbox preparation cannot follow a project-controlled symlink."""
+    if not bench_gates.shutil.which("cargo") or not bench_gates.shutil.which("bwrap"):
+        pytest.skip("cargo/bwrap unavailable")
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-symlink"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (workspace / "src").mkdir()
+    (workspace / "src" / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+    escaped_support = tmp_path / "escaped-support"
+    escaped_support.mkdir()
+    (workspace / ".cargo-home").symlink_to(escaped_support, target_is_directory=True)
+
+    with bench_gates.sandboxed_cargo_test_command(
+        workspace=workspace,
+        command=[bench_gates.shutil.which("cargo") or "cargo", "test", "--quiet"],
+    ):
+        pass
+
+    assert list(escaped_support.iterdir()) == []
+
+
+def test_rust_native_gate_rejects_project_rustc_wrapper_output_spoof(tmp_path: Path) -> None:
+    """Project Cargo config cannot forge native-test evidence through a compiler wrapper."""
+    if not bench_gates.shutil.which("cargo"):
+        pytest.skip("cargo unavailable")
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-wrapper"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+    (tmp_path / ".cargo").mkdir()
+    (tmp_path / ".cargo" / "config.toml").write_text(
+        '[build]\nrustc-wrapper = "./wrapper.sh"\n',
+        encoding="utf-8",
+    )
+    wrapper = tmp_path / "wrapper.sh"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' >&2\n"
+        'exec "$@"\n',
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+
+    ok, _detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        ["src/lib.rs"],
+        timeout_s=30,
+    )
+
+    assert ok is False
+    assert commands[0]["native_test_count"] == 0
+    assert str(commands[0]["error"]).startswith("native_validation_contract_invalid:")
+
+
+def test_rust_native_gate_rejects_custom_harness_output_spoof(tmp_path: Path) -> None:
+    """A harness=false binary is not authoritative libtest execution evidence."""
+    if not bench_gates.shutil.which("cargo"):
+        pytest.skip("cargo unavailable")
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-custom-harness"\nversion = "0.1.0"\nedition = "2021"\n'
+        '[[test]]\nname = "fake"\npath = "tests/fake.rs"\nharness = false\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "fake.rs").write_text(
+        'fn main() { println!("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"); }\n',
+        encoding="utf-8",
+    )
+
+    ok, _detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        ["src/lib.rs", "tests/fake.rs"],
+        timeout_s=30,
+    )
+
+    assert ok is False
+    assert commands[0]["native_test_count"] == 0
+    assert str(commands[0]["error"]).startswith("native_validation_contract_invalid:")
+
+
+@pytest.mark.parametrize(
+    ("manifest_target", "source_path"),
+    [
+        ('[lib]\npath = "src/lib.rs"\nharness = false\n', "src/lib.rs"),
+        (
+            '[[bin]]\nname = "fake-bin"\npath = "src/main.rs"\ntest = true\nharness = false\n',
+            "src/main.rs",
+        ),
+        (
+            '[[example]]\nname = "fake-example"\npath = "examples/fake.rs"\ntest = true\nharness = false\n',
+            "examples/fake.rs",
+        ),
+        (
+            '[[bench]]\nname = "fake-bench"\npath = "benches/fake.rs"\nharness = false\n',
+            "benches/fake.rs",
+        ),
+    ],
+)
+def test_rust_native_gate_rejects_all_custom_harness_targets(
+    tmp_path: Path,
+    manifest_target: str,
+    source_path: str,
+) -> None:
+    """Every Cargo target kind with a custom harness is non-authoritative."""
+    if not bench_gates.shutil.which("cargo"):
+        pytest.skip("cargo unavailable")
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-target-harness"\nversion = "0.1.0"\nedition = "2021"\n' + manifest_target,
+        encoding="utf-8",
+    )
+    source = tmp_path / source_path
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        'fn main() { println!("running 1 test"); '
+        'println!("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"); }\n',
+        encoding="utf-8",
+    )
+
+    ok, _detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        [source_path],
+        timeout_s=30,
+    )
+
+    assert ok is False
+    assert commands[0]["native_test_count"] == 0
+    assert str(commands[0]["error"]).startswith("native_validation_contract_invalid:")
+
+
+@pytest.mark.parametrize(
+    "cargo_config",
+    [
+        '[target.x86_64-unknown-linux-gnu]\nlinker = "./fake-linker.sh"\n',
+        '[target.x86_64-unknown-linux-gnu]\nrustflags = ["-C", "linker=./fake-linker.sh"]\n',
+        '[build]\nrustflags = ["-C", "linker=./fake-linker.sh"]\n',
+        '[build]\nrustdoc = "./fake-rustdoc.sh"\n',
+        '[env]\nCARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "./fake-linker.sh"\n',
+        '[env]\nRUSTFLAGS = "-C linker=./fake-linker.sh"\n',
+    ],
+)
+def test_rust_native_gate_rejects_project_linker_and_rustflags_overrides(
+    tmp_path: Path,
+    cargo_config: str,
+) -> None:
+    """Project Cargo config cannot replace/link-inject the native test executable."""
+    if not bench_gates.shutil.which("cargo"):
+        pytest.skip("cargo unavailable")
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-linker"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text(
+        "#[test]\nfn real_test() { assert!(true); }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".cargo").mkdir()
+    (tmp_path / ".cargo" / "config.toml").write_text(cargo_config, encoding="utf-8")
+    fake_linker = tmp_path / "fake-linker.sh"
+    fake_linker.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    fake_linker.chmod(0o755)
+
+    ok, _detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        ["src/lib.rs"],
+        timeout_s=30,
+    )
+
+    assert ok is False
+    assert commands[0]["native_test_count"] == 0
+    assert str(commands[0]["error"]).startswith("native_validation_contract_invalid:")
+
+
+def test_rust_native_gate_rejects_workspace_member_custom_harness(tmp_path: Path) -> None:
+    """Cargo workspace members cannot bypass the root manifest harness audit."""
+    if not bench_gates.shutil.which("cargo"):
+        pytest.skip("cargo unavailable")
+    (tmp_path / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["member"]\nresolver = "2"\n',
+        encoding="utf-8",
+    )
+    member = tmp_path / "member"
+    member.mkdir()
+    (member / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-member"\nversion = "0.1.0"\nedition = "2021"\n'
+        '[[bin]]\nname = "fake-member"\npath = "src/main.rs"\ntest = true\nharness = false\n',
+        encoding="utf-8",
+    )
+    (member / "src").mkdir()
+    (member / "src" / "main.rs").write_text(
+        'fn main() { println!("running 1 test"); '
+        'println!("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"); }\n',
+        encoding="utf-8",
+    )
+
+    ok, _detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        ["member/src/main.rs"],
+        timeout_s=30,
+    )
+
+    assert ok is False
+    assert commands[0]["native_test_count"] == 0
+    assert str(commands[0]["error"]).startswith("native_validation_contract_invalid:")
+
+
+def test_rust_native_gate_rejects_implicit_path_dependency_member_harness(
+    tmp_path: Path,
+) -> None:
+    """Cargo's implicit in-root path-dependency members receive the same audit."""
+    if not bench_gates.shutil.which("cargo"):
+        pytest.skip("cargo unavailable")
+    (tmp_path / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["app"]\nresolver = "2"\n',
+        encoding="utf-8",
+    )
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "Cargo.toml").write_text(
+        '[package]\nname = "native-rust-app"\nversion = "0.1.0"\nedition = "2021"\n'
+        '[dependencies]\nimplicit-member = { path = "../implicit-member" }\n',
+        encoding="utf-8",
+    )
+    (app / "src").mkdir()
+    (app / "src" / "lib.rs").write_text(
+        "pub fn answer() -> u8 { implicit_member::answer() }\n",
+        encoding="utf-8",
+    )
+    implicit_member = tmp_path / "implicit-member"
+    implicit_member.mkdir()
+    (implicit_member / "Cargo.toml").write_text(
+        '[package]\nname = "implicit-member"\nversion = "0.1.0"\nedition = "2021"\n'
+        '[[bin]]\nname = "fake-implicit"\npath = "src/main.rs"\ntest = true\nharness = false\n',
+        encoding="utf-8",
+    )
+    (implicit_member / "src").mkdir()
+    (implicit_member / "src" / "lib.rs").write_text(
+        "pub fn answer() -> u8 { 42 }\n",
+        encoding="utf-8",
+    )
+    (implicit_member / "src" / "main.rs").write_text(
+        'fn main() { println!("running 1 test"); '
+        'println!("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"); }\n',
+        encoding="utf-8",
+    )
+
+    ok, _detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        ["app/src/lib.rs", "implicit-member/src/lib.rs", "implicit-member/src/main.rs"],
+        timeout_s=30,
+    )
+
+    assert ok is False
+    assert commands[0]["native_test_count"] == 0
+    assert str(commands[0]["error"]).startswith("native_validation_contract_invalid:")
+
+
+def test_non_cargo_rust_compile_is_labeled_and_leaves_no_workspace_output(tmp_path: Path) -> None:
+    """Generic rustc fallback is compile evidence, never cargo-test evidence."""
+    if not bench_gates.shutil.which("rustc"):
+        pytest.skip("rustc unavailable")
+    (tmp_path / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+
+    ok, detail, commands = bench_gates._run_language_build_gate(
+        tmp_path,
+        ["main.rs"],
+        timeout_s=30,
+    )
+
+    assert ok is True
+    assert detail == "rustc compile passed"
+    assert Path(commands[0]["command"][0]).name == "rustc"
+    assert "test" not in commands[0]["command"][1:]
+    assert not list(tmp_path.glob("*.rmeta"))
 
 
 def test_go_project_skips_python_test_path(monkeypatch: Any, tmp_path: Path) -> None:

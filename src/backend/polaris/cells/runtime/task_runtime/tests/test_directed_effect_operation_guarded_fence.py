@@ -3057,6 +3057,7 @@ def test_deo3_terminal_authority_has_no_cross_cell_internal_or_parent_close_bypa
 def test_inventory_and_operation_writer_paths_exactly_own_deo3_states() -> None:
     class_tree = ast.parse(dedent(inspect.getsource(deo_internal.DirectedEffectOperationRepository)))
     assert sorted(_call_owners(class_tree, "GuardedFactEventV1")) == [
+        "_append_parent_batch_rollover_close",
         "_mutate",
         "_parent_settlement_close_command",
         "finalize_inventory",
@@ -3159,10 +3160,18 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
                 "internal/directed_effect_operation.py",
                 "DirectedEffectOperationRepository._append_parent_settlement_close",
             ),
+            (
+                "internal/directed_effect_operation.py",
+                "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
+            ),
             ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.finalize_inventory"),
             ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.seal_inventory"),
         },
         "GuardedFactEventV1": {
+            (
+                "internal/directed_effect_operation.py",
+                "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
+            ),
             ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository._mutate"),
             (
                 "internal/directed_effect_operation.py",
@@ -3231,6 +3240,14 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
             "DirectedEffectOperationRepository._append_parent_settlement_close",
             f"{_FACT_STREAM_PUBLIC}.append_if_guarded_snapshot",
         ),
+        (
+            "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
+            f"{_FACT_STREAM_PUBLIC}.GuardedFactEventV1",
+        ),
+        (
+            "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
+            f"{_FACT_STREAM_PUBLIC}.append_if_guarded_snapshot",
+        ),
     }
     for relative_path, analysis in analyses.items():
         violations = set(
@@ -3255,6 +3272,7 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
         "finalize_inventory",
         "_mutate",
         "_settle_parent_for_terminal_intent",
+        "admit_parent_batch_with_validated_authority",
     ):
         reached = _reachable_repository_methods(root)
         guarded_owners = {
@@ -3264,13 +3282,27 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
             and reference.kind == "call"
             and reference.target.rsplit(".", maxsplit=1)[-1] == "append_if_guarded_snapshot"
         }
-        assert (
-            _forbidden_closure_references(
-                repository_analysis,
-                owners=reached,
+        forbidden_closure_references = _forbidden_closure_references(
+            repository_analysis,
+            owners=reached,
+        )
+        expected_forbidden_closure_references = (
+            (
+                _QualifiedReference(
+                    owner="DirectedEffectOperationRepository.admit_parent_with_validated_authority",
+                    target="append_fact_event",
+                    kind="conservative_forbidden_call",
+                ),
+                _QualifiedReference(
+                    owner="DirectedEffectOperationRepository.admit_parent_with_validated_authority",
+                    target=f"{_FACT_STREAM_PUBLIC}.append_fact_event",
+                    kind="call",
+                ),
             )
-            == ()
-        ), root
+            if root == "admit_parent_batch_with_validated_authority"
+            else ()
+        )
+        assert forbidden_closure_references == expected_forbidden_closure_references, root
         writer_violations = set(
             _writer_taint_violations(
                 repository_analysis,
@@ -3279,7 +3311,33 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
             )
         )
         expected_writer_violations = (
-            allowed_terminal_writer_violations if root == "_settle_parent_for_terminal_intent" else set()
+            allowed_terminal_writer_violations
+            & {
+                (
+                    "DirectedEffectOperationRepository._parent_settlement_close_command",
+                    f"{_FACT_STREAM_PUBLIC}.GuardedFactEventV1",
+                ),
+                (
+                    "DirectedEffectOperationRepository._append_parent_settlement_close",
+                    f"{_FACT_STREAM_PUBLIC}.append_if_guarded_snapshot",
+                ),
+            }
+            if root == "_settle_parent_for_terminal_intent"
+            else (
+                allowed_terminal_writer_violations
+                & {
+                    (
+                        "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
+                        f"{_FACT_STREAM_PUBLIC}.GuardedFactEventV1",
+                    ),
+                    (
+                        "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
+                        f"{_FACT_STREAM_PUBLIC}.append_if_guarded_snapshot",
+                    ),
+                }
+                if root == "admit_parent_batch_with_validated_authority"
+                else set()
+            )
         )
         assert writer_violations == expected_writer_violations, root
         assert guarded_owners <= allowed_guarded_owners, root

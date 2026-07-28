@@ -1,0 +1,63 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "R113-CE-ADVISORY-SCOPE-TRANSPORT-OVERCONSTRAINT",
+  "status": "CLOSED_REQUALIFIED",
+  "severity": "P0",
+  "project_id": "L1-05",
+  "bench_run_id": "0937a12dccc6",
+  "factory_run_id": "factory_582d77d09759",
+  "symptom": "Chief Engineer made two physical HTTP 200 Provider calls but generated 0/3 blueprints, so Director and QA were not reached.",
+  "exact_error": "structured_output_payload_schema_mismatch:$:'scope_for_apply' is a required property",
+  "root_cause": "Factory incorrectly made non-authoritative scope_for_apply advice mandatory in the physical Provider result schema and again in semantic validation. DeepSeek omitted only that field twice, so transport validation discarded an otherwise usable portfolio.",
+  "final_provider_request_evidence": {
+    "primary_semantic_context_snapshot_ref": "bb9aee5d83a72c399be80a7e",
+    "primary_physical_context_snapshot_ref": "bc1b1d8f2ad1da56792e59e2",
+    "repair_semantic_context_snapshot_ref": "df68eaebd19cd1b5a8417c6c",
+    "repair_physical_context_snapshot_ref": "8b8af93056fd0ff8f309fa7f",
+    "role_identity": "pass",
+    "pm_contract_coverage": "pass",
+    "target_file_coverage": "pass",
+    "forced_structured_result_tool": "pass",
+    "thinking_disabled": "pass",
+    "token_window": "pass",
+    "failure_feedback_on_repair": "pass"
+  },
+  "runtime_evidence": {
+    "audit": "/tmp/factory-bench-l1-05-r113/audits/0937a12dccc6/L1-05.audit.json",
+    "review": ".polaris/roles/chief_engineer/factory_582d77d09759/review.json",
+    "provider_calls": 2,
+    "provider_http_statuses": [
+      200,
+      200
+    ],
+    "director_reached": false,
+    "qa_reached": false,
+    "source_files": 0
+  },
+  "authority_analysis": {
+    "scope_for_apply_authority": "advisory_only",
+    "apply_authority": "PM target_files and scope_paths",
+    "scope_expansion_allowed": false
+  },
+  "fix": {
+    "provider_schema": "Keep scope_for_apply declared but optional; keep construction_plan and risk_flags required.",
+    "semantic_validation": "Allow omission but reject a present non-array value.",
+    "audit": "Emit chief_engineer.scope_advisory_omitted without synthesizing CE advice."
+  },
+  "tests": {
+    "red": "1 failed: omitted advisory scope made chief_engineer_review fail",
+    "focused_green": "2 passed, 269 deselected",
+    "factory_characterization_full": "271 passed",
+    "factory_pipeline_full": "1266 passed, 2 warnings",
+    "ce_blueprint_public": "140 passed",
+    "structured_output_and_quality": "51 passed",
+    "kernelone_release_gate": "415 passed, 1 skipped, 2 warnings; ok=true",
+    "static_gates": "ruff, format, mypy, diff, JSON and YAML parse passed",
+    "independent_review": "CLEAR; Critical=0 Important=0 Minor=0",
+    "source_fingerprint": "c34f01bc6a239de1 == c34f01bc6a239de1",
+    "requalification": "pass"
+  },
+  "residual_risk": "A hollow construction plan, missing risk_flags, unknown task id, invalid interface contract, or invalid present scope value remains fail-closed.",
+  "target_project_edits": 0,
+  "next_action": "Consume exactly one fresh isolated R114 run, audit every role final Provider request, then close schedulability again on any new defect."
+}

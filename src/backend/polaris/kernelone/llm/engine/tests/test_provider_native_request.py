@@ -191,6 +191,572 @@ def test_kimi_anthropic_projection_reserves_visible_output_from_reasoning() -> N
 
     assert projection is not None
     assert projection.expected_body()["thinking"] == {"type": "enabled", "budget_tokens": 2_048}
+    assert "tool_choice" not in projection.expected_body()
+
+
+def test_deepseek_official_anthropic_projection_preserves_forced_tool_choice() -> None:
+    payload = _final_payload(stream=True)
+    payload["model"] = "deepseek-v4-pro"
+    payload["tool_choice"] = {
+        "type": "function",
+        "function": {"name": "read_file"},
+    }
+
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="stream",
+        final_payload=payload,
+        provider_config={
+            "base_url": "https://api.deepseek.com/anthropic",
+            "provider_id": "deepseek",
+        },
+    )
+
+    assert projection is not None
+    assert projection.expected_body()["tool_choice"] == {
+        "type": "tool",
+        "name": "read_file",
+    }
+    assert projection.expected_body()["thinking"] == {"type": "disabled"}
+
+
+def test_deepseek_official_anthropic_projection_keeps_default_thinking_without_tool_choice() -> None:
+    payload = _final_payload(stream=True)
+    payload["model"] = "deepseek-v4-pro"
+    payload["tool_choice"] = None
+
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="stream",
+        final_payload=payload,
+        provider_config={
+            "base_url": "https://api.deepseek.com/anthropic",
+            "provider_id": "deepseek",
+        },
+    )
+
+    assert projection is not None
+    assert "tool_choice" not in projection.expected_body()
+    assert "thinking" not in projection.expected_body()
+
+
+def test_deepseek_official_anthropic_projection_rejects_explicit_thinking_with_tool_choice() -> None:
+    payload = _final_payload(stream=True)
+    payload["model"] = "deepseek-v4-pro"
+
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_thinking_tool_choice_conflict:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="stream",
+            final_payload=payload,
+            provider_config={
+                "base_url": "https://api.deepseek.com/anthropic",
+                "provider_id": "deepseek",
+                "thinking": {"type": "enabled"},
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "provider_config",
+    [
+        {
+            "base_url": "https://api.deepseek.com/anthropicology",
+            "api_path": "/v1/messages",
+        },
+        {
+            "base_url": "https://proxy.example.test",
+            "api_path": "/https://api.deepseek.com/anthropic/v1/messages",
+        },
+    ],
+)
+def test_non_deepseek_routes_cannot_inherit_official_thinking_semantics_from_substrings(
+    provider_config: dict[str, object],
+) -> None:
+    payload = _final_payload(stream=True)
+    payload["model"] = "deepseek-v4-pro"
+    payload["tool_choice"] = {
+        "type": "function",
+        "function": {"name": "read_file"},
+    }
+
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="stream",
+        final_payload=payload,
+        provider_config=provider_config,
+    )
+
+    assert projection is not None
+    assert "thinking" not in projection.expected_body()
+
+
+def test_factory_anthropic_projection_rejects_unfrozen_request_overrides() -> None:
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_overrides_forbidden:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="stream",
+            final_payload=_final_payload(stream=True),
+            provider_config={
+                "base_url": "https://api.deepseek.com/anthropic",
+                "request_overrides": {"thinking": {"type": "disabled"}},
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("provider_config", "model", "tool_choice"),
+    [
+        (
+            {
+                "base_url": "https://api.kimi.com/coding/v1",
+                "provider_id": "kimi",
+            },
+            "kimi-for-coding",
+            {"type": "function", "function": {"name": "read_file"}},
+        ),
+        (
+            {
+                "base_url": "https://api.kimi.com/coding/v1",
+                "provider_id": "kimi",
+            },
+            "kimi-for-coding",
+            "required",
+        ),
+        (
+            {
+                "base_url": "https://api.kimi.com/coding/v1",
+                "provider_id": "kimi",
+            },
+            "kimi-for-coding",
+            "none",
+        ),
+        (
+            {
+                "base_url": "https://api.kimi.com/coding/v1",
+                "provider_id": "kimi",
+                "disable_parallel_tool_use": True,
+            },
+            "kimi-for-coding",
+            "auto",
+        ),
+        (
+            {
+                "base_url": "https://anthropic-compatible.test/v1",
+                "disable_tool_choice": True,
+            },
+            "model-1",
+            {"type": "function", "function": {"name": "read_file"}},
+        ),
+    ],
+)
+def test_anthropic_projection_rejects_forced_tool_choice_when_route_cannot_represent_it(
+    provider_config: dict[str, object],
+    model: str,
+    tool_choice: object,
+) -> None:
+    payload = _final_payload(stream=True)
+    payload["model"] = model
+    payload["tool_choice"] = tool_choice
+
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_tool_choice_unsupported:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="stream",
+            final_payload=payload,
+            provider_config=provider_config,
+        )
+
+
+@pytest.mark.parametrize(
+    "tool_choice",
+    [
+        "required",
+        {"type": "function", "function": {"name": "read_file"}},
+    ],
+)
+def test_anthropic_projection_rejects_forced_tool_choice_without_tools(
+    tool_choice: object,
+) -> None:
+    payload = _final_payload()
+    payload["tools"] = []
+    payload["tool_choice"] = tool_choice
+
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_tool_choice_without_tools:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="invoke",
+            final_payload=payload,
+            provider_config={"base_url": "https://anthropic.test/v1"},
+        )
+
+
+@pytest.mark.parametrize(
+    "tool_choice",
+    [
+        "",
+        {},
+        {
+            "type": "function",
+            "function": {"name": "read_file"},
+            "provider_semantic_hint": "must-preserve",
+        },
+        {
+            "type": "function",
+            "function": {"name": "read_file"},
+            "disable_parallel_tool_use": "true",
+        },
+        {"type": "auto", "name": "read_file"},
+        " read_file ",
+        {"type": "tool", "name": " read_file"},
+    ],
+)
+def test_anthropic_projection_rejects_malformed_tool_choice(tool_choice: object) -> None:
+    payload = _final_payload()
+    payload["tool_choice"] = tool_choice
+
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_tool_choice_invalid",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="invoke",
+            final_payload=payload,
+            provider_config={"base_url": "https://anthropic.test/v1"},
+        )
+
+
+def test_anthropic_projection_maps_any_to_native_any() -> None:
+    payload = _final_payload()
+    payload["tool_choice"] = "any"
+
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="invoke",
+        final_payload=payload,
+        provider_config={"base_url": "https://anthropic.test/v1"},
+    )
+
+    assert projection is not None
+    assert projection.expected_body()["tool_choice"] == {"type": "any"}
+
+
+def test_anthropic_projection_preserves_openai_choice_parallel_constraint() -> None:
+    payload = _final_payload()
+    payload["tool_choice"] = {
+        "type": "function",
+        "function": {"name": "read_file"},
+        "disable_parallel_tool_use": True,
+    }
+
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="invoke",
+        final_payload=payload,
+        provider_config={"base_url": "https://anthropic.test/v1"},
+    )
+
+    assert projection is not None
+    assert projection.expected_body()["tool_choice"] == {
+        "type": "tool",
+        "name": "read_file",
+        "disable_parallel_tool_use": True,
+    }
+
+
+def test_anthropic_projection_rejects_forced_choice_not_in_tools() -> None:
+    payload = _final_payload()
+    payload["tool_choice"] = {"type": "tool", "name": "write_file"}
+
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_tool_choice_unknown_tool:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="invoke",
+            final_payload=payload,
+            provider_config={"base_url": "https://anthropic.test/v1"},
+        )
+
+
+def test_deepseek_projection_rejects_unsupported_parallel_constraint() -> None:
+    payload = _final_payload()
+
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_parallel_tool_choice_unsupported:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="invoke",
+            final_payload=payload,
+            provider_config={
+                "base_url": "https://api.deepseek.com/anthropic",
+                "disable_parallel_tool_use": True,
+            },
+        )
+
+
+def test_deepseek_projection_omits_default_false_parallel_constraint() -> None:
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="invoke",
+        final_payload=_final_payload(),
+        provider_config={
+            "base_url": "https://api.deepseek.com/anthropic",
+            "disable_parallel_tool_use": False,
+        },
+    )
+
+    assert projection is not None
+    assert projection.expected_body()["tool_choice"] == {"type": "auto"}
+
+
+def test_non_deepseek_route_does_not_infer_capabilities_from_model_name() -> None:
+    payload = _final_payload()
+    payload["model"] = "deepseek-v4-pro"
+
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="invoke",
+        final_payload=payload,
+        provider_config={
+            "base_url": "https://anthropic-proxy.test/v1",
+            "disable_parallel_tool_use": True,
+        },
+    )
+
+    assert projection is not None
+    assert projection.expected_body()["tool_choice"] == {
+        "type": "auto",
+        "disable_parallel_tool_use": True,
+    }
+
+
+def test_standard_anthropic_projection_preserves_implicit_auto_parallel_constraint() -> None:
+    payload = _final_payload()
+    payload["tool_choice"] = None
+
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="invoke",
+        final_payload=payload,
+        provider_config={
+            "base_url": "https://anthropic.test/v1",
+            "disable_parallel_tool_use": True,
+        },
+    )
+
+    assert projection is not None
+    assert projection.expected_body()["tool_choice"] == {
+        "type": "auto",
+        "disable_parallel_tool_use": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "provider_config",
+    [
+        {
+            "base_url": "https://api.kimi.com/coding/v1",
+            "disable_parallel_tool_use": True,
+        },
+        {
+            "base_url": "https://anthropic-compatible.test/v1",
+            "disable_tool_choice": True,
+            "disable_parallel_tool_use": True,
+        },
+    ],
+)
+def test_unsupported_route_rejects_implicit_auto_parallel_constraint(
+    provider_config: dict[str, object],
+) -> None:
+    payload = _final_payload()
+    payload["tool_choice"] = None
+
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_tool_choice_unsupported:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="invoke",
+            final_payload=payload,
+            provider_config=provider_config,
+        )
+
+
+def test_explicit_false_does_not_override_kimi_tool_choice_capability() -> None:
+    payload = _final_payload()
+    payload["tool_choice"] = "required"
+
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_tool_choice_unsupported:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="invoke",
+            final_payload=payload,
+            provider_config={
+                "base_url": "https://api.kimi.com/coding/v1",
+                "disable_tool_choice": False,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "provider_config",
+    [
+        {
+            "base_url": "https://api.kimi.com/coding/v1",
+            "disable_parallel_tool_use": False,
+        },
+        {
+            "base_url": "https://anthropic-compatible.test/v1",
+            "disable_tool_choice": True,
+            "disable_parallel_tool_use": False,
+        },
+    ],
+)
+def test_unsupported_route_omits_default_auto_false_parallel_constraint(
+    provider_config: dict[str, object],
+) -> None:
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="invoke",
+        final_payload=_final_payload(),
+        provider_config=provider_config,
+    )
+
+    assert projection is not None
+    assert "tool_choice" not in projection.expected_body()
+
+
+def test_deepseek_explicit_identity_rejects_parallel_constraint() -> None:
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_parallel_tool_choice_unsupported:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="invoke",
+            final_payload=_final_payload(),
+            provider_config={
+                "base_url": "https://anthropic-proxy.test/v1",
+                "name": "DeepSeek Official",
+                "provider_id": "deepseek",
+                "disable_parallel_tool_use": True,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [
+        [{"name": "read_file", "parameters": "not-a-schema"}],
+        [{"name": "read_file", "input_schema": "not-a-schema"}],
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "parameters": "not-a-schema",
+                },
+            }
+        ],
+        [
+            {
+                "name": "read_file",
+                "input_schema": {"type": "object"},
+                "provider_semantic_hint": "must-preserve",
+            }
+        ],
+        [
+            {
+                "name": "read_file",
+                "parameters": {"type": "object"},
+                "description": None,
+            }
+        ],
+        [{"name": " read_file", "parameters": {"type": "object"}}],
+    ],
+)
+def test_anthropic_projection_rejects_lossy_tool_schema_conversion(
+    tools: list[object],
+) -> None:
+    payload = _final_payload()
+    payload["tools"] = tools
+
+    with pytest.raises(
+        FactoryProviderNativeRequestProjectionError,
+        match="factory_provider_native_request_tools_unrepresentable:anthropic_messages",
+    ):
+        project_factory_provider_native_request(
+            provider_type="anthropic_compat",
+            mode="invoke",
+            final_payload=payload,
+            provider_config={"base_url": "https://anthropic.test/v1"},
+        )
+
+
+def test_anthropic_projection_does_not_invent_missing_tool_description() -> None:
+    payload = _final_payload()
+    payload["tools"] = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "parameters": {"type": "object"},
+            },
+        }
+    ]
+
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="invoke",
+        final_payload=payload,
+        provider_config={"base_url": "https://anthropic.test/v1"},
+    )
+
+    assert projection is not None
+    assert projection.expected_body()["tools"] == [
+        {
+            "name": "read_file",
+            "input_schema": {"type": "object"},
+        }
+    ]
+
+
+def test_anthropic_projection_allows_default_none_without_tools() -> None:
+    payload = _final_payload()
+    payload["tools"] = []
+    payload["tool_choice"] = "none"
+
+    projection = project_factory_provider_native_request(
+        provider_type="anthropic_compat",
+        mode="invoke",
+        final_payload=payload,
+        provider_config={"base_url": "https://anthropic.test/v1"},
+    )
+
+    assert projection is not None
+    assert "tools" not in projection.expected_body()
+    assert "tool_choice" not in projection.expected_body()
 
 
 def test_reasoning_budget_does_not_enable_thinking_on_standard_anthropic_route() -> None:

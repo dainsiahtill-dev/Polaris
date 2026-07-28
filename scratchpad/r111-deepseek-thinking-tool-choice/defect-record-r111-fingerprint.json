@@ -1,0 +1,43 @@
+{
+  "schema_version": "polaris.main_agent_defect_manifest.v1",
+  "defect_id": "P0-R111-BACKEND-FINGERPRINT-COVERAGE",
+  "status": "FIXED_VERIFIED_R113_IN_PROGRESS",
+  "severity": "P0",
+  "bench_state": "not_schedulable",
+  "symptom": "Production changes under polaris/kernelone/llm and polaris/infrastructure/llm left compute_source_fingerprint() unchanged at 4d35e3706d2e0a26.",
+  "root_cause": "The default fingerprint surface was a hand-maintained list of nine paths and omitted execution-critical production modules.",
+  "risk": "A stale isolated backend could be incorrectly classified as fresh, invalidating Provider and Bench evidence.",
+  "fix": {
+    "production_sources": [
+      "polaris/**/*.py",
+      "scripts/factory_bench/**/*.py"
+    ],
+    "excluded_test_sources": [
+      "**/tests/**",
+      "**/conftest.py",
+      "**/test_*.py",
+      "**/*_test.py"
+    ],
+    "files": [
+      "src/backend/scripts/factory_bench/backend_fingerprint.py",
+      "src/backend/scripts/factory_bench/test_backend_fingerprint.py"
+    ]
+  },
+  "verification": {
+    "red_before_fix": "5 failed, 31 passed",
+    "focused_after_fix": "33 passed",
+    "combined_provider_and_fingerprint": "183 passed",
+    "new_fingerprint": "dc785b78532e9ca1",
+    "stable_samples": [
+      "dc785b78532e9ca1",
+      "dc785b78532e9ca1"
+    ],
+    "independent_review": "CLEAR; no production Python omission found; reviewer focused suite 184 passed",
+    "kernelone_release_gate": "ok=true; mode=all; suite_size=51; tests=415 passed, 1 skipped, 2 warnings",
+    "ruff": "pass",
+    "format": "pass",
+    "mypy": "pass",
+    "compileall": "pass"
+  },
+  "next_action": "Audit the consumed R113 isolated backend fingerprint against cbfd3d7a6acc793a; no second run is authorized."
+}

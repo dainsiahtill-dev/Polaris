@@ -1,0 +1,193 @@
+{
+  "schema_version": "polaris.main-agent-defect-record.v1",
+  "defect_id": "FACTORY-BENCH-L1-05-R108",
+  "generated_at": "2026-07-27",
+  "state": "PREBENCH_GATES_PASSED_R109_AUTHORIZED",
+  "bench_schedulability": "schedulable_once_r109",
+  "project_id": "L1-05",
+  "bench_run_id": "7a634330b08a",
+  "factory_run_id": "factory_08103e3277f9",
+  "source_head": "e11a86db623a0babcd713e3d32b97341b6cad1b8c",
+  "runtime_root": "/home/dains/.cache/kernelone/.polaris/projects/3b5a50cd84983fc1021b6706-d23fe39867c2/runtime",
+  "evidence": {
+    "bench_audit": "/tmp/factory-bench-l1-05-r108/audits/7a634330b08a/L1-05.audit.json",
+    "factory_audits": "/tmp/factory-bench-l1-05-r108/factory_audits.json",
+    "chain_log": "/tmp/factory-bench-l1-05-r108/L1-05.chain.log",
+    "task_runtime_events": "/home/dains/.cache/kernelone/.polaris/projects/3b5a50cd84983fc1021b6706-d23fe39867c2/runtime/events/task_runtime.execution.jsonl",
+    "first_director_run_id": "director-0a4e08acfcbb",
+    "second_director_run_id": "director-c3b350c1c31d",
+    "parent_failed_event_seq": 70,
+    "child_unblocked_event_seq": 71
+  },
+  "symptom": {
+    "factory_stage": "director_dispatch",
+    "reported_failed_task": "task-0-director",
+    "reported_error": "Director must claim TaskBoard task before execution",
+    "artifact_state": {
+      "source_file_count": 6,
+      "source_line_count": 318,
+      "test_file_count": 0,
+      "entrypoint_present": false
+    }
+  },
+  "root_causes": [
+    {
+      "id": "R108-A",
+      "classification": "task_runtime_dependency_projection_split_brain",
+      "status": "FIXED_FOCUSED_VERIFIED",
+      "mechanism": "TaskRuntime settlement authoritatively unblocked TASK-2 after failed-but-materialized TASK-1, but a reused Director TaskRuntimeService refreshed its stale cache and treated the failed parent as blocking again.",
+      "authority_evidence": {
+        "parent_status": "failed",
+        "dependency_satisfaction_kind": "failed_director_materialization",
+        "receipt_count": 1,
+        "failed_receipt_count": 0,
+        "materialized_path_count": 7,
+        "child_event_type": "dependencies_unblocked",
+        "child_status": "pending",
+        "child_blocked_by": []
+      },
+      "fix_files": [
+        "src/backend/polaris/cells/runtime/task_runtime/internal/service.py",
+        "src/backend/polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py"
+      ],
+      "safety_properties": [
+        "The parent remains failed outside dependency-status projection.",
+        "Only TaskRuntime-owned failed_director_materialization evidence can release the dependency.",
+        "Receipt counts, materialized paths, terminal transition, and three SHA-256 bindings are validated.",
+        "Forged or hash-mismatched evidence remains blocked."
+      ]
+    },
+    {
+      "id": "R108-B",
+      "classification": "workflow_runtime_structured_failure_evidence_loss",
+      "status": "FIXED_FOCUSED_VERIFIED",
+      "mechanism": "Director returned structured claim diagnostics, but WorkflowRuntime retained only a generic error string and projected task-0-director.",
+      "fix_files": [
+        "src/backend/polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
+        "src/backend/polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py",
+        "src/backend/polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+      ],
+      "bounded_projection": {
+        "schema_version": "workflow-runtime.role-result-evidence/1",
+        "max_claim_attempts": 8,
+        "max_decision_signals": 8,
+        "arbitrary_role_payload_allowed": false
+      }
+    },
+    {
+      "id": "R108-C",
+      "classification": "terminal_task_runtime_projection_destroyed_before_audit",
+      "status": "FIXED_EXPANDED_VERIFIED",
+      "mechanism": "Terminal Factory drain reset TaskRuntime rows before the audit router could project the authoritative run-scoped facts.",
+      "fix_files": [
+        "src/backend/polaris/cells/factory/pipeline/public/contracts.py",
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py",
+        "src/backend/polaris/delivery/http/routers/factory.py"
+      ],
+      "safety_properties": [
+        "The run-scoped authoritative TaskRuntime projection is frozen and persisted before reset.",
+        "Projection/run/workspace mismatch fails closed and leaves the workspace lease draining.",
+        "The audit router prefers the typed terminal snapshot over destroyed mutable rows."
+      ]
+    },
+    {
+      "id": "R108-D",
+      "classification": "quality_rework_evidence_destroyed_before_orchestration_decision",
+      "status": "FIXED_EXPANDED_VERIFIED",
+      "mechanism": "A failed quality_gate triggered service-owned terminal drain and TaskRuntime reset before the synchronous Factory orchestrator could inspect authoritative QA rework evidence and re-enter Director.",
+      "fix_files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py",
+        "src/backend/polaris/tests/test_factory_router.py",
+        "src/backend/polaris/tests/test_factory_run_service.py"
+      ],
+      "safety_properties": [
+        "Only a failed quality_gate defers destructive terminal drain for the synchronous orchestration decision.",
+        "PM, Chief Engineer, and Director failures retain automatic terminal drain.",
+        "A quality gate with no rework request follows the existing exception closeout and releases the lease.",
+        "QA rework tasks must be explicitly bound to the current Factory run; unbound or cross-run rows remain excluded."
+      ]
+    },
+    {
+      "id": "R108-E",
+      "classification": "terminal_snapshot_lost_across_reset_release_crash_window",
+      "status": "FIXED_EXPANDED_VERIFIED",
+      "mechanism": "A crash after the authoritative TaskRuntime snapshot was saved and rows were reset, but before workspace release, caused lifecycle rollback to persist the stale pre-operation run and erase the snapshot. A retry could then replace the lost authority with a zero-row projection.",
+      "fix_files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_factory_workspace_admission.py"
+      ],
+      "safety_properties": [
+        "Lifecycle rollback reloads the latest persisted run before attaching lease evidence.",
+        "A valid frozen projection is validated and reused across terminal-drain retries.",
+        "Frozen row count keeps the Run Ledger settlement barrier required after live TaskRuntime rows are reset.",
+        "Malformed, foreign-run, foreign-workspace, degraded, or non-authoritative frozen projections fail closed instead of being healed."
+      ]
+    }
+  ],
+  "verification": {
+    "passed": [
+      {
+        "scope": "task_runtime_settlement_focused",
+        "result": "2 passed"
+      },
+      {
+        "scope": "task_runtime_settlement_file",
+        "result": "43 passed"
+      },
+      {
+        "scope": "workflow_runtime_and_dispatch",
+        "result": "509 passed"
+      },
+      {
+        "scope": "factory_contracts_and_terminal_lease_regressions",
+        "result": "42 passed"
+      },
+      {
+        "scope": "factory_workspace_admission",
+        "result": "48 passed"
+      },
+      {
+        "scope": "ruff_format_diff_compileall",
+        "result": "passed"
+      },
+      {
+        "scope": "task_runtime_full",
+        "result": "916 passed"
+      },
+      {
+        "scope": "factory_control_plane_audit_router",
+        "result": "211 passed"
+      },
+      {
+        "scope": "factory_service_and_workspace_admission",
+        "result": "142 passed"
+      },
+      {
+        "scope": "targeted_mypy",
+        "result": "Success: no issues found in 6 source files"
+      },
+      {
+        "scope": "factory_pipeline_full",
+        "result": "1263 passed, 2 warnings"
+      },
+      {
+        "scope": "architecture_full",
+        "result": "1411 passed, 8 skipped"
+      },
+      {
+        "scope": "post_edit_codegraph_and_caveman_review",
+        "result": "CLEAR; no authority bypass, stale overwrite, or projection-healing path found"
+      },
+      {
+        "scope": "source_snapshot_stability",
+        "result": "2 identical captures; manifest d7fd0e5e00ae307cde9ed1ccd82fde66c16a580d6ea8111abf2598b59c5e32e0; 80 paths"
+      }
+    ],
+    "pending": [
+      "one authorized fresh isolated R109 bench",
+      "final provider request context audit for every reached role",
+      "COMPLETED_VERIFIED artifact, dependency, verifier, entrypoint, Run Ledger, QA, and terminal audit closure"
+    ]
+  },
+  "closure_rule": "Do not mark schedulable or COMPLETED_VERIFIED until expanded gates pass and a fresh isolated bench on the then-current stable HEAD reaches all artifact, dependency, build/test/lint, entrypoint, Run Ledger, QA, and terminal audit gates."
+}

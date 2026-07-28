@@ -117,6 +117,27 @@ def _pm_quality_contract_context_payload(context: dict[str, Any] | None) -> dict
     return payload
 
 
+def _pm_scope_path_covers_target(scope_path: Any, target_file: Any) -> bool:
+    scope = str(scope_path or "").replace("\\", "/").strip("/")
+    target = str(target_file or "").replace("\\", "/").strip("/")
+    return bool(scope and target) and (target == scope or target.startswith(f"{scope}/"))
+
+
+def _pm_reconcile_task_target_scope(contract: dict[str, Any]) -> dict[str, Any]:
+    """Keep every final task-local mutation target inside its capability scope."""
+
+    raw_scope_paths = contract.get("scope_paths")
+    scope_paths = list(raw_scope_paths) if isinstance(raw_scope_paths, list) else []
+    raw_target_files = contract.get("target_files")
+    target_files = raw_target_files if isinstance(raw_target_files, list) else []
+    for target_file in target_files:
+        target = str(target_file or "").strip()
+        if target and not any(_pm_scope_path_covers_target(scope, target) for scope in scope_paths):
+            scope_paths.append(target)
+    contract["scope_paths"] = list(dict.fromkeys(scope_paths))
+    return contract
+
+
 class PMContractNormalizationMixin(_PMAdapterMixinBase):
     """PM 合同归一化 mixin：标题/路径/scope/projection 字段归一与结构化校验。"""
 
@@ -242,7 +263,25 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         if not scope_items:
             scope_items = self._infer_scope_from_title(title)
         scope_text = ", ".join(scope_items[:4]) if scope_items else "src/"
-        scope_paths = scope_items[:_PM_CONTRACT_SCOPE_PATH_LIMIT] if scope_items else ["src/", "tests/"]
+        if scope_items:
+            # ``scope_paths`` becomes the Director/DEO write capability.  The
+            # compact scope limit may bound supplementary directory/context
+            # entries, but it must never remove a concrete mutation target:
+            # doing so leaves a task that commands a write while withholding
+            # the matching JobToken authority.  Keep least privilege by
+            # retaining only task-local targets plus as many supplementary
+            # scopes as fit inside the original compact budget.
+            declared_target_scope = list(dict.fromkeys(target_files))
+            declared_target_set = set(declared_target_scope)
+            supplementary_scope = [item for item in scope_items if item not in declared_target_set]
+            supplementary_budget = max(0, _PM_CONTRACT_SCOPE_PATH_LIMIT - len(declared_target_scope))
+            allowed_supplementary = set(supplementary_scope[:supplementary_budget])
+            scope_paths = [item for item in scope_items if item in declared_target_set or item in allowed_supplementary]
+            for target in declared_target_scope:
+                if target not in scope_paths:
+                    scope_paths.append(target)
+        else:
+            scope_paths = ["src/", "tests/"]
 
         depends_on = self._normalize_list(raw.get("depends_on") or raw.get("dependencies"))
         task_id = str(raw.get("id") or f"TASK-{index}").strip()
@@ -400,7 +439,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             flags=re.IGNORECASE,
         )
         if keyword_match:
-            keyword_tokens = re.findall(
+            keyword_tokens: list[str] = re.findall(
                 r"[a-z][a-z0-9_-]{2,}",
                 str(keyword_match.group(1) or "").lower(),
             )
@@ -410,7 +449,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
                 return token
 
         text = str(directive or "").lower()
-        tokens = re.findall(r"[a-z][a-z0-9_-]{3,}", text)
+        tokens: list[str] = re.findall(r"[a-z][a-z0-9_-]{3,}", text)
         for token in tokens:
             if token in _STOPWORDS:
                 continue
@@ -599,7 +638,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         quality = evaluate_pm_task_quality(payload, docs_stage={})
         _raw_tasks = payload.get("tasks") if isinstance(payload, dict) else None
         tasks: list[dict[str, Any]] = _raw_tasks if isinstance(_raw_tasks, list) else []
-        normalized = [item for item in tasks if isinstance(item, dict)]
+        normalized = [_pm_reconcile_task_target_scope(item) for item in tasks if isinstance(item, dict)]
         missing_typescript_contract = _pm_typescript_factory_contract_missing(normalized, directive)
         if missing_typescript_contract:
             quality = dict(quality)

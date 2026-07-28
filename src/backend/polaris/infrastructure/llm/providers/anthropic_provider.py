@@ -6,9 +6,12 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.engine.provider_native_request import (
+    FactoryProviderNativeRequestProjectionError,
     build_anthropic_native_messages,
     convert_tool_choice_to_anthropic,
     convert_tools_to_anthropic,
+    normalize_anthropic_tool_surface_for_wire,
+    reconcile_anthropic_thinking_for_wire,
 )
 from polaris.kernelone.llm.provider_contract import AdapterProviderContract
 from polaris.kernelone.llm.providers import (
@@ -268,25 +271,24 @@ def _normalize_anthropic_thinking(value: Any, *, require_enabled: bool = False) 
 
 
 def _sanitize_anthropic_payload_tool_choice(payload: dict[str, Any], config: dict[str, Any], model: str) -> None:
-    if "tool_choice" not in payload:
-        return
-    if not payload.get("tools"):
-        payload.pop("tool_choice", None)
-        return
-    tool_choice = _convert_tool_choice_to_anthropic(
-        payload.get("tool_choice"),
-        disable_parallel_tool_use=_coerce_disable_parallel_tool_use(config),
+    tools, tool_choice = normalize_anthropic_tool_surface_for_wire(
+        tools=payload.get("tools"),
+        tool_choice=payload.get("tool_choice"),
+        provider_config=config,
+        model=model,
     )
-    if not isinstance(tool_choice, dict) or not tool_choice:
+    if tools:
+        payload["tools"] = tools
+    else:
+        payload.pop("tools", None)
+    if tool_choice is None:
         payload.pop("tool_choice", None)
-        return
-    if not _supports_tool_choice(config, model):
-        payload.pop("tool_choice", None)
-        return
-    payload["tool_choice"] = tool_choice
+    else:
+        payload["tool_choice"] = tool_choice
 
 
 def _sanitize_anthropic_payload_options(payload: dict[str, Any], config: dict[str, Any], model: str) -> None:
+    requested_thinking = payload["thinking"] if "thinking" in payload else config.get("thinking")
     require_enabled = _requires_enabled_thinking(config, model)
     normalized = _normalize_anthropic_thinking(payload.get("thinking"), require_enabled=require_enabled)
     normalized = _apply_reasoning_budget_to_thinking(
@@ -299,20 +301,17 @@ def _sanitize_anthropic_payload_options(payload: dict[str, Any], config: dict[st
     else:
         payload["thinking"] = normalized
     _sanitize_anthropic_payload_tool_choice(payload, config, model)
-
-
-def _coerce_disable_parallel_tool_use(config: dict[str, Any]) -> bool | None:
-    value = config.get("disable_parallel_tool_use")
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return None
-    token = str(value).strip().lower()
-    if token in {"1", "true", "yes", "on"}:
-        return True
-    if token in {"0", "false", "no", "off"}:
-        return False
-    return None
+    reconciled = reconcile_anthropic_thinking_for_wire(
+        thinking=payload.get("thinking") if isinstance(payload.get("thinking"), Mapping) else None,
+        requested_thinking=requested_thinking,
+        tool_choice=payload.get("tool_choice") if isinstance(payload.get("tool_choice"), Mapping) else None,
+        provider_config=config,
+        model=model,
+    )
+    if reconciled is None:
+        payload.pop("thinking", None)
+    else:
+        payload["thinking"] = reconciled
 
 
 def _convert_tools_to_anthropic(tools: Any) -> list[dict[str, Any]]:
@@ -328,40 +327,6 @@ def _convert_tool_choice_to_anthropic(
         tool_choice,
         disable_parallel_tool_use=disable_parallel_tool_use,
     )
-
-
-def _supports_tool_choice(config: dict[str, Any], model: str) -> bool:
-    """Return whether this Anthropic-compatible endpoint accepts tool_choice.
-
-    Some Anthropic-compatible endpoints expose native tools but reject the
-    `tool_choice` field for reasoning/thinking models. DeepSeek's Anthropic
-    endpoint currently returns HTTP 400 ("Thinking mode does not support this
-    tool_choice") in that case. Kimi's coding endpoint requires thinking but
-    rejects forced tool choice while thinking is enabled. Omitting the field
-    preserves tool availability while letting the provider use its default
-    native tool selection behavior.
-    """
-
-    raw_flag = config.get("disable_tool_choice")
-    if isinstance(raw_flag, bool):
-        return not raw_flag
-    if raw_flag is not None:
-        flag = str(raw_flag).strip().lower()
-        if flag in {"1", "true", "yes", "on", "disabled", "disable"}:
-            return False
-
-    token = " ".join(
-        [
-            str(config.get("base_url") or ""),
-            str(config.get("api_path") or ""),
-            str(config.get("name") or ""),
-            str(config.get("provider_id") or ""),
-            str(model or ""),
-        ]
-    ).lower()
-    if "deepseek" in token:
-        return False
-    return not ("api.kimi.com/coding" in token or "kimi-for-coding" in token)
 
 
 def _inject_api_key(config: dict[str, Any], api_key: str | None) -> dict[str, Any]:
@@ -406,21 +371,13 @@ def _apply_anthropic_options(payload: dict[str, Any], config: dict[str, Any], mo
         payload["system"] = system_prompt
 
 
-def _apply_anthropic_tools(payload: dict[str, Any], config: dict[str, Any], model: str) -> None:
-    anthropic_tools = _convert_tools_to_anthropic(config.get("tools"))
-    if not anthropic_tools:
-        return
-    payload["tools"] = anthropic_tools
-    disable_parallel_tool_use = _coerce_disable_parallel_tool_use(config)
-    tool_choice = _convert_tool_choice_to_anthropic(
-        config.get("tool_choice"),
-        disable_parallel_tool_use=disable_parallel_tool_use,
-    )
-    if not isinstance(tool_choice, dict) or not tool_choice:
-        return
-    if _supports_tool_choice(config, model):
-        payload["tool_choice"] = tool_choice
-        return
+def _seed_anthropic_raw_tool_surface(payload: dict[str, Any], config: dict[str, Any]) -> None:
+    """Seed raw config values; normalize once after final request overrides."""
+
+    if "tools" in config:
+        payload["tools"] = config["tools"]
+    if "tool_choice" in config:
+        payload["tool_choice"] = config["tool_choice"]
 
 
 def _provider_native_messages(
@@ -598,14 +555,23 @@ class AnthropicProvider(BaseProvider):
             "messages": messages,
             "temperature": _temperature(config),
         }
-        _apply_anthropic_options(payload, config, model)
-        if message_system is not None:
-            payload["system"] = message_system
-        _apply_anthropic_tools(payload, config, model)
-        overrides = config.get("request_overrides")
-        if isinstance(overrides, dict):
-            payload.update(overrides)
-        _sanitize_anthropic_payload_options(payload, config, model)
+        try:
+            _apply_anthropic_options(payload, config, model)
+            if message_system is not None:
+                payload["system"] = message_system
+            _seed_anthropic_raw_tool_surface(payload, config)
+            overrides = config.get("request_overrides")
+            if isinstance(overrides, dict):
+                payload.update(overrides)
+            _sanitize_anthropic_payload_options(payload, config, model)
+        except FactoryProviderNativeRequestProjectionError as exc:
+            return InvokeResult(
+                ok=False,
+                output="",
+                latency_ms=0,
+                usage=Usage.estimate(prompt, ""),
+                error=exc.code,
+            )
         api_key = config.get("api_key")
         return invoke_with_retry(
             url,
@@ -687,7 +653,7 @@ class AnthropicProvider(BaseProvider):
         _apply_anthropic_options(payload, config, model)
         if message_system is not None:
             payload["system"] = message_system
-        _apply_anthropic_tools(payload, config, model)
+        _seed_anthropic_raw_tool_surface(payload, config)
 
         overrides = config.get("request_overrides")
         if isinstance(overrides, dict):

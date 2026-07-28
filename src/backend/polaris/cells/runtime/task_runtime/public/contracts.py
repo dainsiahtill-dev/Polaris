@@ -1347,6 +1347,7 @@ class RuntimeTaskRuntimeError(RuntimeError):
 DIRECTED_EFFECT_OPERATION_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-operation/1"
 DIRECTED_EFFECT_OPERATION_SCHEMA_V2: Final[str] = "task-runtime.directed-effect-operation/2"
 DIRECTED_EFFECT_OPERATION_SCHEMA_V3: Final[str] = "task-runtime.directed-effect-operation/3"
+DIRECTED_EFFECT_OPERATION_SCHEMA_V4: Final[str] = "task-runtime.directed-effect-operation/4"
 DIRECTED_EFFECT_OPERATION_SNAPSHOT_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-operation-snapshot/1"
 DIRECTED_EFFECT_CLAIM_GRANT_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-claim-grant/1"
 DIRECTED_EFFECT_INVENTORY_INTENT_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-inventory-intent/1"
@@ -1359,6 +1360,7 @@ DIRECTED_EFFECT_PARENT_REGISTRY_IDENTITY_SCHEMA_V1: Final[str] = (
 )
 DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1: Final[str] = "task-runtime.directed-effect-parent-registry/1"
 DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2: Final[str] = "task-runtime.directed-effect-parent-registry/2"
+DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3: Final[str] = "task-runtime.directed-effect-parent-registry/3"
 DIRECTED_EFFECT_PARENT_REGISTRY_PROJECTION_SCHEMA_V1: Final[str] = (
     "task-runtime.directed-effect-parent-registry-projection/1"
 )
@@ -2720,6 +2722,37 @@ class AdmitDirectedEffectParentCommandV1:
 
 
 @dataclass(frozen=True, slots=True)
+class AdmitDirectedEffectParentBatchCommandV1:
+    """Admit one canonical batch, rolling over only a receipt-complete predecessor.
+
+    TaskRuntime owns the predecessor close and derives every registry CAS value
+    while holding the active execution-attempt locks. Callers provide identity
+    and correlation only; they cannot manufacture a parent sequence or head.
+    """
+
+    workspace: str
+    task_id: int
+    execution_attempt: TaskRuntimeExecutionAttemptIdentityV1
+    correlation: ParentCorrelationV1
+    admission_idempotency_key: str
+    actor: str = "task_runtime"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _directed_effect_token("workspace", self.workspace))
+        _directed_effect_positive_int("task_id", self.task_id)
+        if not isinstance(self.execution_attempt, TaskRuntimeExecutionAttemptIdentityV1):
+            raise TypeError("execution_attempt must be TaskRuntimeExecutionAttemptIdentityV1")
+        if not isinstance(self.correlation, ParentCorrelationV1):
+            raise TypeError("correlation must be ParentCorrelationV1")
+        object.__setattr__(
+            self,
+            "admission_idempotency_key",
+            _directed_effect_token("admission_idempotency_key", self.admission_idempotency_key),
+        )
+        object.__setattr__(self, "actor", _directed_effect_token("actor", self.actor))
+
+
+@dataclass(frozen=True, slots=True)
 class GetDirectedEffectParentRegistryQueryV1:
     workspace: str
     task_id: int
@@ -3304,6 +3337,7 @@ __all__ = [
     "DIRECTED_EFFECT_OPERATION_SCHEMA_V1",
     "DIRECTED_EFFECT_OPERATION_SCHEMA_V2",
     "DIRECTED_EFFECT_OPERATION_SCHEMA_V3",
+    "DIRECTED_EFFECT_OPERATION_SCHEMA_V4",
     "DIRECTED_EFFECT_OPERATION_SNAPSHOT_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_BINDING_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_CORRELATION_SCHEMA_V1",
@@ -3312,6 +3346,7 @@ __all__ = [
     "DIRECTED_EFFECT_PARENT_REGISTRY_PROJECTION_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1",
     "DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2",
+    "DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3",
     "OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1",
     "TASK_RUNTIME_EXECUTION_ATTEMPT_IDENTITY_SCHEMA_V1",
     "TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1",
@@ -3319,6 +3354,7 @@ __all__ = [
     "TASK_RUNTIME_EXECUTION_STREAM_V1",
     "AbortDirectedEffectOperationCommandV1",
     "AdmitDirectedEffectOperationCommandV1",
+    "AdmitDirectedEffectParentBatchCommandV1",
     "AdmitDirectedEffectParentCommandV1",
     "BindRuntimeTaskToFactoryRunCommandV1",
     "ClaimDirectedEffectCommandV1",

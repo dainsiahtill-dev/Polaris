@@ -487,9 +487,7 @@ def test_prepare_role_dialogue_context_reuses_original_parent_when_reprepared() 
             {"parent_execution_scope_id": "different-parent"}
         ),
         lambda context: context["metadata"].update({"execution_attempt_id": "different-parent"}),
-        lambda context: context["metadata"].update(
-            {"runtime_execution": {"session_id": "different-parent"}}
-        ),
+        lambda context: context["metadata"].update({"runtime_execution": {"session_id": "different-parent"}}),
     ),
 )
 def test_prepare_role_dialogue_context_rejects_conflicting_prior_subinvocation_evidence(
@@ -3148,7 +3146,13 @@ async def test_phase_pre_materialization_quality_records_post_execution_kernel_s
             }
         ],
     }
-    state, _evidence, _can_accept, _write_evidence, summary = await execute_method_module._phase_pre_materialization_quality(
+    (
+        state,
+        _evidence,
+        _can_accept,
+        _write_evidence,
+        summary,
+    ) = await execute_method_module._phase_pre_materialization_quality(
         SimpleNamespace(workspace=str(tmp_path)),
         baseline_files={},
         can_accept_existing_scope=True,
@@ -3271,7 +3275,13 @@ async def test_phase_pre_materialization_quality_passes_artifact_quality_converg
     monkeypatch.setattr(execute_method_module, "run_post_execution_language_repairs", fake_post_execution_repairs)
 
     absolute_inside = tmp_path / "lib" / "model.ts"
-    state, _evidence, _can_accept, _write_evidence, _summary = await execute_method_module._phase_pre_materialization_quality(
+    (
+        state,
+        _evidence,
+        _can_accept,
+        _write_evidence,
+        _summary,
+    ) = await execute_method_module._phase_pre_materialization_quality(
         SimpleNamespace(workspace=str(tmp_path)),
         baseline_files={},
         can_accept_existing_scope=True,
@@ -4636,6 +4646,14 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
                     "src/engine/runner.js",
                     "tests/behavior.test.js",
                 ],
+                "job_token": {
+                    "token_id": "job-TASK-1-source-core",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "allowed_write_paths": [
+                        "src/engine/rules.js",
+                        "src/engine/runner.js",
+                    ],
+                },
                 "module_interface_contract": {
                     "schema_version": "chief_engineer.module_interface_contract.v1",
                     "modules": [{"path": "src/engine/rules.js", "role": "core_engine"}],
@@ -4674,6 +4692,10 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         assert context["scope_paths"] == ["src/engine/rules.js", "src/engine/runner.js"]
         assert context["metadata"]["target_files"] == ["src/engine/rules.js", "src/engine/runner.js"]
         assert context["metadata"]["scope_paths"] == ["src/engine/rules.js", "src/engine/runner.js"]
+        assert context["job_token"]["token_id"] == "job-TASK-1-source-core"
+        assert (
+            metadata["director_execution_envelope"]["authorization"]["capability_token_ref"] == "job-TASK-1-source-core"
+        )
         assert (
             "tests/behavior.test.js"
             not in metadata["director_execution_envelope"]["authorization"]["allowed_write_paths"]
@@ -13367,8 +13389,11 @@ class TestQualityRepairMissingTargetContract:
             task: dict[str, Any],
             task_id: str,
             artifact_quality_errors: list[str],
+            artifact_quality_issues: tuple[dict[str, Any], ...] = (),
+            execution_attempt: Any = None,
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-            del adapter, task, artifact_quality_errors
+            del adapter, task, artifact_quality_errors, artifact_quality_issues
+            assert execution_attempt is None
             calls.append({"task_id": task_id})
             return (
                 [

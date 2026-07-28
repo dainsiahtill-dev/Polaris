@@ -13,6 +13,7 @@ import contextlib
 import inspect
 import logging
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -104,9 +105,30 @@ class RunCompletionWaiter:
         ]
 
     def _active_execution_rows(self, *, run_id: str) -> list[dict[str, Any]]:
-        """Return the active subset of canonical TaskRuntime rows."""
+        """Return active, unexpired rows from the canonical TaskRuntime projection."""
 
-        return [row for row in self._execution_rows(run_id=run_id) if self._row_is_active(row)]
+        projection = self._observable_task_rows_projection()
+        if not self._projection_is_authoritative(projection):
+            return []
+        return [
+            row
+            for row in self._execution_rows(run_id=run_id, projection=projection)
+            if self._row_is_active(row) and self._row_has_live_canonical_execution_fact(row)
+        ]
+
+    @staticmethod
+    def _projection_is_authoritative(
+        projection: ObservableTaskRowsProjectionV1 | None,
+    ) -> bool:
+        if projection is None:
+            return False
+        readiness = dict(projection.readiness)
+        return (
+            projection.authoritative is True
+            and not projection.degraded
+            and projection.source == "task_runtime.execution_fact"
+            and readiness.get("ready") is True
+        )
 
     @staticmethod
     def _row_has_canonical_fact_source(row: Mapping[str, Any]) -> bool:
@@ -117,13 +139,47 @@ class RunCompletionWaiter:
             and str(metadata_map.get("status_source") or "").strip() == "task_runtime.execution_fact"
         )
 
+    @staticmethod
+    def _parse_utc_timestamp(value: Any) -> datetime | None:
+        token = str(value or "").strip()
+        if not token:
+            return None
+        try:
+            parsed = datetime.fromisoformat(token.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+
+    @classmethod
+    def _row_has_live_canonical_execution_fact(
+        cls,
+        row: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        """Require a positive fact sequence and a live owner-cell lease."""
+
+        if not cls._row_has_canonical_fact_source(row):
+            return False
+        sequence = row.get("fact_event_seq")
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+            return False
+        heartbeat = cls._parse_utc_timestamp(row.get("last_heartbeat_at"))
+        lease_expires = cls._parse_utc_timestamp(row.get("lease_expires_at"))
+        if heartbeat is None or lease_expires is None:
+            return False
+        reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        return heartbeat <= reference < lease_expires and heartbeat <= lease_expires
+
     def active_execution_progress_marker(self, *, run_id: str) -> tuple[tuple[str, str, str, str], ...]:
         """Return a stable marker for observable progress in one active run.
 
-        The append-only fact sequence is authoritative when present.  The
-        heartbeat timestamp remains as a transitional fallback for rows whose
-        fact projection predates ``fact_event_seq``.  Consumers compare markers;
-        they must not interpret the values as permissions or task completion.
+        The append-only fact sequence is authoritative. Heartbeat and lease
+        timestamps establish that the owner-cell execution is still live.
+        Consumers compare markers; they must not interpret the values as
+        permissions or task completion.
 
         Complexity:
             O(r log r) time and O(r) memory over active rows.
@@ -165,16 +221,27 @@ class RunCompletionWaiter:
         metadata_map = metadata if isinstance(metadata, dict) else {}
         runtime_execution = metadata_map.get("runtime_execution")
         runtime_execution_map = runtime_execution if isinstance(runtime_execution, dict) else {}
-        row_run_ids = {
+        execution_fact = metadata_map.get("task_runtime_execution_fact")
+        execution_fact_map = execution_fact if isinstance(execution_fact, dict) else {}
+        child_run_ids = {
             str(row.get("workflow_run_id") or "").strip(),
             str(row.get("run_id") or "").strip(),
-            str(row.get("factory_run_id") or "").strip(),
-            str(metadata_map.get("factory_run_id") or "").strip(),
-            str(metadata_map.get("factory_bench_factory_run_id") or "").strip(),
             str(runtime_execution_map.get("run_id") or "").strip(),
-            str(runtime_execution_map.get("factory_run_id") or "").strip(),
+            str(execution_fact_map.get("run_id") or "").strip(),
         }
-        return normalized_run_id in row_run_ids
+        child_run_ids.discard("")
+        if not child_run_ids:
+            return False
+        if child_run_ids == {normalized_run_id}:
+            return True
+
+        # Some Factory-owned waits are keyed by the parent Factory run rather
+        # than one Director child run.  Accept that relationship only through
+        # the typed top-level parent projection and only when every child
+        # identity agrees.  This preserves the legitimate parent barrier
+        # without reviving the former "any alias matches" ambiguity.
+        parent_factory_run_id = str(row.get("factory_run_id") or "").strip()
+        return parent_factory_run_id == normalized_run_id and len(child_run_ids) == 1
 
     @staticmethod
     def _row_is_active(row: Mapping[str, Any]) -> bool:
@@ -350,13 +417,7 @@ class RunCompletionWaiter:
             }
         else:
             readiness = dict(projection.readiness)
-        if (
-            projection is None
-            or projection.authoritative is not True
-            or projection.degraded
-            or projection.source != "task_runtime.execution_fact"
-            or readiness.get("ready") is not True
-        ):
+        if not self._projection_is_authoritative(projection):
             return CommandResult(
                 run_id=run_id,
                 status="blocked",
@@ -380,7 +441,11 @@ class RunCompletionWaiter:
             process_terminal=process_terminal,
         )
         if task_runtime_result is None:
-            return turn_outcome_result
+            # A TransactionKernel turn outcome settles one role turn, not the
+            # Director task execution. Under TaskRuntime authority it may veto
+            # an already-terminal TaskRuntime result through the conflict
+            # matrix below, but it must never grant completion by itself.
+            return None
         if turn_outcome_result is None:
             return task_runtime_result
 
@@ -584,7 +649,9 @@ class RunCompletionWaiter:
         settlement_deadline: float | None = (
             min(deadline, loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS) if process_terminal else None
         )
+        settlement_progress_marker = self.active_execution_progress_marker(run_id=run_id) if process_terminal else None
         deferred_cancel_reason = ""
+        lifecycle_failure_deferred_for_active_execution = False
 
         while True:
             canonical = self.canonical_terminal_result(
@@ -599,15 +666,44 @@ class RunCompletionWaiter:
 
             lifecycle_status = str(lifecycle_result.status or "").strip().lower()
             if lifecycle_status in failure_statuses:
-                metadata = dict(lifecycle_result.metadata or {})
-                metadata.update(
-                    {
-                        "canonical_authoritative": False,
-                        "terminal_source": "orchestration_lifecycle_failure",
-                    }
+                active_execution = self._active_task_runtime_barrier_result(
+                    run_id=run_id,
+                    reason="orchestration_lifecycle_failure",
                 )
-                lifecycle_result.metadata = metadata
-                return lifecycle_result
+                if active_execution is not None:
+                    # The orchestration lifecycle is diagnostic only. A matching
+                    # TaskRuntime execution fact still owns the admitted child
+                    # attempt, so preserve the original execution deadline and
+                    # wait for its canonical terminal fact. The fixed settlement
+                    # window begins only after the owner cell stops reporting an
+                    # active execution.
+                    process_terminal = True
+                    if not deferred_cancel_reason:
+                        settlement_deadline = None
+                        settlement_progress_marker = self.active_execution_progress_marker(run_id=run_id)
+                    lifecycle_failure_deferred_for_active_execution = True
+                elif lifecycle_failure_deferred_for_active_execution:
+                    # The active row may disappear one projection tick before
+                    # its terminal fact becomes visible. Spend only the bounded
+                    # canonical settlement window, still capped by the original
+                    # admitted execution deadline.
+                    process_terminal = True
+                    if settlement_deadline is None:
+                        settlement_deadline = min(
+                            deadline,
+                            loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
+                        )
+                        settlement_progress_marker = self.active_execution_progress_marker(run_id=run_id)
+                else:
+                    metadata = dict(lifecycle_result.metadata or {})
+                    metadata.update(
+                        {
+                            "canonical_authoritative": False,
+                            "terminal_source": "orchestration_lifecycle_failure",
+                        }
+                    )
+                    lifecycle_result.metadata = metadata
+                    return lifecycle_result
 
             if cancel_event is not None and cancel_event.is_set() and not deferred_cancel_reason:
                 barrier_result = self._active_task_runtime_barrier_result(
@@ -620,6 +716,7 @@ class RunCompletionWaiter:
                         deadline,
                         loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
                     )
+                    settlement_progress_marker = self.active_execution_progress_marker(run_id=run_id)
                     continue
                 barrier_result = await self.cancel_active_run(run_id, reason="factory_cancelled")
                 if barrier_result is not None:
@@ -680,6 +777,7 @@ class RunCompletionWaiter:
                     deadline,
                     loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
                 )
+                settlement_progress_marker = self.active_execution_progress_marker(run_id=run_id)
                 continue
 
             if not isinstance(active_task, asyncio.Task):
@@ -692,10 +790,24 @@ class RunCompletionWaiter:
                         deadline,
                         loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
                     )
+                    settlement_progress_marker = self.active_execution_progress_marker(run_id=run_id)
                     continue
 
             now = loop.time()
             if settlement_deadline is not None and now >= settlement_deadline:
+                if process_terminal and not deferred_cancel_reason:
+                    current_progress_marker = self.active_execution_progress_marker(run_id=run_id)
+                    if current_progress_marker != settlement_progress_marker and current_progress_marker != ():
+                        settlement_progress_marker = current_progress_marker
+                        settlement_deadline = min(
+                            deadline,
+                            loop.time() + _CANONICAL_OUTCOME_SETTLEMENT_SECONDS,
+                        )
+                        logger.debug(
+                            "Extending settlement deadline for run %s due to active execution progress",
+                            run_id,
+                        )
+                        continue
                 if deferred_cancel_reason:
                     barrier_result = self._active_task_runtime_barrier_result(
                         run_id=run_id,

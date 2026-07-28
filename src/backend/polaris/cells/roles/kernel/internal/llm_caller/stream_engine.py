@@ -17,6 +17,9 @@ from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_count_from_metadata,
     project_native_tool_call_envelopes_to_metadata,
 )
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    validate_structured_output_stream_tool_call,
+)
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleFrozenSemanticRequestV1,
 )
@@ -628,6 +631,11 @@ class StreamEngine:
                         continue
 
                     if event_type == "tool_call":
+                        validate_structured_output_stream_tool_call(
+                            tool_name=normalized.tool_name,
+                            arguments=normalized.tool_args,
+                            plan=getattr(prepared, "structured_output_transport", None),
+                        )
                         raw_tool_call_count += 1
                         signature = tool_call_signature_from_normalized(normalized)
                         if dedupe_reconnect_replay and reconnect_count > 0:

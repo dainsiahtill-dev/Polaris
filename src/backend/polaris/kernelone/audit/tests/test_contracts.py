@@ -168,12 +168,21 @@ class TestKernelAuditEventToDict:
 class TestKernelAuditEventFromDict:
     """Test suite for KernelAuditEvent.from_dict method."""
 
-    def test_from_dict_minimal(self) -> None:
-        """Test creating event from minimal dict."""
+    def test_from_dict_canonical_persisted_payload(self) -> None:
+        """Persisted events must carry the complete signed audit envelope."""
         payload = {
             "event_id": "from-dict-1",
             "timestamp": "2024-01-15T10:30:00+00:00",
             "event_type": "task_start",
+            "version": "2.0",
+            "source": {},
+            "task": {},
+            "resource": {},
+            "action": {},
+            "data": {},
+            "context": {},
+            "prev_hash": GENESIS_HASH,
+            "signature": "signed",
         }
         event = KernelAuditEvent.from_dict(payload)
 
@@ -187,6 +196,15 @@ class TestKernelAuditEventFromDict:
             "event_id": "z-suffix",
             "timestamp": "2024-01-15T10:30:00Z",
             "event_type": "llm_call",
+            "version": "2.0",
+            "source": {},
+            "task": {},
+            "resource": {},
+            "action": {},
+            "data": {},
+            "context": {},
+            "prev_hash": GENESIS_HASH,
+            "signature": "signed",
         }
         event = KernelAuditEvent.from_dict(payload)
         assert event.event_id == "z-suffix"
@@ -249,28 +267,37 @@ class TestKernelAuditEventFromDict:
         payload = {
             "event_id": "no-type",
             "timestamp": "2024-01-15T10:30:00+00:00",
-            "event_type": "",  # Empty string is not a valid enum value
+            "event_type": "unknown",
+            "version": "2.0",
+            "source": {},
+            "task": {},
+            "resource": {},
+            "action": {},
+            "data": {},
+            "context": {},
+            "prev_hash": GENESIS_HASH,
+            "signature": "signed",
         }
         with pytest.raises(ValueError, match="not a valid KernelAuditEventType"):
             KernelAuditEvent.from_dict(payload)
 
-    def test_from_dict_default_values(self) -> None:
-        """Test that missing optional fields get defaults."""
+    def test_from_dict_rejects_missing_persisted_version(self) -> None:
+        """Deserialization must not synthesize chain-critical persisted fields."""
         payload = {
             "event_id": "defaults",
             "timestamp": "2024-01-15T10:30:00+00:00",
             "event_type": "task_start",
+            "source": {},
+            "task": {},
+            "resource": {},
+            "action": {},
+            "data": {},
+            "context": {},
+            "prev_hash": GENESIS_HASH,
+            "signature": "signed",
         }
-        event = KernelAuditEvent.from_dict(payload)
-        assert event.version == "2.0"
-        assert event.source == {}
-        assert event.task == {}
-        assert event.resource == {}
-        assert event.action == {}
-        assert event.data == {}
-        assert event.context == {}
-        assert event.prev_hash == GENESIS_HASH
-        assert event.signature == ""
+        with pytest.raises(ValueError, match="version is required"):
+            KernelAuditEvent.from_dict(payload)
 
 
 class TestKernelChainVerificationResult:

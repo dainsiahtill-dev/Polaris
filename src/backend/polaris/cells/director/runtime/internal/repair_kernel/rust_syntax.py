@@ -62,6 +62,14 @@ _RUST_DERIVABLE_TRAIT_NAMES = frozenset(
         "PartialOrd",
     }
 )
+# rustc rejects partial derive sets (e.g. Ord without Eq/PartialOrd). Expand
+# requested traits with the minimal derive prerequisites before planning.
+_RUST_DERIVE_PREREQUISITES: dict[str, frozenset[str]] = {
+    "Copy": frozenset({"Clone"}),
+    "Eq": frozenset({"PartialEq"}),
+    "Ord": frozenset({"PartialOrd", "Eq", "PartialEq"}),
+    "PartialOrd": frozenset({"PartialEq"}),
+}
 _KNOWN_RUST_DEPENDENCIES: dict[str, str] = {
     "serde": 'serde = { version = "1.0", features = ["derive"] }',
     "serde_json": 'serde_json = "1.0"',
@@ -806,7 +814,7 @@ def build_rust_missing_trait_derive_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Build span-based edits that add ordinary missing trait derives to Rust structs."""
+    """Build span-based edits that add ordinary missing trait derives to Rust structs/enums."""
 
     normalized_base = {
         _normalize_repair_path(path): str(content or "")
@@ -820,6 +828,7 @@ def build_rust_missing_trait_derive_plan(
     planned_diagnostics: list[RepairDiagnostic] = []
     seen_spans: set[tuple[str, int, int, str]] = set()
     for symbol, traits, diagnostic in _parse_rust_missing_trait_derive_targets(diagnostics):
+        expanded_traits = _expand_rust_derive_prerequisites(traits)
         diagnostic_planned = False
         for path, content in _rust_missing_trait_derive_candidate_files(
             base_files=normalized_base,
@@ -829,7 +838,7 @@ def build_rust_missing_trait_derive_plan(
                 path=path,
                 content=content,
                 symbol=symbol,
-                traits=traits,
+                traits=expanded_traits,
                 diagnostic=diagnostic,
             )
             if operation is None:
@@ -1367,6 +1376,21 @@ def _rust_file_for_module_symbol(
     return None
 
 
+def _expand_rust_derive_prerequisites(traits: frozenset[str] | set[str]) -> frozenset[str]:
+    """Expand requested derives with their rustc-required companion traits."""
+
+    expanded: set[str] = {str(item) for item in traits if str(item)}
+    changed = True
+    while changed:
+        changed = False
+        for trait in tuple(expanded):
+            for prerequisite in _RUST_DERIVE_PREREQUISITES.get(trait, frozenset()):
+                if prerequisite not in expanded:
+                    expanded.add(prerequisite)
+                    changed = True
+    return frozenset(sorted(expanded))
+
+
 def _rust_missing_trait_derive_operation(
     *,
     path: str,
@@ -1378,7 +1402,9 @@ def _rust_missing_trait_derive_operation(
     if not path.endswith(".rs") or not _is_rust_identifier(symbol) or not traits:
         return None
     lines = content.splitlines(keepends=True)
-    declaration_re = re.compile(rf"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+{re.escape(symbol)}\b")
+    # Live L1-05 r92: BTreeMap keys are often enums (`Flavor: Ord`); struct-only
+    # matching left known_rule_matched plans empty despite rust_e0277 diagnostics.
+    declaration_re = re.compile(rf"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+{re.escape(symbol)}\b")
     for item_index, line in enumerate(lines):
         if declaration_re.match(line) is None:
             continue
@@ -1387,8 +1413,8 @@ def _rust_missing_trait_derive_operation(
             expected = lines[derive_index]
             replacement, added = _add_rust_derive_traits_to_line(expected, traits)
             target_index = derive_index
-            struct_line = line
-            unique_context = f"{expected}{struct_line}"
+            item_line = line
+            unique_context = f"{expected}{item_line}"
         else:
             expected = line
             indent = line[: len(line) - len(line.lstrip())]
@@ -1414,6 +1440,7 @@ def _rust_missing_trait_derive_operation(
                 "span_based": True,
                 "symbol": symbol,
                 "struct_name": symbol,
+                "item_kind": "enum" if re.search(r"\benum\b", line) else "struct",
                 "traits_added": tuple(sorted(traits)),
                 "derive_line_existing": derive_index is not None,
                 "unique_context": unique_context,

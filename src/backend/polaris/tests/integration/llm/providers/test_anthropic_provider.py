@@ -17,7 +17,10 @@ from polaris.infrastructure.llm.providers.anthropic_provider import (
     _convert_tool_choice_to_anthropic,
     _convert_tools_to_anthropic,
 )
-from polaris.kernelone.llm.engine.provider_native_request import project_factory_provider_native_request
+from polaris.kernelone.llm.engine.provider_native_request import (
+    FactoryProviderNativeRequestProjectionError,
+    project_factory_provider_native_request,
+)
 from polaris.kernelone.llm.providers import THINKING_PREFIX
 from polaris.kernelone.llm.types import InvokeResult
 
@@ -271,7 +274,7 @@ class TestAnthropicProviderToolConversion:
         assert result.ok is True
         assert captured["payload"]["tool_choice"] == {"type": "tool", "name": "edit_file"}
 
-    def test_invoke_omits_tool_choice_for_deepseek_anthropic_endpoint(
+    def test_invoke_sends_tool_choice_for_deepseek_anthropic_endpoint(
         self,
         monkeypatch: pytest.MonkeyPatch,
         anthropic_compat_config: dict[str, Any],
@@ -304,9 +307,38 @@ class TestAnthropicProviderToolConversion:
 
         assert result.ok is True
         assert "tools" in captured["payload"]
-        assert "tool_choice" not in captured["payload"]
+        assert captured["payload"]["tool_choice"] == {"type": "tool", "name": "edit_file"}
+        assert captured["payload"]["thinking"] == {"type": "disabled"}
 
-    def test_invoke_omits_specified_tool_choice_for_kimi_coding_thinking_endpoint(
+    def test_invoke_rejects_explicit_deepseek_thinking_with_forced_tool_choice(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        fake_post = MagicMock(side_effect=AssertionError("incompatible request must fail before transport"))
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicProvider()
+        result = provider.invoke(
+            "Edit",
+            "deepseek-v4-pro",
+            {
+                **anthropic_compat_config,
+                "base_url": "https://api.deepseek.com/anthropic",
+                "thinking": {"type": "enabled"},
+                "tools": [{"name": "edit_file", "input_schema": {"type": "object"}}],
+                "tool_choice": {"type": "tool", "name": "edit_file"},
+            },
+        )
+
+        assert result.ok is False
+        assert result.error == "factory_provider_native_request_thinking_tool_choice_conflict:anthropic_messages"
+        fake_post.assert_not_called()
+
+    def test_invoke_rejects_specified_tool_choice_for_kimi_coding_thinking_endpoint(
         self,
         monkeypatch: pytest.MonkeyPatch,
         anthropic_compat_config: dict[str, Any],
@@ -338,12 +370,11 @@ class TestAnthropicProviderToolConversion:
         }
         result = provider.invoke("Edit", "kimi-for-coding", config)
 
-        assert result.ok is True
-        assert captured["payload"]["thinking"] == {"type": "enabled"}
-        assert "tools" in captured["payload"]
-        assert "tool_choice" not in captured["payload"]
+        assert result.ok is False
+        assert result.error == "factory_provider_native_request_tool_choice_unsupported:anthropic_messages"
+        assert captured == {}
 
-    def test_invoke_omits_tool_choice_when_config_disables_it(
+    def test_invoke_rejects_forced_tool_choice_when_config_disables_it(
         self,
         monkeypatch: pytest.MonkeyPatch,
         anthropic_compat_config: dict[str, Any],
@@ -374,9 +405,171 @@ class TestAnthropicProviderToolConversion:
         }
         result = provider.invoke("Edit", "claude-3-5-sonnet", config)
 
+        assert result.ok is False
+        assert result.error == "factory_provider_native_request_tool_choice_unsupported:anthropic_messages"
+        assert captured == {}
+
+    def test_invoke_rejects_forced_tool_choice_without_tools(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        provider_called = False
+
+        def fake_post(_url: str, _headers: dict[str, str], _payload: dict[str, Any], _timeout: int) -> Any:
+            nonlocal provider_called
+            provider_called = True
+            raise AssertionError("provider transport must not run")
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        result = AnthropicProvider().invoke(
+            "Edit",
+            "claude-3-5-sonnet",
+            {
+                **anthropic_compat_config,
+                "tools": [],
+                "tool_choice": "required",
+            },
+        )
+
+        assert result.ok is False
+        assert result.error == "factory_provider_native_request_tool_choice_without_tools:anthropic_messages"
+        assert provider_called is False
+
+    def test_invoke_rejects_lossy_tool_schema_before_transport(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        provider_called = False
+
+        def fake_post(_url: str, _headers: dict[str, str], _payload: dict[str, Any], _timeout: int) -> Any:
+            nonlocal provider_called
+            provider_called = True
+            raise AssertionError("provider transport must not run")
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        result = AnthropicProvider().invoke(
+            "Read",
+            "claude-3-5-sonnet",
+            {
+                **anthropic_compat_config,
+                "tools": [{"name": "read_file", "parameters": "not-a-schema"}],
+            },
+        )
+
+        assert result.ok is False
+        assert result.error == "factory_provider_native_request_tools_unrepresentable:anthropic_messages"
+        assert provider_called is False
+
+    def test_invoke_rejects_forced_choice_not_in_tools_before_transport(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        provider_called = False
+
+        def fake_post(_url: str, _headers: dict[str, str], _payload: dict[str, Any], _timeout: int) -> Any:
+            nonlocal provider_called
+            provider_called = True
+            raise AssertionError("provider transport must not run")
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        result = AnthropicProvider().invoke(
+            "Write",
+            "claude-3-5-sonnet",
+            {
+                **anthropic_compat_config,
+                "tools": [{"name": "read_file", "input_schema": {"type": "object"}}],
+                "tool_choice": {"type": "tool", "name": "write_file"},
+            },
+        )
+
+        assert result.ok is False
+        assert result.error == "factory_provider_native_request_tool_choice_unknown_tool:anthropic_messages"
+        assert provider_called is False
+
+    def test_invoke_rejects_implicit_kimi_parallel_constraint_before_transport(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        provider_called = False
+
+        def fake_post(_url: str, _headers: dict[str, str], _payload: dict[str, Any], _timeout: int) -> Any:
+            nonlocal provider_called
+            provider_called = True
+            raise AssertionError("provider transport must not run")
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        result = AnthropicProvider().invoke(
+            "Read",
+            "kimi-for-coding",
+            {
+                **anthropic_compat_config,
+                "base_url": "https://api.kimi.com/coding/v1",
+                "tools": [{"name": "read_file", "input_schema": {"type": "object"}}],
+                "tool_choice": None,
+                "disable_parallel_tool_use": True,
+            },
+        )
+
+        assert result.ok is False
+        assert result.error == "factory_provider_native_request_tool_choice_unsupported:anthropic_messages"
+        assert provider_called is False
+
+    def test_invoke_validates_effective_tool_choice_after_request_override(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        result = AnthropicProvider().invoke(
+            "Read",
+            "claude-3-5-sonnet",
+            {
+                **anthropic_compat_config,
+                "tools": [{"name": "read_file", "input_schema": {"type": "object"}}],
+                "tool_choice": {"type": "tool", "name": "write_file"},
+                "request_overrides": {"tool_choice": "auto"},
+            },
+        )
+
         assert result.ok is True
-        assert "tools" in captured["payload"]
-        assert "tool_choice" not in captured["payload"]
+        assert captured["payload"]["tool_choice"] == {"type": "auto"}
+        assert captured["payload"]["tools"] == [{"name": "read_file", "input_schema": {"type": "object"}}]
 
     def test_invoke_sends_latest_messages_api_fields(
         self,
@@ -606,15 +799,14 @@ class TestAnthropicProviderToolConversion:
             "base_url": "https://api.kimi.com/coding",
             "provider_id": "kimi",
             "tools": [{"name": "write_file", "input_schema": {"type": "object"}}],
-            "tool_choice": {"type": "tool", "name": "write_file"},
+            "tool_choice": "auto",
             "request_overrides": {"tool_choice": "required"},
         }
         result = provider.invoke("Edit", "kimi-for-coding", config)
 
-        assert result.ok is True
-        assert captured["payload"]["thinking"] == {"type": "enabled"}
-        assert "tools" in captured["payload"]
-        assert "tool_choice" not in captured["payload"]
+        assert result.ok is False
+        assert result.error == "factory_provider_native_request_tool_choice_unsupported:anthropic_messages"
+        assert captured == {}
 
 
 class TestAnthropicProviderEdgeCases:
@@ -825,6 +1017,242 @@ class TestAnthropicProviderExceptions:
 
         assert len(chunks) == 1
         assert chunks[0].startswith("Error:")
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_rejects_unsupported_forced_tool_choice_before_transport(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        provider_called = False
+
+        async def _transport_must_not_run(*_args: Any, **_kwargs: Any) -> Any:
+            nonlocal provider_called
+            provider_called = True
+            yield {}
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.anthropic_provider.invoke_stream_with_retry",
+            _transport_must_not_run,
+        )
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://api.kimi.com/coding",
+            "tools": [{"name": "write_file", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "write_file"},
+        }
+
+        chunks = [
+            chunk
+            async for chunk in AnthropicProvider().invoke_stream(
+                "Edit",
+                "kimi-for-coding",
+                config,
+            )
+        ]
+
+        assert chunks == ["Error: factory_provider_native_request_tool_choice_unsupported:anthropic_messages"]
+        assert provider_called is False
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_rejects_lossy_tool_schema_before_transport(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        provider_called = False
+
+        async def _transport_must_not_run(*_args: Any, **_kwargs: Any) -> Any:
+            nonlocal provider_called
+            provider_called = True
+            yield {}
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.anthropic_provider.invoke_stream_with_retry",
+            _transport_must_not_run,
+        )
+        config = {
+            **anthropic_compat_config,
+            "tools": [{"name": "read_file", "parameters": "not-a-schema"}],
+        }
+
+        chunks = [
+            chunk
+            async for chunk in AnthropicProvider().invoke_stream(
+                "Read",
+                "claude-3-5-sonnet",
+                config,
+            )
+        ]
+
+        assert chunks == ["Error: factory_provider_native_request_tools_unrepresentable:anthropic_messages"]
+        assert provider_called is False
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_rejects_deepseek_parallel_constraint_before_transport(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        provider_called = False
+
+        async def _transport_must_not_run(*_args: Any, **_kwargs: Any) -> Any:
+            nonlocal provider_called
+            provider_called = True
+            yield {}
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.anthropic_provider.invoke_stream_with_retry",
+            _transport_must_not_run,
+        )
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://anthropic-proxy.test/v1",
+            "name": "DeepSeek Official",
+            "provider_id": "deepseek",
+            "tools": [{"name": "read_file", "input_schema": {"type": "object"}}],
+            "tool_choice": "auto",
+            "disable_parallel_tool_use": True,
+        }
+
+        chunks = [
+            chunk
+            async for chunk in AnthropicProvider().invoke_stream(
+                "Read",
+                "deepseek-v4-pro",
+                config,
+            )
+        ]
+
+        assert chunks == ["Error: factory_provider_native_request_parallel_tool_choice_unsupported:anthropic_messages"]
+        assert provider_called is False
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_deepseek_forced_tool_choice_disables_thinking_on_wire(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        async def _capture_transport(
+            _url: str,
+            _headers: dict[str, str],
+            payload: dict[str, Any],
+            *,
+            timeout_seconds: float,
+        ) -> Any:
+            captured["payload"] = payload
+            captured["timeout_seconds"] = timeout_seconds
+            yield {"type": "message_stop"}
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.anthropic_provider.invoke_stream_with_retry",
+            _capture_transport,
+        )
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://api.deepseek.com/anthropic",
+            "provider_id": "deepseek",
+            "tools": [{"name": "read_file", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "read_file"},
+        }
+
+        events = [
+            event
+            async for event in AnthropicProvider().invoke_stream_events(
+                "Read",
+                "deepseek-v4-pro",
+                config,
+            )
+        ]
+
+        assert events == [{"type": "message_stop"}]
+        assert captured["payload"]["tool_choice"] == {"type": "tool", "name": "read_file"}
+        assert captured["payload"]["thinking"] == {"type": "disabled"}
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_rejects_explicit_deepseek_thinking_with_tool_choice_before_transport(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        provider_called = False
+
+        async def _transport_must_not_run(*_args: Any, **_kwargs: Any) -> Any:
+            nonlocal provider_called
+            provider_called = True
+            yield {}
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.anthropic_provider.invoke_stream_with_retry",
+            _transport_must_not_run,
+        )
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://api.deepseek.com/anthropic",
+            "provider_id": "deepseek",
+            "thinking": {"type": "enabled", "budget_tokens": 1_024},
+            "tools": [{"name": "read_file", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "read_file"},
+        }
+
+        with pytest.raises(
+            FactoryProviderNativeRequestProjectionError,
+            match="factory_provider_native_request_thinking_tool_choice_conflict:anthropic_messages",
+        ):
+            async for _ in AnthropicProvider().invoke_stream_events(
+                "Read",
+                "deepseek-v4-pro",
+                config,
+            ):
+                pass
+
+        assert provider_called is False
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_validates_effective_tool_choice_after_request_override(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        async def _capture_transport(
+            _url: str,
+            _headers: dict[str, str],
+            payload: dict[str, Any],
+            *,
+            timeout_seconds: float,
+        ) -> Any:
+            captured["payload"] = payload
+            captured["timeout_seconds"] = timeout_seconds
+            yield {"type": "message_stop"}
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.anthropic_provider.invoke_stream_with_retry",
+            _capture_transport,
+        )
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://api.kimi.com/coding/v1",
+            "tools": [{"name": "read_file", "input_schema": {"type": "object"}}],
+            "tool_choice": "required",
+            "request_overrides": {"tool_choice": "auto"},
+        }
+
+        events = [
+            event
+            async for event in AnthropicProvider().invoke_stream_events(
+                "Read",
+                "kimi-for-coding",
+                config,
+            )
+        ]
+
+        assert events == [{"type": "message_stop"}]
+        assert "tool_choice" not in captured["payload"]
+        assert captured["payload"]["tools"] == [{"name": "read_file", "input_schema": {"type": "object"}}]
 
     @pytest.mark.asyncio
     async def test_invoke_stream_success_fallback(

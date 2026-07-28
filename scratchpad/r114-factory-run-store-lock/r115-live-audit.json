@@ -1,0 +1,846 @@
+{
+  "run_id": "factory_5ea5c947530e",
+  "status": "running",
+  "phase": "implementation",
+  "progress": 50.0,
+  "current_stage": "director_dispatch",
+  "last_successful_stage": "chief_engineer_review",
+  "gates": [],
+  "failure": null,
+  "events_tail": [
+    {
+      "canonical_sha256": "e384901fdeb71fc787ed68fe5d028380e6890415e99fe3a5a216067e133e917b",
+      "chain_event_hash": "9dc7b386af3a53596afa89b8ab16b6125042482f43e0922e93439335ca4621f3",
+      "chain_previous_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 1,
+      "event_id": "evt_5947178ff148",
+      "payload": {
+        "created_at": "2026-07-27T20:14:05.063232+00:00",
+        "description": "# Product Requirements — 厨房味觉配色器\n\n## Goal\n- 用 Rust 实现「厨房味觉配色器」。创意钩子: 把味觉映射成菜谱色板和摆盘规则。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。\n\n\n## Project Metadata\n- 主语言: rust\n- 领域: creative\n- 项目类型: creative_tool\n- 创意钩子: 把味觉映射成菜谱色板和摆盘规则\n- PM -> Chief Engineer -> Director -> QA 必须在任务合同中保留这些元数据字段, 确保目标语义不丢失。\n\n## Acceptance Criteria\n- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。\n- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口; CLI 项目提供 package.json 脚本或可直接执行的 main 文件; API 项目提供可启动服务入口和健康检查说明。\n- package.json 脚本不得是只检查 manifest 的占位脚本; build/test/start 或等价脚本必须实际运行产品入口或核心规则验证。\n- 附 README.md 说明如何运行。\n- 关键验收维度: 把味觉映射成菜谱色板和摆盘规则; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。。\n\n## Deterministic Checks\nPM -> Chief Engineer -> Director -> QA 必须把以下检查转成任务目标和验收标准, 缺失任一项应视为未完成:\n- rust_compile\n- min_files:3\n- content_any:flavor|palette|ingredient|recipe\n- source_target_coverage:src/**/*.rs\n\n## Bench Level Contract (Mandatory)\n- schema_version: factory-bench.level_contract.v1\n- level: 1\n\nRequired minimums:\n- min_behavior_rules: 3\n- min_behavior_symbols: 6\n- min_branch_count: 3\n- min_edge_cases: 2\n- min_primary_entities: 3\n- min_prod_files: 3\n- min_prod_lines: 120\n- min_test_assertions: 2\n- min_test_files: 1\n\nRequired evidence:\n- PM task contract carries product-specific behavior rules and sample data\n- Chief Engineer blueprint names concrete modules, public contracts, and gate commands\n- Director implementation separates core behavior from entrypoint/I/O\n- Tests assert business results across normal, boundary, and invalid inputs\n- Factory audit implementation_depth passes the level-specific thresholds\n\nAnti-hollow delivery rules:\n- Do not satisfy content checks by keyword stuffing, comments, README text, or static placeholder output\n- Do not pass tests that only check files exist, scripts exist, or keywords appear\n- Do not let runtime hard gates override low QA score or major quality findings\n\n\n## Source Tree Structure Contract (MANDATORY)\nPM -> Chief Engineer -> Director 必须按以下结构创建源代码文件, 仅生成 package.json / tsconfig.json 等配置文件不算完成, 必须包含核心业务逻辑源码:\n- 必须包含 `src/` 目录, 核心业务逻辑在 `src/` 下的 `.rs` 文件中。\n- 至少包含以下类型的源文件:\n  - `src/models/` 或 `src/model.rs` — 数据模型/实体定义\n  - `src/engine/` 或 `src/lib.rs` — 核心引擎/逻辑\n  - `src/main.rs` — 应用入口\n- 必须包含 `tests/` 目录下的集成测试或 `#[test]` 单元测试。\n\n**重要**: Director 任务的 target_files 必须覆盖 src/ 下的源文件, 不能只包含 package.json / tsconfig.json / index.html 等脚手架文件。\n\n\n## Feature Keywords Contract (MANDATORY)\n以下关键词必须出现在生成的源代码文件中(变量名、类名、注释或字符串均可): **flavor, palette, ingredient, recipe**\nPM -> Chief Engineer -> Director 的任务目标和验收标准必须包含这些关键词。\nDirector 的 target_files 中的源文件必须至少包含其中一个关键词的实际使用。\n\n## Language-Specific Runnable Contract (Rust)\n- 必须包含 `Cargo.toml`。\n- `cargo build` 必须成功。\n\n",
+        "factory_run_id": "factory_5ea5c947530e",
+        "name": "Factory Run - pm"
+      },
+      "run_id": "factory_5ea5c947530e",
+      "schema_version": "factory.run_admitted.v1",
+      "timestamp": "2026-07-27T20:14:05.063356+00:00",
+      "type": "factory_run_admitted"
+    },
+    {
+      "chain_event_hash": "989972206cd128c11e1db4c60a01ff0a9adaa43838464303dd7cf2d228814a7a",
+      "chain_previous_hash": "9dc7b386af3a53596afa89b8ab16b6125042482f43e0922e93439335ca4621f3",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 2,
+      "event_id": "evt_324f27eb945b",
+      "message": "Run started",
+      "run_id": "factory_5ea5c947530e",
+      "timestamp": "2026-07-27T20:14:05.146470+00:00",
+      "type": "started"
+    },
+    {
+      "chain_event_hash": "90d66aaa8e2a8e34fc06578d430af5b0207e76d484ddcdc82580eeda4beadece",
+      "chain_previous_hash": "989972206cd128c11e1db4c60a01ff0a9adaa43838464303dd7cf2d228814a7a",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 3,
+      "event_id": "evt_d055cea38919",
+      "message": "Started stage pm_planning",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "pm_planning",
+      "timestamp": "2026-07-27T20:14:05.304569+00:00",
+      "type": "stage_started"
+    },
+    {
+      "chain_event_hash": "2f67abd4d0d9640914ffabeb772e06f7e8189045eea043cab868a3701f7ce81f",
+      "chain_previous_hash": "90d66aaa8e2a8e34fc06578d430af5b0207e76d484ddcdc82580eeda4beadece",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 4,
+      "event_id": "evt_e0d04d8bb0b6",
+      "message": "PM planning completed: Run status: completed; signals=5; error_code=none; root_cause_hint=none",
+      "persistence_intent": {
+        "checkpoint_ref": "runtime/factory_5ea5c947530e/checkpoints/running_2026-07-27T20_14_12.919317+00_00.json",
+        "factory_run_id": "factory_5ea5c947530e",
+        "persistence_intent_sha256": "3d76b2ca5396eff7cae41ad0b97de59c3696291abbc734a9e4c8ff062752cc2c",
+        "schema_version": "factory.stage_persistence_intent.v1",
+        "stage": "pm_planning",
+        "stage_result_canonical_sha256": "49ce9dd6827c6562afaabb5d0bb6646ac2d25d8f33f883859a6fe262a23ed7e2"
+      },
+      "result": {
+        "artifacts": [
+          "tasks/plan.json",
+          "workspace/roles/pm/factory_5ea5c947530e/plan.json",
+          "workspace/plans/factory_5ea5c947530e.plan.json",
+          "workspace/plans/latest.plan.json",
+          "runtime/signals/pm_planning.signals.json"
+        ],
+        "completed_at": "2026-07-27T20:14:12.919317+00:00",
+        "metadata": {},
+        "output": "PM planning completed: Run status: completed; signals=5; error_code=none; root_cause_hint=none",
+        "stage": "pm_planning",
+        "started_at": "2026-07-27T20:14:05.304569+00:00",
+        "status": "success"
+      },
+      "run_id": "factory_5ea5c947530e",
+      "stage": "pm_planning",
+      "stage_artifact_bindings": {
+        "binding_vector_sha256": "3f2e266aeb2430ec483c169cb3cffc3700092c691d82c26e089ae2c6173f9cf9",
+        "factory_run_id": "factory_5ea5c947530e",
+        "items": [
+          {
+            "canonical_json_sha256": "7cdf759a65a40f94226fed8c07b981427afea6d4922d225f18774dba24a983a4",
+            "document_schema_version": "pm.plan_artifact.v1",
+            "immutable_snapshot_ref": "runtime/factory_5ea5c947530e/artifacts/stage-bindings/sha256/22/220c9264872038c4d8374e2fd474e7860e426afbbabf72676a66dd7101884e68.json",
+            "kind": "pm_contract",
+            "logical_source_path": "tasks/plan.json",
+            "raw_sha256": "220c9264872038c4d8374e2fd474e7860e426afbbabf72676a66dd7101884e68",
+            "target_files_projection_sha256": "08678aba03af7949dcff53a2dfceaab681e9c9924548a472f6a910a85bfc117a",
+            "task_count": 3,
+            "task_id_vector_sha256": "f1d4f4c2091ec494d74b9a416f0d6b8f0b46acf31aeb287d139db2c45e896c26",
+            "utf8_byte_count": 85418
+          }
+        ],
+        "schema_version": "factory.stage_artifact_bindings.v1",
+        "stage": "pm_planning"
+      },
+      "timestamp": "2026-07-27T20:14:12.919317+00:00",
+      "type": "stage_completed"
+    },
+    {
+      "chain_event_hash": "96afc207218d3c0980fc64b2412a77c3b8e93974e08567fd630d70376b9d96fd",
+      "chain_previous_hash": "2f67abd4d0d9640914ffabeb772e06f7e8189045eea043cab868a3701f7ce81f",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 5,
+      "checkpoint_canonical_sha256": "b6b8b8feb680937aef3e0d4d19b85a173372a0cb1be1d282988c2ad91e77843d",
+      "checkpoint_ref": "runtime/factory_5ea5c947530e/checkpoints/running_2026-07-27T20_14_12.919317+00_00.json",
+      "event_id": "evt_15699006e0b8",
+      "factory_run_id": "factory_5ea5c947530e",
+      "persistence_intent_sha256": "3d76b2ca5396eff7cae41ad0b97de59c3696291abbc734a9e4c8ff062752cc2c",
+      "run_id": "factory_5ea5c947530e",
+      "run_snapshot_canonical_sha256": "e8ab90e0fbecd5db2f6fb73fcbeedbeece005965fa33e5ddb04f4c6f999dd494",
+      "schema_version": "factory.stage_persistence_committed.v1",
+      "stage": "pm_planning",
+      "stage_completed_chain_event_hash": "2f67abd4d0d9640914ffabeb772e06f7e8189045eea043cab868a3701f7ce81f",
+      "stage_completed_chain_sequence": 4,
+      "stage_completed_event_id": "evt_e0d04d8bb0b6",
+      "timestamp": "2026-07-27T20:14:13.986113+00:00",
+      "type": "factory_stage_persistence_committed"
+    },
+    {
+      "chain_event_hash": "b01521044e80b3e73463ecfb77bfcacb659f275567e83c95e455fc30379d05a2",
+      "chain_previous_hash": "96afc207218d3c0980fc64b2412a77c3b8e93974e08567fd630d70376b9d96fd",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 6,
+      "event_id": "evt_d4b32391c88b",
+      "message": "Started stage chief_engineer_review",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "chief_engineer_review",
+      "timestamp": "2026-07-27T20:14:14.343941+00:00",
+      "type": "stage_started"
+    },
+    {
+      "chain_event_hash": "4f9bd1bd5d03af121f1622526e4edbd2a19e3c30b0189506cbbc0e80846baf5e",
+      "chain_previous_hash": "b01521044e80b3e73463ecfb77bfcacb659f275567e83c95e455fc30379d05a2",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 7,
+      "event_id": "evt_69f2924296e4",
+      "message": "Stage chief_engineer_review is still running",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "chief_engineer_review",
+      "timestamp": "2026-07-27T20:14:29.476360+00:00",
+      "type": "stage_heartbeat"
+    },
+    {
+      "chain_event_hash": "26329a4b276bf4ba8bafa47f241162b7b1719788380dcc8e307c3a9cab7e4ce6",
+      "chain_previous_hash": "4f9bd1bd5d03af121f1622526e4edbd2a19e3c30b0189506cbbc0e80846baf5e",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 8,
+      "event_id": "evt_b802bc9a7db1",
+      "message": "Stage chief_engineer_review is still running",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "chief_engineer_review",
+      "timestamp": "2026-07-27T20:14:44.522983+00:00",
+      "type": "stage_heartbeat"
+    },
+    {
+      "chain_event_hash": "a14370f5b4361bd80babfbb9bf51d4babb191ff9fd891cd60535cf03459ddbf7",
+      "chain_previous_hash": "26329a4b276bf4ba8bafa47f241162b7b1719788380dcc8e307c3a9cab7e4ce6",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 9,
+      "event_id": "evt_117318ebb64d",
+      "message": "Stage chief_engineer_review is still running",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "chief_engineer_review",
+      "timestamp": "2026-07-27T20:14:59.567662+00:00",
+      "type": "stage_heartbeat"
+    },
+    {
+      "chain_event_hash": "452e97227affaa8f39b8b67ef0c220dd6a6df7fd65796094dc5041b9123e2eb2",
+      "chain_previous_hash": "a14370f5b4361bd80babfbb9bf51d4babb191ff9fd891cd60535cf03459ddbf7",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 10,
+      "event_id": "evt_fcb5dabfe95e",
+      "message": "Stage chief_engineer_review is still running",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "chief_engineer_review",
+      "timestamp": "2026-07-27T20:15:15.941095+00:00",
+      "type": "stage_heartbeat"
+    },
+    {
+      "chain_event_hash": "d83fbc477fdb8d0095fed3dabdf0b749b5f24ed2fe564fabcba2d93817dd7ce4",
+      "chain_previous_hash": "452e97227affaa8f39b8b67ef0c220dd6a6df7fd65796094dc5041b9123e2eb2",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 11,
+      "event_id": "evt_ddb66500a61a",
+      "message": "Stage chief_engineer_review is still running",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "chief_engineer_review",
+      "timestamp": "2026-07-27T20:15:31.179350+00:00",
+      "type": "stage_heartbeat"
+    },
+    {
+      "chain_event_hash": "9227436d8aa03fb41946f804d0f5633c8905f0904267c79401f4bb314a0f0e84",
+      "chain_previous_hash": "d83fbc477fdb8d0095fed3dabdf0b749b5f24ed2fe564fabcba2d93817dd7ce4",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 12,
+      "event_id": "evt_eab088f99f40",
+      "message": "Stage chief_engineer_review is still running",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "chief_engineer_review",
+      "timestamp": "2026-07-27T20:15:46.225586+00:00",
+      "type": "stage_heartbeat"
+    },
+    {
+      "chain_event_hash": "f498ef6cf8f3ae2c6b745a152077e149ff107667cbfc2e0b1ebe1426db689fff",
+      "chain_previous_hash": "9227436d8aa03fb41946f804d0f5633c8905f0904267c79401f4bb314a0f0e84",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 13,
+      "event_id": "evt_3ba789abb957",
+      "message": "Stage chief_engineer_review is still running",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "chief_engineer_review",
+      "timestamp": "2026-07-27T20:16:01.268748+00:00",
+      "type": "stage_heartbeat"
+    },
+    {
+      "chain_event_hash": "9aa8e71ae60b1dc1d00a21ee3695ba2b115d310b8e65c587ed49f4645cf9a546",
+      "chain_previous_hash": "f498ef6cf8f3ae2c6b745a152077e149ff107667cbfc2e0b1ebe1426db689fff",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 14,
+      "event_id": "evt_0ffb4cfffbc7",
+      "message": "Chief Engineer portfolio review generated 3/3 blueprints; llm_calls=2; signals=1; error_code=none; root_cause_hint=none",
+      "persistence_intent": {
+        "checkpoint_ref": "runtime/factory_5ea5c947530e/checkpoints/running_2026-07-27T20_16_03.425321+00_00.json",
+        "factory_run_id": "factory_5ea5c947530e",
+        "persistence_intent_sha256": "f4f31e103402492f9a3f95c37e5eae2521f381f478cbda49aafce9a6c4d5fec6",
+        "schema_version": "factory.stage_persistence_intent.v1",
+        "stage": "chief_engineer_review",
+        "stage_result_canonical_sha256": "0ba2bae45e117879f1ce35d49380c092c6e4e9b4feb64355e23b31cc460c9317"
+      },
+      "result": {
+        "artifacts": [
+          "runtime/blueprints/ce_TASK-1_20260727201602961253.json",
+          "runtime/blueprints/ce_TASK-2_20260727201603111828.json",
+          "runtime/blueprints/ce_TASK-3_20260727201603240478.json",
+          "runtime/blueprints/ce_portfolio_c4675ab68654deed704b96325b3bdc8c.json",
+          "runtime/state/blueprints/factory_5ea5c947530e.review.json",
+          "workspace/roles/chief_engineer/factory_5ea5c947530e/review.json",
+          "workspace/blueprints/factory_5ea5c947530e.review.json",
+          "workspace/blueprints/latest.review.json",
+          "workspace/roles/chief_engineer/factory_5ea5c947530e/blueprints/ce_TASK-1_20260727201602961253.json",
+          "workspace/blueprints/ce_TASK-1_20260727201602961253.json",
+          "workspace/roles/chief_engineer/factory_5ea5c947530e/blueprints/ce_TASK-2_20260727201603111828.json",
+          "workspace/blueprints/ce_TASK-2_20260727201603111828.json",
+          "workspace/roles/chief_engineer/factory_5ea5c947530e/blueprints/ce_TASK-3_20260727201603240478.json",
+          "workspace/blueprints/ce_TASK-3_20260727201603240478.json",
+          "runtime/signals/chief_engineer_review.signals.json"
+        ],
+        "completed_at": "2026-07-27T20:16:03.425321+00:00",
+        "metadata": {
+          "error_code": "",
+          "failure_class": "",
+          "recoverable": false,
+          "responsible_layer": "",
+          "root_cause_hint": ""
+        },
+        "output": "Chief Engineer portfolio review generated 3/3 blueprints; llm_calls=2; signals=1; error_code=none; root_cause_hint=none",
+        "stage": "chief_engineer_review",
+        "started_at": "2026-07-27T20:14:14.343941+00:00",
+        "status": "success"
+      },
+      "run_id": "factory_5ea5c947530e",
+      "stage": "chief_engineer_review",
+      "stage_artifact_bindings": {
+        "binding_vector_sha256": "d65f1fac385951de0ff836ddb1f58fd9f5a03b467231f0bd22fa9c24969e1bc6",
+        "factory_run_id": "factory_5ea5c947530e",
+        "items": [
+          {
+            "chain_event_hash": "2f67abd4d0d9640914ffabeb772e06f7e8189045eea043cab868a3701f7ce81f",
+            "chain_sequence": 4,
+            "event_id": "evt_e0d04d8bb0b6",
+            "kind": "pm_stage_event",
+            "pm_canonical_json_sha256": "7cdf759a65a40f94226fed8c07b981427afea6d4922d225f18774dba24a983a4",
+            "pm_immutable_snapshot_ref": "runtime/factory_5ea5c947530e/artifacts/stage-bindings/sha256/22/220c9264872038c4d8374e2fd474e7860e426afbbabf72676a66dd7101884e68.json",
+            "pm_raw_sha256": "220c9264872038c4d8374e2fd474e7860e426afbbabf72676a66dd7101884e68",
+            "pm_target_files_projection_sha256": "08678aba03af7949dcff53a2dfceaab681e9c9924548a472f6a910a85bfc117a",
+            "pm_task_id_vector_sha256": "f1d4f4c2091ec494d74b9a416f0d6b8f0b46acf31aeb287d139db2c45e896c26"
+          },
+          {
+            "canonical_json_sha256": "2b684fc19210e8fd7200476d653bae7318b2fc72c858e5c71eb7810cbcf196f3",
+            "document_schema_version": "factory.chief_engineer_review.v2",
+            "generated_blueprints": 3,
+            "immutable_snapshot_ref": "runtime/factory_5ea5c947530e/artifacts/stage-bindings/sha256/ec/ec99283f34a24079cd38a36507b5646383596b67645b63ce605ac6ce1ead8f53.json",
+            "kind": "ce_review_manifest",
+            "logical_source_path": "runtime/state/blueprints/factory_5ea5c947530e.review.json",
+            "raw_sha256": "ec99283f34a24079cd38a36507b5646383596b67645b63ce605ac6ce1ead8f53",
+            "total_tasks": 3,
+            "utf8_byte_count": 91695
+          },
+          {
+            "blueprint_id": "ce_TASK-1_20260727201602961253",
+            "canonical_json_sha256": "b99049bbff50148567019bb2d9300630facbec84a871ef877c20f9a16a90f695",
+            "document_schema_version": "chief_engineer.blueprint.v1",
+            "embedded_blueprint_hash": "6eca5e4dbc2ce9ffc1ffaf20dc0e8b882c55727e876c16563ec1829d5690802d",
+            "embedded_pm_contract_hash": "0b00ac4e3d53c7e614a3fbf2831a2de6a8ab8658e44aeef05a41932c6879fe74",
+            "embedded_pm_task_canonical_sha256": "ac8ad01173822444f15c665692b7480394b6137149fa545d56a93be8889a583c",
+            "embedded_pm_task_projection_sha256": "b2026524864b9e1a61245b355dc95ff806f3ea9640664a4b94d715cfcf6a9876",
+            "expected_pm_task_canonical_sha256": "ac8ad01173822444f15c665692b7480394b6137149fa545d56a93be8889a583c",
+            "factory_run_id": "factory_5ea5c947530e",
+            "hash_scheme": "chief_engineer.blueprint_hash.v1",
+            "immutable_snapshot_ref": "runtime/factory_5ea5c947530e/artifacts/stage-bindings/sha256/e5/e5d8ad24300b0a1280dfdbd1b88d81a283c325926a05ddb65d39ba73856b50e9.json",
+            "kind": "ce_blueprint",
+            "logical_source_path": "runtime/blueprints/ce_TASK-1_20260727201602961253.json",
+            "ordinal": 0,
+            "raw_sha256": "e5d8ad24300b0a1280dfdbd1b88d81a283c325926a05ddb65d39ba73856b50e9",
+            "recomputed_blueprint_hash": "6eca5e4dbc2ce9ffc1ffaf20dc0e8b882c55727e876c16563ec1829d5690802d",
+            "recomputed_pm_contract_hash": "0b00ac4e3d53c7e614a3fbf2831a2de6a8ab8658e44aeef05a41932c6879fe74",
+            "target_files_projection_sha256": "b2026524864b9e1a61245b355dc95ff806f3ea9640664a4b94d715cfcf6a9876",
+            "task_id": "TASK-1",
+            "utf8_byte_count": 164331
+          },
+          {
+            "blueprint_id": "ce_TASK-2_20260727201603111828",
+            "canonical_json_sha256": "e365bbc62e87f53deb4000c04447be9526840bda0b27eeb6c03a0f8c89b61748",
+            "document_schema_version": "chief_engineer.blueprint.v1",
+            "embedded_blueprint_hash": "4ebddb9e8f0932bdd67b111a97255738986af28dfde75d3ae1126247cb6c5bbb",
+            "embedded_pm_contract_hash": "ccc051f22197c117730a19c52e7befbc7591fc7ca03d04ea36d09446bb9ce2a9",
+            "embedded_pm_task_canonical_sha256": "6ceb9f5554218bf47ddcdbe2572d55744a375f4a4ab9c5d93679dd2b52790f6c",
+            "embedded_pm_task_projection_sha256": "b694b710213aab7978c25323182760ada257c1305d8ac68b90f9b3d42f2779b1",
+            "expected_pm_task_canonical_sha256": "6ceb9f5554218bf47ddcdbe2572d55744a375f4a4ab9c5d93679dd2b52790f6c",
+            "factory_run_id": "factory_5ea5c947530e",
+            "hash_scheme": "chief_engineer.blueprint_hash.v1",
+            "immutable_snapshot_ref": "runtime/factory_5ea5c947530e/artifacts/stage-bindings/sha256/f5/f538906932825e5a3cf5d465a056b9bdf40fe2212fb615184dde90384339d8c1.json",
+            "kind": "ce_blueprint",
+            "logical_source_path": "runtime/blueprints/ce_TASK-2_20260727201603111828.json",
+            "ordinal": 1,
+            "raw_sha256": "f538906932825e5a3cf5d465a056b9bdf40fe2212fb615184dde90384339d8c1",
+            "recomputed_blueprint_hash": "4ebddb9e8f0932bdd67b111a97255738986af28dfde75d3ae1126247cb6c5bbb",
+            "recomputed_pm_contract_hash": "ccc051f22197c117730a19c52e7befbc7591fc7ca03d04ea36d09446bb9ce2a9",
+            "target_files_projection_sha256": "b694b710213aab7978c25323182760ada257c1305d8ac68b90f9b3d42f2779b1",
+            "task_id": "TASK-2",
+            "utf8_byte_count": 158191
+          },
+          {
+            "blueprint_id": "ce_TASK-3_20260727201603240478",
+            "canonical_json_sha256": "b9d113d5d450f5a9f7411af425a3c6f164ee8a86826bbd315ba0ee7af6c89d43",
+            "document_schema_version": "chief_engineer.blueprint.v1",
+            "embedded_blueprint_hash": "ec99d90af77e8d9138eb2fe8e5426569ff56e6298e08c0c312361448126e0d6a",
+            "embedded_pm_contract_hash": "48f6692cadad19f2baca8e95a8e9efea1b1839a9012173d0830d4629a38f2306",
+            "embedded_pm_task_canonical_sha256": "e2daa4c785e639937e49dfed0051f91d3dd861f0c1255a1e6e8d3460381949d3",
+            "embedded_pm_task_projection_sha256": "9a94b152229751408626500412c993bb4602a0fc7bd925fa882c4c6a3be6b975",
+            "expected_pm_task_canonical_sha256": "e2daa4c785e639937e49dfed0051f91d3dd861f0c1255a1e6e8d3460381949d3",
+            "factory_run_id": "factory_5ea5c947530e",
+            "hash_scheme": "chief_engineer.blueprint_hash.v1",
+            "immutable_snapshot_ref": "runtime/factory_5ea5c947530e/artifacts/stage-bindings/sha256/ac/ac4c4c1cda5f2166a1e49f10dd1719eb45e704c8ef957c78b5db4b915a058386.json",
+            "kind": "ce_blueprint",
+            "logical_source_path": "runtime/blueprints/ce_TASK-3_20260727201603240478.json",
+            "ordinal": 2,
+            "raw_sha256": "ac4c4c1cda5f2166a1e49f10dd1719eb45e704c8ef957c78b5db4b915a058386",
+            "recomputed_blueprint_hash": "ec99d90af77e8d9138eb2fe8e5426569ff56e6298e08c0c312361448126e0d6a",
+            "recomputed_pm_contract_hash": "48f6692cadad19f2baca8e95a8e9efea1b1839a9012173d0830d4629a38f2306",
+            "target_files_projection_sha256": "9a94b152229751408626500412c993bb4602a0fc7bd925fa882c4c6a3be6b975",
+            "task_id": "TASK-3",
+            "utf8_byte_count": 148342
+          }
+        ],
+        "schema_version": "factory.stage_artifact_bindings.v1",
+        "stage": "chief_engineer_review"
+      },
+      "timestamp": "2026-07-27T20:16:03.425321+00:00",
+      "type": "stage_completed"
+    },
+    {
+      "chain_event_hash": "1f14678b6e3fcc45173a75a7e41b94f438633320d299ecd1b7ac579ae5cedcc3",
+      "chain_previous_hash": "9aa8e71ae60b1dc1d00a21ee3695ba2b115d310b8e65c587ed49f4645cf9a546",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 15,
+      "checkpoint_canonical_sha256": "0dade87e33ca14a8fbf316b696ec625372c60c5ad6e8ae3e9d407c970e86f4f9",
+      "checkpoint_ref": "runtime/factory_5ea5c947530e/checkpoints/running_2026-07-27T20_16_03.425321+00_00.json",
+      "event_id": "evt_5801e6948a7a",
+      "factory_run_id": "factory_5ea5c947530e",
+      "persistence_intent_sha256": "f4f31e103402492f9a3f95c37e5eae2521f381f478cbda49aafce9a6c4d5fec6",
+      "run_id": "factory_5ea5c947530e",
+      "run_snapshot_canonical_sha256": "364b121dab067479052cd2e0a582ae02e342d473d66a3d6302d03bc46d41e388",
+      "schema_version": "factory.stage_persistence_committed.v1",
+      "stage": "chief_engineer_review",
+      "stage_completed_chain_event_hash": "9aa8e71ae60b1dc1d00a21ee3695ba2b115d310b8e65c587ed49f4645cf9a546",
+      "stage_completed_chain_sequence": 14,
+      "stage_completed_event_id": "evt_0ffb4cfffbc7",
+      "timestamp": "2026-07-27T20:16:04.257058+00:00",
+      "type": "factory_stage_persistence_committed"
+    },
+    {
+      "chain_event_hash": "e26df88dae2cfacdda70aaced5db07b7e10c7d9a2ca13340a17eb30d9db9aa25",
+      "chain_previous_hash": "1f14678b6e3fcc45173a75a7e41b94f438633320d299ecd1b7ac579ae5cedcc3",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 16,
+      "event_id": "evt_e639b835170d",
+      "message": "Started stage director_dispatch",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "director_dispatch",
+      "timestamp": "2026-07-27T20:16:04.495826+00:00",
+      "type": "stage_started"
+    },
+    {
+      "chain_event_hash": "a1dcc94785f56fc018e086bbb1f641c22332cb5a1a57ca6cb8895840c40dc913",
+      "chain_previous_hash": "e26df88dae2cfacdda70aaced5db07b7e10c7d9a2ca13340a17eb30d9db9aa25",
+      "chain_schema_version": "factory.event_chain.v1",
+      "chain_sequence": 17,
+      "event_id": "evt_9297df4b80ee",
+      "message": "Stage director_dispatch is still running",
+      "run_id": "factory_5ea5c947530e",
+      "stage": "director_dispatch",
+      "timestamp": "2026-07-27T20:16:20.386791+00:00",
+      "type": "stage_heartbeat"
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "plan.json",
+      "path": "tasks/plan.json",
+      "size": 85418,
+      "task_id": null
+    },
+    {
+      "name": "plan.json",
+      "path": "workspace/roles/pm/factory_5ea5c947530e/plan.json",
+      "size": 85418,
+      "task_id": null
+    },
+    {
+      "name": "factory_5ea5c947530e.plan.json",
+      "path": "workspace/plans/factory_5ea5c947530e.plan.json",
+      "size": 85418,
+      "task_id": null
+    },
+    {
+      "name": "latest.plan.json",
+      "path": "workspace/plans/latest.plan.json",
+      "size": 85418,
+      "task_id": null
+    },
+    {
+      "name": "pm_planning.signals.json",
+      "path": "runtime/signals/pm_planning.signals.json",
+      "size": 1671,
+      "task_id": null
+    },
+    {
+      "name": "ce_TASK-1_20260727201602961253.json",
+      "path": "runtime/blueprints/ce_TASK-1_20260727201602961253.json",
+      "size": 164331,
+      "task_id": "TASK-1"
+    },
+    {
+      "name": "ce_TASK-2_20260727201603111828.json",
+      "path": "runtime/blueprints/ce_TASK-2_20260727201603111828.json",
+      "size": 158191,
+      "task_id": "TASK-2"
+    },
+    {
+      "name": "ce_TASK-3_20260727201603240478.json",
+      "path": "runtime/blueprints/ce_TASK-3_20260727201603240478.json",
+      "size": 148342,
+      "task_id": "TASK-3"
+    },
+    {
+      "name": "ce_portfolio_c4675ab68654deed704b96325b3bdc8c.json",
+      "path": "runtime/blueprints/ce_portfolio_c4675ab68654deed704b96325b3bdc8c.json",
+      "size": 37456,
+      "task_id": "portfolio_c4675ab68654deed704b96325b3bdc8c"
+    },
+    {
+      "name": "factory_5ea5c947530e.review.json",
+      "path": "runtime/state/blueprints/factory_5ea5c947530e.review.json",
+      "size": 91695,
+      "task_id": null
+    },
+    {
+      "name": "review.json",
+      "path": "workspace/roles/chief_engineer/factory_5ea5c947530e/review.json",
+      "size": 91695,
+      "task_id": null
+    },
+    {
+      "name": "factory_5ea5c947530e.review.json",
+      "path": "workspace/blueprints/factory_5ea5c947530e.review.json",
+      "size": 91695,
+      "task_id": null
+    },
+    {
+      "name": "latest.review.json",
+      "path": "workspace/blueprints/latest.review.json",
+      "size": 91695,
+      "task_id": null
+    },
+    {
+      "name": "ce_TASK-1_20260727201602961253.json",
+      "path": "workspace/roles/chief_engineer/factory_5ea5c947530e/blueprints/ce_TASK-1_20260727201602961253.json",
+      "size": 164331,
+      "task_id": "TASK-1"
+    },
+    {
+      "name": "ce_TASK-1_20260727201602961253.json",
+      "path": "workspace/blueprints/ce_TASK-1_20260727201602961253.json",
+      "size": 164331,
+      "task_id": "TASK-1"
+    },
+    {
+      "name": "ce_TASK-2_20260727201603111828.json",
+      "path": "workspace/roles/chief_engineer/factory_5ea5c947530e/blueprints/ce_TASK-2_20260727201603111828.json",
+      "size": 158191,
+      "task_id": "TASK-2"
+    },
+    {
+      "name": "ce_TASK-2_20260727201603111828.json",
+      "path": "workspace/blueprints/ce_TASK-2_20260727201603111828.json",
+      "size": 158191,
+      "task_id": "TASK-2"
+    },
+    {
+      "name": "ce_TASK-3_20260727201603240478.json",
+      "path": "workspace/roles/chief_engineer/factory_5ea5c947530e/blueprints/ce_TASK-3_20260727201603240478.json",
+      "size": 148342,
+      "task_id": "TASK-3"
+    },
+    {
+      "name": "ce_TASK-3_20260727201603240478.json",
+      "path": "workspace/blueprints/ce_TASK-3_20260727201603240478.json",
+      "size": 148342,
+      "task_id": "TASK-3"
+    },
+    {
+      "name": "chief_engineer_review.signals.json",
+      "path": "runtime/signals/chief_engineer_review.signals.json",
+      "size": 845,
+      "task_id": "review.signals"
+    }
+  ],
+  "summary_md": null,
+  "summary_json": null,
+  "generated_at": "2026-07-27T20:16:30.807237+00:00",
+  "evidence_counts": {
+    "events_total": 17,
+    "events_tail": 17,
+    "artifacts": 20,
+    "gates": 0,
+    "failures": 0,
+    "summary_md": 0,
+    "summary_json": 0,
+    "event_types": {
+      "factory_run_admitted": 1,
+      "started": 1,
+      "stage_started": 3,
+      "stage_completed": 2,
+      "factory_stage_persistence_committed": 2,
+      "stage_heartbeat": 8
+    }
+  },
+  "factory_run_id": "factory_5ea5c947530e",
+  "workspace": "/tmp/factory-bench-l1-05-r115/workspaces/9ae82d7111f6-5f89fd839c489dbd/L1-05-e561a0dcdada9554/678d99053b85c836103992be",
+  "run_identity": {
+    "schema_version": "factory.run_identity.v1",
+    "run_id": "factory_5ea5c947530e",
+    "factory_run_id": "factory_5ea5c947530e",
+    "workspace": "/tmp/factory-bench-l1-05-r115/workspaces/9ae82d7111f6-5f89fd839c489dbd/L1-05-e561a0dcdada9554/678d99053b85c836103992be",
+    "requested_project_id": "L1-05",
+    "canonical_project_id": "L1-05",
+    "instance_id": "",
+    "backend_port": 49978,
+    "frontend_port": null
+  },
+  "control_plane_projection": {
+    "schema_version": 1,
+    "source": "run_ledger_projection",
+    "available": false,
+    "ok": false,
+    "status": "pending",
+    "audit_path": "/tmp/factory-bench-l1-05-r115/workspaces/9ae82d7111f6-5f89fd839c489dbd/L1-05-e561a0dcdada9554/678d99053b85c836103992be/runtime/control_plane/ledger",
+    "migration_ledgers_included": false,
+    "query_scope": {
+      "run_id": "factory_5ea5c947530e",
+      "factory_run_id": "",
+      "project_id": ""
+    },
+    "consumed_run_ids": [
+      "factory_5ea5c947530e"
+    ],
+    "total": 0,
+    "projected": 0,
+    "missing": 0,
+    "failed": 0,
+    "missing_required_modalities": [],
+    "failed_required_modalities": [],
+    "failed_control_plane_events": [],
+    "failed_evidence_details": {
+      "required_modalities": [],
+      "control_plane_events": [],
+      "failed_gate_count": 0
+    },
+    "projects": [],
+    "detail": "run ledger projection is not available yet",
+    "evidence_policy": {
+      "ok": false,
+      "enabled_modalities": [],
+      "required_modalities": [],
+      "missing_required_modalities": [],
+      "failed_required_modalities": []
+    },
+    "evidence_modalities": {},
+    "task_boundary": {
+      "ok": true,
+      "verdict_count": 0,
+      "latest": {},
+      "failed": []
+    },
+    "tool_lifecycle": {
+      "ok": true,
+      "requirement": false,
+      "requirement_status": "not_required",
+      "event_count": 0,
+      "native_tool_calls_count": 0,
+      "decoded_tool_calls_count": 0,
+      "dispatched_tool_calls_count": 0,
+      "tool_result_count": 0,
+      "effect_receipt_count": 0,
+      "native_tool_call_names": [],
+      "dropped_count": 0,
+      "failed_count": 0,
+      "failure_evidence": [],
+      "events": [],
+      "requirement_projection": {
+        "schema_version": "polaris.tool_lifecycle_requirement.v1",
+        "required": false,
+        "state": "not_required",
+        "required_task_keys": [],
+        "missing_required_task_keys": [],
+        "obligations": []
+      },
+      "required_task_keys": [],
+      "missing_required_task_keys": [],
+      "latest_by_task": {},
+      "unresolved_by_task": {},
+      "unresolved_count": 0,
+      "unresolved_dropped_count": 0,
+      "unresolved_failed_count": 0,
+      "outcome_projection": {
+        "schema_version": "polaris.tool_lifecycle_outcome_projection.v1",
+        "source": "event_rows",
+        "degraded": false,
+        "fallback": "",
+        "requirement": false,
+        "requirement_status": "not_required"
+      }
+    }
+  },
+  "run_ledger_projection": {
+    "schema_version": 1,
+    "source": "run_ledger_projection",
+    "available": false,
+    "ok": false,
+    "status": "pending",
+    "audit_path": "/tmp/factory-bench-l1-05-r115/workspaces/9ae82d7111f6-5f89fd839c489dbd/L1-05-e561a0dcdada9554/678d99053b85c836103992be/runtime/control_plane/ledger",
+    "migration_ledgers_included": false,
+    "query_scope": {
+      "run_id": "factory_5ea5c947530e",
+      "factory_run_id": "",
+      "project_id": ""
+    },
+    "consumed_run_ids": [
+      "factory_5ea5c947530e"
+    ],
+    "total": 0,
+    "projected": 0,
+    "missing": 0,
+    "failed": 0,
+    "missing_required_modalities": [],
+    "failed_required_modalities": [],
+    "failed_control_plane_events": [],
+    "failed_evidence_details": {
+      "required_modalities": [],
+      "control_plane_events": [],
+      "failed_gate_count": 0
+    },
+    "projects": [],
+    "detail": "run ledger projection is not available yet",
+    "evidence_policy": {
+      "ok": false,
+      "enabled_modalities": [],
+      "required_modalities": [],
+      "missing_required_modalities": [],
+      "failed_required_modalities": []
+    },
+    "evidence_modalities": {},
+    "task_boundary": {
+      "ok": true,
+      "verdict_count": 0,
+      "latest": {},
+      "failed": []
+    },
+    "tool_lifecycle": {
+      "ok": true,
+      "requirement": false,
+      "requirement_status": "not_required",
+      "event_count": 0,
+      "native_tool_calls_count": 0,
+      "decoded_tool_calls_count": 0,
+      "dispatched_tool_calls_count": 0,
+      "tool_result_count": 0,
+      "effect_receipt_count": 0,
+      "native_tool_call_names": [],
+      "dropped_count": 0,
+      "failed_count": 0,
+      "failure_evidence": [],
+      "events": [],
+      "requirement_projection": {
+        "schema_version": "polaris.tool_lifecycle_requirement.v1",
+        "required": false,
+        "state": "not_required",
+        "required_task_keys": [],
+        "missing_required_task_keys": [],
+        "obligations": []
+      },
+      "required_task_keys": [],
+      "missing_required_task_keys": [],
+      "latest_by_task": {},
+      "unresolved_by_task": {},
+      "unresolved_count": 0,
+      "unresolved_dropped_count": 0,
+      "unresolved_failed_count": 0,
+      "outcome_projection": {
+        "schema_version": "polaris.tool_lifecycle_outcome_projection.v1",
+        "source": "event_rows",
+        "degraded": false,
+        "fallback": "",
+        "requirement": false,
+        "requirement_status": "not_required"
+      }
+    }
+  },
+  "task_runtime_projection": {
+    "schema_version": "task_runtime.observable_task_rows_authority.v1",
+    "workspace": "/tmp/factory-bench-l1-05-r115/workspaces/9ae82d7111f6-5f89fd839c489dbd/L1-05-e561a0dcdada9554/678d99053b85c836103992be",
+    "source": "task_runtime.execution_fact",
+    "authoritative": true,
+    "degraded": false,
+    "requested_factory_run_id": "factory_5ea5c947530e",
+    "total_row_count": 5,
+    "row_count": 5,
+    "rows": [
+      {
+        "task_id": "1",
+        "workflow_run_id": "director-7c6d0cd78402",
+        "factory_run_id": "factory_5ea5c947530e",
+        "status": "in_progress",
+        "execution_state": "in_progress",
+        "fact_event_seq": 30,
+        "source": "task_runtime.execution_fact",
+        "status_source": "task_runtime.execution_fact"
+      },
+      {
+        "task_id": "2",
+        "workflow_run_id": "",
+        "factory_run_id": "factory_5ea5c947530e",
+        "status": "blocked",
+        "execution_state": "blocked",
+        "fact_event_seq": 24,
+        "source": "task_runtime.execution_fact",
+        "status_source": "task_runtime.execution_fact"
+      },
+      {
+        "task_id": "3",
+        "workflow_run_id": "",
+        "factory_run_id": "factory_5ea5c947530e",
+        "status": "blocked",
+        "execution_state": "blocked",
+        "fact_event_seq": 25,
+        "source": "task_runtime.execution_fact",
+        "status_source": "task_runtime.execution_fact"
+      },
+      {
+        "task_id": "4",
+        "workflow_run_id": "factory_5ea5c947530e",
+        "factory_run_id": "factory_5ea5c947530e",
+        "status": "pending",
+        "execution_state": "pending",
+        "fact_event_seq": 19,
+        "source": "task_runtime.execution_fact",
+        "status_source": "task_runtime.execution_fact"
+      },
+      {
+        "task_id": "5",
+        "workflow_run_id": "factory_5ea5c947530e",
+        "factory_run_id": "factory_5ea5c947530e",
+        "status": "completed",
+        "execution_state": "completed",
+        "fact_event_seq": 22,
+        "source": "task_runtime.execution_fact",
+        "status_source": "task_runtime.execution_fact"
+      }
+    ],
+    "readiness": {
+      "ready": true,
+      "blocking_reasons": [],
+      "task_row_file_fallback_required": false,
+      "projected_session_file_fallback_required": false,
+      "observable_projection_parity_ready": true,
+      "task_row_read_model_fallback_coverage": {
+        "file_rows_count": 5,
+        "fact_rows_count": 5,
+        "projected_rows_count": 5,
+        "file_row_ids_without_execution_fact": [],
+        "fact_row_ids_without_file_row": [],
+        "coverage_ratio": 1.0,
+        "transitional_file_fallback_required": false
+      },
+      "task_row_read_model_projection_parity_coverage": {
+        "transitional_rows_count": 5,
+        "fact_only_rows_count": 5,
+        "transitional_only_row_ids": [],
+        "fact_only_row_ids": [],
+        "row_ids_with_projection_mismatch": [],
+        "parity_ratio": 1.0,
+        "observable_projection_parity_ready": true
+      },
+      "projected_runtime_execution_session_fallback_coverage": {
+        "file_projected_session_rows_count": 3,
+        "fact_projected_session_rows_count": 3,
+        "file_projected_session_task_ids_without_execution_fact": [],
+        "fact_projected_session_task_ids_without_file_row": [],
+        "coverage_ratio": 1.0,
+        "projected_session_file_fallback_required": false
+      }
+    }
+  },
+  "control_plane_projection_error": null,
+  "director_convergence": {
+    "qa_ran": false,
+    "blocking_phase": "director_dispatch",
+    "taskboard_initial": {},
+    "taskboard_final": {},
+    "missing_delivery_targets": [
+      "director_dispatch",
+      "quality_gate"
+    ],
+    "per_binding_task_status": [],
+    "director_summary": null
+  }
+}

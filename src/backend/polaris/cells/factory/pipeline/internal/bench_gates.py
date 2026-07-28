@@ -40,6 +40,13 @@ from polaris.cells.control_plane.verifier_policy.public import (
 )
 from polaris.kernelone.events.final_request_evidence import normalize_context_snapshot_ref
 
+from .native_validation_sandbox import (
+    NativeValidationContractError,
+    NativeValidationSandboxError,
+    cargo_native_test_count,
+    is_cargo_test_command,
+    sandboxed_cargo_test_command,
+)
 from .run_ledger import summarize_run_ledger_projection
 
 _REQUIRED_LLM_ROLES = ("pm", "chief_engineer", "qa", "director")
@@ -1000,7 +1007,9 @@ def _go_command(workspace: Path, go_files: list[str]) -> list[str]:
 def _rust_compile_command(workspace: Path, rust_files: list[str]) -> list[str]:
     cargo = shutil.which("cargo")
     if (workspace / "Cargo.toml").is_file() and cargo:
-        return [cargo, "check", "--quiet"]
+        # Cargo test is the native Rust verification boundary: it compiles the
+        # project and executes unit/integration tests in one physical gate.
+        return [cargo, "test", "--quiet"]
     rustc = shutil.which("rustc")
     if not rustc:
         return []
@@ -1009,6 +1018,60 @@ def _rust_compile_command(workspace: Path, rust_files: list[str]) -> list[str]:
         rust_files[0] if rust_files else "",
     )
     return [rustc, "--edition=2021", "--emit=metadata", root] if root else []
+
+
+def _run_sandboxed_cargo_test(
+    command: list[str],
+    workspace: Path,
+    *,
+    timeout_s: int,
+) -> dict[str, Any]:
+    try:
+        with sandboxed_cargo_test_command(
+            workspace=workspace,
+            command=command,
+        ) as sandbox:
+            result = _run_command(
+                sandbox.command,
+                workspace,
+                timeout_s=timeout_s,
+            )
+    except NativeValidationContractError as exc:
+        return {
+            "command": command,
+            "ok": False,
+            "returncode": None,
+            "duration_s": 0.0,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+            "error": f"native_validation_contract_invalid: {exc}",
+            "sandboxed": False,
+            "native_test_count": 0,
+        }
+    except NativeValidationSandboxError as exc:
+        return {
+            "command": command,
+            "ok": False,
+            "returncode": None,
+            "duration_s": 0.0,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+            "error": f"native_validation_sandbox_unavailable: {exc}",
+            "sandboxed": False,
+            "native_test_count": 0,
+        }
+
+    native_test_count = cargo_native_test_count(result.get("stdout_tail"))
+    result["command"] = command
+    result["native_test_count"] = native_test_count
+    result["sandbox_backend"] = sandbox.backend
+    result["sandboxed"] = True
+    if result.get("returncode") == 0 and native_test_count < 1:
+        result["ok"] = False
+        result["error"] = "cargo_test_zero_tests"
+    return result
 
 
 def _run_language_build_gate(
@@ -1061,9 +1124,29 @@ def _run_language_build_gate(
         command = _rust_compile_command(workspace, rust_files)
         if not command:
             return False, "rustc/cargo unavailable for Rust project", []
-        cmd = _run_command(command, workspace, timeout_s=max(10, int(timeout_s)))
+        if is_cargo_test_command(command):
+            cmd = _run_sandboxed_cargo_test(
+                command,
+                workspace,
+                timeout_s=max(10, int(timeout_s)),
+            )
+            cmd["phase"] = "build_test_lint"
+            if cmd.get("returncode") == 0 and int(cmd.get("native_test_count") or 0) < 1:
+                return False, "cargo test executed zero tests", [cmd]
+            return (
+                bool(cmd.get("ok")),
+                "cargo test passed" if cmd.get("ok") else "cargo test failed",
+                [cmd],
+            )
+        with tempfile.TemporaryDirectory(prefix="polaris-factory-rustc-") as out_dir:
+            rustc_command = [*command, "--out-dir", out_dir]
+            cmd = _run_command(rustc_command, workspace, timeout_s=max(10, int(timeout_s)))
         cmd["phase"] = "build_test_lint"
-        return bool(cmd.get("ok")), "Rust compile check passed" if cmd.get("ok") else "Rust compile check failed", [cmd]
+        return (
+            bool(cmd.get("ok")),
+            "rustc compile passed" if cmd.get("ok") else "rustc compile failed",
+            [cmd],
+        )
 
     cpp_files = _files_with_suffix(_source_files, _CPP_SOURCE_SUFFIXES)
     if cpp_files:

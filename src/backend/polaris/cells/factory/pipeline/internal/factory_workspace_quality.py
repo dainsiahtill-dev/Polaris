@@ -34,6 +34,13 @@ from polaris.kernelone.benchmark.factory_audit import check_workspace_delivery_d
 
 from . import factory_stage_helpers as helpers
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
+from .native_validation_sandbox import (
+    NativeValidationContractError,
+    NativeValidationSandboxError,
+    cargo_native_test_count,
+    is_cargo_test_command,
+    sandboxed_cargo_test_command,
+)
 
 _MASKED_WORKSPACE_FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
@@ -266,7 +273,11 @@ class WorkspaceQualityRunner:
     def _rust_workspace_quality_commands(self) -> list[list[str]]:
         if not (self.workspace / "Cargo.toml").is_file():
             return []
-        return [["cargo", "check", "--quiet"]]
+        # ``cargo test`` compiles every target and executes native unit and
+        # integration tests. A prior Bench-shaped PM contract generated a
+        # Python wrapper for Rust while this gate ran only ``cargo check``;
+        # the declared test evidence was therefore never executed.
+        return [["cargo", "test", "--quiet"]]
 
     def _cpp_workspace_quality_commands(self) -> list[list[str]]:
         cpp_files = [
@@ -394,6 +405,64 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                 "stdout_tail": "",
                 "stderr_tail": "",
             }
+        if is_cargo_test_command(resolved_command):
+            try:
+                with sandboxed_cargo_test_command(
+                    workspace=self.workspace,
+                    command=resolved_command,
+                ) as sandbox:
+                    return self._run_resolved_command(
+                        command=command,
+                        resolved_command=sandbox.command,
+                        timeout_seconds=timeout_seconds,
+                        started_at=started_at,
+                        sandbox_backend=sandbox.backend,
+                        cargo_test=True,
+                    )
+            except NativeValidationContractError as exc:
+                return {
+                    "command": command,
+                    "started_at": started_at,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "exit_code": None,
+                    "passed": False,
+                    "error": f"native_validation_contract_invalid: {exc}",
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                    "sandboxed": False,
+                    "native_test_count": 0,
+                }
+            except NativeValidationSandboxError as exc:
+                return {
+                    "command": command,
+                    "started_at": started_at,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "exit_code": None,
+                    "passed": False,
+                    "error": f"native_validation_sandbox_unavailable: {exc}",
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                    "sandboxed": False,
+                }
+        return self._run_resolved_command(
+            command=command,
+            resolved_command=resolved_command,
+            timeout_seconds=timeout_seconds,
+            started_at=started_at,
+            sandbox_backend="",
+            cargo_test=False,
+        )
+
+    def _run_resolved_command(
+        self,
+        *,
+        command: list[str],
+        resolved_command: list[str],
+        timeout_seconds: float,
+        started_at: str,
+        sandbox_backend: str,
+        cargo_test: bool,
+    ) -> dict[str, Any]:
         try:
             completed = subprocess.run(
                 resolved_command,
@@ -408,36 +477,50 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
             )
             stdout = helpers.trim_command_output(completed.stdout)
             stderr = helpers.trim_command_output(completed.stderr)
-            nested_diagnostics = _nested_javac_diagnostics_from_output(
-                workspace=self.workspace,
-                stdout=stdout,
-                stderr=stderr,
-                timeout_seconds=min(
-                    _NESTED_JAVAC_DIAGNOSTIC_TIMEOUT_SECONDS,
-                    max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
-                ),
-            )
+            nested_diagnostics = ""
+            if not cargo_test:
+                nested_diagnostics = _nested_javac_diagnostics_from_output(
+                    workspace=self.workspace,
+                    stdout=stdout,
+                    stderr=stderr,
+                    timeout_seconds=min(
+                        _NESTED_JAVAC_DIAGNOSTIC_TIMEOUT_SECONDS,
+                        max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
+                    ),
+                )
             if nested_diagnostics:
                 stderr = helpers.trim_command_output("\n\n".join(part for part in (stderr, nested_diagnostics) if part))
             masked_failure_reason = ""
             if int(completed.returncode) == 0:
                 masked_failure_reason = _masked_workspace_failure_reason(stdout, stderr)
+            native_test_count = cargo_native_test_count(completed.stdout) if cargo_test else 0
+            zero_native_tests = cargo_test and int(completed.returncode) == 0 and native_test_count < 1
             result: dict[str, Any] = {
                 "command": command,
                 "started_at": started_at,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "exit_code": int(completed.returncode),
-                "passed": int(completed.returncode) == 0 and not masked_failure_reason,
+                "passed": (int(completed.returncode) == 0 and not masked_failure_reason and not zero_native_tests),
                 "stdout_tail": stdout,
                 "stderr_tail": stderr,
             }
+            if cargo_test:
+                result.update(
+                    {
+                        "native_test_count": native_test_count,
+                        "sandbox_backend": sandbox_backend,
+                        "sandboxed": True,
+                    }
+                )
             if nested_diagnostics:
                 result["nested_diagnostics"] = nested_diagnostics
-            if masked_failure_reason:
+            if zero_native_tests:
+                result["error"] = "cargo_test_zero_tests"
+            elif masked_failure_reason:
                 result["error"] = masked_failure_reason
             return result
         except subprocess.TimeoutExpired as exc:
-            return {
+            result = {
                 "command": command,
                 "started_at": started_at,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
@@ -447,8 +530,17 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                 "stdout_tail": helpers.trim_command_output(str(exc.stdout or "")),
                 "stderr_tail": helpers.trim_command_output(str(exc.stderr or "")),
             }
+            if cargo_test:
+                result.update(
+                    {
+                        "native_test_count": cargo_native_test_count(exc.stdout),
+                        "sandbox_backend": sandbox_backend,
+                        "sandboxed": True,
+                    }
+                )
+            return result
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            return {
+            result = {
                 "command": command,
                 "started_at": started_at,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
@@ -458,6 +550,15 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                 "stdout_tail": "",
                 "stderr_tail": "",
             }
+            if cargo_test:
+                result.update(
+                    {
+                        "native_test_count": 0,
+                        "sandbox_backend": sandbox_backend,
+                        "sandboxed": True,
+                    }
+                )
+            return result
 
 
 def _masked_workspace_failure_reason(stdout: str, stderr: str) -> str:

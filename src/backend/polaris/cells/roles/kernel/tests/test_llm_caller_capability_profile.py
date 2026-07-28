@@ -11,6 +11,16 @@ from polaris.cells.roles.kernel.internal import context_gateway as context_gatew
 from polaris.cells.roles.kernel.internal.llm_caller import request_preparer as request_preparer_module
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import build_final_request_context_audit_for_request
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    resolve_structured_output_transport,
+)
+from polaris.cells.roles.kernel.internal.transaction.decision_message_builder import (
+    build_decision_messages,
+)
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
+    RoleStructuredOutputContractV1,
+)
 from polaris.kernelone.context.contracts import TurnEngineContextResult
 from polaris.kernelone.llm.engine.contracts import ModelSpec
 
@@ -159,6 +169,81 @@ async def test_streaming_json_contract_preserves_reasoning_budget_and_truthful_f
     assert prepared.ai_request.options["reasoning_budget_tokens"] == 2_048
     assert prepared.ai_request.context["reasoning_budget_tokens"] == 2_048
     assert prepared.capability_profile["response_format_mode"] == "text_json_fallback"
+
+
+@pytest.mark.asyncio
+async def test_streaming_typed_contract_audits_provider_tool_json_schema(tmp_path: Path) -> None:
+    request_preparer = LLMRequestPreparer(workspace=str(tmp_path), formatter=None, model_catalog=None)
+    request_preparer._model_catalog = _ModelCatalog()
+    profile = SimpleNamespace(
+        role_id="chief_engineer",
+        provider_id="provider-a",
+        model="qwen-16k",
+        tool_policy=SimpleNamespace(whitelist=()),
+    )
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "construction_plan": {"type": "object"},
+                "scope_for_apply": {"type": "array"},
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+            "additionalProperties": False,
+        },
+    )
+    transport = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert transport is not None
+    result_tool = transport.tool_definition
+    forced_choice = transport.tool_choice
+    decision_messages = build_decision_messages(
+        [
+            {"role": "system", "content": "You are the Chief Engineer."},
+            {
+                "role": "user",
+                "content": (
+                    "Submit one blueprint portfolio for targets src/main.rs, src/engine.rs, and tests/integration.rs."
+                ),
+            },
+        ],
+        [result_tool],
+    )
+    context = SimpleNamespace(
+        message="Submit one blueprint portfolio.",
+        domain="code",
+        context_override={
+            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: decision_messages,
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [result_tool],
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY: forced_choice,
+            STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection(),
+        },
+    )
+
+    prepared = await request_preparer._prepare_llm_request(
+        profile=profile,
+        system_prompt="You are the Chief Engineer.",
+        context=context,
+        temperature=0.0,
+        max_tokens=8_192,
+        stream=True,
+    )
+
+    assert prepared.response_format_mode == "provider_tool_json_schema"
+    assert prepared.request_options["tools"] == [result_tool]
+    assert prepared.request_options["tool_choice"] == forced_choice
+    assert "response_format" not in prepared.request_options
+    assert prepared.capability_profile["response_format_mode"] == "provider_tool_json_schema"
+    rendered = "\n".join(message["content"] for message in prepared.messages)
+    assert "SYSTEM CONSTRAINT (Structured Result)" in rendered
+    assert "SYSTEM CONSTRAINT (Execution)" not in rendered
+    assert "TASK CONTRACT (single-batch planning)" not in rendered
+    assert "This request requires mutation" not in rendered
+    assert "POSITIVE TOOL SEQUENCE TEMPLATES" not in rendered
 
 
 @pytest.mark.asyncio

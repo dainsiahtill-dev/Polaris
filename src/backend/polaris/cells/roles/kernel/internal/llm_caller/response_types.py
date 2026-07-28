@@ -12,6 +12,7 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleFrozenSemanticRequestV1,
 )
 
+from ..structured_output_transport import StructuredOutputTransportPlan
 from .factory_dispatch_propagation import FactorySemanticDispatchPropagationPort
 
 
@@ -107,6 +108,7 @@ class PreparedLLMRequest:
         response_format_mode: Response format mode indicator
         context_os_audit: Prompt-level ContextOS audit evidence
         capability_profile: Resolved actor/model/provider capability snapshot
+        structured_output_transport: Caller-owned non-executable result protocol
     """
 
     messages: list[dict[str, str]]
@@ -122,6 +124,7 @@ class PreparedLLMRequest:
     response_format_mode: str = "plain_text"
     context_os_audit: dict[str, Any] = field(default_factory=dict)
     capability_profile: dict[str, Any] = field(default_factory=dict)
+    structured_output_transport: StructuredOutputTransportPlan | None = None
     factory_semantic_request: FactoryRoleFrozenSemanticRequestV1 | None = None
     factory_dispatch_port: FactorySemanticDispatchPropagationPort | None = field(
         default=None,

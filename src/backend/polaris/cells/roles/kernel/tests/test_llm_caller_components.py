@@ -71,6 +71,10 @@ from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import (
     StreamEngine,
     _store_context_messages_accepts_provider_request,
 )
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    STRUCTURED_OUTPUT_TOOL_NAME,
+    resolve_structured_output_transport,
+)
 from polaris.cells.roles.kernel.public import final_request_evidence_cutoff as cutoff_contract
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
@@ -80,6 +84,10 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleEvidenceCutoffRequestV1,
     FactoryRoleSemanticRequestIdentityV1,
     bind_factory_role_evidence_authority,
+)
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
+    RoleStructuredOutputContractV1,
 )
 from polaris.kernelone.audit.omniscient.dedup import LLMEventDeduplicator, set_global_llm_dedup
 from polaris.kernelone.context.contracts import TurnEngineContextResult
@@ -3798,6 +3806,102 @@ class TestStreamEngineRunStream:
         assert [event.get("error") for event in events if event.get("type") == "error"] == [
             "provider_stream_timeout:193s"
         ]
+
+    async def test_invalid_structured_result_emits_terminal_call_error_before_consumer_projection(self) -> None:
+        """Provider result-schema drift must close the physical LLM attempt.
+
+        R107 returned the forced result tool without ``scope_for_apply``.
+        Validation occurred only in the downstream TransactionKernel projector,
+        which raised after the LLM stream had yielded the tool call. The
+        physical attempt therefore retained only ``llm_call_start`` and the
+        bounded CE schema-repair path could not classify the invalid payload.
+        """
+
+        contract = RoleStructuredOutputContractV1(
+            schema_name="chief_engineer_blueprint_portfolio",
+            description="Submit the complete Chief Engineer blueprint portfolio.",
+            json_schema={
+                "type": "object",
+                "properties": {
+                    "construction_plan": {"type": "object"},
+                    "scope_for_apply": {"type": "array"},
+                    "risk_flags": {"type": "array"},
+                },
+                "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+                "additionalProperties": False,
+            },
+        )
+        plan = resolve_structured_output_transport(
+            {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+        )
+        assert plan is not None
+        prepared = _b33_propagating_prepared()
+        prepared.structured_output_transport = plan
+        context = SimpleNamespace(
+            context_override={"stream_max_reconnects": 0},
+            stream_cancelled=False,
+            temperature=0.2,
+            max_tokens=16_384,
+        )
+        emit_error = Mock()
+
+        class _Executor:
+            async def invoke_stream(self, _request: object, *, physical_dispatch_port: object):
+                assert physical_dispatch_port is prepared.factory_dispatch_port
+                yield {
+                    "type": "tool_call",
+                    "tool_call": {
+                        "id": "call-invalid-structured-result",
+                        "name": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "arguments": {"construction_plan": {}, "risk_flags": []},
+                    },
+                }
+                yield {"type": "complete", "content": ""}
+
+        engine = StreamEngine(
+            workspace="/ws",
+            get_executor=lambda: _Executor(),
+            allow_native_tool_text_fallback_fn=Mock(return_value=False),
+            emit_call_start_event=Mock(),
+            emit_call_error_event=emit_error,
+            emit_call_end_event=Mock(),
+            emit_call_retry_event=Mock(),
+        )
+
+        with (
+            patch(
+                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
+                "build_final_request_context_audit_for_request",
+                return_value={"final_request_token_estimate": 1},
+            ),
+            patch(
+                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
+                "enforce_factory_aware_final_request_evidence_coverage"
+            ),
+        ):
+            events = [
+                event
+                async for event in engine.run_stream(
+                    profile=SimpleNamespace(provider_id="provider-a", role_id="chief_engineer"),
+                    prepared=prepared,
+                    context=context,
+                    start_time=time.perf_counter(),
+                    role_id="chief_engineer",
+                    run_id="run-invalid-structured-result",
+                    task_id="CE-PORTFOLIO-run-invalid-structured-result",
+                    attempt=0,
+                    model="model-a",
+                    call_id="call-a",
+                    event_emitter=None,
+                    turn_round=0,
+                )
+            ]
+
+        assert [event["type"] for event in events] == ["error"]
+        assert events[0]["error"].startswith("structured_output_payload_schema_mismatch:$:")
+        assert "'scope_for_apply' is a required property" in events[0]["error"]
+        emit_error.assert_called_once()
+        assert emit_error.call_args.kwargs["error_message"] == events[0]["error"]
 
     async def test_cancel_before_invoke(self) -> None:
         """取消标志设置时应立即抛出 CancelledError."""

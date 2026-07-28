@@ -4,6 +4,10 @@ from types import SimpleNamespace
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.transaction import tool_surface
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
+    RoleStructuredOutputContractV1,
+)
 from polaris.cells.roles.profile.public.service import RoleTurnRequest, profile_from_dict
 
 
@@ -21,6 +25,71 @@ def _profile() -> Any:
 
 def _context_result() -> Any:
     return SimpleNamespace(messages=[], token_estimate=0)
+
+
+def _structured_output_projection() -> dict[str, Any]:
+    return RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "construction_plan": {"type": "object"},
+                "scope_for_apply": {"type": "array"},
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+            "additionalProperties": False,
+        },
+    ).to_context_projection()
+
+
+def test_structured_output_contract_replaces_executable_tool_surface(monkeypatch: Any) -> None:
+    """The result carrier is provider protocol, not an executable role tool."""
+
+    monkeypatch.setattr(
+        tool_surface,
+        "build_native_tool_schemas",
+        lambda _profile: [
+            {"type": "function", "function": {"name": "write_file", "parameters": {"type": "object"}}}
+        ],
+    )
+    monkeypatch.setattr(
+        tool_surface,
+        "_apply_runtime_tool_policy",
+        lambda **kwargs: (kwargs["tool_definitions"], {"runtime_tool_policy_applied": True}),
+    )
+    monkeypatch.setattr(tool_surface, "resolve_from_scratch_write_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "resolve_repair_edit_target", lambda _context, _workspace: "")
+    monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
+    request = RoleTurnRequest(
+        workspace="/tmp/workspace",
+        message="Return the Chief Engineer portfolio.",
+        context_override={
+            STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: _structured_output_projection(),
+        },
+    )
+
+    plan = tool_surface.plan_transaction_tool_surface(
+        role="chief_engineer",
+        profile=_profile(),
+        request=request,
+        context_result=_context_result(),
+        messages=[],
+        workspace="/tmp/workspace",
+        mode="stream",
+    )
+
+    assert [item["function"]["name"] for item in plan.tool_definitions] == [
+        "submit_structured_role_output"
+    ]
+    assert plan.tool_choice_override == {
+        "type": "function",
+        "function": {"name": "submit_structured_role_output"},
+    }
+    assert plan.runtime_tool_policy_audit["structured_output_transport"]["side_effect"] is False
+    assert plan.runtime_tool_policy_audit["structured_output_transport"]["tool_lifecycle"] is False
+    assert plan.conflict_error is None
 
 
 def test_plan_transaction_tool_surface_honors_forced_no_tools(monkeypatch: Any) -> None:

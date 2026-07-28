@@ -23,7 +23,7 @@ repository architecture fence are also closed.
 
 - commands: `CreateRuntimeTaskCommandV1`, `UpdateRuntimeTaskCommandV1`, `ReopenRuntimeTaskCommandV1`, `BindRuntimeTaskToFactoryRunCommandV1`, `FenceExpiredFactoryRunSessionsCommandV1`, `PrepareOwnerReworkExecutionCommandV1`
 - execution commands: `OpenTaskRuntimeExecutionAttemptAuthorityCommandV1`, `HeartbeatTaskRuntimeExecutionAttemptCommandV1`, `SettleTaskRuntimeExecutionAttemptCommandV1`
-- DEO-1B commands: `EnrollDirectedEffectParentRegistryStreamCommandV1`, `EnrollDirectedEffectOperationStreamCommandV1`, `AdmitDirectedEffectParentCommandV1`, `AdmitDirectedEffectOperationCommandV1`, `ClaimDirectedEffectCommandV1`, `AbortDirectedEffectOperationCommandV1`
+- DEO parent/operation commands: `EnrollDirectedEffectParentRegistryStreamCommandV1`, `EnrollDirectedEffectOperationStreamCommandV1`, `AdmitDirectedEffectParentCommandV1`, `AdmitDirectedEffectParentBatchCommandV1`, `AdmitDirectedEffectOperationCommandV1`, `ClaimDirectedEffectCommandV1`, `AbortDirectedEffectOperationCommandV1`
 - DEO-2A inventory commands: `SealDirectedEffectInventoryCommandV1`, `FinalizeDirectedEffectInventoryAdmissionCommandV1`
 - DEO-2A inventory contracts: `DirectedEffectInventoryIntentV1`, `DirectedEffectInventoryMemberV1`, `DirectedEffectInventoryProjectionV1`, `DirectedEffectInventoryResultV1`, `DirectedEffectClaimGrantV1`
 - queries: `ListRuntimeTasksQueryV1`, `GetRuntimeTaskQueryV1`, `ValidateTaskRuntimeExecutionAttemptQueryV1`, `GetDirectedEffectParentRegistryQueryV1`, `GetDirectedEffectOperationQueryV1`, `GetDirectedEffectInventoryQueryV1`, `GetDirectedEffectParentReadinessQueryV1`
@@ -76,6 +76,11 @@ repository architecture fence are also closed.
   membership, and guarded CAS checks reject drift before an authority transition
 - only the sealed inventory's exact `INTENT_COMMITTED` set can produce the ready
   fact; claim and abort require that durable ready prefix
+- a later real tool batch must use TaskRuntime-owned
+  `AdmitDirectedEffectParentBatchCommandV1`: TaskRuntime derives every registry
+  head and parent sequence under the execution-attempt locks, closes only a
+  receipt-complete predecessor, and fail-closes unresolved or failed effects;
+  callers cannot reuse an open parent or manufacture CAS values
 - a confirmed fresh claim returns exactly one `DirectedEffectClaimGrantV1`;
   same-command reconciliation may return that grant, but idempotent replay never
   reissues it and never appends a new claim fact

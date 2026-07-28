@@ -1,0 +1,57 @@
+{
+  "schema_version": "polaris.main_agent_defect.v1",
+  "defect_id": "PREBENCH-KERNELONE-AUDIT-CONTRACT-BASELINE",
+  "status": "CLOSED_REQUALIFIED",
+  "severity": "P1",
+  "discovered_during": "R115-CONTEXT-OS-CAPABILITY-LEAK broad regression",
+  "symptom": {
+    "command_scope": "roles-kernel plus kernelone/audit tests",
+    "result": "The original two-file baseline reproduced at 65 passed / 8 failed. After contract reconciliation, the full KernelOne audit scope passes 597 tests.",
+    "failing_files": [
+      "src/backend/polaris/kernelone/audit/tests/test_contracts.py",
+      "src/backend/polaris/kernelone/audit/tests/test_validators.py"
+    ],
+    "resolved_failures": [
+      "Seven failures were stale duplicate-test expectations: persisted audit restoration intentionally requires the complete signed envelope, and audit writes/queries intentionally require a valid non-empty run_id.",
+      "One production inconsistency was real: normalize_event_type silently mapped empty input to task_start, allowing missing event identity to be misclassified. Empty input now fails closed through KernelAuditEventType validation."
+    ]
+  },
+  "scope_separation": {
+    "related_to_context_os_fix": false,
+    "evidence": "The 65-passed/8-failed baseline was reproduced before this dedicated bucket changed any audit source or tests, proving separation from the earlier ContextOS work. This bucket intentionally changes validators.py plus the stale contract/validator tests; contracts.py remains unchanged. Focused, full-audit, and release-gate commands independently validate that narrow diff.",
+    "must_not_be_hidden": true
+  },
+  "root_cause": {
+    "classification": "STALE_DUPLICATE_TEST_CONTRACT_PLUS_EMPTY_EVENT_TYPE_FAIL_OPEN",
+    "status": "implemented_pending_independent_review",
+    "authoritative_evidence": [
+      "Commit 700c09cc (Validate persisted audit event chains) intentionally made every persisted envelope field mandatory and added canonical strict unit tests.",
+      "require_valid_run_id has been fail-closed since its original implementation and all runtime emit/query callers consume that strict contract.",
+      "The only split-brain was normalize_event_type: one suite required rejection while a duplicate unit test preserved the silent task_start default."
+    ]
+  },
+  "bench_impact": "Pre-bench static/test gate cannot be declared globally clean until the intended audit contract is identified and implementation/tests are reconciled without weakening fail-closed semantics.",
+  "provider_calls": 0,
+  "bench_runs": 0,
+  "verification": {
+    "focused_contract_and_validator_suites": "123 passed",
+    "full_kernelone_audit_scope": "597 passed",
+    "kernelone_release_gate": "ok=true; mode=all; suite_size=51; 415 passed, 1 skipped, 2 pre-existing warnings",
+    "ruff": "passed",
+    "ruff_format": "passed",
+    "mypy": "passed for validators.py"
+  },
+  "independent_review": {
+    "verdict": "CLEAR",
+    "critical": 0,
+    "important": 0,
+    "minor": 0,
+    "independent_evidence": [
+      "123 focused contract/validator tests passed",
+      "597 exact full KernelOne audit tests passed",
+      "818 wider audit tests passed",
+      "Ruff, format, mypy, and diff-check passed"
+    ]
+  },
+  "next_action": "Closed. Keep Provider and Bench unauthorized until the separate Rust native-validation review reaches CLEAR and the pre-bench governance gate is synchronized."
+}

@@ -57,7 +57,7 @@ from polaris.cells.roles.kernel.public.directed_effect_service import (
 )
 from polaris.cells.runtime.task_runtime.public import (
     AdmitDirectedEffectOperationCommandV1,
-    AdmitDirectedEffectParentCommandV1,
+    AdmitDirectedEffectParentBatchCommandV1,
     ClaimDirectedEffectCommandV1,
     CommitDirectedEffectReceiptCommandV1,
     DirectedEffectInventoryIntentV1,
@@ -76,7 +76,7 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptIdentityV1,
     TaskRuntimeService,
     admit_directed_effect_operation,
-    admit_directed_effect_parent,
+    admit_directed_effect_parent_batch,
     claim_directed_effect,
     commit_directed_effect_receipt,
     create_task_runtime_execution_attempt_authority,
@@ -556,7 +556,7 @@ class _RecordingRuntime:
 
     def admit_parent(
         self,
-        command: AdmitDirectedEffectParentCommandV1,
+        command: AdmitDirectedEffectParentBatchCommandV1,
     ) -> DirectedEffectOperationResultV1:
         self._record("admit_parent", command)
         malformed = self._malformed("admit_parent", DirectedEffectOperationResultV1)
@@ -564,7 +564,7 @@ class _RecordingRuntime:
             return cast(DirectedEffectOperationResultV1, malformed)
         if self.fail_stage == "admit_parent":
             return DirectedEffectOperationResultV1(ok=False, code="stream_append_failed")
-        return admit_directed_effect_parent(command)
+        return admit_directed_effect_parent_batch(command)
 
     def enroll_operation(
         self,
@@ -738,8 +738,8 @@ def test_exact_lifecycle_order_fields_cas_and_sealed_member_binding(tmp_path: Pa
     )
     commands = {name: command for name, command in runtime.events if name not in {"bind_member", "admit_operation"}}
     parent = commands["admit_parent"]
-    assert isinstance(parent, AdmitDirectedEffectParentCommandV1)
-    assert (parent.expected_version, parent.expected_seq, parent.actor) == (0, 1, "roles.kernel")
+    assert isinstance(parent, AdmitDirectedEffectParentBatchCommandV1)
+    assert parent.actor == "roles.kernel"
     seal = commands["seal_inventory"]
     assert isinstance(seal, SealDirectedEffectInventoryCommandV1)
     assert (seal.expected_registry_version, seal.expected_registry_seq, seal.expected_operation_head_seq) == (1, 2, 0)
@@ -773,6 +773,85 @@ def test_exact_lifecycle_order_fields_cas_and_sealed_member_binding(tmp_path: Pa
         finalize.expected_operation_head_seq,
     ) == (2, 3, 2)
     assert all(name != "claim_operation" for name, _ in runtime.events)
+
+
+def test_lifecycle_admits_second_turn_after_first_batch_receipts_close(tmp_path: Path) -> None:
+    attempt = _setup_attempt(str(tmp_path / "workspace"))
+    runtime = _RecordingRuntime(events=[])
+    service = _service(runtime)
+    first = service.prepare_batch(
+        execution_attempt=attempt,
+        execution_attempt_authority=_authority(attempt),
+        turn_id="turn-1",
+        batch_id="batch-1",
+        candidates=(_candidate(attempt, ordinal=0),),
+    )
+    assert first.status == "ready"
+    assert first.prepared_batch is not None
+    first_batch = first.prepared_batch
+    first_member = first_batch.prepared_members[0].member
+    claimed = claim_directed_effect(
+        ClaimDirectedEffectCommandV1(
+            workspace=attempt.workspace,
+            task_id=attempt.task_id,
+            execution_attempt=attempt,
+            parent_binding=first_batch.parent_binding,
+            tool_call_id=first_member.tool_call_id,
+            effect_id=first_member.effect_id,
+            expected_version=1,
+            expected_seq=2,
+            actor="roles.kernel.test",
+            intended_effect_fingerprint=first_member.intended_effect_fingerprint,
+            policy_verdict_hash=first_member.policy_verdict_hash,
+            expected_receipt_binding_hash=first_member.expected_receipt_binding_hash,
+        )
+    )
+    assert claimed.code == "effect_claimed"
+    committed = commit_directed_effect_receipt(
+        CommitDirectedEffectReceiptCommandV1(
+            workspace=attempt.workspace,
+            task_id=attempt.task_id,
+            execution_attempt=attempt,
+            parent_binding=first_batch.parent_binding,
+            tool_call_id=first_member.tool_call_id,
+            effect_id=first_member.effect_id,
+            expected_version=2,
+            expected_seq=3,
+            actor="roles.kernel.test",
+            intended_effect_fingerprint=first_member.intended_effect_fingerprint,
+            policy_verdict_hash=first_member.policy_verdict_hash,
+            expected_receipt_binding_hash=first_member.expected_receipt_binding_hash,
+            receipt_ref="receipt://roles-kernel/first-batch",
+            receipt_hash="b" * 64,
+            receipt_binding_hash=first_member.expected_receipt_binding_hash,
+            receipt_outcome="succeeded",
+        )
+    )
+    assert committed.code == "receipt_committed"
+
+    second = service.prepare_batch(
+        execution_attempt=attempt,
+        execution_attempt_authority=_authority(attempt),
+        turn_id="turn-2",
+        batch_id="batch-2",
+        candidates=(
+            _candidate(
+                attempt,
+                ordinal=0,
+                tool_call_id="call-second",
+                target_path="src/b.py",
+                turn_id="turn-2",
+                batch_id="batch-2",
+            ),
+        ),
+    )
+
+    assert second.status == "ready", second
+    assert second.prepared_batch is not None
+    assert second.prepared_batch.parent_binding.parent_sequence == 2
+    assert second.prepared_batch.parent_binding.registry_version == 5
+    assert second.prepared_batch.latest_parent_registry_head == 7
+    assert second.prepared_batch.prepared_members[0].member.tool_call_id == "call-second"
 
 
 @pytest.mark.parametrize(

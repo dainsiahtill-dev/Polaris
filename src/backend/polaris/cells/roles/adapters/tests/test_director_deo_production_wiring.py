@@ -128,17 +128,21 @@ async def test_director_root_builds_one_exact_deo_dependency_bundle(
         run_id="RUN-8",
         lease_expires_at="2099-01-01T00:00:00Z",
     )
+    caller_context = {
+        "task_id": context_task_id,
+        "run_id": "RUN-8",
+        "session_id": "session-TASK-8",
+        "task_runtime_guard": True,
+        "job_token": {
+            "token_id": "job-TASK-8",
+            "capability_audit": {"ok": True, "issues": []},
+            "allowed_write_paths": ["src/main.rs"],
+        },
+        "task_runtime_execution_attempt_authority": create_task_runtime_execution_attempt_authority(execution_attempt),
+    }
     result = await adapter._invoke_role_runtime_session(
         "implement the task",
-        context={
-            "task_id": context_task_id,
-            "run_id": "RUN-8",
-            "session_id": "session-TASK-8",
-            "task_runtime_guard": True,
-            "task_runtime_execution_attempt_authority": create_task_runtime_execution_attempt_authority(
-                execution_attempt
-            ),
-        },
+        context=caller_context,
         max_retries=1,
     )
 
@@ -155,3 +159,130 @@ async def test_director_root_builds_one_exact_deo_dependency_bundle(
     assert captured["command"].session_id == "session-TASK-8"
     assert captured["command"].run_id == "RUN-8"
     assert result["success"] is True
+    envelope = caller_context["director_execution_envelope"]
+    assert envelope["authorization"]["capability_token_ref"] == "job-TASK-8"
+    assert caller_context["execution_envelope_hash"] == envelope["envelope_hash"]
+
+
+@pytest.mark.asyncio
+async def test_director_timeout_boundary_projects_execution_authority_to_caller_context(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+    envelope = {
+        "schema_version": "polaris.execution_envelope.v1",
+        "envelope_hash": "a" * 64,
+        "authorization": {"capability_token_ref": "job-1"},
+    }
+
+    async def fake_dialogue(_message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        assert isinstance(context, dict)
+        context["director_execution_envelope"] = dict(envelope)
+        context["execution_envelope_hash"] = envelope["envelope_hash"]
+        return {"content": "done", "success": True}
+
+    monkeypatch.setattr(adapter, "_invoke_role_dialogue", fake_dialogue)
+    caller_context: dict[str, Any] = {"job_token": {"token_id": "job-1"}}
+
+    result = await adapter._invoke_role_dialogue_with_timeout(
+        "implement",
+        context=caller_context,
+        timeout_seconds=30,
+        stage_label="first_call",
+    )
+
+    assert result["success"] is True
+    assert caller_context["director_execution_envelope"] == envelope
+    assert caller_context["execution_envelope_hash"] == "a" * 64
+
+
+@pytest.mark.asyncio
+async def test_director_timeout_boundary_rejects_execution_envelope_with_mismatched_job_token(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+
+    async def fake_dialogue(_message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        assert isinstance(context, dict)
+        context["director_execution_envelope"] = {
+            "schema_version": "polaris.execution_envelope.v1",
+            "envelope_hash": "e" * 64,
+            "authorization": {"capability_token_ref": "job-other"},
+        }
+        context["execution_envelope_hash"] = "e" * 64
+        return {"content": "done", "success": True}
+
+    monkeypatch.setattr(adapter, "_invoke_role_dialogue", fake_dialogue)
+    caller_context: dict[str, Any] = {"job_token": {"token_id": "job-1"}}
+
+    result = await adapter._invoke_role_dialogue_with_timeout(
+        "implement",
+        context=caller_context,
+        timeout_seconds=30,
+        stage_label="first_call",
+    )
+
+    assert result["success"] is True
+    assert "director_execution_envelope" not in caller_context
+    assert "execution_envelope_hash" not in caller_context
+
+
+def test_deferred_repair_authority_composes_matching_job_token_and_execution_envelope() -> None:
+    from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
+        _capability_token_from_context,
+    )
+
+    token = _capability_token_from_context(
+        {
+            "job_token": {
+                "token_id": "job-1",
+                "capability_audit": {"ok": True, "issues": []},
+                "allowed_write_paths": ["src/main.rs"],
+            },
+            "director_execution_envelope": {
+                "envelope_hash": "b" * 64,
+                "authorization": {
+                    "capability_token_ref": "job-1",
+                    "allowed_write_paths": ["src/main.rs"],
+                },
+            },
+        }
+    )
+
+    assert token is not None
+    assert token["token_id"] == "job-1"
+    assert token["execution_envelope_hash"] == "b" * 64
+    assert token["allowed_write_paths"] == ["src/main.rs"]
+
+
+@pytest.mark.parametrize(
+    "context",
+    (
+        {
+            "director_execution_envelope": {
+                "envelope_hash": "c" * 64,
+                "authorization": {"capability_token_ref": "job-1"},
+            }
+        },
+        {
+            "job_token": {
+                "token_id": "job-1",
+                "capability_audit": {"ok": True, "issues": []},
+            },
+            "director_execution_envelope": {
+                "envelope_hash": "d" * 64,
+                "authorization": {"capability_token_ref": "job-other"},
+            },
+        },
+    ),
+)
+def test_deferred_repair_authority_rejects_unbound_or_mismatched_envelope(
+    context: dict[str, Any],
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
+        _capability_token_from_context,
+    )
+
+    assert _capability_token_from_context(context) is None

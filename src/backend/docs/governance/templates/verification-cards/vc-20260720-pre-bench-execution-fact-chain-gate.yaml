@@ -1,7 +1,7 @@
 card_id: vc-20260720-pre-bench-execution-fact-chain-gate
 classification: structural
 status: active
-bench_status: not_schedulable
+bench_status: r116_consumed_failed_two_platform_defects_open_not_schedulable
 bug_summary: >-
   DEO-1A through DEO-4 and B3.4-B3.6 are closed. The first authorized fresh
   isolated L1-04 run exposed final_request_role_included_refs_drift before CE
@@ -195,8 +195,359 @@ bug_summary: >-
   pre-bench architecture run exposed R35: Director rewrote a TaskRuntime-owned
   runtime_execution projection for child role calls. R35 now treats that
   projection as read-only and carries parent/child identity only through
-  director.role_subinvocation.v1. The complete current-source fact-chain and
-  architecture gates are green, authorizing exactly one fresh isolated L1-04.
+  director.role_subinvocation.v1. R100 then proved the primary Director batch
+  could settle its receipts but the same TaskRuntime attempt's real repair
+  batch was rejected with deo_parent_admission_failed/parent_open_conflict.
+  The roles.kernel caller had hard-coded parent version 0/sequence 1 for every
+  batch while TaskRuntime intentionally kept the receipt-complete predecessor
+  OPEN until terminal settlement. R100 is closed without parent reuse or fake
+  settlement: TaskRuntime now atomically closes only a ready,
+  receipt-complete predecessor, writes strict V4 child and V3 parent rollover
+  facts, derives the successor CAS/sequence under the execution-attempt locks,
+  and admits the next batch. Same-batch replay is idempotent; unresolved,
+  failed, dead-lettered, terminally closed, or identity-drifted predecessors
+  remain fail-closed. Crash recovery is proven both between child closes and
+  after the durable parent close, and settlement/admission races linearize
+  without split writes. The complete current-source fact-chain, Cell,
+  integration, architecture, static, and post-edit CodeGraph/Caveman review
+  gates are green. R101 then consumed one run with a 540-second smoke timeout
+  instead of the repository's mandatory 5400-second completion-verification
+  timeout. The deadline policy correctly blocked before CE Provider transport:
+  the runner exposed only 513 seconds, while the observed three-wave schedule
+  required 310 seconds of downstream reserve plus a 205-second CE generation
+  floor before any PM wall time. R101 is therefore retained as valid
+  fail-closed deadline evidence but is invalid as runnable/COMPLETED_VERIFIED
+  acceptance evidence. The current AGENTS.md, CLAUDE.md, and runner default all
+  require 5400 seconds for completion verification; deadline-policy 16/16 and
+  two identical current-source snapshots are green, authorizing exactly one
+  fresh isolated L1-05 R102 with the 5400-second Factory lease and 6000-second
+  outer watchdog. R102 consumed that authorization and proved the 5400-second
+  deadline contract, PM route, readable final-request snapshots, and two
+  physical Chief Engineer calls. It then exposed R102A: the CE caller declared
+  a JSON contract only through prompt/context flags, while all four exact CE
+  request snapshots carried tools=[], tool_choice=null, and
+  response_format=null. The primary and independently claimed schema-repair
+  calls therefore produced long unconstrained text that did not contain the
+  required construction_plan/scope_for_apply/risk_flags object. R102A is now
+  closed with a caller-owned typed structured-output contract projected once
+  through roles.runtime, a single strict provider result-tool schema, local
+  Draft 2020-12 payload validation, and stream/non-stream normalization before
+  TransactionKernel tool decoding. The reserved result tool has no execution,
+  authorization, Tool Lifecycle, effect-receipt, or mutation-port authority.
+  Primary and repair calls share the exact dynamic portfolio schema. Roles
+  Kernel/Runtime/Factory 6138 and architecture 1411 tests are green; static,
+  CodeGraph, and Caveman review found no boundary violation. R103 consumed its
+  single authorization and reached the frozen Chief Engineer semantic request,
+  then B3.5 correctly rejected it before Provider transport with
+  tool_registry_schema_missing: the new reserved result protocol was being
+  classified as an executable ToolSpecRegistry tool. R103A closes that
+  provenance-classification defect without registering or authorizing the
+  protocol tool. Prepared requests now carry the exact caller-owned transport
+  plan into final-request audit; audit projects a separately hashed
+  provider_protocol_schema_coverage record; B3.5 accepts only one exact strict
+  result schema with the exact forced tool_choice and zero execution/effect
+  authority. Same-name schema drift, mixed protocol/executable surfaces, and
+  unknown executable tools remain fail-closed. Roles Kernel/Runtime/Factory
+  6142 and architecture 1411 tests are green. R104 consumed its one-shot
+  authorization and proved the complete PM and Chief Engineer semantic and
+  physical Provider requests were role-correct, readable, coverage-complete,
+  and carried the strict non-executable submit_structured_role_output protocol.
+  The Provider returned one native result-protocol call without tool errors,
+  but the caller-owned schema permitted unknown
+  construction_plan.project_interface_contract fields that the downstream
+  Chief Engineer parser correctly rejects fail-closed. R104A closes the
+  producer/consumer schema drift at its source: the Provider schema now permits
+  only provider_declarations and consumer_declarations in that interface
+  wrapper; the parser remains strict and no execution/tool authority is added.
+  R105 consumed the resulting one-shot authorization and proved complete,
+  role-correct, coverage-complete final Provider requests for PM, Chief
+  Engineer, and three Director calls. Director committed seven declared Rust
+  files through one all-success DEO parent, but the first failed quality gate
+  cascade-blocked the remaining tasks. The TaskRuntime failure event contained
+  both the terminal DEO proof and the materialized adapter result while omitting
+  dependency-satisfaction evidence. R105A closes that projection TOCTOU:
+  settlement no longer evaluates the stale phase-A Task snapshot before the
+  adapter result becomes visible; it derives the narrow, hash-bound dependency
+  proof from the existing projection-lock TaskBoard snapshot. The parent
+  remains failed, and all missing, failed, dead-lettered, out-of-scope, or
+  identity-drifted evidence remains fail-closed. R106 then consumed the
+  resulting authorization and proved 11 readable, role-correct,
+  coverage-complete final Provider requests across PM, Chief Engineer, and
+  Director. Director again committed seven declared Rust files through a
+  terminal all-success DEO proof, but exposed two deeper projection defects.
+  First, the authoritative adapter_result arrived in the settlement command
+  metadata and therefore was still absent from the pre-update TaskBoard row
+  inspected by R105A. Settlement now evaluates the exact merged metadata that
+  it atomically persists, while retaining every existing DEO identity, receipt,
+  hash, path, and regular-file fail-closed check. Second, the complete
+  multi-megabyte task_row_snapshot correctly belonged in the durable
+  task_runtime.execution fact but was copied verbatim into the realtime Factory
+  envelope, exceeding the NATS 1 MiB payload ceiling. Realtime now carries only
+  a typed durable-fact reference projection; the durable fact remains complete
+  and authoritative. Focused red/green tests, TaskRuntime, WorkflowRuntime,
+  TaskRuntime architecture fences, static gates, and all 1419 architecture
+  cases are green. R107 consumed the next authorization and failed before
+  Director: its complete Chief Engineer final request was readable,
+  role-correct, coverage-complete, and forced the strict non-executable result
+  protocol, but the Provider omitted the required root scope_for_apply field.
+  The physical stream yielded that invalid tool call before protocol validation;
+  downstream validation then raised outside the LLM lifecycle, leaving only a
+  start event and bypassing the existing one-shot CE schema repair. R107A now
+  validates the reserved result call at the Provider stream boundary before
+  consumer delivery, so invalid payloads produce a canonical terminal
+  call_error with Provider identity. Factory classifies only explicit
+  result-protocol payload violations as output-validation failures eligible for
+  its existing independent, bounded schema repair. Provider, routing, deadline,
+  circuit, and semantic-design failures remain fatal. Roles Kernel and Factory
+  Pipeline 5447, focused 406, and relevant architecture 23 tests are green.
+bug_path:
+  file: src/backend/polaris/cells/runtime/task_runtime/internal/service.py
+  method: >-
+    TaskRuntimeService._failed_materialization_dependency_satisfaction and
+    TaskRuntimeService._publish_factory_execution_event
+  symptom: >-
+    R106 settlement carried the materialized adapter_result only in command
+    metadata, so the dependency proof still missed it before the TaskBoard
+    update. The same durable execution fact then copied a 3.9 MiB
+    task_row_snapshot into a 4.16 MiB realtime envelope, which NATS correctly
+    rejected against its 1 MiB ceiling.
+r107_bug_path:
+  files:
+    - src/backend/polaris/cells/roles/kernel/internal/llm_caller/stream_engine.py
+    - src/backend/polaris/cells/roles/kernel/internal/structured_output_transport.py
+    - src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py
+  symptom: >-
+    The forced CE result tool omitted scope_for_apply. Validation raised in the
+    downstream TransactionKernel projector after the Provider stream yielded
+    the call, so chief_engineer.llm.events contained llm_call_start only and
+    Factory did not consume its governed schema-repair attempt.
+r108_closure:
+  source_run:
+    project_id: L1-05
+    bench_run_id: 7a634330b08a
+    factory_run_id: factory_08103e3277f9
+  closed_roots:
+    - task_runtime_dependency_projection_split_brain
+    - workflow_runtime_structured_failure_evidence_loss
+    - terminal_task_runtime_projection_destroyed_before_audit
+    - quality_rework_evidence_destroyed_before_orchestration_decision
+    - terminal_snapshot_lost_across_reset_release_crash_window
+  authority_invariants:
+    - >-
+      A failed parent releases dependency capability only with a TaskRuntime-owned,
+      hash-bound failed-materialization receipt; its terminal status stays failed.
+    - >-
+      Terminal drain freezes and validates the exact run/workspace-bound
+      TaskRuntime authority projection before reset.
+    - >-
+      Lifecycle rollback reloads the latest persisted Factory run and cannot
+      overwrite a frozen terminal snapshot with a stale pre-operation object.
+    - >-
+      A terminal-drain retry reuses the valid frozen snapshot and keeps the Run
+      Ledger barrier required even after live TaskRuntime rows have been reset.
+  machine_record: scratchpad/r108-evidence/defect-record-r108.json
+r110_closure:
+  source_run:
+    project_id: L1-05
+    bench_run_id: 6770b42ca4e7
+    factory_run_id: factory_9efb8d1cee31
+  consumed_authorization: exactly_one_fresh_isolated_l1_05_r110
+  result: failed_at_chief_engineer_structured_result_protocol_conflict
+  exact_error_code: chief_engineer.llm_review_failed
+  exact_error: model returned thinking-only response; awaiting user clarification
+  root_cause: >-
+    The final Chief Engineer Provider request exposed only the reserved,
+    non-executable submit_structured_role_output result protocol, but
+    build_decision_messages still injected generic Director execution,
+    mutation, verification, and single-batch task-contract instructions because
+    PM target files were present. Both physical CE attempts had complete,
+    role-correct context and a forced strict result tool, yet the contradictory
+    prompt told the model both to return a typed result and to inspect/write
+    project files with tools that were not physically available.
+  fix: >-
+    Treat the exact singleton structured-result Provider surface as a typed
+    non-mutation turn. Project one explicit structured-result constraint and the
+    exact physical schema, then skip every generic execution, mutation,
+    verification, and task-contract template. Mixed structured-result plus
+    executable surfaces do not receive this exemption.
+  final_request_snapshot_refs:
+    chief_engineer_semantic:
+      - 32e04e7e9e595c6607ae0d80
+      - a06800d6bf27a0c600112486
+    chief_engineer_physical:
+      - 62335dbd7917fc240da8a3d2
+      - d6ed1775d0695396559eabdd
+    pm_semantic:
+      - ebdc927c713fdee216ceae7f
+    pm_physical:
+      - bf7e589e6e15d0dddf2ee79e
+  context_audit:
+    role_identity: pass
+    pm_contract: pass
+    target_files: pass
+    required_result_tool: pass
+    final_request_token_estimate: 5122
+    context_window_tokens: 1000000
+    max_output_tokens: 16384
+    root_cause_is_context_capacity: false
+  provider_calls:
+    pm: 1
+    chief_engineer: 2
+    director: 0
+    qa: 0
+  instance_stopped_via_launcher: true
+assumptions:
+  - id: A1
+    statement: >-
+      I assume the R100 failure was a platform parent-lifecycle defect, not a
+      weak-model or missing-context failure.
+    status: verified_true
+    evidence: >-
+      R100 Factory run factory_cdb8b392ded9 preserved six valid repair
+      write_file calls while TaskRuntime returned parent_open_conflict before
+      dispatch.
+  - id: A2
+    statement: >-
+      I assume a predecessor parent is eligible for rollover only after its
+      immutable inventory is ready and every admitted effect has a successful
+      receipt or an authoritative unstarted abort.
+    status: verified_true
+    evidence: >-
+      TaskRuntime reducer and public tests reject unresolved, failed-receipt,
+      dead-letter, inventory-not-ready, identity-drift, and terminal-close
+      cases fail-closed.
+  - id: A3
+    statement: >-
+      I assume rollover and terminal settlement must share the execution
+      attempt's local and cooperative file locks and remain recoverable after
+      every durable partial write.
+    status: verified_true
+    evidence: >-
+      Real-thread winner-order tests prove linearization; crash-seam tests prove
+      recovery between child closes and after the V3 parent close.
+  - id: A4
+    statement: >-
+      I assume R105 is not a role-context, Provider, or tool-schema defect.
+    status: verified_true
+    evidence: >-
+      Every reached PM, Chief Engineer, and Director semantic/physical snapshot
+      is readable, role-correct, coverage-complete, and tool-schema-correct;
+      Provider and Director tool calls completed without tool errors.
+  - id: A5
+    statement: >-
+      I assume the projection-lock TaskBoard row is the latest owner-cell fact
+      available for fresh settlement projection.
+    status: verified_true
+    evidence: >-
+      TaskBoard.get returns a deep copy under its transaction; settlement reads
+      it only after acquiring the local and cooperative projection locks, and
+      the same row is already the idempotence authority.
+  - id: A6
+    statement: >-
+      I assume a failed parent may release only dependency capability, never
+      completion, when declared materialized paths and all-success DEO evidence
+      are hash-bound.
+    status: verified_true
+    evidence: >-
+      Focused fail-closed tests preserve parent FAILED and reject missing,
+      failed, dead-lettered, zero-receipt, out-of-scope, and non-write evidence.
+  - id: A7
+    statement: >-
+      I assume the settlement command metadata is part of the exact atomic Task
+      projection and must participate in dependency-proof calculation.
+    status: verified_true
+    evidence: >-
+      The R106 command carried adapter_result and terminal DEO evidence while
+      the projection-lock row did not; the new red/green test proves merged
+      metadata releases only dependency capability and leaves the parent failed.
+  - id: A8
+    statement: >-
+      I assume the full task_row_snapshot is durable-fact evidence and need not
+      be duplicated in the lossy realtime notification envelope.
+    status: verified_true
+    evidence: >-
+      Durable task_runtime.execution retains the complete snapshot. Realtime
+      publishes its fact id, sequence, and stream under a typed projection, and
+      the 2 MiB regression fixture serializes below the 1 MiB NATS ceiling.
+  - id: A9
+    statement: >-
+      I assume a Provider result-protocol schema violation is an invalid output
+      eligible for one bounded repair, while transport and design failures are
+      not.
+    status: verified_true
+    evidence: >-
+      R107's exact final request was valid and the Provider physically returned
+      the forced result call. Red/green and stage integration tests prove the
+      invalid call records terminal call_error, then a separate claimed repair
+      can succeed; circuit, Provider, deadline, and semantic failures remain
+      excluded by the narrow admission predicate.
+pre_mortem:
+  failure_point: >-
+    The highest-risk failure is either using an unlocked post-settlement row,
+    allowing a forged adapter_result to bypass DEO proof, or changing idempotent
+    replay to recompute a proof instead of consuming its stored hash-bound
+    receipt.
+  risk_zone:
+    - polaris.cells.runtime.task_runtime.internal.service
+    - polaris.cells.runtime.task_runtime.internal.task_board
+    - polaris.cells.orchestration.workflow_runtime.internal.director_result_artifacts
+verification_plan:
+  unit_tests:
+    - file: polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py
+      description: >-
+        Publish adapter_result after the phase-A Task read but before projection,
+        then settle against one real committed DEO receipt.
+      expected: >-
+        Parent stays FAILED; the projection stores a hash-bound dependency
+        receipt and releases only the directly blocked child.
+      status: new
+    - file: polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_operation.py
+      description: >-
+        Verify eligible rollover, idempotent replay, fail-closed predecessor
+        cases, and both durable crash windows.
+      expected: >-
+        Exactly one successor parent is admitted with a dynamically derived
+        sequence; no unresolved or failed predecessor can roll over.
+      status: new
+    - file: polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_concurrency.py
+      description: >-
+        Race parent-batch rollover against terminal settlement under the real
+        TaskRuntime locks.
+      expected: >-
+        Either rollover wins and settlement remains blocked by the successor,
+        or settlement wins and admission is rejected; never split writes.
+      status: new
+    - file: polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py
+      description: >-
+        Exercise two real receipt-backed tool batches through roles.kernel and
+        TaskRuntime.
+      expected: >-
+        Batch two receives parent sequence 2 and current registry heads rather
+        than hard-coded version 0/sequence 1.
+      status: new
+  integration_tests:
+    - description: TaskRuntime and roles.kernel complete Cell regression
+      command: >-
+        python -m pytest -q polaris/cells/runtime/task_runtime
+        polaris/cells/roles/kernel
+      status: existing_fix
+    - description: Factory, Director, roles.adapters, and roles.runtime integration regression
+      command: >-
+        python -m pytest -q polaris/cells/factory polaris/cells/director
+        polaris/cells/roles/adapters polaris/cells/roles/runtime
+      status: existing_fix
+    - description: Complete architecture and TaskRuntime boundary fences
+      command: python -m pytest -q polaris/tests/architecture
+      status: existing_fix
+  manual_check:
+    - >-
+      Inspect the R100 final Provider request/context evidence and confirm the
+      repair model produced the required native write tool calls.
+    - >-
+      Capture the exact HEAD, changed-content manifest, and changed-path set
+      twice before issuing the one-shot R101 authorization.
+related_adrs:
+  - ADR-0097
 scope:
   platform_only: true
   target_project_edits: forbidden
@@ -268,27 +619,1168 @@ required_gates:
   r42_factory_stage_characterization: "261 passed"
   r42b_final_request_prompt_control_plane_isolation: pass
   r42b_final_request_and_qualification_integration: "321 passed"
+  r100_taskruntime_owned_parent_batch_rollover: pass
+  r100_receipt_complete_predecessor_only: pass
+  r100_unresolved_and_failed_effect_fail_closed: pass
+  r100_same_batch_idempotent_replay: pass
+  r100_partial_child_close_crash_recovery: pass
+  r100_parent_close_before_successor_crash_recovery: pass
+  r100_rollover_settlement_linearization: pass
+  r100_key_fact_chain_and_boundary: "425 passed, 10 warnings"
+  r100_taskruntime_full: "911 passed, 10 warnings"
+  r100_taskruntime_roles_kernel_combined: "5089 passed, 13 warnings"
+  r100_factory_director_adapters_roles_runtime: "4767 passed, 4 warnings"
+  r100_architecture_full: "1411 passed, 8 skipped"
+  r100_static_and_codegraph_caveman_review: pass
+  r101_deadline_contract_audit: "pass; 16 passed"
+  r101_short_timeout_classification: "smoke_only_not_acceptance_evidence"
+  r102_required_factory_timeout_seconds: 5400
+  r102_required_outer_watchdog_seconds: 6000
+  r102a_ce_provider_structured_output_contract: pass
+  r102a_structured_result_tool_no_effect: pass
+  r102a_roles_kernel_runtime_factory_full: "6138 passed, 7 warnings"
+  r102a_architecture_full: "1411 passed, 8 skipped"
+  r102a_static_codegraph_caveman_review: pass
+  r103_provider_protocol_registry_misclassification: closed
+  r103a_exact_provider_protocol_provenance: pass
+  r103a_spoofed_schema_fail_closed: pass
+  r103a_mixed_executable_surface_fail_closed: pass
+  r103a_roles_kernel_runtime_factory_full: "6142 passed, 7 warnings"
+  r103a_architecture_full: "1411 passed, 8 skipped"
+  r103a_static_codegraph_caveman_review: pass
+  r104_ce_provider_protocol_physical_dispatch: pass
+  r104_pm_final_request_context_audit: pass
+  r104_ce_final_request_context_audit: pass
+  r104_director_and_qa_not_reached: pass
+  r104_project_interface_schema_drift: closed
+  r104a_project_interface_exact_schema_red_green: "1 passed after expected red failure"
+  r104a_factory_characterization: "265 passed"
+  r104a_chief_engineer_strict_parser: "140 passed"
+  r104a_structured_transport_and_final_request_audit: "85 passed"
+  r104a_static_and_codegraph_review: pass
+  r104a_roles_kernel_runtime_factory_ce_full: "6592 passed, 7 warnings"
+  r104a_architecture_full: "1411 passed, 8 skipped"
+  r105_pm_ce_director_final_request_context_audit: pass
+  r105_provider_and_tool_calls: "10 readable semantic/physical refs; 0 tool errors"
+  r105_qa_not_reached: pass
+  r105a_projection_race_red: "1 failed; missing dependency_satisfaction.materialized_paths"
+  r105a_failed_materialization_focus: "10 passed"
+  r105a_settlement_full: "40 passed"
+  r105a_workflow_runtime_full: "215 passed"
+  r105a_taskruntime_boundary_fence: "145 passed"
+  r105a_taskruntime_full: "912 passed, 10 warnings"
+  r105a_architecture_full: "1411 passed, 8 skipped"
+  r105a_static_and_codegraph_review: pass
+  r106_final_request_context_audit: >-
+    11 of 11 readable physical snapshots; PM 3, Chief Engineer 2, Director 6;
+    role identity, required evidence, tool schema, tool choice, response format,
+    and final-request coverage all pass; QA not reached
+  r106_realtime_oversize_evidence: >-
+    4164559-byte and 4164321-byte Factory envelopes rejected six times each by
+    the 1048576-byte NATS ceiling
+  r106_settlement_command_metadata_red_green: >-
+    expected red KeyError on dependency materialized_paths; 1 passed after fix
+  r106_realtime_durable_snapshot_projection_red_green: >-
+    expected red full snapshot in realtime envelope; 1 passed after fix and
+    serialized envelope below 1048576 bytes
+  r106_focused_taskruntime: "47 passed, 215 deselected"
+  r106_taskruntime_full: "423 passed"
+  r106_workflow_runtime_full: "215 passed"
+  r106_taskruntime_boundary_fence: "145 passed"
+  r106_architecture_full: "1411 passed, 8 skipped"
+  r106_static_gates: pass
+  r106_codegraph_preedit_blast_radius_review: pass
+  r107_ce_final_request_context_audit: >-
+    snapshot 3a0e59c760b1c5f4edd25dd9 readable; role identity, PM contract,
+    13 target files, strict protocol schema/tool choice, and evidence coverage
+    pass; 5122 final-request tokens in a 1000000-token window
+  r107_physical_result: >-
+    forced submit_structured_role_output returned physically but omitted
+    required scope_for_apply
+  r107a_expected_red: >-
+    3 failed: invalid tool call escaped without terminal event, repair admission
+    false, failure class incorrect
+  r107a_exact_red_green: "8 passed"
+  r107a_affected_complete: "406 passed"
+  r107a_roles_kernel_factory_pipeline_full: "5447 passed, 5 warnings"
+  r107a_relevant_architecture_fences: "23 passed"
+  r107a_production_mypy: "Success: no issues found in 3 source files"
+  r107a_ruff_and_format: pass
+  r108_taskruntime_full: "916 passed, 2 warnings"
+  r108_orchestration_workflow_pm_dispatch_full: "509 passed"
+  r108_factory_pipeline_full: "1263 passed, 2 warnings"
+  r108_factory_service_router_audit: "147 passed, 2 warnings"
+  r108_factory_workspace_admission: "48 passed, 2 warnings"
+  r108_architecture_full: "1411 passed, 8 skipped"
+  r108_targeted_mypy: "Success: no issues found in 6 source files"
+  r108_static_gates: pass
+  r108_post_edit_codegraph_caveman_review: pass
+  r108_source_snapshot_a: d7fd0e5e00ae307cde9ed1ccd82fde66c16a580d6ea8111abf2598b59c5e32e0
+  r108_source_snapshot_b: d7fd0e5e00ae307cde9ed1ccd82fde66c16a580d6ea8111abf2598b59c5e32e0
+  r108_source_snapshots_identical: true
+  current_roles_kernel_runtime_factory_ce_full: "6592 passed, 7 warnings"
   current_roles_kernel_full: "2747 passed, 1 warning"
-  current_factory_pipeline_full: "1237 passed, 2 warnings"
+  current_factory_pipeline_full: "1262 passed, 2 warnings"
   current_kernelone_release: "415 passed, 1 skipped, 2 warnings; ok=true"
+  current_execution_fact_chain_combined: "5089 passed, 13 warnings"
+  current_taskruntime_full: "916 passed, 2 warnings"
+  current_roles_runtime_full: "266 passed"
   current_architecture_full: "1411 passed, 8 skipped"
   current_static_gates: pass
-  source_snapshot_a: d7c0ddc8ddba40ea831322ac561da327a5cf9f2da73b068d582c1dca5283b68e
-  source_snapshot_b: d7c0ddc8ddba40ea831322ac561da327a5cf9f2da73b068d582c1dca5283b68e
+  r109_consumed_result: >-
+    failed at director_dispatch after 474.6 seconds; PM and Chief Engineer
+    completed, Director made six physical Provider requests, six Rust source
+    files and 664 production lines landed, cargo check passed, but the active
+    downstream TaskRuntime work did not converge before the dispatch boundary.
+    The resulting project had no tests and no Rust bin target, so
+    implementation_depth and entrypoint_smoke failed honestly.
+  r109_final_provider_context_refs: "10 total: PM=2, Chief Engineer=2, Director=6"
+  r109_llm_route_audit: pass
+  r109_instance_stopped_via_launcher: true
+  r110_cross_task_rust_missing_bin_ownership_focused: "28 passed"
+  r110_ce_factory_characterization: "409 passed"
+  r110_director_adapter_deo: "460 passed, 2 warnings"
+  r110_taskruntime_full: "916 passed, 2 warnings"
+  r110_pre_bench_execution_matrix: "669 passed, 2 warnings"
+  r110_context_instance_fs_matrix: "200 passed, 2 warnings"
+  r110_architecture_full: "1411 passed, 8 skipped"
+  r110_targeted_mypy: "Success: no issues found in 4 source files"
+  r110_ruff_and_format: pass
+  r110_post_edit_codegraph_review: pass
+  r110_consumed_result: >-
+    failed at chief_engineer_review after 248.1 seconds; PM completed, two
+    physical Chief Engineer attempts ran with readable complete final-request
+    snapshots, but both returned thinking-only output and no structured result
+    call because the final prompt mixed a non-executable result protocol with
+    impossible workspace-mutation instructions.
+  r110a_structured_result_prompt_unit: "4 passed"
+  r110a_request_preparer_integration: "1 passed"
+  r110a_exact_r110_snapshot_replay: pass
+  r110a_roles_kernel_full: "4201 passed, 3 warnings"
+  r110a_factory_pipeline_full: "1264 passed, 2 warnings"
+  r110a_architecture_full: "1411 passed, 8 skipped"
+  r110a_kernelone_release_gate: "ok=true; exit=0"
+  r110a_provider_and_structured_transport_focused: "111 passed"
+  r110a_targeted_mypy: "Success: no issues found in 4 source files"
+  r110a_ruff_format_compileall_diff_check: pass
+  r110a_post_edit_codegraph_review: pass
+  r110a_independent_quality_security_review: "CLEAR; Critical=0 Important=0"
+  r110a_source_fingerprint_a: 4d35e3706d2e0a26
+  r110a_source_fingerprint_b: 4d35e3706d2e0a26
+  r110a_source_fingerprints_identical: true
+  r110a_owned_diff_hash: 7f3b1b89f1e21b7725aee1e0c91cbdd066de58762673e6c9798c8804a69eecf0
+  r110a_source_snapshot_invalidated_pending_requalification: false
+  r110a_pre_bench_requalification: pass
+  r111_consumed_result: >-
+    failed at chief_engineer_review after 21.4 seconds. The exact final
+    Provider Request was role-correct, context-sufficient, and exposed only
+    submit_structured_role_output, but DeepSeek V4 defaults thinking to enabled
+    and rejected the forced tool_choice with HTTP 400.
+  r111_exact_provider_error: "Thinking mode does not support this tool_choice"
+  r111_provider_capability_and_retry_fix_focused: "235 passed"
+  r111_roles_kernel_full: "4201 passed, 2 warnings"
+  r111_factory_pipeline_full: "1264 passed, 2 warnings"
+  r111_targeted_mypy: "Success: no issues found in 3 source files"
+  r111_ruff_format_compileall: pass
+  r111_post_edit_codegraph_review: pass
+  r111_defect_manifest: scratchpad/r111-deepseek-thinking-tool-choice/defect-record-r111.json
+  r111_post_review_provider_native_async_fingerprint: "183 passed"
+  r111_post_review_roles_kernel_full: "2774 passed, 1 warning"
+  r111_post_review_factory_pipeline_full: "1264 passed, 2 warnings"
+  r111_broad_compatibility_regression_after_fix: "46 passed"
+  r111_independent_quality_security_review: >-
+    CLEAR; Critical=0 Important=0 Minor=0; independent reviewer focused suite
+    184 passed
+  r111_fingerprint_coverage_defect_manifest: >-
+    scratchpad/r111-deepseek-thinking-tool-choice/defect-record-r111-fingerprint.json
+  r111_source_fingerprint_coverage_red: "5 failed, 31 passed"
+  r111_source_fingerprint_coverage_green: "33 passed"
+  r111_source_fingerprint_a: dc785b78532e9ca1
+  r111_source_fingerprint_b: dc785b78532e9ca1
+  r111_source_fingerprints_identical: true
+  r111_kernelone_release_gate: >-
+    ok=true; mode=all; suite_size=51; tests=415 passed, 1 skipped, 2 warnings
+  r111_pre_bench_requalification: pass
+  r111_fix_live_reverified: false
+  r111_source_snapshot_invalidated_pending_requalification: false
+  r112_consumed_result: >-
+    failed before Factory chain startup. Three healthy isolated backends
+    completed application startup and returned the exact expected fingerprint,
+    but the Instance Supervisor destroyed each one after its one-second
+    identity request timed out.
+  r112_provider_calls: 0
+  r112_backend_start_attempts: 3
+  r112_backend_ports: [49978, 49979, 49980]
+  r112_exact_error: backend identity check timed out
+  r112_live_fingerprint_endpoint: >-
+    HTTP 200; fingerprint=dc785b78532e9ca1;
+    current_source_fingerprint=dc785b78532e9ca1; stale_since_startup=false
+  r112_fingerprint_latency_ms_observed: [1092.8, 1112.4, 1707.7]
+  r112_root_cause: >-
+    _read_backend_identity_payload used a one-second urllib timeout while the
+    newly complete production-source fingerprint takes roughly 1.1-1.7 seconds.
+  r112_defect_manifest: >-
+    scratchpad/r112-backend-identity-probe-timeout/defect-record-r112.json
+  r112_regression_red: "1 failed: backend identity check timed out"
+  r112_identity_focused_green: "6 passed"
+  r112_instances_cell_full: "51 passed"
+  r112_factory_bench_runner_tests: "4 passed"
+  r112_static_gates: "ruff=pass; format=pass; mypy=pass"
+  r112_independent_review: "CLEAR; Critical=0 Important=0 Minor=0"
+  r112_kernelone_release_gate: >-
+    ok=true; mode=all; suite_size=51; tests=415 passed, 1 skipped, 2 warnings
+  r112_source_fingerprint_a: cbfd3d7a6acc793a
+  r112_source_fingerprint_b: cbfd3d7a6acc793a
+  r112_source_fingerprints_identical: true
+  r113_exact_error: "structured_output_payload_schema_mismatch:$:'scope_for_apply' is a required property"
+  r113_final_request_context_audit: >-
+    pass; PM and both CE physical requests were role-correct,
+    context-sufficient, forced the singleton result tool, disabled DeepSeek
+    thinking, and stayed below one percent of the model window
+  r113_regression_red: "1 failed: omitted advisory scope made chief_engineer_review fail"
+  r113_focused_green: "2 passed, 269 deselected"
+  r113_factory_characterization_full: "271 passed"
+  r113_factory_pipeline_full: "1266 passed, 2 warnings"
+  r113_ce_blueprint_public: "140 passed"
+  r113_structured_output_and_quality: "51 passed"
+  r113_static_gates: "ruff=pass; format=pass; mypy=pass; diff=pass; json_yaml_parse=pass"
+  r113_kernelone_release_gate: >-
+    ok=true; mode=all; suite_size=51; tests=415 passed, 1 skipped, 2 warnings
+  r113_independent_quality_security_review: "CLEAR; Critical=0 Important=0 Minor=0"
+  r113_defect_manifest: scratchpad/r113-ce-advisory-scope/defect-record-r113.json
+  r113_source_fingerprint_a: c34f01bc6a239de1
+  r113_source_fingerprint_b: c34f01bc6a239de1
+  r113_source_fingerprints_identical: true
+  r113_pre_bench_requalification: pass
+  r114_defect_manifest: scratchpad/r114-factory-run-store-lock/defect-record-r114.json
+  r114_store_router_regressions: "77 passed, 4 deselected, 2 warnings"
+  r114_factory_stage_persistence: "25 passed"
+  r114_factory_run_service: "95 passed"
+  r114_factory_pipeline_full_final_source: "1266 passed, 2 warnings"
+  r114_static_gates: "ruff=pass; format=pass; mypy=pass; diff=pass; json_yaml_parse=pass"
+  r114_kernelone_release_gate: >-
+    ok=true; mode=all; suite_size=51; tests=415 passed, 1 skipped, 2 warnings
+  r114_independent_quality_security_review: "CLEAR; Critical=0 Important=0 Minor=0"
+  r114_source_fingerprint_a: 3f7783799617aa97
+  r114_source_fingerprint_b: 3f7783799617aa97
+  r114_source_fingerprints_identical: true
+  r114_pre_bench_requalification: pass
+  r115_defect_manifest: scratchpad/r115-director-deo-path-scope/defect-record-r115.json
+  r115_pm_adapter_full_final_source: "137 passed"
+  r115_roles_adapters_full_final_source: "1291 passed, 2 warnings"
+  r115_directed_effect_public_and_adapter_gates: "242 passed"
+  r115_factory_pipeline_full_final_source: "1266 passed, 2 warnings"
+  r115_static_gates: "ruff=pass; format=pass; mypy=pass; compileall=pass; diff=pass; json=pass"
+  r115_kernelone_release_gate: >-
+    ok=true; mode=all; suite_size=51; tests=415 passed, 1 skipped, 2 warnings
+  r115_independent_quality_security_review: "CLEAR; Critical=0 Important=0 Minor=0"
+  r115_source_fingerprint_a: 761ac2eca355b946
+  r115_source_fingerprint_b: 761ac2eca355b946
+  r115_source_fingerprints_identical: true
+  r115_bucket_closed: true
+  r94_related_factory_regressions: "290 passed"
+  r94_independent_review: "CLEAR; Critical=0 Important=0 Minor=0"
+  source_snapshot_a: 0d65332bb1351999ba04c8f02e3a2de55050da518c38a35e03d01908a735e0eb
+  source_snapshot_b: 0d65332bb1351999ba04c8f02e3a2de55050da518c38a35e03d01908a735e0eb
   source_snapshots_identical: true
+latest_consumed_run_r113:
+  project_id: L1-05
+  bench_run_id: 0937a12dccc6
+  factory_run_id: factory_582d77d09759
+  instance_id: factory-bench-l1-05-r113-l1-05-run-0937a12dccc6-3d7a90a2d46bccbb
+  work_dir: /tmp/factory-bench-l1-05-r113
+  result: failed_at_chief_engineer_advisory_scope_transport_validation
+  exact_error_code: chief_engineer.llm_review_failed
+  exact_error: "structured_output_payload_schema_mismatch:$:'scope_for_apply' is a required property"
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 124.6
+  provider_calls:
+    pm: 1
+    chief_engineer: 2
+    director: 0
+    qa: 0
+  final_request_context_refs:
+    pm_semantic: 4012eea09229f83747426950
+    pm_physical: 51d05cbe119d5f0bb46c576f
+    chief_engineer_primary_semantic: bb9aee5d83a72c399be80a7e
+    chief_engineer_primary_physical: bc1b1d8f2ad1da56792e59e2
+    chief_engineer_repair_semantic: df68eaebd19cd1b5a8417c6c
+    chief_engineer_repair_physical: 8b8af93056fd0ff8f309fa7f
+  final_request_audit:
+    role_identity: pass
+    pm_contract: present
+    target_files: present
+    singleton_tool_schema: pass
+    thinking_disabled: pass
+    token_window: pass
+    repair_failure_feedback: pass
+  root_cause: >-
+    Factory made scope_for_apply mandatory at physical transport and semantic
+    validation even though it is non-authoritative advice. Both HTTP 200 CE
+    submissions omitted only that field and were discarded before Director.
+  code_fix: >-
+    Keep scope_for_apply declared and prompted but optional; preserve every
+    authoritative construction/risk/task/interface check, reject a present
+    invalid scope type, synthesize nothing, and emit an auditable warning.
+  artifact_gate:
+    source_files: 0
+    production_lines: 0
+  failed_gates:
+    chief_engineer_structured_result: advisory_scope_overconstraint
+    director: not_reached
+    qa: not_reached
+  target_project_edits: 0
+  instance_stopped_via_launcher: true
+latest_consumed_run_r111:
+  project_id: L1-05
+  bench_run_id: 5a62d23c31f4
+  factory_run_id: factory_04a6a08b970e
+  instance_id: factory-bench-l1-05-r111-l1-05-run-5a62d23c31f4-f239f454b31fd01a
+  work_dir: /tmp/factory-bench-l1-05-r111
+  result: failed_at_deepseek_thinking_tool_choice_capability_conflict
+  exact_error_code: chief_engineer.llm_review_failed
+  exact_provider_error: "Thinking mode does not support this tool_choice"
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 21.4
+  provider_calls:
+    pm_logical: 1
+    chief_engineer_logical: 1
+    chief_engineer_physical_attempts: 3
+    director: 0
+    qa: 0
+  final_request_context_refs:
+    chief_engineer_semantic: a3b2589bc4029ff92f9ce504
+    chief_engineer_physical:
+      - 4cd33eeaf303cc63adb52c52
+      - 46f48a97d000b23bfcc27641
+      - 0c12f8eb7d11fdb9b6f66d42
+      - 1237e7395ca140e167954450
+  final_request_audit:
+    role_identity: pass
+    pm_contract: present
+    target_files_count: 13
+    structured_result_prompt_isolation: pass
+    singleton_tool_schema: pass
+    token_window: pass
+  root_causes:
+    - >-
+      DeepSeek V4 enables thinking by default even when the field is omitted,
+      while thinking mode rejects tool_choice. Polaris projected both semantics
+      without capability reconciliation.
+    - >-
+      Streaming HTTP retry treated every ClientResponseError, including
+      deterministic HTTP 400, as network jitter and discarded the Provider
+      response body from the propagated exception.
+  code_fix:
+    capability_reconciliation: >-
+      DeepSeek tool_choice requests explicitly disable thinking; an explicitly
+      enabled thinking plus tool_choice request fails before transport.
+    retry_classification: >-
+      Only 408, 425, 429, and 5xx HTTP statuses retry; deterministic 4xx
+      failures propagate once with bounded Provider response-body evidence.
+  artifact_gate:
+    source_files: 0
+    production_lines: 0
+  failed_gates:
+    chief_engineer_provider_request: deterministic_400
+    dependency_gate: not_reached
+    build_test_lint_gate: not_reached
+    entrypoint_gate: not_reached
+  target_project_edits: 0
+  instance_stopped_via_launcher: true
+latest_consumed_run_r110:
+  project_id: L1-05
+  bench_run_id: 6770b42ca4e7
+  factory_run_id: factory_9efb8d1cee31
+  instance_id: factory-bench-l1-05-r110-l1-05-run-6770b42ca4e7-e64010e0b3cfce75
+  work_dir: /tmp/factory-bench-l1-05-r110
+  result: failed_at_chief_engineer_structured_result_protocol_conflict
+  exact_error_code: chief_engineer.llm_review_failed
+  exact_error: model returned thinking-only response; awaiting user clarification
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 248.1
+  provider_calls:
+    pm: 1
+    chief_engineer: 2
+    director: 0
+    qa: 0
+  final_request_context_refs:
+    total: 6
+    pm: 2
+    chief_engineer: 4
+    director: 0
+    qa: 0
+  llm_route_audit: pass
+  artifact_gate:
+    source_files: 0
+    production_lines: 0
+  failed_gates:
+    chief_engineer_structured_result: >-
+      Exact singleton result protocol was contaminated by generic mutation and
+      task-contract instructions, producing two thinking-only responses without
+      the forced result call.
+    dependency_gate: not_reached
+    build_test_lint_gate: not_reached
+    entrypoint_gate: not_reached
+  instance_stopped_via_launcher: true
+latest_consumed_run_r109:
+  project_id: L1-05
+  bench_run_id: 8946e5fe33f2
+  factory_run_id: factory_f65362b33fcc
+  instance_id: factory-bench-l1-05-r109-l1-05-run-8946e5fe33f2-e8d47f5205a6c251
+  work_dir: /tmp/factory-bench-l1-05-r109
+  result: failed_at_director_taskruntime_convergence
+  exact_error_code: director.canonical_task_boundary_missing
+  exact_error: >-
+    Director run timed out after timeout settle grace; one or more TaskRuntime
+    rows remained pending, blocked, active, or failed.
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 474.6
+  provider_calls:
+    pm: 2
+    chief_engineer: 2
+    director: 6
+    qa: 0
+  final_request_context_refs:
+    total: 10
+    pm: 2
+    chief_engineer: 2
+    director: 6
+  llm_route_audit: pass
+  artifact_gate:
+    source_files: 6
+    production_lines: 664
+    cargo_check: pass
+  failed_gates:
+    implementation_depth: "test_files=0; test_assertions=0"
+    entrypoint_smoke: "cargo run failed: a bin target must be available"
+  closed_root_causes:
+    - >-
+      Rust missing-bin repair ownership now admits a declared bin target owned
+      by a downstream task without expanding the current task write boundary.
+    - >-
+      Active TaskRuntime operations can no longer be terminalized from a
+      dialogue turn outcome while receipt-backed work is still in progress.
+    - >-
+      Ready Chief Engineer blueprints now mint the canonical JobToken; Director
+      projects its bound execution envelope, and deferred DEO rejects
+      envelope-only or token-mismatched authority.
+  instance_stopped_via_launcher: true
 scheduling:
   bench_schedulable: false
-  authorization_scope: none_r43_consumed
+  authorization_scope: none
+  project_id: L1-05
+  source_head: e11a86db623a0babcd713e3d32b97341b6cad1b8
+  backend_fingerprint: 46562cb0fd37568f
+  per_project_timeout_seconds: 5400
+  outer_timeout_seconds: 6000
+  real_run_timeout_seconds: 180
+  max_failed: 0
   launcher_instance_mode: isolated
   bench_session_reporting: false
   reserved_main_ports:
     backend: 49977
     frontend: 5173
   next_action: >-
-    Run exactly one fresh isolated L1-04 R43 acceptance attempt, audit every
-    physical role's final Provider request from its readable 24-hex ContextOS
-    snapshot, then consume this one-shot authorization and fail closed on the
-    first newly observed general platform defect.
+    Close R116-CE-CONTEXT-OS-CONTROL-PLANE-LEAK and
+    R116-DIRECTOR-RETRY-DEO-SCOPE-BINDING, rerun their focused and broad
+    non-Provider gates, obtain independent review, and recapture a stable
+    backend fingerprint before authorizing at most one fresh isolated R117.
+    No Bench or Provider attempt is authorized while either defect is open.
+latest_consumed_run_r116:
+  project_id: L1-05
+  bench_run_id: 829b6431bad9
+  factory_run_id: factory_3e76c0db79b0
+  instance_id: factory-bench-l1-05-r116-l1-05-run-829b6431bad9-bd813f9a57c806ba
+  work_dir: /tmp/factory-bench-l1-05-r116
+  result: failed_at_director_retry_deo_path_scope_denied
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 697.2
+  source_files: 6
+  production_lines: 595
+  test_files: 0
+  qa_reached: false
+  role_results:
+    pm: success
+    chief_engineer: success
+    director_task_1: success
+    director_task_2: failed
+    director_task_3: blocked
+  final_request_context_refs:
+    pm:
+      - b53ab201e2c909d2e95dbe40
+    chief_engineer:
+      - ae725bf62d2db5883a0f72de
+    director:
+      - 7e057430843090264f7074a8
+      - c38e916a4b485af18a7f22ee
+      - 12a0aec024af573034c52fa2
+  open_defects:
+    - R116-CE-CONTEXT-OS-CONTROL-PLANE-LEAK
+    - R116-DIRECTOR-RETRY-DEO-SCOPE-BINDING
+  instance_stopped_via_launcher: true
+latest_preflight_r115_deterministic_check_section:
+  defect_id: R115-DETERMINISTIC-CHECK-SECTION-LEAK
+  status: CLOSED_REQUALIFIED
+  provider_calls_after_fix: 0
+  bench_runs_after_fix: 0
+  parser_focused_tests: "20 passed"
+  pm_adapter_suite: "156 passed"
+  roles_adapters_suite: "1310 passed, 2 warnings"
+  factory_pipeline_suite: "1266 passed, 2 warnings"
+  kernelone_release_gate: "ok=true; 415 passed, 1 skipped, 2 warnings"
+  static_gates: pass
+  independent_review: CLEAR
+  final_provider_request_audit:
+    pm_context_snapshot_ref: 3ba8d07ee06f16c958f5899a
+    chief_engineer_context_snapshot_refs:
+      - 8970e321997784adca62b5de
+      - e11b50315638c8cffa90a035
+    director_context_snapshot_ref: f2baa1080fcf2c1c75a03a8d
+    role_identity_tools_refs_tokens: pass
+  stable_source_hashes:
+    synthesis_py: 66eb0b56e0befab540654dfbdca93f1e143ee6e5dc98b65782a2b44df3eaf8ed
+    normalization_py: c85e51b6759955da63a383ff24d464d6d1bb8b86595dcc4304b32e6857788fa2
+    test_pm_adapter_pure_py: f3b34b7e4c06fb43a035e9bc7b0ffe3e7667e5fab2b2191505df13656871b848
+  remaining_preflight_bucket: >-
+    Audit the Rust tests/test_product.py validation harness and close the
+    unrelated KernelOne audit contracts/validators baseline drift before any
+    R116 authorization.
+latest_preflight_r115_context_os_isolation:
+  defect_id: R115-CONTEXT-OS-CAPABILITY-LEAK
+  status: CLOSED_REQUALIFIED
+  provider_calls_after_fix: 0
+  bench_runs_after_fix: 0
+  focused_tests: "74 passed"
+  gateway_transaction_tool_gateway_integration: "244 passed"
+  roles_kernel_suite: "2791 passed, 1 warning"
+  static_gates: pass
+  independent_review: CLEAR
+  exact_r115_replay:
+    context_snapshot_ref: f2baa1080fcf2c1c75a03a8d
+    message_chars: 6522
+    original_blueprint_id_preserved: ce_TASK-1_20260727201602961253
+    task_id_preserved: true
+    target_files_preserved: true
+    prompt_safe_capability_refs_preserved: true
+    prompt_safe_scope_preserved: true
+    context_os_ok: true
+    control_plane_isolated: true
+    metadata_key_hits: []
+    content_hits: []
+  stable_source_hashes:
+    context_os_prompt_py: 7a1f7dda2c8ad26bf15bfe3e9d7ca9bb9714a2168bdec7d09b88101352394f2a
+    gateway_helpers_py: 3c99d73c4cdbf99cc90d8b7271796afbd6c41a7989c510b9d933b096176b4d34
+    context_override_processor_py: 40645dd4be4f922c8fd38f85e2aea90fe86c1b5e5b31a538de2eb94484b15d39
+  remaining_preflight_buckets:
+    - final_synchronized_non_provider_preflight
+latest_preflight_r115_kernelone_audit_contract:
+  defect_id: PREBENCH-KERNELONE-AUDIT-CONTRACT-BASELINE
+  status: CLOSED_REQUALIFIED
+  provider_calls_after_fix: 0
+  bench_runs_after_fix: 0
+  focused_contract_and_validator_tests: "123 passed"
+  full_kernelone_audit_scope: "597 passed"
+  independent_wider_audit_scope: "818 passed"
+  kernelone_release_gate: "ok=true; 415 passed, 1 skipped, 2 warnings"
+  static_gates: pass
+  independent_review: CLEAR
+  authoritative_contract:
+    persisted_event_envelope: complete_and_fail_closed
+    run_id: explicit_valid_non_empty
+    empty_event_type: rejected
+    query_none_event_type: no_filter_preserved
+  remaining_preflight_bucket: final_synchronized_non_provider_preflight
+latest_preflight_r115_rust_native_validation:
+  defect_id: R115-RUST-NATIVE-VALIDATION-CONTRACT-DRIFT
+  status: CLOSED_REQUALIFIED
+  provider_calls_after_fix: 0
+  bench_runs_after_fix: 0
+  rust_focused_tests: "18 passed"
+  bench_gate_suite: "210 passed"
+  pm_rust_contract_focus: "1 passed"
+  pm_adapter_suite: "156 passed"
+  roles_adapters_suite: "1310 passed, 2 warnings"
+  factory_pipeline_suite: "1289 passed, 2 warnings"
+  kernelone_release_gate: "ok=true; 415 passed, 1 skipped, 2 warnings"
+  static_gates: pass
+  independent_review: CLEAR
+  native_contract:
+    production_test_target: tests/product.rs
+    command: cargo test --quiet
+    execution_backend: bubblewrap_copy_v1
+    target_workspace_mounted: false
+    zero_test_success_allowed: false
+    custom_harness_allowed: false
+    workspace_member_closure: root_explicit_and_path_dependency
+  remaining_preflight_bucket: final_synchronized_non_provider_preflight
+latest_preflight_r115_final_synchronized_source:
+  status: PASS
+  provider_calls: 0
+  bench_runs: 0
+  source_head: e11a86db623a0babcd713e3d32b97341b6cad1b8
+  backend_fingerprint: 46562cb0fd37568f
+  identical_source_captures: 2
+  worktree_clean: false
+  source_identity_policy: exact_backend_fingerprint
+  factory_pipeline_suite: "1289 passed, 2 warnings"
+  kernelone_audit_suite: "597 passed"
+  kernelone_release_gate:
+    ok: true
+    suite_paths: 51
+    result: "415 passed, 1 skipped, 2 warnings"
+  static_gates:
+    ruff_check: pass
+    ruff_format: pass
+    mypy: pass
+    compileall: pass
+    json_yaml_parse: pass
+    scoped_diff_check: pass
+  machine_readable_defects:
+    R115-DETERMINISTIC-CHECK-SECTION-LEAK: CLOSED_REQUALIFIED
+    R115-CONTEXT-OS-CAPABILITY-LEAK: CLOSED_REQUALIFIED
+    PREBENCH-KERNELONE-AUDIT-CONTRACT-BASELINE: CLOSED_REQUALIFIED
+    R115-RUST-NATIVE-VALIDATION-CONTRACT-DRIFT: CLOSED_REQUALIFIED
+  runtime_preflight:
+    active_factory_bench_processes: 0
+    main_backend_49977_reserved: true
+    main_frontend_5173_reserved: true
+  remaining_preflight_buckets: []
+  authorization:
+    run_id: R116
+    project_id: L1-05
+    count: 0
+    consumed: true
+    consumed_by_bench_run_id: 829b6431bad9
+    launcher_instance_mode: isolated
+    bench_session_reporting: false
+    per_project_timeout_seconds: 5400
+    outer_timeout_seconds: 6000
+    invalidate_on_source_fingerprint_drift: true
+latest_consumed_run_r115:
+  project_id: L1-05
+  bench_run_id: 9ae82d7111f6
+  factory_run_id: factory_5ea5c947530e
+  instance_id: factory-bench-l1-05-r115-l1-05-run-9ae82d7111f6-e1834d6bdd08faab
+  work_dir: /tmp/factory-bench-l1-05-r115
+  result: failed_at_director_deo_path_scope_denied
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 188
+  crossed_chief_engineer: true
+  director_physical_provider_request_observed: true
+  director_native_write_calls: 7
+  source_files_materialized: 0
+  atomic_zero_effect_preserved: true
+  final_request_context_audit:
+    pm: "1/1 pass"
+    chief_engineer: "2/2 pass"
+    director: "1/1 pass"
+    qa: "not admitted after Director failure"
+  root_cause: >-
+    PM retained seven Rust target_files but compacted scope_paths to six; the
+    seventh target was correctly denied by DEO. Final-boundary reconciliation
+    now also covers targets added later by PM quality autofix.
+  exact_instance_stopped_via_launcher: true
+latest_consumed_run_r114:
+  project_id: L1-05
+  bench_run_id: e1d224038e20
+  factory_run_id: factory_c378ec731d8a
+  work_dir: /tmp/factory-bench-l1-05-r114
+  result: failed_factory_run_snapshot_lock_inversion
+  completed_verified: false
+  acceptance_evidence_valid: true
+  crossed_chief_engineer: true
+  director_physical_materialization_observed: true
+  run_snapshot_lock_timeout_observed: true
+  false_run_not_found_projection_observed: true
+  exact_instance_stopped_via_launcher: true
+latest_consumed_run_r108:
+  project_id: L1-05
+  bench_run_id: 7a634330b08a
+  factory_run_id: factory_08103e3277f9
+  work_dir: /tmp/factory-bench-l1-05-r108
+  result: failed_at_director_taskboard_convergence
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 751.4
+  provider_calls:
+    pm: 1
+    chief_engineer: 2
+    director: 6
+    qa: 0
+  final_request_context_audit:
+    refs_total: 18
+    readable: 18
+    role_identity_passed: 18
+    evidence_coverage_passed: 18
+    missing_required_tools: 0
+    unexpected_tool_pruning: 0
+  materialization:
+    code_files: 7
+    source_files: 6
+    task_1_effect_receipts: 8
+    task_1_boundary_completed_verified: true
+    missing_entrypoint: src/main.rs
+    test_files: 0
+  task_runtime:
+    task_1_claimed_by_director: true
+    task_1_terminal_status: failed
+    task_1_error: director_materialization_quality_failed
+    task_2_dependency_unblocked: true
+    task_2_claimed_before_round_2: false
+    round_2_error: Director must claim TaskBoard task before execution
+    terminal_rows_removed_before_bench_projection: true
+    bench_projection_error: task_runtime_projection_not_authoritative
+  gates:
+    plan: pass
+    blueprint: pass
+    llm_route_audit: pass
+    backend_freshness: pass
+    canonical_execution: fail
+    rust_compile: fail_missing_src_main_rs
+    implementation_depth: fail_missing_tests
+    qa: not_reached
+  instance_id: factory-bench-l1-05-r108-l1-05-run-7a634330b08a-67172bc263f4bc8b
+  instance_stopped_via_launcher: true
+latest_consumed_run_r107:
+  project_id: L1-05
+  bench_run_id: 31fbfe83d3a4
+  factory_run_id: factory_2abe34eb45a4
+  work_dir: /tmp/factory-bench-l1-05-r107
+  result: failed_at_chief_engineer_result_protocol_validation
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 161.7
+  provider_calls:
+    pm: 1
+    chief_engineer: 1
+    director: 0
+    qa: 0
+  final_request_context_audit:
+    pm: pass
+    chief_engineer:
+      context_snapshot_ref: 3a0e59c760b1c5f4edd25dd9
+      role_identity_ok: true
+      evidence_coverage_pass: true
+      pm_contract_present: true
+      target_file_count: 13
+      final_request_token_estimate: 5122
+      context_window_tokens: 1000000
+      offered_protocol_tool: submit_structured_role_output
+      forced_tool_choice: submit_structured_role_output
+      protocol_schema_valid: true
+      protocol_executable: false
+    director: not_reached_no_provider_request
+    qa: not_reached_no_provider_request
+  exact_error: >-
+    structured_output_payload_schema_mismatch:$:'scope_for_apply' is a required
+    property
+  lifecycle_defect:
+    chief_engineer_llm_start_events: 1
+    chief_engineer_llm_terminal_events: 0
+    route_audit_observed_binding_count: 0
+    turn_outcome: runtime_failure
+    schema_repair_attempted: false
+  root_cause: >-
+    Caller-owned schema validation happened only after the physical stream
+    yielded the result tool to TransactionKernel. A consumer-side ValueError
+    closed iteration outside StreamEngine, so no canonical LLM terminal event
+    existed and Factory treated the invalid Provider payload as a generic
+    runtime failure instead of bounded output repair.
+  closed_fix: >-
+    Validate the reserved result tool arguments inside StreamEngine before
+    consumer delivery and emit call_error on mismatch. Admit only explicit
+    structured-result protocol violations to the existing separate one-shot CE
+    schema-repair claim; all transport, deadline, circuit, and design failures
+    remain fatal.
+  source_files: 0
+  target_project_edits: 0
+  instance_id: factory-bench-l1-05-r107-l1-05-run-31fbfe83d3a4-3b4f1441e9cae739
+  instance_stopped_via_launcher: true
+latest_consumed_run_r106:
+  project_id: L1-05
+  bench_run_id: 6314507cff0a
+  factory_run_id: factory_5d63bc263122
+  director_run_id: director-c632449aa288
+  work_dir: /tmp/factory-bench-l1-05-r106
+  result: failed_at_director_materialization_quality_dependency_projection
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 596.5
+  factory_timeout_seconds: 5400
+  outer_watchdog_seconds: 6000
+  provider_calls:
+    pm: 3
+    chief_engineer: 2
+    director: 6
+    qa: 0
+  final_request_context_audit:
+    snapshot_ref_count: 11
+    all_snapshot_refs_readable: true
+    all_role_identities_correct: true
+    all_required_evidence_covered: true
+    all_tool_surfaces_correct: true
+    pm_snapshot_refs:
+      - ad56b002f335e09d1f51cf73
+      - 51f3b563a3e8e7c2202f9123
+      - 2c41702597d2dcd7b671dcb7
+    chief_engineer_snapshot_refs:
+      - 83b5281339757700ed19310f
+      - eafcbb767a09bfdcb7d0927b
+    director_snapshot_refs:
+      - 7be484693dbacd27459f6af7
+      - 47f33da616ad56e04b178317
+      - 47ce1e43368e82fde80cc889
+      - ab83caddd879ae35b077ece6
+      - f8b716628388ee3f2f4fc52c
+      - 12420ccd1bd3cfb6aecbc002
+    qa: not_reached_no_provider_request
+  materialization:
+    production_source_files: 6
+    production_source_lines: 574
+    committed_declared_files: 7
+    missing_targets:
+      - src/main.rs
+      - src/engine/mod.rs
+      - src/engine/creature.rs
+      - src/engine/route.rs
+      - tests/integration.rs
+      - README.md
+    parent_status: failed
+    terminal_deo_status: CLOSED_WITH_OUTCOME_PROOF
+    terminal_deo_receipt_count: 7
+    terminal_deo_failed_receipt_count: 0
+    downstream_tasks_cascade_blocked: 2
+  realtime_projection:
+    durable_task_row_snapshot_bytes: 3923000
+    rejected_factory_envelope_bytes:
+      - 4164559
+      - 4164321
+    nats_max_payload_bytes: 1048576
+  root_causes:
+    - >-
+      Failed-materialization dependency proof inspected TaskBoard metadata
+      before merging the settlement command metadata that contained the exact
+      adapter_result being atomically persisted.
+    - >-
+      The realtime Factory notification duplicated the complete durable
+      task_row_snapshot, turning an authoritative 3.9 MiB fact into an
+      unpublishable 4.16 MiB realtime envelope.
+  closed_fixes:
+    - >-
+      Evaluate dependency proof against existing metadata merged with command
+      metadata, while retaining the terminal DEO, receipt, identity, hash,
+      path-scope, and physical regular-file checks.
+    - >-
+      Keep task_row_snapshot only in the durable task_runtime.execution fact;
+      realtime publishes a typed durable-fact reference with event id, sequence,
+      and stream.
+  target_project_edits: 0
+  instance_id: factory-bench-l1-05-r106-l1-05-run-6314507cff0a-6bc29a0e4d61b9b8
+  instance_stopped_via_launcher: true
+latest_consumed_run_r105:
+  project_id: L1-05
+  bench_run_id: ce6cec5b5530
+  factory_run_id: factory_8e383bf24683
+  director_run_id: director-070ddbae51af
+  work_dir: /tmp/factory-bench-l1-05-r105
+  result: failed_at_director_materialization_quality_cascade
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 400.0
+  factory_timeout_seconds: 5400
+  outer_watchdog_seconds: 6000
+  provider_calls:
+    pm: 1
+    chief_engineer: 1
+    director: 3
+    qa: 0
+  final_request_context_audit:
+    pm:
+      semantic_snapshot_ref: 14440e4f0ebde0dcc775ae80
+      physical_snapshot_ref: c1210731a61d2e5dbac85a96
+      role_identity_ok: true
+      evidence_coverage_pass: true
+      required_evidence: pm_raw_intent
+    chief_engineer:
+      semantic_snapshot_ref: a558a79ae5a8c76f16778aa4
+      physical_snapshot_ref: 00a5bb3b1c356cee310a22be
+      role_identity_ok: true
+      evidence_coverage_pass: true
+      protocol_tool: submit_structured_role_output
+      protocol_schema_valid: true
+      protocol_executable: false
+    director:
+      semantic_snapshot_refs:
+        - bdb261c611010bc76be88025
+        - e19ae5832fcec1d3649a474f
+        - ec36a0eee6853890c514bf54
+      physical_snapshot_refs:
+        - 88dd1c025b68f7868abb39de
+        - 0baefe5fb0b4ae55b04e9117
+        - 6484973d4ad76d4b5668f815
+      role_identity_ok: true
+      evidence_coverage_pass: true
+      required_evidence:
+        - pm_contract
+        - chief_engineer_blueprint
+        - target_files
+      tool_schema_count: 17
+      tool_errors: 0
+    qa: not_reached_no_provider_request
+  materialization:
+    production_source_files: 6
+    production_source_lines: 414
+    committed_declared_files: 7
+    deo_receipt_count: 1
+    deo_failed_receipt_count: 0
+    parent_status: failed
+    downstream_tasks_cascade_blocked: 2
+  root_cause: >-
+    The settlement proof decision consumed the phase-A Task snapshot before the
+    adapter result was published. The existing projection-lock row already
+    contained that result, so the terminal event recorded complete DEO and file
+    facts but omitted the only evidence accepted by workflow dependency
+    projection.
+  closed_fix: >-
+    Fresh settlement projection now derives failed-materialization dependency
+    evidence from the existing projection-lock TaskBoard snapshot, falling back
+    to the phase-A snapshot only when the row is absent. Idempotent replay still
+    consumes only stored hash-verified evidence.
+  target_project_edits: 0
+  instance_id: factory-bench-l1-05-r105-l1-05-run-ce6cec5b5530-7ba11fd31046fd72
+  instance_stopped_via_launcher: true
+latest_consumed_run_r104:
+  project_id: L1-05
+  bench_run_id: 9e7a6adb10f8
+  factory_run_id: factory_75d9b09e67c4
+  work_dir: /tmp/factory-bench-l1-05-r104
+  result: failed_at_chief_engineer_portfolio_validation
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 97.4
+  factory_timeout_seconds: 5400
+  outer_watchdog_seconds: 6000
+  exact_error: >-
+    chief_engineer.portfolio_generation_failed:
+    ChiefEngineerBlueprintErrorV1: project_interface_contract contains
+    unsupported fields
+  provider_calls:
+    pm: 1
+    chief_engineer: 1
+    director: 0
+    qa: 0
+  final_request_context_audit:
+    pm:
+      semantic_snapshot_ref: 21180efacff332af95141258
+      physical_snapshot_ref: cb394b01342cd07fcbe3c62f
+      role_identity_ok: true
+      evidence_coverage_pass: true
+      semantic_token_estimate: 2246
+      physical_token_estimate: 2233
+      context_window_tokens: 1000000
+      tool_schema_count: 0
+      required_evidence: pm_raw_intent
+    chief_engineer:
+      semantic_snapshot_ref: a38f53e011f67e0fb5a52aa2
+      physical_snapshot_ref: bbe0c273392e8d09acd40134
+      role_identity_ok: true
+      evidence_coverage_pass: true
+      semantic_token_estimate: 5122
+      physical_token_estimate: 5084
+      context_window_tokens: 1000000
+      message_count: 9
+      tool_schema_count: 1
+      protocol_tool: submit_structured_role_output
+      protocol_schema_valid: true
+      protocol_executable: false
+      protocol_tool_lifecycle: false
+      protocol_side_effect: false
+      required_evidence:
+        - pm_contract
+        - target_files
+    director: not_reached_no_provider_request
+    qa: not_reached_no_provider_request
+  provider_result:
+    native_protocol_tool_calls: 1
+    protocol_tool_errors: 0
+    completion_tokens: 5946
+    empty_visible_content_expected_for_tool_result: true
+  root_cause: >-
+    The caller-owned Provider schema declared canonical interface properties
+    but also allowed arbitrary additional properties. The model followed that
+    permissive wire contract and returned an unsupported interface field; the
+    downstream Chief Engineer parser correctly rejected the drift.
+  closed_fix: >-
+    Set additionalProperties=false only on
+    construction_plan.project_interface_contract while preserving open,
+    extensible task-plan and construction-plan payloads and the strict
+    downstream parser.
+  target_project_edits: 0
+  instance_id: factory-bench-l1-05-r104-l1-05-run-9e7a6adb10f8-82a45e09298c9468
+  instance_stopped_via_launcher: true
+latest_consumed_run_r103:
+  project_id: L1-05
+  factory_run_id: factory_1e5968ddf922
+  work_dir: /tmp/factory-bench-l1-05-r103
+  result: rejected_at_chief_engineer_final_request_qualification
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 22.7
+  factory_timeout_seconds: 5400
+  outer_watchdog_seconds: 6000
+  exact_error: >-
+    chief_engineer.llm_review_failed:
+    root_cause_hint=tool_registry_schema_missing
+  provider_calls:
+    pm: 1
+    chief_engineer: 0
+    director: 0
+    qa: 0
+  context_audit:
+    pm_snapshot_refs:
+      - 5d021867edceb23087a9ea0b
+      - c4c0d3247535b97e52021801
+    chief_engineer_final_snapshot: not_emitted_pre_provider_rejection
+    chief_engineer_frozen_semantic_request: present
+    chief_engineer_structured_result_tool: present
+  root_cause: >-
+    B3.5 required every offered provider tool to reconstruct from
+    ToolSpecRegistry. The reserved submit_structured_role_output result
+    protocol is intentionally non-executable and therefore absent from that
+    registry, but audit had no separate provenance class for it.
+  closed_fix: >-
+    Carry StructuredOutputTransportPlan on PreparedLLMRequest; bind its exact
+    contract, tool schema, and tool_choice hashes into
+    provider_protocol_schema_coverage; qualify that one exact protocol
+    separately before applying unchanged ToolSpecRegistry validation to the
+    remaining executable surface. Do not register the protocol as executable.
+  target_project_edits: 0
+  instance_id: factory-bench-l1-05-r103-l1-05-run-fca3f520508c-9a9aa7043b012ae0
+  instance_stopped_via_launcher: true
+latest_consumed_run_r102:
+  project_id: L1-05
+  bench_run_id: 4d64532f3e5e
+  factory_run_id: factory_ef44c67cd0ab
+  work_dir: /tmp/factory-bench-l1-05-r102
+  result: failed_at_chief_engineer_structured_output_validation
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 181.8
+  factory_timeout_seconds: 5400
+  outer_watchdog_seconds: 6000
+  exact_error: >-
+    chief_engineer.llm_review_failed: Output validation failed: No JSON object
+    matched chief_engineer blueprint keys: construction_plan,
+    scope_for_apply, risk_flags
+  provider_calls:
+    pm: 1
+    chief_engineer_primary: 1
+    chief_engineer_schema_repair: 1
+    director: 0
+    qa: 0
+  chief_engineer_output:
+    primary_max_tokens: 16384
+    primary_completion_tokens: 7270
+    primary_visible_chars: 10820
+    repair_max_tokens: 8192
+    repair_completion_tokens: 6433
+    repair_visible_chars: 7664
+  final_request_context_audit:
+    role_identity: pass
+    required_refs: pass
+    context_quality: pass
+    chief_engineer_snapshot_refs:
+      - c49562d67520d52bc66a05e8
+      - e629e6ffa297a75e12d2eea9
+      - 0617c9eab8de3dc292898efd
+      - 5fc038d10111c80b35d40844
+    physical_tools_count_each: 0
+    physical_tool_choice_each: null
+    physical_response_format_each: null
+    audited_response_format_mode: text_json_fallback
+  root_cause: >-
+    Factory requested a strict CE JSON portfolio only through prompt text and
+    context flags. The streamed Role Kernel request had no caller-owned typed
+    result schema, so neither primary nor repair projected a schema-constrained
+    final Provider surface.
+  closed_fix: >-
+    Carry RoleStructuredOutputContractV1 through roles.runtime; replace the CE
+    executable tool surface with one reserved submit_structured_role_output
+    provider protocol tool; validate its arguments locally against the exact
+    caller schema; consume it into canonical JSON before TransactionKernel tool
+    decoding; reuse the same dynamic task-id schema for primary and repair.
+  target_project_edits: 0
+  instance_id: factory-bench-l1-05-r102-l1-05-run-4d64532f3e5e-613ca000f6eb82dd
+  instance_stopped_via_launcher: true
+latest_consumed_run_r101:
+  project_id: L1-05
+  factory_run_id: factory_70de54091383
+  work_dir: /tmp/factory-bench-l1-05-r101
+  result: correctly_blocked_before_chief_engineer_provider_transport
+  completed_verified: false
+  acceptance_evidence_valid: false
+  invalid_acceptance_reason: used_540_second_smoke_timeout_instead_of_5400_second_completion_timeout
+  exact_error: chief_engineer.deadline_admission_blocked
+  wall_clock_seconds: 20.1
+  factory_timeout_seconds: 540
+  runner_deadline_safety_seconds: 27
+  effective_factory_horizon_seconds: 513
+  dependency_waves: 3
+  reserved_downstream_seconds: 310
+  chief_engineer_generation_floor_seconds: 205
+  available_for_chief_engineer_before_pm_seconds: 203
+  provider_calls:
+    pm: 1
+    chief_engineer: 0
+    director: 0
+    qa: 0
+  final_request_context_audit:
+    pm: pass
+    pm_context_snapshot_refs:
+      - ed689a68dab5963be0eda57c
+      - 83978bd96da252feb46ce864
+    chief_engineer: not_emitted_admission_blocked_before_request_freeze
+    director: not_reached
+    qa: not_reached
+  platform_policy_verdict: >-
+    Correct fail-closed behavior. No conservation rule, CE generation floor,
+    Director reserve, QA reserve, or safety reserve is weakened.
+  instance_id: factory-bench-l1-05-r101-l1-05-run-52457b0b8fdd-9a7baf4dcd60d831
+  instance_stopped_via_launcher: true
+latest_consumed_run_r100:
+  project_id: L1-05
+  factory_run_id: factory_cdb8b392ded9
+  work_dir: /tmp/factory-bench-l1-05-r100-main
+  result: failed_at_director_repair_parent_admission
+  completed_verified: false
+  exact_error: deo_parent_admission_failed
+  root_cause: >-
+    The first real Director tool batch remained the sole OPEN parent after all
+    of its effects had authoritative success receipts. The later repair LLM
+    produced six valid native write_file calls, but roles.kernel attempted a
+    second admission with hard-coded expected_version=0 and expected_seq=1.
+    TaskRuntime correctly rejected it as parent_open_conflict, so none of the
+    valid repair writes reached physical execution.
+  closure: >-
+    Use the TaskRuntime-owned AdmitDirectedEffectParentBatchCommandV1. It
+    derives current registry heads and the next parent sequence under the
+    execution-attempt locks, rolls over only a ready receipt-complete parent,
+    records strict V4 child-close and V3 parent-close evidence, then admits the
+    successor. No target-project code was modified.
+  context_audit:
+    repair_role_identity: pass
+    repair_required_write_tools: pass
+    repair_native_write_calls_generated: 6
+    platform_rejected_before_physical_execution: true
+  instance_id: factory-bench-l1-05-r100-main-l1-05-run-c144bff24276-e884d027923df2a4
+  instance_stopped_via_launcher: true
 latest_consumed_run_r40:
   project_id: L1-04
   bench_run_id: d0c3b2888919
@@ -398,10 +1890,10 @@ latest_consumed_run:
     all_role_identity_tool_schema_and_context_quality: pass
   target_project_edits: 0
 source_snapshot:
-  head: 5a758d7d236f534e41287211707aa6a7152ed7a0
-  changed_content_manifest_sha256: 549b2e48a141717b75df263811b9b4363add4d6a3b6ef38a5c59fb72777fc854
-  worktree_path_set_sha256: 20d8a2154aa45cfdce3ddc5a6fcfd8dc960152c1a2a8d14acee4f9793f451283
-  changed_path_count: 378
+  head: e11a86db623a0babcd713e3d32b97341b6cad1b8
+  changed_content_manifest_sha256: 0d65332bb1351999ba04c8f02e3a2de55050da518c38a35e03d01908a735e0eb
+  worktree_path_set_sha256: 89f847722fae416ccc5a2d4f5f045b26d6e5739dc2430e23f6288e77534d266f
+  changed_path_count: 86
   manifest_algorithm: sha256_of_utf8_lines_sha256_two_spaces_path_lf
   manifest_excludes_gate_card_itself: true
   stable_before_after_gate: true
@@ -451,14 +1943,44 @@ source_snapshot:
   invalidated_by_acceptance_r40: false
   recaptured_after_r40_audit_abort: true
   post_r40_identical_capture_count: 2
+  invalidated_by_acceptance_r100: true
+  recaptured_after_r100_fix: true
+  post_r100_identical_capture_count: 2
+  invalidated_by_acceptance_r102: true
+  recaptured_after_r102a_fix: true
+  post_r102a_identical_capture_count: 2
+  invalidated_by_acceptance_r103: true
+  recaptured_after_r103a_fix: true
+  post_r103a_identical_capture_count: 2
+  invalidated_by_acceptance_r104: true
+  recaptured_after_r104a_fix: true
+  post_r104a_identical_capture_count: 2
+  invalidated_by_acceptance_r105: true
+  recaptured_after_r105a_fix: true
+  post_r105a_identical_capture_count: 2
+  invalidated_by_acceptance_r106: true
+  recaptured_after_r106_fix: true
+  post_r106_identical_capture_count: 2
+  invalidated_by_acceptance_r107: true
+  recaptured_after_r107a_fix: true
+  post_r107a_identical_capture_count: 2
+  invalidated_by_acceptance_r108: true
+  recaptured_after_r108_fix: true
+  post_r108_identical_capture_count: 2
+  recaptured_after_r94_execution_fact_priority_fix: true
+  post_r94_identical_capture_count: 2
 sign_off:
+  completed_by: Codex /root
+  completed_at: "2026-07-27"
+  verified_by: Codex /root full gate and post-edit CodeGraph review
+  verified_at: "2026-07-27"
   owner: Codex /root
   started_at: "2026-07-20"
   closed_at: null
   evidence:
     provider_requests_before_close: 0
     bench_runs_before_close: 0
-    consumed_acceptance_bench_runs: 29
+    consumed_acceptance_bench_runs: 30
     authorized_acceptance_bench_runs: 1
     r32_failed_acceptance_run:
       project_id: L1-04
@@ -1155,6 +2677,35 @@ sign_off:
           Rebuild every subordinate evidence projection from the typed cutoff
           policy facts, recompute the ratio, and remove or reconstruct only the
           superseded evidence findings.
+      - code: ce_streaming_json_contract_not_projected_to_provider
+        root_cause: >-
+          Factory declared the Chief Engineer portfolio JSON contract through
+          prompt text and context flags only. The exact streamed primary and
+          repair Provider requests therefore had no tools, tool_choice, or
+          response_format, and both long responses failed the required-key
+          parser despite sufficient role context.
+        fix: >-
+          Introduce a caller-owned RoleStructuredOutputContractV1, project it
+          once through roles.runtime, expose exactly one strict reserved result
+          tool to the Provider, validate the submitted object against the
+          caller schema, and normalize it to canonical JSON before
+          TransactionKernel tool decoding. The result transport is explicitly
+          non-executable and cannot create Tool Lifecycle or effect-receipt
+          facts.
+      - code: ce_advisory_scope_transport_overconstraint
+        root_cause: >-
+          R113 physically reached DeepSeek twice with qualified final requests
+          and valid construction/risk content, but both HTTP 200 submissions
+          omitted only scope_for_apply. Factory incorrectly made this
+          non-authoritative advice a Provider-transport required field, so
+          stream validation discarded the portfolio before Director.
+        fix: >-
+          Keep scope_for_apply declared and prompted but optional at transport
+          and semantic validation boundaries. Preserve construction_plan,
+          risk_flags, task ids, interface contracts, and present-value type
+          checks; never synthesize CE scope. Emit an explicit warning proving
+          PM target/scope authority remains unchanged and expansion remains
+          forbidden.
     residual_risks:
       - >-
         The long-lived main backend reports stale_since_startup=true because

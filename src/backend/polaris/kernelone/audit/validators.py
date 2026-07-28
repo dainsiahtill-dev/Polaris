@@ -68,8 +68,6 @@ def normalize_event_type(value: KernelAuditEventType | str) -> KernelAuditEventT
     if isinstance(value, KernelAuditEventType):
         return value
     token = str(value or "").strip()
-    if not token:
-        return KernelAuditEventType.TASK_START
     return KernelAuditEventType(token)
 
 

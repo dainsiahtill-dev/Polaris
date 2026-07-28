@@ -37,10 +37,13 @@ from polaris.cells.runtime.task_runtime.public import (
     DIRECTED_EFFECT_OPERATION_SCHEMA_V1,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V2,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V3,
+    DIRECTED_EFFECT_OPERATION_SCHEMA_V4,
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2,
+    DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3,
     AbortDirectedEffectOperationCommandV1,
     AdmitDirectedEffectOperationCommandV1,
+    AdmitDirectedEffectParentBatchCommandV1,
     AdmitDirectedEffectParentCommandV1,
     BindRuntimeTaskToFactoryRunCommandV1,
     ClaimDirectedEffectCommandV1,
@@ -72,6 +75,7 @@ from polaris.cells.runtime.task_runtime.public import (
     abort_directed_effect_operation,
     admit_directed_effect_operation,
     admit_directed_effect_parent,
+    admit_directed_effect_parent_batch,
     claim_directed_effect,
     commit_directed_effect_receipt,
     dead_letter_directed_effect_operation,
@@ -131,6 +135,23 @@ def _parent_command(identity: TaskRuntimeExecutionAttemptIdentityV1) -> AdmitDir
         admission_idempotency_key="parent-1",
         expected_version=0,
         expected_seq=1,
+        actor="test-parent",
+    )
+
+
+def _parent_batch_command(
+    identity: TaskRuntimeExecutionAttemptIdentityV1,
+    *,
+    turn_id: str = "turn-2",
+    batch_id: str = "batch-2",
+    admission_idempotency_key: str = "parent-2",
+) -> AdmitDirectedEffectParentBatchCommandV1:
+    return AdmitDirectedEffectParentBatchCommandV1(
+        workspace=identity.workspace,
+        task_id=identity.task_id,
+        execution_attempt=identity,
+        correlation=ParentCorrelationV1(turn_id=turn_id, batch_id=batch_id),
+        admission_idempotency_key=admission_idempotency_key,
         actor="test-parent",
     )
 
@@ -296,6 +317,111 @@ def _started_operation(
     )
     assert claim_directed_effect(claim_command).code == "effect_claimed"
     return identity, binding, admit_command
+
+
+def _receipt_complete_operations(
+    workspace: Path,
+    *,
+    count: int,
+) -> tuple[
+    TaskRuntimeExecutionAttemptIdentityV1,
+    DirectedEffectParentBindingV1,
+    tuple[AdmitDirectedEffectOperationCommandV1, ...],
+]:
+    identity = _attempt(workspace)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    commands = _seal_operation_commands(
+        identity,
+        binding,
+        *(
+            _operation_command(
+                identity,
+                binding,
+                tool_call_id=f"tool-{ordinal}",
+                effect_id=f"effect-{ordinal}",
+                fingerprint=f"fingerprint-{ordinal}",
+                expected_seq=ordinal,
+            )
+            for ordinal in range(1, count + 1)
+        ),
+    )
+    for command in commands:
+        assert admit_directed_effect_operation(command).code == "admitted"
+    _finalize_operation_inventory(identity, binding)
+    next_expected_seq = len(commands) + 1
+    for command in commands:
+        claimed = claim_directed_effect(
+            ClaimDirectedEffectCommandV1(
+                workspace=identity.workspace,
+                task_id=identity.task_id,
+                execution_attempt=identity,
+                parent_binding=binding,
+                tool_call_id=command.tool_call_id,
+                effect_id=command.effect_id,
+                expected_version=1,
+                expected_seq=next_expected_seq,
+                actor="test-child",
+                intended_effect_fingerprint=command.intended_effect_fingerprint,
+                policy_verdict_hash=command.policy_verdict_hash,
+                expected_receipt_binding_hash=command.expected_receipt_binding_hash,
+            )
+        )
+        assert claimed.code == "effect_claimed"
+        next_expected_seq += 1
+    for ordinal, command in enumerate(commands, start=1):
+        committed = commit_directed_effect_receipt(
+            CommitDirectedEffectReceiptCommandV1(
+                workspace=identity.workspace,
+                task_id=identity.task_id,
+                execution_attempt=identity,
+                parent_binding=binding,
+                tool_call_id=command.tool_call_id,
+                effect_id=command.effect_id,
+                expected_version=2,
+                expected_seq=next_expected_seq,
+                actor="test-receipt",
+                intended_effect_fingerprint=command.intended_effect_fingerprint,
+                policy_verdict_hash=command.policy_verdict_hash,
+                expected_receipt_binding_hash=command.expected_receipt_binding_hash,
+                receipt_ref=f"receipt://director/batch-rollover/{ordinal}",
+                receipt_hash=str(ordinal) * 64,
+                receipt_binding_hash=command.expected_receipt_binding_hash,
+                receipt_outcome="succeeded",
+            )
+        )
+        assert committed.code == "receipt_committed"
+        next_expected_seq += 1
+    return identity, binding, commands
+
+
+def _commit_successful_receipt(
+    identity: TaskRuntimeExecutionAttemptIdentityV1,
+    binding: DirectedEffectParentBindingV1,
+    admitted: AdmitDirectedEffectOperationCommandV1,
+) -> None:
+    committed = commit_directed_effect_receipt(
+        CommitDirectedEffectReceiptCommandV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=binding,
+            tool_call_id=admitted.tool_call_id,
+            effect_id=admitted.effect_id,
+            expected_version=2,
+            expected_seq=3,
+            actor="test-receipt",
+            intended_effect_fingerprint=admitted.intended_effect_fingerprint,
+            policy_verdict_hash=admitted.policy_verdict_hash,
+            expected_receipt_binding_hash=admitted.expected_receipt_binding_hash,
+            receipt_ref="receipt://director/batch-rollover",
+            receipt_hash="8" * 64,
+            receipt_binding_hash=admitted.expected_receipt_binding_hash,
+            receipt_outcome="succeeded",
+        )
+    )
+    assert committed.code == "receipt_committed"
 
 
 def _aborted_operation(
@@ -1492,6 +1618,212 @@ def test_settlement_closes_receipt_parent_before_terminal_session(tmp_path: Path
     assert (
         close_payload["terminal_intent_hash"]
         == settled["session"]["metadata"]["terminal_settlement_proof"]["terminal_intent_hash"]
+    )
+
+
+def test_parent_batch_admission_rolls_over_receipt_complete_parent(tmp_path: Path) -> None:
+    identity, first_binding, admitted = _started_operation(tmp_path)
+    _commit_successful_receipt(identity, first_binding, admitted)
+
+    second = admit_directed_effect_parent_batch(_parent_batch_command(identity))
+
+    assert second.code == "parent_admitted", second
+    assert second.parent_binding is not None
+    assert second.parent_binding.parent_sequence == 2
+    assert second.parent_binding.registry_version == 5
+    assert second.parent_binding.source_event_seq == 5
+    assert second.parent_binding.correlation == ParentCorrelationV1(
+        turn_id="turn-2",
+        batch_id="batch-2",
+    )
+
+    old_operation = get_directed_effect_operation(
+        GetDirectedEffectOperationQueryV1(
+            workspace=identity.workspace,
+            task_id=identity.task_id,
+            execution_attempt=identity,
+            parent_binding=first_binding,
+            tool_call_id=admitted.tool_call_id,
+            effect_id=admitted.effect_id,
+        )
+    )
+    assert old_operation.code == "found"
+    assert old_operation.state == "CLOSED_BY_PARENT"
+
+    operation_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=first_binding.operation_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+    operation_close = cast(dict[str, object], operation_events[-1]["payload"])
+    operation_descriptor = cast(dict[str, object], operation_close["replay_descriptor"])
+    assert operation_close["schema_version"] == DIRECTED_EFFECT_OPERATION_SCHEMA_V4
+    assert operation_descriptor["command"] == "close_by_parent"
+    assert operation_descriptor["batch_rollover_hash"]
+    assert operation_descriptor["terminal_intent_hash"] == ""
+    assert operation_descriptor["settlement_outcome"] == ""
+
+    registry_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=first_binding.registry_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+    batch_close = cast(dict[str, object], registry_events[-2]["payload"])
+    assert batch_close["schema_version"] == DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3
+    assert batch_close["close_kind"] == "batch_rollover"
+    assert batch_close["receipt_count"] == 1
+    assert batch_close["failed_receipt_count"] == 0
+    assert batch_close["dead_letter_count"] == 0
+
+
+def test_parent_batch_admission_recovers_after_partial_child_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity, first_binding, _commands = _receipt_complete_operations(tmp_path, count=2)
+    crashed = False
+
+    def crash_after_first_child_close(_result: object, close_index: int) -> None:
+        nonlocal crashed
+        if close_index == 1 and not crashed:
+            crashed = True
+            raise RuntimeError("simulated crash after first batch child close")
+
+    monkeypatch.setattr(
+        deo_internal.DirectedEffectOperationRepository,
+        "_after_batch_rollover_child_close",
+        staticmethod(crash_after_first_child_close),
+    )
+
+    with pytest.raises(RuntimeError, match="simulated crash after first batch child close"):
+        admit_directed_effect_parent_batch(_parent_batch_command(identity))
+
+    partial_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=first_binding.operation_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+    assert sum(event["event_type"].endswith(".closed_by_parent") for event in partial_events) == 1
+
+    monkeypatch.setattr(
+        deo_internal.DirectedEffectOperationRepository,
+        "_after_batch_rollover_child_close",
+        staticmethod(lambda _result, _close_index: None),
+    )
+    recovered = admit_directed_effect_parent_batch(_parent_batch_command(identity))
+
+    assert recovered.code == "parent_admitted"
+    assert recovered.parent_binding is not None
+    assert recovered.parent_binding.parent_sequence == 2
+    assert recovered.parent_binding.registry_version == 5
+    operation_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=first_binding.operation_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+    assert sum(event["event_type"].endswith(".closed_by_parent") for event in operation_events) == 2
+    registry_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=first_binding.registry_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+    assert sum(event["event_type"] == "task_runtime.deo_parent_registry.v1.closed" for event in registry_events) == 1
+
+
+def test_parent_batch_admission_replays_current_batch_without_closing_it(tmp_path: Path) -> None:
+    identity, binding, _admitted = _started_operation(tmp_path)
+
+    replay = admit_directed_effect_parent_batch(
+        _parent_batch_command(
+            identity,
+            turn_id="turn-1",
+            batch_id="batch-1",
+            admission_idempotency_key="parent-1",
+        )
+    )
+
+    assert replay.code == "parent_idempotent_replay"
+    assert replay.parent_binding == binding
+    registry_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=binding.registry_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+    assert len(registry_events) == 3
+    assert all(
+        cast(dict[str, object], event["payload"])["schema_version"] != DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3
+        for event in registry_events
+    )
+
+
+def test_parent_batch_admission_blocks_unresolved_previous_effect(tmp_path: Path) -> None:
+    identity, binding, _admitted = _started_operation(tmp_path)
+
+    blocked = admit_directed_effect_parent_batch(_parent_batch_command(identity))
+
+    assert blocked.ok is False
+    assert blocked.code == "parent_open_conflict"
+    assert blocked.evidence["reason"] == "batch_rollover_operation_unresolved"
+    registry_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=binding.registry_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+    assert len(registry_events) == 3
+
+
+def test_terminal_settlement_accepts_crash_after_batch_close_before_next_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity, binding, admitted = _started_operation(tmp_path)
+    _commit_successful_receipt(identity, binding, admitted)
+
+    def crash_after_close(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated crash after durable batch close")
+
+    monkeypatch.setattr(
+        deo_internal.DirectedEffectOperationRepository,
+        "_after_batch_rollover_parent_close",
+        staticmethod(crash_after_close),
+    )
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        admit_directed_effect_parent_batch(_parent_batch_command(identity))
+
+    monkeypatch.undo()
+    settled = TaskRuntimeService(identity.workspace).settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=identity.workspace,
+            identity=identity,
+            outcome="completed",
+            summary="terminal after durable batch close",
+        )
+    )
+
+    assert settled["success"] is True, json.dumps(settled, ensure_ascii=False, sort_keys=True)
+    registry_events = query_fact_events(
+        QueryFactEventsV1(
+            workspace=identity.workspace,
+            stream=binding.registry_stream_token,
+            strict_integrity=True,
+        )
+    ).events
+    assert cast(dict[str, object], registry_events[-1]["payload"])["schema_version"] == (
+        DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3
     )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from polaris.kernelone.audit.context_os_prompt import (
     audit_context_os_prompt_messages,
     summarize_context_os_audit_from_ledger,
@@ -38,6 +39,117 @@ def test_context_os_prompt_audit_rejects_control_plane_content_leak() -> None:
 
     assert audit["ok"] is False
     assert "context_os_snapshot:" in audit["control_plane"]["content_hits"]
+
+
+def test_context_os_prompt_audit_rejects_capability_and_execution_attempt_authority() -> None:
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": "capability_token: {'token_id': 'job-1'}",
+                "metadata": {
+                    "task_runtime_execution_attempt": {
+                        "run_id": "director-1",
+                    }
+                },
+            },
+            {"role": "user", "content": "Materialize the declared Rust targets."},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction="Materialize the declared Rust targets.",
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert "capability_token:" in audit["control_plane"]["content_hits"]
+    assert audit["control_plane"]["metadata_key_hits"] == ["task_runtime_execution_attempt"]
+
+
+def test_context_os_prompt_audit_rejects_opaque_capability_object_signature() -> None:
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": "payload: CapabilityToken(token_id='job-1', allowed_scope=['src/main.rs'])",
+            },
+            {"role": "user", "content": "Materialize the declared Rust targets."},
+        ],
+        context_sources=("state_first_context_os.project",),
+        current_user_instruction="Materialize the declared Rust targets.",
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert "capabilitytoken(" in audit["control_plane"]["content_hits"]
+
+
+def test_context_os_prompt_audit_rejects_camel_case_serialized_capability_key() -> None:
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": ("payload: capabilityToken: {'tokenId': 'job-2', 'allowedScope': ['src/camel.rs']}"),
+            },
+            {"role": "user", "content": "Materialize the declared Rust targets."},
+        ],
+        context_sources=("state_first_context_os.project",),
+        current_user_instruction="Materialize the declared Rust targets.",
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert "capability_token" in audit["control_plane"]["content_hits"]
+
+
+def test_context_os_prompt_audit_rejects_spaced_serialized_capability_key() -> None:
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": "payload: 'capability token': {'token_id': 'job-3'}",
+            },
+            {"role": "user", "content": "Materialize the declared Rust targets."},
+        ],
+        context_sources=("state_first_context_os.project",),
+        current_user_instruction="Materialize the declared Rust targets.",
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert "capability_token" in audit["control_plane"]["content_hits"]
+
+
+@pytest.mark.parametrize(
+    ("serialized_key", "token_key", "scope_key"),
+    (
+        ("capability.token", "token.id", "allowed.scope"),
+        ("capability/token", "token/id", "allowed/scope"),
+        ("capability\ttoken", "token\tid", "allowed\tscope"),
+    ),
+)
+def test_context_os_prompt_audit_normalizes_quoted_key_separator_variants(
+    serialized_key: str,
+    token_key: str,
+    scope_key: str,
+) -> None:
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"payload: '{serialized_key}': {{'{token_key}': 'job-variant', '{scope_key}': ['src/private.rs']}}"
+                ),
+            },
+            {"role": "user", "content": "Materialize the declared Rust targets."},
+        ],
+        context_sources=("state_first_context_os.project",),
+        current_user_instruction="Materialize the declared Rust targets.",
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert "capability_token" in audit["control_plane"]["content_hits"]
 
 
 def test_context_os_prompt_audit_accepts_task_ids_inside_pm_contract() -> None:

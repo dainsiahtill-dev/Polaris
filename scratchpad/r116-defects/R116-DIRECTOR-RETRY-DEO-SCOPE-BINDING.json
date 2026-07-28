@@ -1,0 +1,84 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "R116-DIRECTOR-RETRY-DEO-SCOPE-BINDING",
+  "status": "FIX_IMPLEMENTED_FOCUSED_GREEN",
+  "severity": "P0",
+  "project_id": "L1-05",
+  "bench_run_id": "829b6431bad9",
+  "factory_run_id": "factory_3e76c0db79b0",
+  "director_run_id": "director-3b0759f5f992",
+  "source_head": "e11a86db623a0babcd713e3d32b97341b6cad1b8",
+  "backend_fingerprint": "46562cb0fd37568f",
+  "symptom": "Director TASK-2 corrective retry was qualified with max_tokens=7000 despite a declared output_budget_tokens=128000. The provider exhausted exactly 7000 completion tokens: two write_file calls were complete, while the third was truncated to content-only with no file argument. DEO then fail-closed the malformed mutation as deo_path_scope_denied, leaving src/main.rs and engine targets unmaterialized.",
+  "final_provider_request_evidence": {
+    "initial_context_snapshot_ref": "c38e916a4b485af18a7f22ee",
+    "retry_context_snapshot_ref": "12a0aec024af573034c52fa2",
+    "role": "director",
+    "role_identity_ok": true,
+    "tool_choice": "required",
+    "available_tools": [
+      "write_file"
+    ],
+    "current_task_targets_present": true,
+    "stale_task_identity_in_request": false,
+    "declared_output_budget_tokens": 128000,
+    "physical_max_tokens": 7000,
+    "completion_tokens": 7000,
+    "context_quality_error": "execution_strategy_output_budget_under_applied"
+  },
+  "runtime_evidence": {
+    "factory_audit": "/tmp/factory-bench-l1-05-r116/factory_audits.json",
+    "director_result": "/tmp/factory-bench-l1-05-r116/workspaces/829b6431bad9-d9346f677f02bcd7/L1-05-e561a0dcdada9554/f8846f49600b6917260592a8/.polaris/history/runs/director-3b0759f5f992/results/director.result.json",
+    "director_journal": "/tmp/factory-bench-l1-05-r116/workspaces/829b6431bad9-d9346f677f02bcd7/L1-05-e561a0dcdada9554/f8846f49600b6917260592a8/.polaris/history/runs/director-3b0759f5f992/logs/journal.raw.jsonl",
+    "backend_log": "/home/dains/.polaris/instances/factory-bench-l1-05-r116-l1-05-run-829b6431bad9-bd813f9a57c806ba/logs/backend.log",
+    "turn_outcome": "/home/dains/.cache/kernelone/.polaris/projects/f8846f49600b6917260592a8-96e12bba4716/runtime/events/roles.kernel.turn_outcomes.jsonl",
+    "primary_error": "TransactionKernel execution failed: deo_path_scope_denied",
+    "retry_invocations": [
+      {
+        "tool": "write_file",
+        "file": "src/engine/flavor_rules.rs",
+        "content_chars": 16667
+      },
+      {
+        "tool": "write_file",
+        "file": "src/engine/flavor_runner.rs",
+        "content_chars": 9358
+      },
+      {
+        "tool": "write_file",
+        "file": null,
+        "content_chars": 2641,
+        "truncated": true
+      }
+    ]
+  },
+  "root_cause_class": "final_provider_retry_output_budget_conservation",
+  "root_cause_status": "CONFIRMED",
+  "known_facts": [
+    "The initial and retry Provider requests both carry the correct TASK-2 contract and target files.",
+    "The initial model batch targeted TASK-1 paths and was correctly rejected atomically.",
+    "The corrective retry emitted three write_file calls; the third call lost its required file argument at the exact 7000-token output boundary.",
+    "The final request audit marked execution_strategy_output_budget_under_applied as severity=error and context_needs_review=true, but qualification still permitted the physical call.",
+    "The forced-tool retry path overwrote the 128000-token execution strategy budget with the 7000-token create floor.",
+    "No target-project write from the denied retry was accepted."
+  ],
+  "repair_contract": [
+    "Treat max_tokens_floor as a lower bound even for forced-tool retries; never shrink the declared execution strategy output budget.",
+    "Reject final provider qualification when context_quality contains any severity=error finding.",
+    "Do not broaden path scope, synthesize authority, bypass DEO, or weaken atomic zero-effect behavior.",
+    "Preserve the existing fail-closed denial for genuinely malformed or out-of-scope mutation calls."
+  ],
+  "required_tests": [
+    "A forced retry with a 7000-token floor and a 128000-token execution strategy preserves max_tokens=128000.",
+    "A final request audit containing a severity=error context-quality finding is rejected before physical provider qualification.",
+    "A retry writing a prior-task or unrelated path remains rejected with zero effects.",
+    "Retry settlement continues to produce canonical Tool Lifecycle and effect receipts."
+  ],
+  "implementation_files": [
+    "src/backend/polaris/cells/roles/kernel/internal/kernel/transaction_factory.py",
+    "src/backend/polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
+  ],
+  "focused_test_result": "2 passed",
+  "bench_authorization_consumed": true,
+  "next_bench_authorized": false
+}

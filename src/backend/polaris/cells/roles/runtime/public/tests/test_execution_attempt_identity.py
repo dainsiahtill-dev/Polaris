@@ -11,6 +11,10 @@ from polaris.cells.events.fact_stream.public import (
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
+    RoleStructuredOutputContractV1,
+)
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.public import service as role_runtime_service_module
 from polaris.cells.roles.runtime.public.contracts import (
@@ -82,6 +86,57 @@ def test_task_request_projects_only_canonical_execution_attempt(tmp_path: Path) 
     assert request.context_override["llm_call_timeout_seconds"] == 73
     assert request.context_override["request_timeout_seconds"] == 73
     assert request.context_override["timeout_seconds"] == 73
+
+
+def test_task_request_projects_typed_structured_output_contract(tmp_path: Path) -> None:
+    identity = _claim_attempt(tmp_path)
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "construction_plan": {"type": "object"},
+                "scope_for_apply": {"type": "array"},
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+            "additionalProperties": False,
+        },
+    )
+    command = replace(
+        _command(tmp_path, identity),
+        role="chief_engineer",
+        structured_output_contract=contract,
+    )
+
+    request = RoleRuntimeService._build_task_request(command)
+
+    assert request.context_override[STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY] == (
+        contract.to_context_projection()
+    )
+
+
+def test_task_request_rejects_structured_output_context_drift(tmp_path: Path) -> None:
+    identity = _claim_attempt(tmp_path)
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {"construction_plan": {"type": "object"}},
+            "required": ["construction_plan"],
+        },
+    )
+    command = replace(
+        _command(tmp_path, identity),
+        role="chief_engineer",
+        context={STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: {"schema_name": "drift"}},
+        structured_output_contract=contract,
+    )
+
+    with pytest.raises(ValueError, match="structured_output_contract_context_drift"):
+        RoleRuntimeService._build_task_request(command)
 
 
 def test_task_command_rejects_mismatched_session_before_kernel(tmp_path: Path) -> None:

@@ -18,74 +18,13 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from polaris.kernelone.audit.context_os_prompt import CONTROL_PLANE_PROMPT_KEYS
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 
-_CONTROL_PLANE_CONTEXT_KEYS = {
-    "allowed_provider_ids",
-    "allowed_provider_types",
-    "blocked_provider_ids",
-    "blocked_provider_types",
-    "cognitive_runtime_enabled",
-    "cognitive_runtime_mode",
-    "cognitive_runtime_required",
-    "cognitive_guidance",
-    "context_os_expected",
-    "context_os_snapshot",
-    "cognitive_strategy_override",
-    # Runtime execution knobs (control plane) — ADR-0071: must NOT enter the data
-    # plane. Live (L2-11 2026-06-15) these leaked into the context_override system
-    # message and, alongside an uncapped value, were the dominant BudgetExceededError.
-    "disable_internal_tool_rounds",
-    "llm_call_timeout_seconds",
-    "request_timeout_seconds",
-    "timeout_seconds",
-    # Signal-rendered planes (2026-06-15): these are injected for the Director's
-    # BlueprintStepsSignal card (build_blueprint_step_card renders them concisely) and must
-    # NOT be ALSO serialized verbatim into the context_override message — that was a
-    # 2143-token duplicate of construction_step (worsened by the P1 anchor contract)
-    # that blew the budget and crashed the Director turn (BudgetExceededError, Director
-    # barely ran). The signal reads them directly from context_override, not the message.
-    "construction_step",
-    "consumed_interfaces",
-    "pre_state_verify",
-    "last_failure",
-    "delivery_mode",
-    "director_quality_repair",
-    "domain",
-    "factory_run_id",
-    "host_kind",
-    "llm_provider_policy",
-    "metadata",
-    "model_allowlist",
-    "model_blocklist",
-    "provider_allowlist",
-    "provider_blocklist",
-    "provider_policy",
-    "role_runtime_required",
-    "run_id",
-    "run_card",
-    "runtime_session_id",
-    "session_context_config",
-    "session_turn_events",
-    "session_id",
-    "state_first_context_os",
-    "strategy_override",
-    "stream_options",
-    "task_id",
-    "target_task_id",
-    "pm_task_id",
-    "prompt_profile",
-    "prompt_profile_id",
-    "prompt_profile_ids",
-    "prompt_profiles",
-    "prompt_profile_appendix",
-    "prompt_profile_audit",
-    "task_runtime_guard",
-    "task_runtime_session_id",
-    "selected_prompt_profile_ids",
-    "workspace",
-    "workspace_root",
-}
+# One taxonomy owns both prevention and detection. ContextOverrideProcessor
+# consumes the original mapping separately for runtime/tool authority; this set
+# controls prompt serialization only.
+_CONTROL_PLANE_CONTEXT_KEYS = CONTROL_PLANE_PROMPT_KEYS
 
 # Budget guard (order-4, 2026-06-15): a single oversized context_override value
 # (a serialized blueprint/payload/guidance) was rendered verbatim into one system
@@ -93,6 +32,7 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
 # crashing the Director turn BEFORE any write. Cap each value so no one value can
 # blow the window; the weak model cannot use multi-thousand-token metadata anyway.
 _DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP = 1500
+_MAX_CONTEXT_OVERRIDE_VALUE_CHAR_CAP = 16000
 
 
 def _context_override_value_char_cap() -> int:
@@ -103,7 +43,7 @@ def _context_override_value_char_cap() -> int:
         except ValueError:
             return _DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP
         if value > 0:
-            return value
+            return min(value, _MAX_CONTEXT_OVERRIDE_VALUE_CHAR_CAP)
     return _DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP
 
 
