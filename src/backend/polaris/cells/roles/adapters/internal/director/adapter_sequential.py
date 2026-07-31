@@ -164,7 +164,7 @@ async def execute_sequential(
         )
 
     engine.set_dependencies(llm_caller=_wrap_llm_caller, tool_gateway=None)
-    message = build_director_message(task)
+    message = build_director_message(task, context=context)
     stats = await engine.execute(initial_message=message, profile=profile)
 
     await emit_task_trace_event(
@@ -197,8 +197,10 @@ async def execute_hybrid(
     context: dict[str, Any] | None,
     seq_config: dict[str, Any],
     emit_task_trace_event: Any,
+    call_role_llm_with_timeout: Any,
+    build_director_message: Any,
 ) -> dict[str, Any]:
-    """Execute task using Hybrid Engine."""
+    """Execute Hybrid through the same audited RoleRuntime boundary as Sequential."""
     from polaris.cells.roles.engine.public.service import EngineBudget, EngineContext, HybridEngine
     from polaris.cells.roles.runtime.public.service import registry
 
@@ -213,9 +215,17 @@ async def execute_hybrid(
         max_no_progress_steps=seq_config["budget"].max_no_progress_steps,
         max_wall_time_seconds=seq_config["budget"].max_wall_time_seconds,
     )
-    subject = task.get("subject") or task.get("title", "")
-    description = task.get("description", "")
-    message = f"任务: {subject}\n\n描述: {description}"
+    message = build_director_message(task, context=context)
+
+    async def _wrap_llm_caller(**kwargs: Any) -> str:
+        prompt = str(kwargs.get("prompt") or "").strip()
+        return await seq_llm_caller(
+            workspace,
+            role_id,
+            prompt,
+            context if isinstance(context, dict) else {},
+            call_role_llm_with_timeout,
+        )
 
     await emit_task_trace_event(
         task_id=task_id,
@@ -239,6 +249,7 @@ async def execute_hybrid(
             role=role_id,
             task=message,
             profile=profile,
+            llm_caller=_wrap_llm_caller,
         )
         result = await engine.run(task=message, context=engine_context)
 

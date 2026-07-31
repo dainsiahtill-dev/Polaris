@@ -1,7 +1,7 @@
 {
   "schema_version": "polaris.machine_readable_defect.v1",
   "defect_id": "R116-DIRECTOR-RETRY-DEO-SCOPE-BINDING",
-  "status": "FIX_IMPLEMENTED_FOCUSED_GREEN",
+    "status": "CLOSED_VERIFIED",
   "severity": "P0",
   "project_id": "L1-05",
   "bench_run_id": "829b6431bad9",
@@ -53,7 +53,7 @@
     ]
   },
   "root_cause_class": "final_provider_retry_output_budget_conservation",
-  "root_cause_status": "CONFIRMED",
+    "root_cause_status": "CLOSED_VERIFIED",
   "known_facts": [
     "The initial and retry Provider requests both carry the correct TASK-2 contract and target files.",
     "The initial model batch targeted TASK-1 paths and was correctly rejected atomically.",
@@ -78,7 +78,23 @@
     "src/backend/polaris/cells/roles/kernel/internal/kernel/transaction_factory.py",
     "src/backend/polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
   ],
-  "focused_test_result": "2 passed",
-  "bench_authorization_consumed": true,
+    "focused_test_result": "2 red-to-green contract tests; 4222 roles.kernel full passed",
+    "broad_verification": {
+        "roles_kernel": "4222 passed, 2 warnings",
+        "factory": "1357 passed, 2 warnings",
+        "kernelone_audit": "818 passed",
+        "kernelone_release_gate": "ok=true; suite_size=51; 415 passed, 1 skipped, 2 warnings",
+        "static_gates": "ruff, format, mypy, compileall, JSON, YAML, and diff check passed",
+        "source_head": "2d46c996fadd8952caf1e39705119f4aa1048e47",
+        "stable_backend_fingerprint": "745451bc6b829e00"
+    },
+    "independent_review": {
+        "verdict": "CLEAR",
+        "critical": 0,
+        "important": 0,
+        "minor": 0,
+        "independent_focused_tests": "6 passed"
+    },
+    "bench_authorization_consumed": true,
   "next_bench_authorized": false
 }

@@ -1306,7 +1306,6 @@ def select_guidance(context: LanguagePromptContext) -> GuidanceSelection:
     explicit_contract_language = _explicit_contract_language_from_text(combined_text)
     path_language = _language_from_paths(normalized_context.target_files)
     hard_check_language = _hard_check_language_from_text(combined_text)
-    workspace_language = _language_from_workspace(normalized_context.workspace) if normalized_context.workspace else ""
     language = next(
         (
             candidate
@@ -1315,17 +1314,18 @@ def select_guidance(context: LanguagePromptContext) -> GuidanceSelection:
                 explicit_contract_language,
                 path_language,
                 hard_check_language,
-                workspace_language,
-                metadata_language,
             )
             if candidate in _LANGUAGE_PROFILES
         ),
-        "generic",
+        "",
     )
+    if not language:
+        workspace_language = (
+            _language_from_workspace(normalized_context.workspace) if normalized_context.workspace else ""
+        )
+        language = workspace_language if workspace_language in _LANGUAGE_PROFILES else "generic"
     if language == "generic":
         language = _language_from_text(_combined_text(normalized_context)) or language
-    if language == "generic" and normalized_context.workspace:
-        language = _language_from_workspace(normalized_context.workspace) or language
     language_profile = _LANGUAGE_PROFILES.get(language)
     framework = _detect_framework(normalized_context)
     task_foci = _detect_task_foci(normalized_context)

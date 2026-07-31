@@ -820,6 +820,24 @@ class TestProcessContextOverride:
         assert "nested: {'key': 'value'}" in result["content"]
         assert "list: [1, 2, 3]" in result["content"]
 
+    def test_nested_metadata_structure_remains_excluded_from_prompt_projection(self) -> None:
+        override = {
+            "payload": {
+                "metadata": {
+                    "capability_token": "must-stay-control-plane",
+                },
+                "summary": "public data",
+            }
+        }
+
+        result = _override_processor().process_context_override(override)
+
+        assert result is not None
+        assert "summary" in result["content"]
+        assert "public data" in result["content"]
+        assert "metadata" not in result["content"]
+        assert "must-stay-control-plane" not in result["content"]
+
     def test_process_context_override_drops_control_plane_fields(self) -> None:
         override = {
             "safe_key": "visible context",

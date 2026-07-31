@@ -1,0 +1,271 @@
+"""Receipt-bound dependency artifact evidence for Director final requests."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+from polaris.cells.roles.adapters.internal.director import dependency_artifact_evidence as evidence_module
+from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
+    DirectorDependencyArtifactEvidenceError,
+    TrustedDirectorDependencyArtifactSnapshotV2,
+    build_director_dependency_artifact_snapshot,
+    project_director_dependency_artifact_snapshot,
+)
+
+
+def _effect_receipt(path: str, *, suffix: str = "1") -> dict[str, Any]:
+    receipt_hash = suffix * 64
+    return {
+        "status": "success",
+        "result": {"file": path},
+        "effect_receipt": {
+            "schema_version": "roles.adapters.director_physical_effect_receipt.v2",
+            "receipt_id": f"director-physical-effect-{suffix * 24}",
+            "receipt_hash": receipt_hash,
+            "receipt_binding_hash": "b" * 64,
+            "physical_result_hash": "c" * 64,
+            "target_state_hash": "d" * 64,
+            "receipt_outcome": "succeeded",
+            "authoritative": True,
+            "durable": True,
+        },
+        "effect_receipt_commit": {
+            "state": "RECEIPT_COMMITTED",
+            "receipt_ref": f"director-physical-effect-{suffix * 24}",
+            "receipt_hash": receipt_hash,
+        },
+    }
+
+
+def _parent_row(
+    *,
+    task_id: int = 1,
+    external_task_id: str = "TASK-1",
+    paths: tuple[str, ...] = ("src/models/flavor.rs",),
+) -> dict[str, Any]:
+    return {
+        "id": task_id,
+        "status": "completed",
+        "metadata": {
+            "external_task_id": external_task_id,
+            "adapter_result": {
+                "new_files": list(paths),
+                "modified_files": [],
+                "write_tool_evidence": True,
+                "primary_llm": {
+                    "metadata": {
+                        "batch_receipt": {
+                            "raw_results": [
+                                _effect_receipt(path, suffix=str(index + 1)) for index, path in enumerate(paths)
+                            ]
+                        }
+                    }
+                },
+            },
+        },
+    }
+
+
+def _child_task(dependencies: list[int | str]) -> dict[str, Any]:
+    return {
+        "id": 2,
+        "metadata": {
+            "external_task_id": "TASK-2",
+            "resolved_depends_on_task_ids": dependencies,
+        },
+    }
+
+
+def _resolver(rows: dict[str, dict[str, Any]]):
+    def resolve(task_id: str) -> dict[str, Any] | None:
+        return rows.get(str(task_id))
+
+    return resolve
+
+
+def test_snapshot_is_bound_to_parent_task_effect_receipt_and_exact_body(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "models" / "flavor.rs"
+    source.parent.mkdir(parents=True)
+    body = "pub enum FlavorProfile { Sweet, Sour }\n"
+    source.write_text(body, encoding="utf-8")
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task([1]),
+        get_task=_resolver({"1": _parent_row()}),
+    )
+
+    assert type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+    payload = snapshot.payload()
+    assert payload["schema_version"] == "polaris.actual_sibling_exports.evidence.v2"
+    assert payload["dependency_task_ids"] == ["1"]
+    assert payload["covered_parent_task_ids"] == ["1"]
+    assert payload["module_count"] == 1
+    module = payload["modules"][0]
+    assert module["parent_task_id"] == "1"
+    assert module["parent_external_task_id"] == "TASK-1"
+    assert module["path"] == "src/models/flavor.rs"
+    assert module["body"] == body
+    assert module["effect_receipt_id"].startswith("director-physical-effect-")
+    assert len(module["effect_receipt_hash"]) == 64
+    assert len(module["source_fact_hash"]) == 64
+    assert len(module["sha256"]) == 64
+    rendered = "\n".join(snapshot.message_lines())
+    assert payload["snapshot_sha256"] in rendered
+    assert body in rendered
+
+
+def test_snapshot_reads_only_receipt_listed_parent_files(tmp_path: Path) -> None:
+    parent = tmp_path / "src" / "parent.py"
+    parent.parent.mkdir()
+    parent.write_text("PARENT = 1\n", encoding="utf-8")
+    unrelated = tmp_path / "src" / "unrelated.py"
+    unrelated.write_text("SECRET = 2\n", encoding="utf-8")
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task([1]),
+        get_task=_resolver({"1": _parent_row(paths=("src/parent.py",))}),
+    )
+
+    assert snapshot is not None
+    payload = snapshot.payload()
+    assert [module["path"] for module in payload["modules"]] == ["src/parent.py"]
+    assert "unrelated.py" not in "\n".join(snapshot.message_lines())
+
+
+def test_snapshot_uses_one_guarded_read_for_payload_and_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "src" / "parent.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    calls: list[str] = []
+    original = evidence_module.read_guarded_regular_file_snapshot
+
+    def counted(root: str, relative_path: str, max_bytes: int):
+        calls.append(relative_path)
+        return original(root, relative_path, max_bytes)
+
+    monkeypatch.setattr(evidence_module, "read_guarded_regular_file_snapshot", counted)
+
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task([1]),
+        get_task=_resolver({"1": _parent_row(paths=("src/parent.py",))}),
+    )
+
+    assert snapshot is not None
+    assert calls == ["src/parent.py"]
+    assert "VALUE = 1" in "\n".join(snapshot.message_lines())
+
+
+def test_projection_rejects_caller_preset_and_uses_only_trusted_snapshot(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "parent.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task([1]),
+        get_task=_resolver({"1": _parent_row(paths=("src/parent.py",))}),
+    )
+    context: dict[str, Any] = {
+        "actual_sibling_exports": {"schema_version": "forged"},
+        "metadata": {"actual_sibling_exports": {"schema_version": "forged"}},
+    }
+
+    project_director_dependency_artifact_snapshot(context, snapshot)
+
+    assert snapshot is not None
+    assert context["actual_sibling_exports"] == snapshot.payload()
+    assert context["metadata"]["actual_sibling_exports"] == snapshot.payload()
+
+    project_director_dependency_artifact_snapshot(context, None)
+    assert "actual_sibling_exports" not in context
+    assert "actual_sibling_exports" not in context["metadata"]
+
+
+@pytest.mark.parametrize(
+    ("workspace", "expected_code"),
+    [
+        ("", "dependency_artifact_workspace_invalid"),
+        ("relative/workspace", "dependency_artifact_workspace_invalid"),
+    ],
+)
+def test_snapshot_rejects_empty_or_relative_workspace(workspace: str, expected_code: str) -> None:
+    with pytest.raises(DirectorDependencyArtifactEvidenceError) as exc_info:
+        build_director_dependency_artifact_snapshot(
+            workspace=workspace,
+            child_task=_child_task([1]),
+            get_task=_resolver({"1": _parent_row()}),
+        )
+    assert exc_info.value.code == expected_code
+
+
+def test_snapshot_rejects_symlink_parent_artifact(tmp_path: Path) -> None:
+    real = tmp_path / "real.py"
+    real.write_text("VALUE = 1\n", encoding="utf-8")
+    source = tmp_path / "src" / "parent.py"
+    source.parent.mkdir()
+    source.symlink_to(real)
+
+    with pytest.raises(DirectorDependencyArtifactEvidenceError) as exc_info:
+        build_director_dependency_artifact_snapshot(
+            workspace=str(tmp_path),
+            child_task=_child_task([1]),
+            get_task=_resolver({"1": _parent_row(paths=("src/parent.py",))}),
+        )
+
+    assert exc_info.value.code == "dependency_artifact_guarded_read_failed"
+
+
+def test_snapshot_rejects_oversized_parent_artifact(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "parent.py"
+    source.parent.mkdir()
+    source.write_text("x" * (64 * 1024 + 1), encoding="utf-8")
+
+    with pytest.raises(DirectorDependencyArtifactEvidenceError) as exc_info:
+        build_director_dependency_artifact_snapshot(
+            workspace=str(tmp_path),
+            child_task=_child_task([1]),
+            get_task=_resolver({"1": _parent_row(paths=("src/parent.py",))}),
+        )
+
+    assert exc_info.value.code == "dependency_artifact_guarded_read_failed"
+
+
+def test_snapshot_rejects_parent_without_committed_receipt(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "parent.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    parent = _parent_row(paths=("src/parent.py",))
+    del parent["metadata"]["adapter_result"]["primary_llm"]["metadata"]["batch_receipt"]["raw_results"][0][
+        "effect_receipt_commit"
+    ]
+
+    with pytest.raises(DirectorDependencyArtifactEvidenceError) as exc_info:
+        build_director_dependency_artifact_snapshot(
+            workspace=str(tmp_path),
+            child_task=_child_task([1]),
+            get_task=_resolver({"1": parent}),
+        )
+
+    assert exc_info.value.code == "dependency_artifact_receipt_missing"
+
+
+def test_snapshot_rejects_resolver_returning_wrong_parent(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "parent.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+
+    with pytest.raises(DirectorDependencyArtifactEvidenceError) as exc_info:
+        build_director_dependency_artifact_snapshot(
+            workspace=str(tmp_path),
+            child_task=_child_task([2]),
+            get_task=_resolver({"2": _parent_row(task_id=1, paths=("src/parent.py",))}),
+        )
+
+    assert exc_info.value.code == "dependency_artifact_parent_identity_mismatch"

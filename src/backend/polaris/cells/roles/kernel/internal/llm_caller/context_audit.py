@@ -300,11 +300,29 @@ def _resident_agi_coverage_flags(ai_request: Any | None) -> dict[str, bool]:
     }
 
 
-def _coverage_flags(*, ai_request: Any | None = None) -> dict[str, bool]:
+def _coverage_flags(
+    *,
+    ai_request: Any | None = None,
+    prepared: PreparedLLMRequest | None = None,
+) -> dict[str, bool]:
     structured_flags = structured_context_coverage_flags(_request_context(ai_request)) if ai_request is not None else {}
     module_interface_contract = _module_interface_contract_payload(ai_request) if ai_request is not None else {}
+    messages = (
+        _request_messages(
+            ai_request,
+            [dict(item) for item in prepared.messages if isinstance(item, dict)],
+        )
+        if ai_request is not None and prepared is not None
+        else None
+    )
     actual_sibling_exports = (
-        _actual_sibling_exports_payload(ai_request, module_interface_contract) if ai_request is not None else {}
+        _actual_sibling_exports_payload(
+            ai_request,
+            module_interface_contract,
+            messages=messages,
+        )
+        if ai_request is not None
+        else {}
     )
     architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request) if ai_request is not None else {}
     failed_gate_evidence = _failed_gate_evidence_payload(ai_request) if ai_request is not None else {}
@@ -1004,19 +1022,138 @@ def _module_interface_contract_summary(contract: dict[str, Any]) -> dict[str, An
     }
 
 
-def _looks_like_actual_sibling_exports(value: Any) -> bool:
+def _is_sha256(value: Any) -> bool:
+    token = str(value or "").strip()
+    return len(token) == 64 and all(character in "0123456789abcdef" for character in token)
+
+
+def _canonical_actual_sibling_exports_hash(value: Mapping[str, Any]) -> str:
+    payload = dict(value)
+    payload.pop("snapshot_sha256", None)
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError):
+        return ""
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _actual_sibling_exports_message_bound(
+    value: Mapping[str, Any],
+    messages: list[dict[str, Any]],
+) -> bool:
+    rendered = "\n".join(str(message.get("content") or "") for message in messages)
+    snapshot_hash = str(value.get("snapshot_sha256") or "").strip()
+    marker = f"polaris.actual_sibling_exports.evidence.v2 snapshot_sha256={snapshot_hash}"
+    if marker not in rendered:
+        return False
+    modules = value.get("modules")
+    if not isinstance(modules, list):
+        return False
+    for module in modules:
+        if not isinstance(module, dict):
+            return False
+        header = (
+            f"--- parent_task_id={module.get('parent_task_id')} "
+            f"receipt_id={module.get('effect_receipt_id')} "
+            f"path={module.get('path')} sha256={module.get('sha256')} ---"
+        )
+        body = str(module.get("body") or "")
+        if f"{header}\n{body}" not in rendered:
+            return False
+    return True
+
+
+def _looks_like_actual_sibling_exports(
+    value: Any,
+    *,
+    messages: list[dict[str, Any]] | None = None,
+) -> bool:
     if not isinstance(value, dict):
         return False
-    schema_version = str(value.get("schema_version") or "").strip()
-    if schema_version == "polaris.actual_sibling_exports.evidence.v1":
-        return True
-    return (
-        isinstance(value.get("modules"), (list, tuple))
-        or _int_value(value.get("actual_interface_snapshot_file_count")) > 0
+    if value.get("schema_version") != "polaris.actual_sibling_exports.evidence.v2":
+        return False
+    if value.get("source") != "roles.adapters.director.task_runtime_dependency_artifact_snapshot":
+        return False
+    dependency_ids = _string_list(value.get("dependency_task_ids"))
+    covered_parent_ids = _string_list(value.get("covered_parent_task_ids"))
+    if not dependency_ids or dependency_ids != covered_parent_ids or len(set(dependency_ids)) != len(dependency_ids):
+        return False
+    modules = value.get("modules")
+    if not isinstance(modules, list) or not modules:
+        return False
+    if type(value.get("module_count")) is not int or value.get("module_count") != len(modules):
+        return False
+    total_bytes = 0
+    module_parent_ids: set[str] = set()
+    required_hash_fields = (
+        "source_fact_hash",
+        "effect_receipt_hash",
+        "effect_receipt_binding_hash",
+        "physical_result_hash",
+        "target_state_hash",
+        "sha256",
     )
+    for module in modules:
+        if not isinstance(module, dict):
+            return False
+        parent_task_id = str(module.get("parent_task_id") or "").strip()
+        if parent_task_id not in dependency_ids:
+            return False
+        module_parent_ids.add(parent_task_id)
+        if not str(module.get("parent_runtime_task_id") or "").strip():
+            return False
+        if not str(module.get("parent_external_task_id") or "").strip():
+            return False
+        if not str(module.get("source_fact_ref") or "").startswith("task_runtime.observable_task:"):
+            return False
+        if not str(module.get("effect_receipt_id") or "").strip():
+            return False
+        if any(not _is_sha256(module.get(field)) for field in required_hash_fields):
+            return False
+        path = str(module.get("path") or "").strip()
+        if (
+            not path
+            or path.startswith("/")
+            or "\\" in path
+            or "\x00" in path
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+        ):
+            return False
+        body = module.get("body")
+        if not isinstance(body, str) or not body:
+            return False
+        body_bytes = body.encode("utf-8")
+        if type(module.get("byte_count")) is not int or module.get("byte_count") != len(body_bytes):
+            return False
+        if hashlib.sha256(body_bytes).hexdigest() != module.get("sha256"):
+            return False
+        guarded_snapshot = module.get("guarded_snapshot")
+        if not isinstance(guarded_snapshot, dict):
+            return False
+        for field in ("device", "inode", "mtime_ns", "ctime_ns", "root_device", "root_inode"):
+            if type(guarded_snapshot.get(field)) is not int or guarded_snapshot[field] < 0:
+                return False
+        total_bytes += len(body_bytes)
+    if module_parent_ids != set(dependency_ids):
+        return False
+    if type(value.get("total_byte_count")) is not int or value.get("total_byte_count") != total_bytes:
+        return False
+    snapshot_hash = str(value.get("snapshot_sha256") or "").strip()
+    if not _is_sha256(snapshot_hash) or snapshot_hash != _canonical_actual_sibling_exports_hash(value):
+        return False
+    return messages is None or _actual_sibling_exports_message_bound(value, messages)
 
 
-def _direct_actual_sibling_exports_payload(ai_request: Any | None) -> dict[str, Any]:
+def _direct_actual_sibling_exports_payload(
+    ai_request: Any | None,
+    *,
+    messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     if ai_request is None:
         return {}
     context_payload = _request_context(ai_request)
@@ -1029,7 +1166,7 @@ def _direct_actual_sibling_exports_payload(ai_request: Any | None) -> dict[str, 
         _mapping(context_payload.get("blueprint")),
     ):
         candidate = container.get("actual_sibling_exports")
-        if isinstance(candidate, dict) and _looks_like_actual_sibling_exports(candidate):
+        if isinstance(candidate, dict) and _looks_like_actual_sibling_exports(candidate, messages=messages):
             return dict(candidate)
     return {}
 
@@ -1037,56 +1174,16 @@ def _direct_actual_sibling_exports_payload(ai_request: Any | None) -> dict[str, 
 def _actual_sibling_exports_payload(
     ai_request: Any | None,
     module_interface_contract: dict[str, Any] | None = None,
+    *,
+    messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    del module_interface_contract
     if ai_request is None:
         return {}
-    direct_payload = _direct_actual_sibling_exports_payload(ai_request)
+    direct_payload = _direct_actual_sibling_exports_payload(ai_request, messages=messages)
     if direct_payload:
         return direct_payload
-    contract = module_interface_contract or _module_interface_contract_payload(ai_request)
-    modules = contract.get("modules") if isinstance(contract, dict) else None
-    rows: list[dict[str, Any]] = []
-    if isinstance(modules, (list, tuple)):
-        for module in modules:
-            if not isinstance(module, dict):
-                continue
-            symbols = _string_list(module.get("actual_public_symbols"))
-            if not symbols:
-                continue
-            rows.append(
-                {
-                    "path": str(module.get("path") or "").strip(),
-                    "symbols": symbols,
-                    "symbol_source": str(module.get("symbol_source") or "").strip(),
-                }
-            )
-    context_payload = _request_context(ai_request)
-    existing_target_files: list[dict[str, Any]] = []
-    for container in (
-        context_payload,
-        _mapping(context_payload.get("ce_blueprint")),
-        _mapping(context_payload.get("chief_engineer_blueprint")),
-        _mapping(context_payload.get("blueprint")),
-        _task_metadata(ai_request),
-    ):
-        raw_rows = container.get("existing_target_files")
-        if isinstance(raw_rows, (list, tuple)):
-            existing_target_files.extend(dict(item) for item in raw_rows if isinstance(item, dict))
-    snapshot_file_count = (
-        _int_value(contract.get("actual_interface_snapshot_file_count")) if isinstance(contract, dict) else 0
-    )
-    if not rows and not existing_target_files and snapshot_file_count <= 0:
-        return {}
-    return {
-        "schema_version": "polaris.actual_sibling_exports.evidence.v1",
-        "modules": rows[:20],
-        "module_count": len(rows),
-        "existing_target_file_count": len(existing_target_files),
-        "actual_interface_snapshot_sources": _string_list(contract.get("actual_interface_snapshot_sources"))
-        if isinstance(contract, dict)
-        else [],
-        "actual_interface_snapshot_file_count": snapshot_file_count,
-    }
+    return {}
 
 
 def _looks_like_interface_discrepancy_payload(value: Any) -> bool:
@@ -1571,7 +1668,14 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     ce_blueprint = _ce_blueprint_payload(ai_request)
     target_scope = _target_scope_payload(ai_request)
     module_interface_contract = _module_interface_contract_payload(ai_request)
-    actual_sibling_exports = _actual_sibling_exports_payload(ai_request, module_interface_contract)
+    actual_sibling_exports = _actual_sibling_exports_payload(
+        ai_request,
+        module_interface_contract,
+        messages=_request_messages(
+            ai_request,
+            [dict(item) for item in prepared.messages if isinstance(item, dict)],
+        ),
+    )
     interface_discrepancy_context = _interface_discrepancy_context_payload(ai_request)
     architecture_or_file_plan = _architecture_or_file_plan_payload(ai_request)
     failed_gate_evidence = _failed_gate_evidence_payload(ai_request)
@@ -2637,7 +2741,7 @@ def build_final_request_context_audit_for_request(
         window_tokens >= _UNDERUTILIZED_WINDOW_THRESHOLD
         and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
     )
-    coverage = _coverage_flags(ai_request=ai_request)
+    coverage = _coverage_flags(ai_request=ai_request, prepared=prepared)
     prompt_profile_selection = _prompt_profile_selection(ai_request)
     sampling = _request_sampling_audit(ai_request, prepared)
     request_metadata_summary = _request_metadata_summary(ai_request, prepared)

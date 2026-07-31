@@ -45,6 +45,13 @@ from .adapter_sequential import (
     execute_hybrid,
     execute_sequential,
 )
+from .dependency_artifact_evidence import (
+    DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
+    DirectorDependencyArtifactEvidenceError,
+    TrustedDirectorDependencyArtifactSnapshotV2,
+    build_director_dependency_artifact_snapshot,
+    project_director_dependency_artifact_snapshot,
+)
 from .dialogue import get_settings_safe
 from .execute_method import execute_director_task
 from .execution import DirectorPatchExecutor
@@ -816,219 +823,6 @@ def _director_actual_interface_injection_enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
-def _build_director_actual_sibling_exports_payload(workspace: str) -> dict[str, Any]:
-    """Build structured evidence for actual exports already present in the workspace."""
-
-    try:
-        from polaris.kernelone.quality.cross_artifact_interfaces import build_symbol_index_snapshot
-
-        snapshot = build_symbol_index_snapshot(workspace)
-    except (OSError, RuntimeError, ValueError, TypeError, ImportError):
-        return {}
-    exports = getattr(snapshot, "physical_exports", {}) or {}
-    if not isinstance(exports, dict) or not exports:
-        return {}
-    modules: list[dict[str, Any]] = []
-    for path in sorted(exports):
-        symbols = exports.get(path) or ()
-        rendered: list[str] = []
-        symbol_kinds: dict[str, str] = {}
-        signatures: dict[str, str] = {}
-        for sym in symbols[:32]:
-            name = str(getattr(sym, "name", "") or "").strip()
-            if not name:
-                continue
-            rendered.append(name)
-            kind = str(getattr(sym, "symbol_kind", "") or "").strip()
-            signature = str(getattr(sym, "signature", "") or "").strip()
-            if kind:
-                symbol_kinds[name] = kind
-            if signature:
-                signatures[name] = signature
-        if not rendered:
-            continue
-        module: dict[str, Any] = {
-            "path": str(path),
-            "symbols": rendered,
-            "symbol_source": "workspace_symbol_index",
-        }
-        if symbol_kinds:
-            module["symbol_kinds"] = symbol_kinds
-        if signatures:
-            module["signatures"] = signatures
-        modules.append(module)
-        if len(modules) >= 50:
-            break
-    if not modules:
-        return {}
-    return {
-        "schema_version": "polaris.actual_sibling_exports.evidence.v1",
-        "source": "roles.adapters.director.workspace_symbol_index",
-        "modules": modules,
-        "module_count": len(modules),
-        "actual_interface_snapshot_sources": ["workspace_symbol_index"],
-        "actual_interface_snapshot_file_count": len(exports),
-    }
-
-
-def _inject_director_actual_sibling_exports(context: dict[str, Any], *, workspace: str) -> None:
-    """Promote actual sibling exports into structured context and metadata."""
-
-    if not _director_actual_interface_injection_enabled():
-        return
-    if isinstance(context.get("actual_sibling_exports"), dict):
-        return
-    payload = _build_director_actual_sibling_exports_payload(workspace)
-    if not payload:
-        return
-    context["actual_sibling_exports"] = payload
-    metadata_raw = context.get("metadata")
-    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-    metadata.setdefault("actual_sibling_exports", payload)
-    context["metadata"] = metadata
-
-
-def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
-    """Inject the ACTUAL exported symbols of already-generated workspace files.
-
-    A consumer task (e.g. the CLI/engine that imports the models a prior task
-    generated) otherwise only receives the CE's PREDICTED interface or a generic
-    "read the existing files first" hint, so the model guesses symbol names
-    (root#4 cross-file incoherence) or read-explores siblings at runtime (no-write
-    retry batches). Bounded to names + kinds + signatures, never file bodies.
-    Inert on error or empty workspace.
-    """
-    try:
-        from polaris.kernelone.quality.cross_artifact_interfaces import build_symbol_index_snapshot
-
-        snapshot = build_symbol_index_snapshot(workspace)
-    except (OSError, RuntimeError, ValueError, TypeError, ImportError):
-        return []
-    exports = getattr(snapshot, "physical_exports", {}) or {}
-    if not exports:
-        return []
-    lines: list[str] = [
-        "已生成文件的实际导出接口 / Actual exported interface of already-generated sibling files:",
-        "(消费或引用这些文件时必须使用下列真实符号名与签名，禁止臆造；这些即真实接口，无需先 read_file 探索)",
-        "TEST/CONFIG/DOC TASK HARD RULE: imports from existing source files may use only the actual symbols listed here; planned_exports/tentative_exports are advisory and must not be imported as if they already exist.",
-    ]
-    file_count = 0
-    for path in sorted(exports):
-        symbols = exports[path]
-        if not symbols:
-            continue
-        rendered: list[str] = []
-        for sym in symbols[:14]:
-            name = str(getattr(sym, "name", "") or "")
-            if not name:
-                continue
-            sig = str(getattr(sym, "signature", "") or "")
-            kind = str(getattr(sym, "symbol_kind", "") or "")
-            rendered.append(name + (f"({sig})" if sig else "") + (f" [{kind}]" if kind else ""))
-        if rendered:
-            lines.append(f"- {path}: " + ", ".join(rendered))
-            file_count += 1
-        if file_count >= 24:
-            break
-    # build_symbol_index_snapshot yields only 'class' for a class (no fields), so
-    # after symbol coherence is fixed the residual runtime logic bug is the model
-    # misusing a class field/type (e.g. treating a str as an object with `.name`).
-    # Inject bounded actual file bodies so it sees the real fields/constructors/
-    # return types. These files already exist and are correct -- the model must USE
-    # their symbols, not rewrite them.
-    # Budget large enough to carry full small/medium implementations: a TEST task
-    # must see the WHOLE implementation it asserts against (factory_bench L1-03
-    # forecast.py is 433 lines; a 60-line snippet left the model guessing expected
-    # values -> 11 failing test assertions). Still capped so a huge file cannot
-    # dominate the window.
-    content_budget = 30000
-    # build_symbol_index_snapshot omits entrypoint files (e.g. Go main.go where
-    # package-level helpers like fixedClock/mustExhibit live), so a TEST task that
-    # only sees `exports` redeclares them and fails to compile (factory_bench L1-04
-    # main_test.go redeclared main.go symbols). Walk the workspace for real impl
-    # source files too, entrypoint first, skipping the test files the task itself
-    # writes and build/vendor dirs.
-    _src_ext = (
-        ".py",
-        ".go",
-        ".ts",
-        ".tsx",
-        ".js",
-        ".jsx",
-        ".rs",
-        ".java",
-        ".rb",
-        ".c",
-        ".cc",
-        ".cpp",
-        ".h",
-        ".hpp",
-        ".cs",
-        ".kt",
-        ".swift",
-        ".php",
-    )
-    _skip_seg = {
-        "node_modules",
-        ".git",
-        "dist",
-        "build",
-        "target",
-        "__pycache__",
-        "vendor",
-        ".venv",
-        "venv",
-        ".polaris",
-        ".mypy_cache",
-    }
-
-    def _looks_like_test(rel: str) -> bool:
-        base = rel.rsplit("/", 1)[-1]
-        guarded = f"/{rel}/"
-        return (
-            base.startswith("test_")
-            or base.endswith("_test.go")
-            or base.endswith("_test.py")
-            or ".test." in base
-            or ".spec." in base
-            or "/tests/" in guarded
-            or "/test/" in guarded
-        )
-
-    inject_paths: list[str] = [p for p in sorted(exports) if not _looks_like_test(p)]
-    seen_paths = set(inject_paths)
-    for _root, _dirs, _files in os.walk(workspace):
-        _dirs[:] = [_d for _d in _dirs if _d not in _skip_seg]
-        for _fn in _files:
-            if not _fn.endswith(_src_ext):
-                continue
-            _rel = os.path.relpath(os.path.join(_root, _fn), workspace).replace("\\", "/")
-            if _rel in seen_paths or _looks_like_test(_rel):
-                continue
-            seen_paths.add(_rel)
-            inject_paths.append(_rel)
-    inject_paths.sort(key=lambda p: (0 if p.rsplit("/", 1)[-1].split(".")[0] in {"main", "index", "app"} else 1, p))
-    body_lines: list[str] = []
-    for path in inject_paths:
-        if content_budget <= 0:
-            break
-        try:
-            with open(os.path.join(workspace, path), encoding="utf-8", errors="replace") as _fh:
-                snippet = "\n".join(_fh.read().splitlines()[:400])[:content_budget]
-        except OSError:
-            continue
-        if not snippet.strip():
-            continue
-        body_lines.append(f"--- {path} (已存在文件实际内容；请使用其符号，勿重复声明或重写此文件) ---")
-        body_lines.append(snippet)
-        content_budget -= len(snippet)
-    if body_lines:
-        lines.append("")
-        lines.append("已生成依赖文件的实际定义（据此正确使用其类字段/构造/返回类型，避免把 str 当对象等逻辑误用）:")
-        lines.extend(body_lines)
-    return lines if file_count else []
-
-
 def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -> list[str]:
     resolved_blueprint_id = str(blueprint_id or "").strip()
     if not resolved_blueprint_id:
@@ -1514,6 +1308,20 @@ class DirectorAdapter(BaseRoleAdapter):
         seq_config = self._get_sequential_config(context)
         if not seq_config:
             return {"success": False, "error": "Sequential not enabled"}
+        timeout_seconds = float(seq_config["budget"].max_wall_time_seconds)
+
+        async def _call_canonical_role_runtime(
+            message: str,
+            *,
+            context: dict[str, Any] | None,
+        ) -> dict[str, Any]:
+            return await self._invoke_role_dialogue_with_timeout(
+                message,
+                context=context,
+                timeout_seconds=timeout_seconds,
+                stage_label="sequential",
+            )
+
         return await execute_sequential(
             self.workspace,
             self.role_id,
@@ -1522,7 +1330,7 @@ class DirectorAdapter(BaseRoleAdapter):
             run_id,
             context,
             seq_config,
-            self._invoke_role_dialogue_with_timeout,
+            _call_canonical_role_runtime,
             self._emit_task_trace_event,
             self._build_director_message,
         )
@@ -1538,6 +1346,20 @@ class DirectorAdapter(BaseRoleAdapter):
         seq_config = self._get_sequential_config(context)
         if not seq_config:
             return {"success": False, "error": "Sequential not enabled"}
+        timeout_seconds = float(seq_config["budget"].max_wall_time_seconds)
+
+        async def _call_canonical_role_runtime(
+            message: str,
+            *,
+            context: dict[str, Any] | None,
+        ) -> dict[str, Any]:
+            return await self._invoke_role_dialogue_with_timeout(
+                message,
+                context=context,
+                timeout_seconds=timeout_seconds,
+                stage_label="hybrid",
+            )
+
         return await execute_hybrid(
             self.workspace,
             self.role_id,
@@ -1547,6 +1369,8 @@ class DirectorAdapter(BaseRoleAdapter):
             context,
             seq_config,
             self._emit_task_trace_event,
+            _call_canonical_role_runtime,
+            self._build_director_message,
         )
 
     # -------------------------------------------------------------------------
@@ -1603,7 +1427,18 @@ class DirectorAdapter(BaseRoleAdapter):
         )
 
         context_payload = dict(context) if isinstance(context, dict) else {}
-        _inject_director_actual_sibling_exports(context_payload, workspace=str(self.workspace))
+        trusted_dependency_snapshot = context_payload.pop(
+            DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
+            None,
+        )
+        project_director_dependency_artifact_snapshot(
+            context_payload,
+            (
+                trusted_dependency_snapshot
+                if type(trusted_dependency_snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+                else None
+            ),
+        )
         self._ensure_director_verification_commands(
             message=message,
             context=context_payload,
@@ -2323,6 +2158,56 @@ class DirectorAdapter(BaseRoleAdapter):
     # Director Message Building
     # -------------------------------------------------------------------------
 
+    def _prepare_director_dependency_artifact_snapshot(
+        self,
+        *,
+        task: dict[str, Any],
+        context: dict[str, Any],
+    ) -> TrustedDirectorDependencyArtifactSnapshotV2 | None:
+        """Project one trusted parent-artifact snapshot into a mutable turn context."""
+
+        task_metadata = _copy_mapping_payload(task.get("metadata")) or {}
+        context_metadata = _copy_mapping_payload(context.get("metadata")) or {}
+        merged_task = dict(task)
+        merged_task["metadata"] = {**task_metadata, **context_metadata}
+        for key in (
+            "resolved_depends_on_task_ids",
+            "depends_on_task_ids",
+            "depends_on_external",
+            "dependency_task_ids",
+            "depends_on",
+        ):
+            if key not in merged_task["metadata"] and context.get(key) not in (None, "", [], (), {}):
+                merged_task["metadata"][key] = context[key]
+
+        context.pop(DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY, None)
+        project_director_dependency_artifact_snapshot(context, None)
+        if not _director_actual_interface_injection_enabled():
+            return None
+        try:
+            snapshot = build_director_dependency_artifact_snapshot(
+                workspace=str(self.workspace),
+                child_task=merged_task,
+                get_task=lambda parent_task_id: self._get_task(parent_task_id),
+            )
+        except DirectorDependencyArtifactEvidenceError as exc:
+            metadata = _copy_mapping_payload(context.get("metadata")) or {}
+            metadata["actual_sibling_exports_projection_error"] = {
+                "schema_version": "polaris.actual_sibling_exports.projection_error.v1",
+                "code": exc.code,
+                "details": dict(exc.details),
+            }
+            context["metadata"] = metadata
+            return None
+
+        metadata = _copy_mapping_payload(context.get("metadata")) or {}
+        metadata.pop("actual_sibling_exports_projection_error", None)
+        context["metadata"] = metadata
+        if type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2:
+            context[DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY] = snapshot
+        project_director_dependency_artifact_snapshot(context, snapshot)
+        return snapshot
+
     def _build_director_message(
         self,
         task: dict[str, Any],
@@ -2336,6 +2221,10 @@ class DirectorAdapter(BaseRoleAdapter):
         raw_metadata = task.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         runtime_context = context if isinstance(context, dict) else {}
+        dependency_artifact_snapshot = self._prepare_director_dependency_artifact_snapshot(
+            task=task,
+            context=runtime_context,
+        )
         runtime_metadata_raw = runtime_context.get("metadata")
         runtime_metadata: dict[str, Any] = runtime_metadata_raw if isinstance(runtime_metadata_raw, dict) else {}
         goal = str(
@@ -2511,9 +2400,9 @@ class DirectorAdapter(BaseRoleAdapter):
             ),
             "",
             *(
-                _build_director_workspace_interface_lines(self.workspace)
-                if _director_actual_interface_injection_enabled()
-                else []
+                dependency_artifact_snapshot.message_lines()
+                if type(dependency_artifact_snapshot) is TrustedDirectorDependencyArtifactSnapshotV2
+                else ()
             ),
             "",
             "QA 返工要求:" if qa_rework_reason else "",

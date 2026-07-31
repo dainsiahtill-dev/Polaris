@@ -1,7 +1,7 @@
 card_id: vc-20260720-pre-bench-execution-fact-chain-gate
 classification: structural
 status: active
-bench_status: r116_consumed_failed_two_platform_defects_open_not_schedulable
+bench_status: r119_consumed_terminal_offline_closed_pending_independent_review_not_schedulable
 bug_summary: >-
   DEO-1A through DEO-4 and B3.4-B3.6 are closed. The first authorized fresh
   isolated L1-04 run exposed final_request_role_included_refs_drift before CE
@@ -1072,10 +1072,11 @@ latest_consumed_run_r109:
   instance_stopped_via_launcher: true
 scheduling:
   bench_schedulable: false
-  authorization_scope: none
+  authorization_scope: none_pending_independent_review
   project_id: L1-05
-  source_head: e11a86db623a0babcd713e3d32b97341b6cad1b8
-  backend_fingerprint: 46562cb0fd37568f
+  source_head: 2d46c996fadd8952caf1e39705119f4aa1048e47
+  source_diff_sha256: pending_recompute_after_independent_review
+  backend_fingerprint: 3eb8e3cc2c288270
   per_project_timeout_seconds: 5400
   outer_timeout_seconds: 6000
   real_run_timeout_seconds: 180
@@ -1086,11 +1087,209 @@ scheduling:
     backend: 49977
     frontend: 5173
   next_action: >-
-    Close R116-CE-CONTEXT-OS-CONTROL-PLANE-LEAK and
-    R116-DIRECTOR-RETRY-DEO-SCOPE-BINDING, rerun their focused and broad
-    non-Provider gates, obtain independent review, and recapture a stable
-    backend fingerprint before authorizing at most one fresh isolated R117.
-    No Bench or Provider attempt is authorized while either defect is open.
+    R119 is terminal and its two failed runtime-fact edges are implemented and
+    green offline. Complete independent read-only review of R119 and R119A,
+    recompute the synchronized source fingerprint, and only then decide whether
+    exactly one fresh isolated R120 is authorized. Do not start another run.
+latest_consumed_run_r119:
+  project_id: L1-05
+  bench_run_id: d103df7a7d40
+  factory_run_id: factory_10da0efd8077
+  work_dir: /tmp/factory-bench-l1-05-r119
+  result: failed_at_director_dependent_artifact_context_closure
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 1061.4
+  source_files: 10
+  source_lines: 1003
+  test_files: 0
+  qa_reached: false
+  role_results:
+    pm: success
+    chief_engineer: success
+    director: partial
+    qa: not_reached
+  exact_request_audit:
+    task_2_context_snapshot_ref: e335121ae3df449813588714
+    task_2_actual_sibling_exports: absent
+    task_2_actual_parent_bodies: absent
+    task_2_compile_failure: "E0432 unresolved import models::flavor::FlavorAxis"
+    task_3_provider_request_created: false
+    task_3_pre_provider_failure: missing_required_refs_failed_gate_evidence
+  first_failed_edge: >-
+    Committed TASK-1 physical Rust artifacts did not reach dependent TASK-2's
+    final Provider request because an empty language-specific semantic index
+    suppressed all physical fallback evidence.
+  machine_readable_defects:
+    R119-DEPENDENT-ARTIFACT-CONTEXT-CLOSURE: IMPLEMENTED_OFFLINE_PENDING_INDEPENDENT_REVIEW
+    R119A-EAGER-WORKSPACE-LANGUAGE-SCAN: IMPLEMENTED_OFFLINE_PENDING_INDEPENDENT_REVIEW
+  verification:
+    new_red_to_green: "5 passed"
+    director_tasking: "411 passed in 176.79s"
+    director_adapter_pure: "441 passed, 2 warnings"
+    final_request_sampling_audit: "48 passed"
+    roles_kernel: "2799 passed, 1 warning"
+    roles_adapters: "1311 passed, 2 warnings"
+    factory_pipeline: "1289 passed, 2 warnings"
+    static_gates: pass
+    post_edit_codegraph_review: pass
+    independent_review: pending
+  authorization:
+    run_id: R120
+    project_id: L1-05
+    count: 0
+    consumed: false
+    authorized: false
+    launcher_instance_mode: isolated
+    bench_session_reporting: false
+latest_consumed_run_r118:
+  project_id: L1-05
+  bench_run_id: 9f26348117b6
+  factory_run_id: factory_55f243df0040
+  work_dir: /tmp/factory-bench-l1-05-r118
+  result: failed_at_chief_engineer_structured_result_free_text_filter_corruption
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 172.3
+  source_files: 0
+  qa_reached: false
+  role_results:
+    pm: success
+    chief_engineer: failed
+    director: not_reached
+    qa: not_reached
+  exact_request_audit:
+    provider_type: anthropic_compat
+    model: deepseek-v4-pro
+    forced_tool_name: submit_structured_role_output
+    primary_native_result_tool_calls: 1
+    repair_native_result_tool_calls: 1
+    context_os_audit: pass
+    evidence_coverage: pass
+  first_failed_edge: >-
+    StructuredOutputStreamNormalizer emitted caller-schema-validated canonical
+    JSON as an ordinary chunk, and StreamEventHandler reinterpreted it through
+    free-text delimiter filters, reordering legal JSON bytes.
+  machine_readable_defects:
+    R118-STRUCTURED-RESULT-FREE-TEXT-FILTER-CORRUPTION: CLOSED_VERIFIED
+  verification:
+    focused: "154 passed"
+    roles_kernel: "4227 passed, 2 warnings"
+    factory: "1357 passed, 2 warnings"
+    static_gates: pass
+    post_edit_codegraph_review: pass
+    independent_review: "CLEAR; Critical=0 Important=0 Minor=0; 22 passed"
+  authorization:
+    run_id: R119
+    project_id: L1-05
+    count: 1
+    consumed: true
+    launcher_instance_mode: isolated
+    bench_session_reporting: false
+    per_project_timeout_seconds: 5400
+    outer_timeout_seconds: 6000
+    invalidate_on_source_fingerprint_drift: true
+latest_consumed_run_r117:
+  project_id: L1-05
+  bench_run_id: cf5872a7cd58
+  factory_run_id: factory_f3292e71fe48
+  instance_id: factory-bench-l1-05-r117-l1-05-run-cf5872a7cd58-4bbb77f80487d198
+  work_dir: /tmp/factory-bench-l1-05-r117
+  result: failed_at_director_task_2_context_os_ambiguous_content_key
+  canonical_gate: run_ledger_integrity_failed
+  completed_verified: false
+  acceptance_evidence_valid: true
+  wall_clock_seconds: 307.0
+  source_files: 6
+  production_lines: 232
+  test_files: 0
+  rust_compile: pass
+  qa_reached: false
+  role_results:
+    pm: success
+    chief_engineer: success
+    director_task_1: completed_verified
+    director_task_2: failed_before_provider_transport
+    director_task_3: blocked
+  final_request_context_refs:
+    pm:
+      - 52077cd6f14e983765884e1d
+      - 3d58ed1157d8c6e15a59b059
+    chief_engineer:
+      - 8df35d85f86ed2ad0d5bd45c
+      - e46f542f57f3be4d046d6a12
+    director:
+      - 367fa154be09fbcf7d903b55
+      - 32534185ab53bb65a2ad623c
+      - 3fff0455ce61117f6adbf3cc
+  exact_first_failed_edge:
+    source: context_os_prompt_content_taxonomy
+    target: final_provider_attempt_qualification
+    error: final_request_context_quality_failed
+    content_hits:
+      - "'metadata'"
+    metadata_key_hits: []
+    provider_transport_attempted: false
+  closed_defects:
+    R117-CONTEXT-OS-AMBIGUOUS-CONTENT-KEY-FALSE-POSITIVE: CLOSED_VERIFIED
+  closure_evidence:
+    focused: "150 passed"
+    roles_kernel: "2794 passed, 1 warning"
+    factory: "1289 passed, 2 warnings"
+    kernelone_audit: "150 passed"
+    kernelone_release_gate: "ok=true; suite_size=51; 415 passed, 1 skipped, 2 warnings"
+    exact_r117_replay: "12 messages; ok=true; content_hits=[]; metadata_key_hits=[]"
+    static_gates: pass
+    post_edit_codegraph_review: pass
+    independent_review: "CLEAR; Critical=0 Important=0 Minor=0; 9 passed"
+    stable_backend_fingerprint: 67dce593ec089c44
+  instance_stop_result: >-
+    Launcher stop returned a delayed port-release error, then the authoritative
+    instance projection reported status=stopped with backend_alive=false and
+    frontend_alive=false.
+  instance_stopped: true
+latest_preflight_r117_defect_closure:
+  status: PASS
+  provider_calls_after_fix: 0
+  bench_runs_after_fix: 0
+  source_head: 2d46c996fadd8952caf1e39705119f4aa1048e47
+  backend_fingerprint_a: 67dce593ec089c44
+  backend_fingerprint_b: 67dce593ec089c44
+  source_fingerprints_identical: true
+  machine_readable_defects:
+    R117-CONTEXT-OS-AMBIGUOUS-CONTENT-KEY-FALSE-POSITIVE: CLOSED_VERIFIED
+  exact_request_replay:
+    context_snapshot_ref: 3fff0455ce61117f6adbf3cc
+    message_count: 12
+    before:
+      ok: false
+      content_hits:
+        - "'metadata'"
+    after:
+      ok: true
+      content_hits: []
+      metadata_key_hits: []
+      current_user_instruction_preserved: true
+      current_user_final: true
+  verification:
+    focused: "150 passed"
+    roles_kernel: "2794 passed, 1 warning"
+    factory: "1289 passed, 2 warnings"
+    kernelone_audit: "150 passed"
+    kernelone_release_gate: "ok=true; suite_size=51; 415 passed, 1 skipped, 2 warnings"
+    static_gates: pass
+    post_edit_codegraph_review: pass
+    independent_review: "CLEAR; Critical=0 Important=0 Minor=0; 9 passed"
+  authorization:
+    run_id: R118
+    project_id: L1-05
+    count: 1
+    consumed: true
+    launcher_instance_mode: isolated
+    bench_session_reporting: false
+    per_project_timeout_seconds: 5400
+    outer_timeout_seconds: 6000
+    invalidate_on_source_fingerprint_drift: true
 latest_consumed_run_r116:
   project_id: L1-05
   bench_run_id: 829b6431bad9
@@ -1120,10 +1319,47 @@ latest_consumed_run_r116:
       - 7e057430843090264f7074a8
       - c38e916a4b485af18a7f22ee
       - 12a0aec024af573034c52fa2
-  open_defects:
-    - R116-CE-CONTEXT-OS-CONTROL-PLANE-LEAK
-    - R116-DIRECTOR-RETRY-DEO-SCOPE-BINDING
+  closed_defects:
+    R116-CE-CONTEXT-OS-CONTROL-PLANE-LEAK: CLOSED_VERIFIED
+    R116-DIRECTOR-RETRY-DEO-SCOPE-BINDING: CLOSED_VERIFIED
+  closure_evidence:
+    roles_kernel: "4222 passed, 2 warnings"
+    factory: "1357 passed, 2 warnings"
+    kernelone_audit: "818 passed"
+    kernelone_release_gate: "ok=true; suite_size=51; 415 passed, 1 skipped, 2 warnings"
+    static_gates: pass
+    independent_review: "CLEAR; Critical=0 Important=0 Minor=0; 6 passed"
+    stable_backend_fingerprint: 745451bc6b829e00
   instance_stopped_via_launcher: true
+latest_preflight_r116_defect_closure:
+  status: PASS
+  provider_calls_after_fix: 0
+  bench_runs_after_fix: 0
+  source_head: 2d46c996fadd8952caf1e39705119f4aa1048e47
+  backend_fingerprint_a: 745451bc6b829e00
+  backend_fingerprint_b: 745451bc6b829e00
+  source_fingerprints_identical: true
+  machine_readable_defects:
+    R116-CE-CONTEXT-OS-CONTROL-PLANE-LEAK: CLOSED_VERIFIED
+    R116-DIRECTOR-RETRY-DEO-SCOPE-BINDING: CLOSED_VERIFIED
+  verification:
+    focused: "318 passed plus 2 red-to-green contract tests"
+    roles_kernel: "4222 passed, 2 warnings"
+    factory: "1357 passed, 2 warnings"
+    kernelone_audit: "818 passed"
+    kernelone_release_gate: "ok=true; suite_size=51; 415 passed, 1 skipped, 2 warnings"
+    static_gates: pass
+    independent_review: "CLEAR; Critical=0 Important=0 Minor=0; 6 passed"
+  authorization:
+    run_id: R117
+    project_id: L1-05
+    count: 1
+    consumed: true
+    launcher_instance_mode: isolated
+    bench_session_reporting: false
+    per_project_timeout_seconds: 5400
+    outer_timeout_seconds: 6000
+    invalidate_on_source_fingerprint_drift: true
 latest_preflight_r115_deterministic_check_section:
   defect_id: R115-DETERMINISTIC-CHECK-SECTION-LEAK
   status: CLOSED_REQUALIFIED

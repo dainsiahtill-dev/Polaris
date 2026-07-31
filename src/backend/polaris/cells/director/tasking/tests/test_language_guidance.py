@@ -6,8 +6,9 @@ All text file operations in these tests use explicit UTF-8 encoding.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+from polaris.cells.director.tasking.internal import language_guidance
 from polaris.cells.director.tasking.internal.execution_profile import (
     resolve_director_execution_profile,
 )
@@ -144,6 +145,36 @@ def test_detect_primary_language_falls_back_to_workspace(tmp_path) -> None:
     source.write_text("fn main() {}\n", encoding="utf-8")
 
     assert detect_primary_language([], tmp_path) == "rust"
+
+
+def test_explicit_target_language_does_not_scan_workspace() -> None:
+    with patch.object(
+        language_guidance,
+        "_language_from_workspace",
+        side_effect=AssertionError("workspace scan must be lazy"),
+    ) as workspace_scanner:
+        identity, section = build_language_section(
+            ["src/main.ts"],
+            "/tmp",
+            subject="Implement TypeScript entrypoint",
+        )
+
+    workspace_scanner.assert_not_called()
+    assert "TypeScript" in identity
+    assert "Primary language: TypeScript" in section
+
+
+def test_unknown_target_language_uses_workspace_as_final_fallback() -> None:
+    with patch.object(language_guidance, "_language_from_workspace", return_value="rust") as workspace_scanner:
+        identity, section = build_language_section(
+            ["README.md"],
+            "/tmp/fallback-workspace",
+            subject="Document the existing project",
+        )
+
+    workspace_scanner.assert_called_once_with("/tmp/fallback-workspace")
+    assert "Rust" in identity
+    assert "Primary language: Rust" in section
 
 
 def test_unknown_language_uses_generic_identity() -> None:
@@ -290,6 +321,81 @@ def test_fresh_source_materialization_is_not_reclassified_as_tests_by_acceptance
     assert profile.temperature_phase == "code_generation"
     assert "failed_gate_or_verification_evidence" not in strategy.evidence_requirements
     assert strategy.context_underutilized_policy == "warn"
+
+
+def test_first_pass_tests_require_actual_sibling_exports_only_when_dependent() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Implement Rust acceptance tests and README",
+        description=(
+            "Create tests/product.rs with normal, boundary, and invalid-input behavior assertions. "
+            "This is the first verification pass after the implementation task."
+        ),
+        metadata={"phase": "verification", "project_type": "cargo_workspace", "language": "rust"},
+        target_files=["tests/product.rs", "README.md"],
+        scope_paths=["tests/product.rs", "README.md"],
+    )
+
+    strategy = resolve_director_execution_strategy(
+        profile,
+        metadata={"depends_on_external": ["TASK-2"]},
+    )
+    root_strategy = resolve_director_execution_strategy(profile, metadata={})
+
+    assert profile.task_type == "tests"
+    assert "actual_sibling_exports" in strategy.evidence_requirements
+    assert "actual_sibling_exports" not in root_strategy.evidence_requirements
+    assert "failed_gate_evidence" not in strategy.evidence_requirements
+    assert "failed_gate_evidence" not in root_strategy.evidence_requirements
+    assert "failed_gate_or_verification_evidence" not in strategy.evidence_requirements
+
+
+def test_bugfix_and_repair_keep_failed_gate_evidence_requirement() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Repair Rust compile failure",
+        description="Fix cargo check E0432 after the verifier reported the failing import.",
+        metadata={"phase": "repair", "project_type": "cargo_workspace", "language": "rust"},
+        target_files=["src/engine/flavor_rules.rs"],
+        scope_paths=["src/engine/flavor_rules.rs"],
+    )
+
+    strategy = resolve_director_execution_strategy(
+        profile,
+        metadata={
+            "depends_on": ["TASK-1"],
+            "previous_verification_result": {"exit_code": 101, "diagnostic": "E0432"},
+        },
+    )
+    root_strategy = resolve_director_execution_strategy(
+        profile,
+        metadata={"previous_verification_result": {"exit_code": 101, "diagnostic": "E0432"}},
+    )
+
+    assert profile.task_type == "bugfix"
+    assert profile.phase == "repair"
+    assert "failed_gate_evidence" in strategy.evidence_requirements
+    assert "failed_gate_evidence" in root_strategy.evidence_requirements
+    assert "actual_sibling_exports" in strategy.evidence_requirements
+    assert "actual_sibling_exports" not in root_strategy.evidence_requirements
+
+
+def test_only_dependent_code_task_requires_actual_sibling_exports() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Implement Rust mapping engine and CLI",
+        description="Implement the scoped engine files against the domain model task.",
+        metadata={"phase": "implementation", "project_type": "cargo_workspace", "language": "rust"},
+        target_files=["src/engine/mod.rs", "src/main.rs"],
+        scope_paths=["src/engine", "src/main.rs"],
+    )
+
+    dependent_strategy = resolve_director_execution_strategy(
+        profile,
+        metadata={"depends_on": ["TASK-1"]},
+    )
+    root_strategy = resolve_director_execution_strategy(profile, metadata={"depends_on": []})
+
+    assert profile.task_type == "write_code"
+    assert "actual_sibling_exports" in dependent_strategy.evidence_requirements
+    assert "actual_sibling_exports" not in root_strategy.evidence_requirements
 
 
 def test_execution_strategy_derives_large_budget_from_profile() -> None:

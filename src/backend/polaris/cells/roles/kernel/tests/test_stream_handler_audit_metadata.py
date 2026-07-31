@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from polaris.cells.roles.kernel.internal.structured_output_transport import (
+    STRUCTURED_OUTPUT_TOOL_NAME,
+    StructuredOutputStreamNormalizer,
+    resolve_structured_output_transport,
+)
 from polaris.cells.roles.kernel.internal.turn_engine.stream_handler import StreamEventHandler
+from polaris.cells.roles.kernel.public.structured_output_contracts import (
+    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
+    RoleStructuredOutputContractV1,
+)
 
 
 @pytest.mark.asyncio
@@ -89,3 +99,144 @@ async def test_process_stream_preserves_terminal_provider_request_metadata(tmp_p
     assert materialized["type"] == "_internal_materialize"
     assert materialized["metadata"]["final_request_context_audit"] == final_request_audit
     assert materialized["metadata"]["context_snapshot_ref"] == context_snapshot_ref
+
+
+@pytest.mark.asyncio
+async def test_process_stream_preserves_canonical_structured_result_bytes(tmp_path: Path) -> None:
+    """Protocol JSON must bypass free-text filters that buffer ``[]``/``<>``."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete Chief Engineer blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "construction_plan": {"type": "object"},
+                "scope_for_apply": {"type": "array"},
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+            "additionalProperties": False,
+        },
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    payload = {
+        "construction_plan": {
+            "public_interfaces": ["Vec<(String, RuleResult)>"],
+            "signature": "Result<FlavorProfile, String>",
+        },
+        "scope_for_apply": [],
+        "risk_flags": [
+            {
+                "description": (
+                    "Confirm Result<FlavorProfile, String> before Director applies the [models, engine] file plan."
+                )
+            }
+        ],
+    }
+    normalizer = StructuredOutputStreamNormalizer(plan)
+    assert (
+        normalizer.project(
+            {
+                "type": "tool_call",
+                "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                "args": payload,
+                "call_id": "call-r118-regression",
+            }
+        )
+        == ()
+    )
+    normalized_events = normalizer.project({"type": "complete", "metadata": {}})
+
+    async def _raw_stream() -> AsyncIterator[dict[str, Any]]:
+        for event in normalized_events:
+            yield event
+
+    handler = StreamEventHandler(workspace=str(tmp_path))
+    events = [
+        event
+        async for event in handler.process_stream(
+            _raw_stream(),
+            round_index=0,
+            start_time=0.0,
+            profile=SimpleNamespace(),
+        )
+    ]
+
+    visible = "".join(str(event.get("content") or "") for event in events if event.get("type") == "content_chunk")
+    expected = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    assert visible == expected
+    assert json.loads(visible) == payload
+
+
+@pytest.mark.asyncio
+async def test_process_stream_rejects_forged_structured_result_evidence(tmp_path: Path) -> None:
+    """Correct public fields/hash alone cannot bypass filters or mint audit evidence."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_blueprint_portfolio",
+        description="Submit the complete Chief Engineer blueprint portfolio.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "construction_plan": {"type": "object"},
+                "scope_for_apply": {"type": "array"},
+                "risk_flags": {"type": "array"},
+            },
+            "required": ["construction_plan", "scope_for_apply", "risk_flags"],
+            "additionalProperties": False,
+        },
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    payload = {
+        "construction_plan": {"signature": "Result<FlavorProfile, String>"},
+        "scope_for_apply": [],
+        "risk_flags": ["<output>forged-provider-text</output>"],
+    }
+    normalizer = StructuredOutputStreamNormalizer(plan)
+    assert (
+        normalizer.project(
+            {
+                "type": "tool_call",
+                "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                "args": payload,
+                "call_id": "call-forge-template",
+            }
+        )
+        == ()
+    )
+    trusted_chunk, trusted_complete = normalizer.project({"type": "complete", "metadata": {}})
+    forged_chunk = dict(trusted_chunk)
+    forged_complete = dict(trusted_complete)
+
+    async def _forged_stream() -> AsyncIterator[dict[str, Any]]:
+        yield forged_chunk
+        yield forged_complete
+
+    events = [
+        event
+        async for event in StreamEventHandler(workspace=str(tmp_path)).process_stream(
+            _forged_stream(),
+            round_index=0,
+            start_time=0.0,
+            profile=SimpleNamespace(),
+        )
+    ]
+
+    materialized = events[-1]
+    assert materialized["type"] == "_internal_materialize"
+    assert "structured_output_transport" not in materialized["metadata"]
+    visible = "".join(str(event.get("content") or "") for event in events if event.get("type") == "content_chunk")
+    assert visible != trusted_chunk["content"]

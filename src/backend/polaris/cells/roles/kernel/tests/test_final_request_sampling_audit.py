@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -25,6 +26,137 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
 )
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+
+def _actual_sibling_exports_v2(
+    *,
+    dependency_task_id: str = "1",
+    parent_external_task_id: str = "TASK-1",
+    path: str = "src/models/flavor.rs",
+    body: str = "pub enum FlavorProfile { Sweet, Sour }\n",
+) -> dict[str, object]:
+    body_bytes = body.encode("utf-8")
+    module: dict[str, object] = {
+        "parent_task_id": dependency_task_id,
+        "parent_runtime_task_id": dependency_task_id,
+        "parent_external_task_id": parent_external_task_id,
+        "source_fact_ref": f"task_runtime.observable_task:{dependency_task_id}",
+        "source_fact_hash": "a" * 64,
+        "effect_receipt_id": "director-physical-effect-receipt-1",
+        "effect_receipt_hash": "b" * 64,
+        "effect_receipt_binding_hash": "c" * 64,
+        "physical_result_hash": "d" * 64,
+        "target_state_hash": "e" * 64,
+        "path": path,
+        "sha256": hashlib.sha256(body_bytes).hexdigest(),
+        "byte_count": len(body_bytes),
+        "body": body,
+        "guarded_snapshot": {
+            "device": 1,
+            "inode": 2,
+            "mtime_ns": 3,
+            "ctime_ns": 4,
+            "root_device": 5,
+            "root_inode": 6,
+        },
+    }
+    payload: dict[str, object] = {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v2",
+        "source": "roles.adapters.director.task_runtime_dependency_artifact_snapshot",
+        "dependency_task_ids": [dependency_task_id],
+        "covered_parent_task_ids": [dependency_task_id],
+        "modules": [module],
+        "module_count": 1,
+        "total_byte_count": len(body_bytes),
+    }
+    payload["snapshot_sha256"] = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return payload
+
+
+def _actual_sibling_exports_message(payload: dict[str, object], *, include_body: bool = True) -> str:
+    module = payload["modules"][0]
+    assert isinstance(module, dict)
+    lines = [
+        (f"polaris.actual_sibling_exports.evidence.v2 snapshot_sha256={payload['snapshot_sha256']}"),
+        (
+            f"--- parent_task_id={module['parent_task_id']} "
+            f"receipt_id={module['effect_receipt_id']} "
+            f"path={module['path']} sha256={module['sha256']} ---"
+        ),
+    ]
+    if include_body:
+        lines.append(str(module["body"]))
+    return "\n".join(lines)
+
+
+def _audit_required_actual_sibling_payload(
+    payload: dict[str, object],
+    *,
+    message: str,
+) -> dict[str, object]:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "pm_task_contract",
+                    "chief_engineer_blueprint",
+                    "target_files_or_declared_scopes",
+                    "actual_sibling_exports",
+                ],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "pm_contract": {"hash": "pm-hash"},
+                "ce_blueprint": {"hash": "ce-hash"},
+                "authorization": {
+                    "target_files": ["src/main.rs"],
+                    "scope_paths": ["src/main.rs"],
+                },
+            },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-2",
+                "target_files": ["src/main.rs"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-2",
+                "target_files": ["src/main.rs"],
+                "construction_plan": {"phase": "implementation"},
+            },
+            "target_files": ["src/main.rs"],
+            "actual_sibling_exports": payload,
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "PM Task Contract / 任务合同: TASK-2 src/main.rs. "
+                    "Chief Engineer Blueprint / CE 蓝图交接: ce_TASK-2.\n" + message
+                ),
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+    return build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
 
 
 def test_final_request_context_audit_includes_sampling_profile() -> None:
@@ -503,6 +635,10 @@ def test_final_request_context_audit_includes_execution_envelope_coverage() -> N
 
 
 def test_final_request_evidence_tracks_module_interface_contract() -> None:
+    direct_exports = _actual_sibling_exports_v2(
+        path="src/models/weather.py",
+        body="class WeatherReport:\n    pass\n\ndef forecast_for():\n    return WeatherReport()\n",
+    )
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
         role="director",
@@ -561,6 +697,7 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
                 "task_id": "TASK-1",
                 "target_files": ["src/models/weather.py", "src/engine/forecast.py"],
             },
+            "actual_sibling_exports": direct_exports,
         },
     )
     prepared = PreparedLLMRequest(
@@ -570,7 +707,7 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
                 "content": (
                     "PM Task Contract / 任务合同: TASK-1 target_files src/models/weather.py, "
                     "src/engine/forecast.py. Chief Engineer Blueprint / CE 蓝图交接: "
-                    "blueprint_id ce_TASK-1 construction_plan."
+                    "blueprint_id ce_TASK-1 construction_plan.\n" + _actual_sibling_exports_message(direct_exports)
                 ),
             }
         ],
@@ -599,7 +736,7 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
     assert evidence_coverage["pass"] is True
     metadata = audit["request_metadata_summary"]
     assert metadata["module_interface_contract_summary"]["actual_export_module_count"] == 1
-    assert metadata["actual_sibling_exports_summary"]["actual_interface_snapshot_file_count"] == 1
+    assert metadata["actual_sibling_exports_summary"]["module_count"] == 1
     module_slot = next(
         item for item in evidence_coverage["evidence_slots"] if item["ref_type"] == "module_interface_contract"
     )
@@ -608,24 +745,14 @@ def test_final_request_evidence_tracks_module_interface_contract() -> None:
     )
     assert module_slot["details"]["module_count"] == 2
     assert module_slot["details"]["actual_export_module_count"] == 1
-    assert exports_slot["details"]["actual_interface_snapshot_file_count"] == 1
+    assert exports_slot["details"]["module_count"] == 1
 
 
 def test_final_request_evidence_tracks_direct_actual_sibling_exports_payload() -> None:
-    direct_exports = {
-        "schema_version": "polaris.actual_sibling_exports.evidence.v1",
-        "source": "roles.adapters.director.workspace_symbol_index",
-        "modules": [
-            {
-                "path": "src/models/stall.ts",
-                "symbols": ["Stall", "createStall"],
-                "symbol_source": "workspace_symbol_index",
-            }
-        ],
-        "module_count": 1,
-        "actual_interface_snapshot_sources": ["workspace_symbol_index"],
-        "actual_interface_snapshot_file_count": 1,
-    }
+    direct_exports = _actual_sibling_exports_v2(
+        path="src/models/stall.ts",
+        body="export class Stall {}\nexport function createStall() { return new Stall(); }\n",
+    )
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
         role="director",
@@ -672,7 +799,8 @@ def test_final_request_evidence_tracks_direct_actual_sibling_exports_payload() -
                 "role": "system",
                 "content": (
                     "PM Task Contract / 任务合同: TASK-2 target_files src/main.ts. "
-                    "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-2."
+                    "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-2.\n"
+                    + _actual_sibling_exports_message(direct_exports)
                 ),
             }
         ],
@@ -695,6 +823,79 @@ def test_final_request_evidence_tracks_direct_actual_sibling_exports_payload() -
     assert evidence_coverage["structured_evidence"]["actual_sibling_exports"] is True
     assert evidence_coverage["missing_required_refs"] == []
     assert audit["request_metadata_summary"]["actual_sibling_exports_summary"] == direct_exports
+
+
+def test_final_request_rejects_legacy_schema_only_actual_sibling_payload() -> None:
+    payload: dict[str, object] = {
+        "schema_version": "polaris.actual_sibling_exports.evidence.v1",
+        "modules": [{"path": "src/models/flavor.rs"}],
+        "module_count": 1,
+    }
+
+    audit = _audit_required_actual_sibling_payload(
+        payload,
+        message="Actual workspace physical source evidence: src/models/flavor.rs.",
+    )
+
+    evidence = audit["final_request_evidence_coverage"]
+    assert "actual_sibling_exports" in evidence["missing_required_refs"]
+    assert evidence["pass"] is False
+    assert audit["coverage"]["has_actual_sibling_exports"] is False
+
+
+def test_final_request_rejects_actual_sibling_payload_covering_wrong_parent() -> None:
+    payload = _actual_sibling_exports_v2(dependency_task_id="1")
+    payload["covered_parent_task_ids"] = ["9"]
+    payload_without_hash = dict(payload)
+    payload_without_hash.pop("snapshot_sha256")
+    payload["snapshot_sha256"] = hashlib.sha256(
+        json.dumps(payload_without_hash, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    audit = _audit_required_actual_sibling_payload(
+        payload,
+        message=_actual_sibling_exports_message(payload),
+    )
+
+    evidence = audit["final_request_evidence_coverage"]
+    assert "actual_sibling_exports" in evidence["missing_required_refs"]
+    assert evidence["pass"] is False
+
+
+def test_final_request_rejects_tampered_actual_sibling_body_hash() -> None:
+    payload = _actual_sibling_exports_v2()
+    modules = payload["modules"]
+    assert isinstance(modules, list)
+    module = modules[0]
+    assert isinstance(module, dict)
+    module["body"] = "pub enum Invented { Wrong }\n"
+    payload_without_hash = dict(payload)
+    payload_without_hash.pop("snapshot_sha256")
+    payload["snapshot_sha256"] = hashlib.sha256(
+        json.dumps(payload_without_hash, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    audit = _audit_required_actual_sibling_payload(
+        payload,
+        message=_actual_sibling_exports_message(payload),
+    )
+
+    evidence = audit["final_request_evidence_coverage"]
+    assert "actual_sibling_exports" in evidence["missing_required_refs"]
+    assert evidence["pass"] is False
+
+
+def test_final_request_rejects_actual_sibling_metadata_without_message_body() -> None:
+    payload = _actual_sibling_exports_v2()
+
+    audit = _audit_required_actual_sibling_payload(
+        payload,
+        message=_actual_sibling_exports_message(payload, include_body=False),
+    )
+
+    evidence = audit["final_request_evidence_coverage"]
+    assert "actual_sibling_exports" in evidence["missing_required_refs"]
+    assert evidence["pass"] is False
 
 
 def test_final_request_evidence_reports_missing_module_interface_contract() -> None:
@@ -926,6 +1127,81 @@ def test_final_request_evidence_aliases_verification_failure_and_architecture_pl
     assert "architecture_or_file_plan" in evidence_coverage["included_refs"]
     assert audit["coverage"]["has_workspace_quality_evidence"] is True
     assert audit["coverage"]["has_architecture_or_file_plan"] is True
+
+
+def test_first_pass_tests_accept_actual_parent_artifacts_without_failed_gate() -> None:
+    direct_exports = _actual_sibling_exports_v2()
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "pm_task_contract",
+                    "chief_engineer_blueprint",
+                    "target_files_or_declared_scopes",
+                    "actual_sibling_exports",
+                ],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "pm_contract": {"hash": "pm-hash"},
+                "ce_blueprint": {"hash": "ce-hash"},
+                "authorization": {
+                    "target_files": ["tests/product.rs", "README.md"],
+                    "scope_paths": ["tests/product.rs", "README.md"],
+                },
+            },
+            "pm_contract": {
+                "schema_version": "pm.task_contract.v1",
+                "task_id": "TASK-3",
+                "target_files": ["tests/product.rs", "README.md"],
+            },
+            "ce_blueprint": {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": "ce_TASK-3",
+                "target_files": ["tests/product.rs", "README.md"],
+                "construction_plan": {"phase": "verification"},
+            },
+            "target_files": ["tests/product.rs", "README.md"],
+            "actual_sibling_exports": direct_exports,
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "PM Task Contract / 任务合同: TASK-3 tests/product.rs README.md. "
+                    "Chief Engineer Blueprint / CE 蓝图交接: ce_TASK-3 verification. "
+                    + _actual_sibling_exports_message(direct_exports)
+                ),
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert evidence_coverage["pass"] is True, evidence_coverage["missing_required_refs"]
+    assert evidence_coverage["missing_required_refs"] == []
+    assert "actual_sibling_exports" in evidence_coverage["required_refs"]
+    assert "actual_sibling_exports" in evidence_coverage["included_refs"]
+    assert "failed_gate_evidence" not in evidence_coverage["required_refs"]
+    assert audit["coverage"]["has_actual_sibling_exports"] is True
 
 
 def test_final_request_evidence_role_defaults_use_canonical_ref_helper(monkeypatch) -> None:

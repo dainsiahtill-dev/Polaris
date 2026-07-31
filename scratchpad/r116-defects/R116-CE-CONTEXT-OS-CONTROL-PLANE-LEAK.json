@@ -1,7 +1,7 @@
 {
   "schema_version": "polaris.machine_readable_defect.v1",
   "defect_id": "R116-CE-CONTEXT-OS-CONTROL-PLANE-LEAK",
-  "status": "FIX_IMPLEMENTED_FOCUSED_GREEN",
+    "status": "CLOSED_VERIFIED",
   "severity": "P0",
   "project_id": "L1-05",
   "bench_run_id": "829b6431bad9",
@@ -29,7 +29,7 @@
     "llm_audit": ".polaris/audit/chief_engineer.llm_call.json"
   },
   "root_cause_class": "context_plane_isolation_and_final_request_qualification",
-  "root_cause_status": "CONFIRMED",
+    "root_cause_status": "CLOSED_VERIFIED",
   "repair_contract": [
     "Do not project execution deadline or timeout control-plane fields into prompt-visible Chief Engineer ContextOS payloads.",
     "Preserve the same fields in runtime-only authority and scheduling state.",
@@ -47,7 +47,23 @@
     "src/backend/polaris/cells/roles/kernel/internal/llm_caller/context_audit.py",
     "src/backend/polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py"
   ],
-  "focused_test_result": "318 passed across ContextOS, final provider qualification, retry budget, final request sampling, and TransactionKernel suites",
-  "bench_authorization_consumed": true,
+    "focused_test_result": "318 passed across ContextOS, final provider qualification, retry budget, final request sampling, and TransactionKernel suites",
+    "broad_verification": {
+        "roles_kernel": "4222 passed, 2 warnings",
+        "factory": "1357 passed, 2 warnings",
+        "kernelone_audit": "818 passed",
+        "kernelone_release_gate": "ok=true; suite_size=51; 415 passed, 1 skipped, 2 warnings",
+        "static_gates": "ruff, format, mypy, compileall, JSON, YAML, and diff check passed",
+        "source_head": "2d46c996fadd8952caf1e39705119f4aa1048e47",
+        "stable_backend_fingerprint": "745451bc6b829e00"
+    },
+    "independent_review": {
+        "verdict": "CLEAR",
+        "critical": 0,
+        "important": 0,
+        "minor": 0,
+        "independent_focused_tests": "6 passed"
+    },
+    "bench_authorization_consumed": true,
   "next_bench_authorized": false
 }

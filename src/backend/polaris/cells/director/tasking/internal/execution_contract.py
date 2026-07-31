@@ -131,7 +131,10 @@ def _quality_contract(
         "output_contract_id": profile.output_contract_id,
         "requires_language_best_practices": "language_best_practices" in strategy.evidence_requirements,
         "requires_architecture_or_file_plan": "architecture_or_file_plan" in strategy.evidence_requirements,
-        "requires_failed_gate_evidence": "failed_gate_or_verification_evidence" in strategy.evidence_requirements,
+        "requires_failed_gate_evidence": any(
+            requirement in strategy.evidence_requirements
+            for requirement in ("failed_gate_evidence", "failed_gate_or_verification_evidence")
+        ),
     }
 
 

@@ -1,0 +1,112 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "R118-STRUCTURED-RESULT-FREE-TEXT-FILTER-CORRUPTION",
+  "status": "CLOSED_VERIFIED",
+  "severity": "P0",
+  "project_id": "L1-05",
+  "bench_run_id": "9f26348117b6",
+  "factory_run_id": "factory_55f243df0040",
+  "source_head": "2d46c996fadd8952caf1e39705119f4aa1048e47",
+  "backend_fingerprint": "67dce593ec089c44",
+  "symptom": "Chief Engineer primary and schema-repair attempts each made exactly one forced submit_structured_role_output Provider call, but TransactionKernel projected one malformed visible JSON chunk and zero native tool calls. Chief Engineer validation therefore generated 0/3 blueprints and failed before Director or QA.",
+  "final_provider_request_evidence": {
+    "role": "chief_engineer",
+    "provider_type": "anthropic_compat",
+    "model": "deepseek-v4-pro",
+    "tool_name": "submit_structured_role_output",
+    "tool_choice_forced": true,
+    "tool_schema_strict": true,
+    "context_os_audit_ok": true,
+    "evidence_coverage_pass": true,
+    "primary_semantic_context_snapshot_ref": "c63883e65fbf99012638052c",
+    "primary_physical_context_snapshot_ref": "d25b0e949480dfa1f46e0a44",
+    "repair_semantic_context_snapshot_ref": "8d142bff510da6622246efa0",
+    "repair_physical_context_snapshot_ref": "b3f2590515dce15671101ede",
+    "primary_native_call_id": "call_00_mNP2voOiQWncD8HQfSHc3712",
+    "repair_native_call_id": "call_00_4CarISJUXycSsPF41RPz0867",
+    "primary_native_tool_calls_count": 1,
+    "repair_native_tool_calls_count": 1,
+    "primary_response_content_chars": 0,
+    "repair_response_content_chars": 0
+  },
+  "runtime_evidence": {
+    "factory_audit": "/tmp/factory-bench-l1-05-r118/factory_audits.json",
+    "workspace": "/tmp/factory-bench-l1-05-r118/workspaces/9f26348117b6-229f353070af1691/L1-05-e561a0dcdada9554/181eafd01613bf24341ee58c",
+    "runtime_root": "/home/dains/.cache/kernelone/.polaris/projects/181eafd01613bf24341ee58c-17ff529c5341/runtime",
+    "llm_events": "runtime/events/chief_engineer.llm.events.jsonl",
+    "truthlog": "runtime/events/kernel.turn.truthlog.events.jsonl",
+    "chief_engineer_signals": "runtime/signals/chief_engineer_review.signals.json",
+    "primary_truthlog_visible_chars": 15300,
+    "repair_truthlog_visible_chars": 12457,
+    "truthlog_native_tool_calls_count": 0,
+    "failure": "Output validation failed: No JSON object matched chief_engineer blueprint keys: construction_plan, scope_for_apply, risk_flags",
+    "wall_clock_seconds": 172.3,
+    "director_reached": false,
+    "qa_reached": false
+  },
+  "first_failed_edge": {
+    "from": "roles.kernel.structured_output_transport canonical JSON chunk",
+    "to": "roles.kernel.turn_engine StreamEventHandler content projection",
+    "expected": "Canonical JSON bytes remain unchanged until Chief Engineer schema validation.",
+    "actual": "Canonical JSON was passed through StreamingPatchBuffer, OutputTagFilter, and BracketToolWrapperFilter. Independent delimiter buffers for angle brackets and square brackets were flushed in a different order, reordering otherwise valid JSON bytes.",
+    "observed_corruption": "\"risk_flags\":<FlavorProfile, String> ... }[{\"description\":\"Result",
+    "inline_reproduction": "A valid canonical payload containing Result<FlavorProfile, String>, Vec<(String, RuleResult)>, and JSON arrays is transformed into an equal-length but non-JSON string by StreamEventHandler."
+  },
+  "root_cause_class": "typed_protocol_payload_reinterpreted_as_free_text",
+  "root_cause_status": "CLOSED_VERIFIED",
+  "root_cause": "StructuredOutputStreamNormalizer correctly validates and canonicalizes the reserved non-effect result tool, but emits the canonical payload as an untyped chunk. StreamEventHandler then routes it through free-text patch, XML/output, bracket-tool, and thinking filters. Those filters are correct only for assistant prose; their independent incremental buffers do not preserve byte order when protocol JSON contains both Rust/TypeScript angle-bracket signatures and JSON arrays.",
+  "repair_contract": [
+    "Bind the canonical result chunk to structured-output transport evidence including payload_sha256.",
+    "Recognize only a private in-process event minted after reserved result-tool schema validation; public metadata and payload_sha256 are audit evidence, not provenance.",
+    "Strip Provider-controlled structured_output_transport metadata from chunk, complete, context_metadata, and passthrough events before projection.",
+    "Recognize only a provenance-bound, hash-bound, strict, provider_tool, non-effect, non-tool-lifecycle protocol chunk.",
+    "Bypass all free-text filters for that verified protocol chunk and preserve its canonical bytes exactly.",
+    "Materialize structured_output_transport evidence only from a provenance-bearing internal event.",
+    "Keep ordinary assistant chunks, textual tool wrappers, patch blocks, thinking tags, and invalid protocol markers on the existing filtered path.",
+    "Do not relax Chief Engineer JSON/schema validation and do not add malformed-output salvage."
+  ],
+  "required_tests": [
+    "StructuredOutputStreamNormalizer marks the canonical chunk with hash-bound transport evidence.",
+    "The canonical chunk recognizer rejects absent, malformed, mismatched-hash, executable, or non-strict evidence.",
+    "A Provider chunk with every public field and the correct payload hash but no validated result-tool provenance cannot bypass filters or materialize evidence.",
+    "Provider-controlled reserved metadata is stripped from buffered chunks and terminal events when no result tool was validated.",
+    "Serialization removes private provenance and therefore fails closed.",
+    "StreamEventHandler preserves exact canonical bytes for payloads containing JSON arrays and Rust/TypeScript angle-bracket signatures.",
+    "The preserved payload remains json.loads-compatible and equal to the original caller-validated mapping.",
+    "Ordinary visible-output wrapper and patch filtering regressions remain green.",
+    "Full request-fact streaming transport still consumes the reserved result tool before Tool Lifecycle."
+  ],
+  "implementation_files": [
+    "src/backend/polaris/cells/roles/kernel/internal/structured_output_transport.py",
+    "src/backend/polaris/cells/roles/kernel/internal/turn_engine/stream_handler.py",
+    "src/backend/polaris/cells/roles/kernel/tests/test_structured_output_transport.py",
+    "src/backend/polaris/cells/roles/kernel/tests/test_stream_handler_audit_metadata.py"
+  ],
+  "red_to_green_evidence": {
+    "red": "Inline exact-shape reproduction raised JSONDecodeError and produced the same delimiter reordering signature observed in R118.",
+    "green": "The same payload now bypasses free-text filters only when its transport evidence and payload hash verify; exact byte equality and json.loads both pass."
+  },
+  "focused_test_result": "154 passed across structured output transport, stream handler audit, request-fact projection, visible output contract, and turn engine.",
+  "static_gates": "ruff check passed; ruff format passed; mypy passed for both implementation modules; compileall passed; git diff --check passed.",
+  "broad_verification": {
+    "status": "passed",
+    "roles_kernel": "4227 passed, 2 warnings",
+    "factory": "1357 passed, 2 warnings",
+    "source_head": "2d46c996fadd8952caf1e39705119f4aa1048e47",
+    "source_diff_sha256": "c3b5c3d69813bfec6be1f40b8df5023e88ac9443132036dd7d4c86d2ff0f6f5c"
+  },
+  "independent_review": {
+    "status": "CLEAR",
+    "critical": 0,
+    "important": 0,
+    "minor": 0,
+    "focused_tests": "22 passed",
+    "attack_replay": "Public fields and a matching payload hash without the private runtime event type are rejected; forged metadata is stripped and not materialized.",
+    "residual_risk": "A future serialization or dict-copy boundary between normalizer and handler will discard legitimate provenance and fail closed; this is an availability regression risk, not an evidence-forgery risk."
+  },
+  "bench_authorization_consumed": true,
+  "next_bench_authorized": true,
+  "next_bench_run_id": "R119",
+  "next_bench_project_id": "L1-05",
+  "next_bench_authorization_count": 1
+}

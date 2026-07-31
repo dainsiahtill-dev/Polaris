@@ -37,11 +37,8 @@ from polaris.cells.roles.adapters.internal.director import (
 )
 from polaris.cells.roles.adapters.internal.director.adapter import (
     DirectorAdapter,
-    _build_director_actual_sibling_exports_payload,
     _build_director_blueprint_handoff_lines,
-    _build_director_workspace_interface_lines,
     _director_actual_interface_injection_enabled,
-    _inject_director_actual_sibling_exports,
     _load_ce_blueprint_contract_payload,
     _merge_ce_blueprint_contract_payload,
     _normalize_director_role_response,
@@ -875,77 +872,6 @@ def test_director_actual_interface_injection_defaults_on(monkeypatch: pytest.Mon
 
     monkeypatch.setenv("KERNELONE_DIRECTOR_INJECT_WORKSPACE_INTERFACE", "0")
     assert _director_actual_interface_injection_enabled() is False
-
-
-def test_director_actual_sibling_exports_promoted_to_context_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Any,
-) -> None:
-    def fake_snapshot(workspace: str) -> SimpleNamespace:
-        assert workspace == str(tmp_path)
-        return SimpleNamespace(
-            physical_exports={
-                "src/models/stall.ts": [
-                    SimpleNamespace(name="Stall", symbol_kind="class", signature="class Stall"),
-                    SimpleNamespace(
-                        name="createStall",
-                        symbol_kind="function",
-                        signature="function createStall(): Stall",
-                    ),
-                ]
-            }
-        )
-
-    monkeypatch.setattr(
-        "polaris.kernelone.quality.cross_artifact_interfaces.build_symbol_index_snapshot",
-        fake_snapshot,
-    )
-
-    payload = _build_director_actual_sibling_exports_payload(str(tmp_path))
-    assert payload["schema_version"] == "polaris.actual_sibling_exports.evidence.v1"
-    assert payload["source"] == "roles.adapters.director.workspace_symbol_index"
-    assert payload["modules"][0]["path"] == "src/models/stall.ts"
-    assert payload["modules"][0]["symbols"] == ["Stall", "createStall"]
-
-    context: dict[str, Any] = {"metadata": {"task_id": "TASK-2"}}
-    _inject_director_actual_sibling_exports(context, workspace=str(tmp_path))
-
-    assert context["actual_sibling_exports"] == payload
-    assert context["metadata"]["actual_sibling_exports"] == payload
-
-
-def test_director_workspace_interface_lines_mark_actual_exports_authoritative(
-    tmp_path: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    src_dir = tmp_path / "src"
-    src_dir.mkdir()
-    (src_dir / "index.js").write_text("export function createIndex() { return {}; }\n", encoding="utf-8")
-
-    def fake_snapshot(workspace: str) -> SimpleNamespace:
-        assert workspace == str(tmp_path)
-        return SimpleNamespace(
-            physical_exports={
-                "src/index.js": [
-                    SimpleNamespace(
-                        name="createIndex",
-                        symbol_kind="function",
-                        signature="function createIndex(): object",
-                    )
-                ]
-            }
-        )
-
-    monkeypatch.setattr(
-        "polaris.kernelone.quality.cross_artifact_interfaces.build_symbol_index_snapshot",
-        fake_snapshot,
-    )
-
-    text = "\n".join(_build_director_workspace_interface_lines(str(tmp_path)))
-
-    assert "TEST/CONFIG/DOC TASK HARD RULE" in text
-    assert "planned_exports/tentative_exports are advisory" in text
-    assert "src/index.js: createIndex" in text
 
 
 def test_director_blueprint_handoff_projects_module_interface_contract(tmp_path: Any) -> None:
@@ -4961,6 +4887,97 @@ class TestApplyIntelligentCorrection:
 
 class TestBuildDirectorMessage:
     """_build_director_message constructs prompt text deterministically."""
+
+    def test_dependency_message_uses_receipt_bound_parent_snapshot_and_rejects_preset(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        source = tmp_path / "src" / "models" / "flavor.rs"
+        source.parent.mkdir(parents=True)
+        source.write_text("pub enum FlavorProfile { Sweet, Sour }\n", encoding="utf-8")
+        receipt_id = "director-physical-effect-receipt-1"
+        parent = {
+            "id": 1,
+            "metadata": {
+                "external_task_id": "TASK-1",
+                "adapter_result": {
+                    "new_files": ["src/models/flavor.rs"],
+                    "modified_files": [],
+                    "write_tool_evidence": True,
+                    "primary_llm": {
+                        "metadata": {
+                            "batch_receipt": {
+                                "raw_results": [
+                                    {
+                                        "status": "success",
+                                        "result": {"file": "src/models/flavor.rs"},
+                                        "effect_receipt": {
+                                            "schema_version": ("roles.adapters.director_physical_effect_receipt.v2"),
+                                            "receipt_id": receipt_id,
+                                            "receipt_hash": "a" * 64,
+                                            "receipt_binding_hash": "b" * 64,
+                                            "physical_result_hash": "c" * 64,
+                                            "target_state_hash": "d" * 64,
+                                            "receipt_outcome": "succeeded",
+                                            "authoritative": True,
+                                            "durable": True,
+                                        },
+                                        "effect_receipt_commit": {
+                                            "state": "RECEIPT_COMMITTED",
+                                            "receipt_ref": receipt_id,
+                                            "receipt_hash": "a" * 64,
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                },
+            },
+        }
+        task_runtime = MagicMock()
+        task_runtime.get_task.return_value = parent
+        adapter = _make_adapter(tmp_path, task_runtime=task_runtime)
+        context: dict[str, Any] = {
+            "actual_sibling_exports": {"schema_version": "forged"},
+            "metadata": {
+                "actual_sibling_exports": {"schema_version": "forged"},
+                "resolved_depends_on_task_ids": [1],
+            },
+        }
+
+        msg = adapter._build_director_message(
+            {
+                "id": 2,
+                "subject": "Implement engine",
+                "metadata": {"resolved_depends_on_task_ids": [1]},
+            },
+            context=context,
+        )
+
+        payload = context["actual_sibling_exports"]
+        assert payload["schema_version"] == "polaris.actual_sibling_exports.evidence.v2"
+        assert payload["dependency_task_ids"] == ["1"]
+        assert payload["modules"][0]["effect_receipt_id"] == receipt_id
+        assert "pub enum FlavorProfile" in msg
+        assert payload["snapshot_sha256"] in msg
+        assert "forged" not in msg
+
+    def test_root_message_removes_caller_preset_actual_sibling_evidence(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        context: dict[str, Any] = {
+            "actual_sibling_exports": {"schema_version": "forged"},
+            "metadata": {"actual_sibling_exports": {"schema_version": "forged"}},
+        }
+
+        msg = adapter._build_director_message(
+            {"subject": "Root task", "metadata": {}},
+            context=context,
+        )
+
+        assert "actual_sibling_exports" not in context
+        assert "actual_sibling_exports" not in context["metadata"]
+        assert "forged" not in msg
 
     def test_includes_subject(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

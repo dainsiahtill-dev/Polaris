@@ -1,0 +1,72 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "R119A-EAGER-WORKSPACE-LANGUAGE-SCAN",
+  "status": "IMPLEMENTED_OFFLINE_PENDING_INDEPENDENT_REVIEW",
+  "severity": "P1",
+  "source_head": "2d46c996fadd8952caf1e39705119f4aa1048e47",
+  "discovery_mode": "static_call_graph_plus_offline_runtime_test",
+  "symptom": "The Director Tasking suite stalled for more than 23 minutes at test_prompt_module_order_truncation_and_overflow_note while PromptBuilder constructed a prompt for src/a.ts in workspace=/tmp.",
+  "failed_edge": {
+    "edge_id": "R119A-E1",
+    "from": "strong language evidence from metadata, contract, target path, or hard verifier",
+    "to": "Director language guidance selection",
+    "expected": "A supported strong language signal resolves the language without filesystem discovery.",
+    "actual": "select_guidance eagerly called _language_from_workspace before selecting an already available supported target-path language.",
+    "effect": "A deterministic TypeScript prompt build recursively scanned the entire shared /tmp tree across every registered extension, making validation latency depend on unrelated bench residue."
+  },
+  "static_graph_evidence": {
+    "call_path": [
+      "PromptBuilder.build_code_generation_prompt",
+      "build_language_section",
+      "select_guidance",
+      "_language_from_workspace",
+      "Path.rglob"
+    ],
+    "source": "src/backend/polaris/cells/director/tasking/internal/language_guidance.py",
+    "eager_call_line_before_fix": 1309,
+    "workspace_scan_shape": "For every extension in _EXT_TO_LANG, recursively rglob the entire workspace until 25 matches per extension."
+  },
+  "runtime_evidence": {
+    "stalled_test": "polaris/cells/director/tasking/tests/test_prompt_builder.py::test_prompt_module_order_truncation_and_overflow_note",
+    "stalled_suite_elapsed_seconds_lower_bound": 1380,
+    "stalled_workspace": "/tmp",
+    "post_fix_stalled_test_result": "1 passed in 0.83s",
+    "post_fix_language_guidance_result": "24 passed in 0.97s",
+    "post_fix_director_tasking_full": "411 passed in 176.79s"
+  },
+  "root_cause_class": "unnecessary_eager_filesystem_discovery",
+  "root_cause_status": "FIXED_OFFLINE",
+  "root_cause": "The language-selection priority was expressed as eager local variable evaluation rather than lazy graph traversal. Workspace discovery ran even when a stronger supported language fact already existed.",
+  "repair_contract": [
+    "Resolve supported metadata, explicit contract, target-path, and hard-check language signals first.",
+    "Call _language_from_workspace only when every stronger signal is absent or unsupported.",
+    "Preserve workspace discovery as the final structural fallback before generic text inference.",
+    "Do not weaken language guidance, filesystem safety, or unsupported-language behavior."
+  ],
+  "required_tests": [
+    "A supported target-file extension must not call _language_from_workspace.",
+    "An unknown target must still call _language_from_workspace exactly once.",
+    "Existing metadata, contract, task-focus, execution-profile, and workspace-fallback guidance tests remain green.",
+    "The formerly stalled prompt-module-order test completes within the normal focused-test horizon.",
+    "The complete Director Tasking suite completes successfully."
+  ],
+  "implementation_scope": [
+    "src/backend/polaris/cells/director/tasking/internal/language_guidance.py",
+    "src/backend/polaris/cells/director/tasking/tests/test_language_guidance.py"
+  ],
+  "bench_authorization_consumed": false,
+  "next_bench_authorized": false,
+  "validation_evidence": {
+    "red_test": "1 failed, 1 passed before implementation; explicit target language proved the eager scan",
+    "language_guidance_full": "24 passed in 0.97s",
+    "formerly_stalled_test": "1 passed in 0.83s",
+    "director_tasking_full": "411 passed in 176.79s",
+    "ruff": "PASS",
+    "ruff_format": "PASS",
+    "mypy": "PASS",
+    "compileall": "PASS",
+    "diff_check": "PASS",
+    "post_edit_codegraph": "PASS: workspace discovery is reached only after all stronger supported language signals fail"
+  },
+  "next_action": "Complete independent read-only review together with R119."
+}

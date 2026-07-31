@@ -21,9 +21,26 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
 
 STRUCTURED_OUTPUT_TOOL_NAME = "submit_structured_role_output"
 STRUCTURED_OUTPUT_TRANSPORT_SCHEMA = "roles.kernel.structured_output_transport.v1"
+_STRUCTURED_OUTPUT_METADATA_KEY = "structured_output_transport"
 _STRUCTURED_OUTPUT_DESCRIPTION_SUFFIX = (
     "Call this result-submission tool exactly once. It records no side effect and is not an executable workspace tool."
 )
+
+
+class _ValidatedStructuredOutputStreamEvent(dict[str, Any]):
+    """In-process provenance minted only after reserved-tool validation."""
+
+
+def _without_untrusted_transport_metadata(event: Mapping[str, Any]) -> dict[str, Any]:
+    """Strip Provider-controlled evidence reserved for the internal projector."""
+
+    sanitized = dict(event)
+    raw_metadata = event.get("metadata")
+    if isinstance(raw_metadata, Mapping):
+        metadata = dict(raw_metadata)
+        metadata.pop(_STRUCTURED_OUTPUT_METADATA_KEY, None)
+        sanitized["metadata"] = metadata
+    return sanitized
 
 
 def _canonical_json(value: Mapping[str, Any]) -> str:
@@ -187,6 +204,71 @@ def _transport_evidence(
     }
 
 
+def is_canonical_structured_output_stream_chunk(event: Mapping[str, Any]) -> bool:
+    """Recognize one internally validated result-protocol JSON chunk.
+
+    The protocol normalizer emits a canonical JSON chunk before the terminal
+    stream event. Downstream visible-text filters must not reinterpret that
+    protocol payload as patch syntax, XML, thinking text, or bracket-wrapped
+    tool text. Recognition is bound to the canonical payload hash and the
+    non-effect transport invariants, so an ordinary Provider text chunk cannot
+    opt itself out of those filters merely by choosing a metadata key.
+    """
+
+    if type(event) is not _ValidatedStructuredOutputStreamEvent:
+        return False
+    if str(event.get("type") or "").strip() != "chunk":
+        return False
+    metadata = event.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    evidence = metadata.get(_STRUCTURED_OUTPUT_METADATA_KEY)
+    if not isinstance(evidence, Mapping):
+        return False
+    if (
+        evidence.get("schema_version") != STRUCTURED_OUTPUT_TRANSPORT_SCHEMA
+        or evidence.get("transport") != "provider_tool"
+        or evidence.get("tool_name") != STRUCTURED_OUTPUT_TOOL_NAME
+        or evidence.get("strict") is not True
+        or evidence.get("side_effect") is not False
+        or evidence.get("tool_lifecycle") is not False
+    ):
+        return False
+    content = str(event.get("content") or "")
+    if not content:
+        return False
+    if hashlib.sha256(content.encode("utf-8")).hexdigest() != str(evidence.get("payload_sha256") or ""):
+        return False
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, Mapping)
+
+
+def trusted_structured_output_stream_evidence(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return evidence only for an internally minted validated stream event."""
+
+    if type(event) is not _ValidatedStructuredOutputStreamEvent:
+        return None
+    metadata = event.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return None
+    evidence = metadata.get(_STRUCTURED_OUTPUT_METADATA_KEY)
+    if not isinstance(evidence, Mapping):
+        return None
+    if (
+        evidence.get("schema_version") != STRUCTURED_OUTPUT_TRANSPORT_SCHEMA
+        or evidence.get("transport") != "provider_tool"
+        or evidence.get("tool_name") != STRUCTURED_OUTPUT_TOOL_NAME
+        or evidence.get("strict") is not True
+        or evidence.get("side_effect") is not False
+        or evidence.get("tool_lifecycle") is not False
+    ):
+        return None
+    return dict(evidence)
+
+
 def _validate_payload(
     payload: Mapping[str, Any],
     plan: StructuredOutputTransportPlan,
@@ -274,38 +356,45 @@ class StructuredOutputStreamNormalizer:
         self._call_id = ""
 
     def project(self, event: dict[str, Any]) -> tuple[dict[str, Any], ...]:
-        event_type = str(event.get("type") or "").strip()
+        sanitized_event = _without_untrusted_transport_metadata(event)
+        event_type = str(sanitized_event.get("type") or "").strip()
         if event_type == "chunk":
-            self._buffered_chunks.append(dict(event))
+            self._buffered_chunks.append(sanitized_event)
             return ()
-        if event_type == "tool_call" and str(event.get("tool") or "").strip() == STRUCTURED_OUTPUT_TOOL_NAME:
+        if event_type == "tool_call" and str(sanitized_event.get("tool") or "").strip() == STRUCTURED_OUTPUT_TOOL_NAME:
             if self._payload_json is not None:
                 raise ValueError("structured_output_tool_must_be_called_exactly_once")
-            args = event.get("args")
+            args = sanitized_event.get("args")
             if not isinstance(args, Mapping):
                 raise ValueError("structured_output_tool_arguments_must_be_object")
             _validate_payload(args, self._plan)
             self._payload_json = _canonical_json(args)
-            self._call_id = str(event.get("call_id") or "").strip()
+            self._call_id = str(sanitized_event.get("call_id") or "").strip()
             return ()
         if event_type != "complete":
-            return (event,)
+            return (sanitized_event,)
         if self._payload_json is None:
             buffered = tuple(self._buffered_chunks)
             self._buffered_chunks.clear()
-            return (*buffered, event)
+            return (*buffered, sanitized_event)
         evidence = _transport_evidence(
             self._plan,
             payload_json=self._payload_json,
             call_id=self._call_id,
         )
-        metadata = dict(event.get("metadata") or {})
-        metadata["structured_output_transport"] = evidence
-        complete = dict(event)
+        metadata = dict(sanitized_event.get("metadata") or {})
+        metadata[_STRUCTURED_OUTPUT_METADATA_KEY] = evidence
+        complete = _ValidatedStructuredOutputStreamEvent(sanitized_event)
         complete["metadata"] = metadata
         self._buffered_chunks.clear()
         return (
-            {"type": "chunk", "content": self._payload_json},
+            _ValidatedStructuredOutputStreamEvent(
+                {
+                    "type": "chunk",
+                    "content": self._payload_json,
+                    "metadata": {_STRUCTURED_OUTPUT_METADATA_KEY: evidence},
+                }
+            ),
             complete,
         )
 
@@ -315,8 +404,10 @@ __all__ = [
     "STRUCTURED_OUTPUT_TRANSPORT_SCHEMA",
     "StructuredOutputStreamNormalizer",
     "StructuredOutputTransportPlan",
+    "is_canonical_structured_output_stream_chunk",
     "normalize_structured_output_response",
     "require_exact_structured_output_tool_surface",
     "resolve_structured_output_transport",
+    "trusted_structured_output_stream_evidence",
     "validate_structured_output_stream_tool_call",
 ]

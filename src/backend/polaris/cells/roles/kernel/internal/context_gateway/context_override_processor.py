@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from polaris.kernelone.audit.context_os_prompt import (
-    CONTROL_PLANE_PROMPT_CONTENT_KEYS,
+    CONTROL_PLANE_PROMPT_PROJECTION_KEYS,
     find_control_plane_prompt_content_hits,
     normalize_control_plane_prompt_key,
 )
@@ -219,7 +219,7 @@ class ContextOverrideProcessor:
                         normalized_key = normalize_control_plane_prompt_key(key)
                         if (
                             normalized_key.startswith("_")
-                            or normalized_key in CONTROL_PLANE_PROMPT_CONTENT_KEYS
+                            or normalized_key in CONTROL_PLANE_PROMPT_PROJECTION_KEYS
                             or (raw_authority_shape and normalized_key in _RAW_AUTHORITY_SHAPE_KEYS)
                         ):
                             continue

@@ -15,6 +15,10 @@ from typing import Any, AsyncIterator, Generator
 from polaris.kernelone.llm.providers.stream_thinking_parser import ChunkKind
 from polaris.kernelone.llm.toolkit.streaming_patch_buffer import StreamingPatchBuffer
 
+from ..structured_output_transport import (
+    is_canonical_structured_output_stream_chunk,
+    trusted_structured_output_stream_evidence,
+)
 from .artifacts import _BracketToolWrapperFilter
 from .utils import normalize_stream_tool_call_payload, tool_call_signature, visible_delta
 
@@ -146,6 +150,25 @@ class StreamEventHandler:
                     emitted_round_thinking += content
                     yield {"type": "thinking_chunk", "content": content, "iteration": round_index}
             elif event_type == "chunk":
+                if is_canonical_structured_output_stream_chunk(event):
+                    # This is validated protocol data, not free-form assistant
+                    # text. Passing it through the patch/output/bracket filters
+                    # corrupts legal JSON containing Rust/TS signatures such as
+                    # ``Result<T, E>`` and array values: each filter buffers a
+                    # different delimiter and their terminal flush order
+                    # reorders bytes. Preserve the canonical payload exactly.
+                    full_content.append(content)
+                    evidence = trusted_structured_output_stream_evidence(event)
+                    if evidence is not None:
+                        stream_metadata["structured_output_transport"] = evidence
+                    if content:
+                        emitted_round_content += content
+                        yield {
+                            "type": "content_chunk",
+                            "content": content,
+                            "iteration": round_index,
+                        }
+                    continue
                 full_content.append(content)
                 patch_visible, _ = self._patch_buffer.feed(content)
                 output_visible = self._output_filter.feed(patch_visible)
@@ -198,7 +221,9 @@ class StreamEventHandler:
             elif event_type == "context_metadata":
                 raw_metadata = event.get("metadata")
                 if isinstance(raw_metadata, dict):
-                    stream_metadata.update(raw_metadata)
+                    metadata = dict(raw_metadata)
+                    metadata.pop("structured_output_transport", None)
+                    stream_metadata.update(metadata)
                 raw_usage = event.get("usage")
                 if isinstance(raw_usage, dict):
                     stream_usage.update(raw_usage)
@@ -214,6 +239,10 @@ class StreamEventHandler:
                     full_content.append(content)
                 raw_metadata = event.get("metadata")
                 metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+                evidence = trusted_structured_output_stream_evidence(event)
+                metadata.pop("structured_output_transport", None)
+                if evidence is not None:
+                    metadata["structured_output_transport"] = evidence
                 stream_metadata.update(metadata)
                 raw_usage = event.get("usage")
                 if not isinstance(raw_usage, dict):

@@ -1,0 +1,114 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "R119-DEPENDENT-ARTIFACT-CONTEXT-CLOSURE",
+  "status": "IMPLEMENTED_OFFLINE_PENDING_INDEPENDENT_REVIEW",
+  "severity": "P0",
+  "project_id": "L1-05",
+  "bench_run_id": "d103df7a7d40",
+  "factory_run_id": "factory_10da0efd8077",
+  "source_head": "2d46c996fadd8952caf1e39705119f4aa1048e47",
+  "backend_fingerprint": "3eb8e3cc2c288270",
+  "symptom": "PM and Chief Engineer completed, Director physically materialized TASK-1 and TASK-2, but TASK-2 compiled against an invented FlavorAxis symbol and TASK-3 was rejected before Provider dispatch. The run ended at director_dispatch with TOOL_LIFECYCLE_MISSING for TASK-3, no tests, failed Run Ledger, and COMPLETED_VERIFIED=0.",
+  "runtime_evidence": {
+    "factory_audit": "/tmp/factory-bench-l1-05-r119/factory_audits.json",
+    "workspace": "/tmp/factory-bench-l1-05-r119/workspaces/d103df7a7d40-cf3c93bd4962486e/L1-05-e561a0dcdada9554/c90b72943e21008a44640af0",
+    "runtime_root": "/home/dains/.cache/kernelone/.polaris/projects/c90b72943e21008a44640af0-e6c464e83619/runtime",
+    "backend_log": "/home/dains/.polaris/instances/factory-bench-l1-05-r119-l1-05-run-d103df7a7d40-7761051097afa102/logs/backend.log",
+    "director_result": ".polaris/history/runs/director-33d91dfe8def/results/director.result.json",
+    "task_runtime_events": "runtime/events/task_runtime.execution.jsonl",
+    "source_files": 10,
+    "source_lines": 1003,
+    "test_files": 0,
+    "wall_clock_seconds": 1061.4,
+    "terminal_chain_state": "fail",
+    "terminal_stage": "director_dispatch",
+    "completed_verified": false
+  },
+  "final_provider_request_evidence": {
+    "task_2_context_snapshot_ref": "e335121ae3df449813588714",
+    "task_2_snapshot_path": "/home/dains/.cache/kernelone/.polaris/projects/c90b72943e21008a44640af0-e6c464e83619/runtime/contexts/e3/e335121ae3df449813588714",
+    "task_2_has_actual_sibling_exports": false,
+    "task_2_actual_parent_bodies_present": false,
+    "task_2_tools": [
+      "write_file"
+    ],
+    "task_2_compile_failure": "error[E0432]: unresolved import `models::flavor::FlavorAxis`",
+    "task_3_provider_request_created": false,
+    "task_3_pre_provider_failure": "FinalRequestEvidenceCoverageError: Final provider request evidence coverage failed; missing_required_refs=failed_gate_evidence"
+  },
+  "failed_edges": [
+    {
+      "edge_id": "R119-E1",
+      "from": "TASK-1 committed physical effects",
+      "to": "TASK-2 final Provider request",
+      "expected": "The dependent implementation task receives bounded, hashed physical source evidence for all materialized parent artifacts, independent of language-specific symbol-index support.",
+      "actual": "Rust build_symbol_index_snapshot returned no physical_exports, so both actual_sibling_exports and physical source bodies were omitted. TASK-2 received only predicted CE interfaces and invented FlavorAxis.",
+      "effect": "TASK-2 wrote four files whose imports do not match TASK-1's actual Rust API; cargo check failed with E0432."
+    },
+    {
+      "edge_id": "R119-E2",
+      "from": "TASK-2 committed physical effects",
+      "to": "TASK-3 first-pass tests final Provider request",
+      "expected": "A first-pass tests task requires actual parent artifact evidence and may create tests before any verification gate has failed.",
+      "actual": "Director execution strategy required failed_gate_or_verification_evidence for every tests task; the final-request mapper collapsed that composite requirement to failed_gate_evidence, which cannot exist before the first verifier run.",
+      "effect": "TASK-3 failed closed before Provider dispatch, produced no Tool Lifecycle, tests, receipts, QA, or verified Run Ledger."
+    }
+  ],
+  "root_cause_class": "dependent_physical_artifact_fact_edge_missing",
+  "root_cause_status": "FIXED_OFFLINE",
+  "root_cause": "The Director context contract treats language-specific semantic symbol extraction as a prerequisite for all physical sibling evidence and conflates first-pass test creation with repair-after-failed-verification. Consequently, already committed parent effects do not reliably become required evidence in dependent child Provider requests.",
+  "repair_contract": [
+    "Model the closure as one graph edge: committed/materialized parent artifacts must become required, bounded, auditable evidence in every dependent child final Provider request.",
+    "Keep semantic symbol-index evidence when available, but add a language-neutral physical source fallback with relative path, SHA-256, byte count, and bounded UTF-8 body projection.",
+    "Do not claim fallback file evidence is a semantic export index; expose its source and capability honestly.",
+    "Require actual_sibling_exports for dependent implementation, integration, refactor, tests, and validation tasks.",
+    "For first-pass tests or validation without failed-gate evidence, require actual_sibling_exports rather than failed_gate_evidence.",
+    "Keep failed_gate_evidence mandatory for bugfix and repair phases where a prior failure is the task's causal input.",
+    "Keep final-request evidence enforcement fail-closed when required physical parent evidence is genuinely absent.",
+    "Do not add a read-tool bypass, target-project repair, or legacy PM-to-Director path."
+  ],
+  "required_tests": [
+    "First-pass tests strategy requires actual_sibling_exports and not failed_gate_evidence.",
+    "Bugfix and repair strategies still require failed_gate_evidence.",
+    "A dependent write_code task requires actual_sibling_exports; a root task without dependencies does not.",
+    "A Rust workspace with no semantic symbol-index exports still produces a non-empty physical-source evidence payload with paths, hashes, sizes, and honest source metadata.",
+    "Rust physical source bodies reach Director prompt context even when the semantic symbol index is empty.",
+    "Existing JavaScript/TypeScript semantic symbol-index payload behavior remains unchanged.",
+    "Final-request audit passes for first-pass tests when actual sibling evidence is present and no failed gate exists.",
+    "Final-request audit still fails closed when required actual sibling evidence is absent."
+  ],
+  "implementation_scope": [
+    "src/backend/polaris/cells/director/tasking/internal/execution_contract.py",
+    "src/backend/polaris/cells/director/tasking/internal/execution_strategy.py",
+    "src/backend/polaris/cells/roles/adapters/internal/director/adapter.py",
+    "their focused tests"
+  ],
+  "validation_evidence": {
+    "new_red_to_green_tests": "5 passed",
+    "director_tasking_full": "411 passed in 176.79s",
+    "director_adapter_pure_full": "441 passed",
+    "final_request_sampling_audit_full": "48 passed",
+    "execution_envelope_full": "4 passed",
+    "factory_fanout": "25 passed",
+    "factory_role_evidence": "44 passed",
+    "roles_kernel_full": "2799 passed",
+    "roles_adapters_full": "1311 passed",
+    "factory_pipeline_full": "1289 passed",
+    "ruff": "PASS",
+    "ruff_format": "PASS",
+    "mypy": "PASS, 4 source files",
+    "compileall": "PASS",
+    "diff_check": "PASS",
+    "post_edit_codegraph": "PASS: dependent evidence injection remains before strategy/final-request evidence enforcement; language-neutral fallback is bounded and honestly labeled"
+  },
+  "forbidden_scope": [
+    "target project business code",
+    "factory_bench success criteria",
+    "Run Ledger truth semantics",
+    "QA verifier policy",
+    "legacy deterministic repair paths"
+  ],
+  "bench_authorization_consumed": true,
+  "next_bench_authorized": false,
+  "next_action": "Complete independent read-only review and update the pre-bench verification card before deciding whether exactly one fresh isolated bench is authorized."
+}

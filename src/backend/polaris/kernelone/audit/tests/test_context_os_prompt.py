@@ -171,6 +171,46 @@ def test_context_os_prompt_audit_accepts_task_ids_inside_pm_contract() -> None:
     assert audit["control_plane"]["content_hits"] == []
 
 
+def test_context_os_prompt_audit_accepts_metadata_as_ordinary_prompt_prose() -> None:
+    """A generic structural noun is not proof of serialized runtime authority."""
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": "Document the 'metadata' field exposed by the public data model.",
+            },
+            {"role": "user", "content": "Implement the declared Rust target files."},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction="Implement the declared Rust target files.",
+        expected=True,
+    )
+
+    assert audit["ok"] is True
+    assert audit["control_plane"]["content_hits"] == []
+
+
+def test_context_os_prompt_audit_still_rejects_metadata_as_message_metadata_key() -> None:
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {
+                "role": "system",
+                "content": "Projected context summary.",
+                "metadata": {"metadata": {"capability_token": "job-1"}},
+            },
+            {"role": "user", "content": "Implement the declared Rust target files."},
+        ],
+        context_sources=("state_first_context_os.project",),
+        metadata={"state_first_mode_active": True},
+        current_user_instruction="Implement the declared Rust target files.",
+        expected=True,
+    )
+
+    assert audit["ok"] is False
+    assert audit["control_plane"]["metadata_key_hits"] == ["metadata"]
+
+
 def test_context_os_prompt_audit_still_rejects_task_id_metadata() -> None:
     audit = audit_context_os_prompt_messages(
         messages=[

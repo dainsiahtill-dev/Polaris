@@ -153,10 +153,39 @@ def _requires_module_interface_contract(profile: TaskExecutionProfileV1) -> bool
     )
 
 
-def _evidence_requirements(profile: TaskExecutionProfileV1) -> tuple[str, ...]:
+def _has_declared_dependencies(metadata: Mapping[str, Any]) -> bool:
+    containers = (
+        metadata,
+        _mapping(metadata.get("task")),
+        _mapping(metadata.get("task_context")),
+        _mapping(metadata.get("metadata")),
+    )
+    for container in containers:
+        for key in (
+            "depends_on",
+            "depends_on_external",
+            "depends_on_task_ids",
+            "resolved_depends_on_task_ids",
+            "dependency_task_ids",
+            "blocked_by",
+        ):
+            value = container.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+            if isinstance(value, (list, tuple, set, frozenset, dict)) and bool(value):
+                return True
+    return False
+
+
+def _evidence_requirements(
+    profile: TaskExecutionProfileV1,
+    metadata: Mapping[str, Any],
+) -> tuple[str, ...]:
     requirements = ["pm_task_contract", "chief_engineer_blueprint", "target_files_or_declared_scopes"]
-    if profile.task_type in {"bugfix", "tests", "validation"} or "repair" in profile.phase:
-        requirements.append("failed_gate_or_verification_evidence")
+    if profile.task_type == "bugfix" or "repair" in profile.phase:
+        requirements.append("failed_gate_evidence")
+    if _has_declared_dependencies(metadata):
+        requirements.append("actual_sibling_exports")
     if profile.task_type in {"write_code", "integration", "refactor"} or len(profile.target_files) >= 3:
         requirements.append("architecture_or_file_plan")
     if _requires_module_interface_contract(profile):
@@ -272,7 +301,7 @@ def resolve_director_execution_strategy(
         prompt_max_chars=prompt_max_chars,
         min_context_utilization=min_utilization,
         context_underutilized_policy=policy,
-        evidence_requirements=_evidence_requirements(profile),
+        evidence_requirements=_evidence_requirements(profile, normalized_metadata),
         context_budget_policy=_context_budget_policy(profile, input_budget),
         target_files=profile.target_files,
         scope_paths=profile.scope_paths,

@@ -126,11 +126,18 @@ CONTROL_PLANE_PROMPT_KEYS = frozenset(
         "workspace_root",
     }
 )
-# ``task_id`` is authoritative domain evidence inside PM contracts and CE
-# portfolio plans. It remains forbidden in message metadata, where it denotes
-# control-plane leakage, but a bare occurrence in prompt content is ambiguous
-# and must not make a valid structured contract fail isolation auditing.
-CONTROL_PLANE_PROMPT_CONTENT_KEYS = CONTROL_PLANE_PROMPT_KEYS - {"task_id"}
+# Structural projection and natural-language scanning have different evidence
+# strength. ``task_id`` is authoritative domain evidence inside PM contracts
+# and CE portfolio plans, so prompt-safe structured projections may retain it.
+# It remains forbidden in message metadata, where it denotes control-plane
+# leakage.
+CONTROL_PLANE_PROMPT_PROJECTION_KEYS = CONTROL_PLANE_PROMPT_KEYS - {"task_id"}
+
+# A generic word such as ``metadata`` is not proof that runtime authority was
+# serialized into prompt content. It remains forbidden as an actual message
+# metadata key and as a nested structured projection key. Only the weaker
+# natural-language signature scan excludes it.
+CONTROL_PLANE_PROMPT_CONTENT_KEYS = CONTROL_PLANE_PROMPT_PROJECTION_KEYS - {"metadata"}
 _CONTROL_CONTENT_TOKENS = tuple(
     sorted(
         {
@@ -480,6 +487,7 @@ def audit_context_os_prompt_messages(
 __all__ = [
     "CONTROL_PLANE_PROMPT_CONTENT_KEYS",
     "CONTROL_PLANE_PROMPT_KEYS",
+    "CONTROL_PLANE_PROMPT_PROJECTION_KEYS",
     "CONTROL_PLANE_PROMPT_VALUE_TOKENS",
     "audit_context_os_prompt_messages",
     "compact_context_os_audit",
