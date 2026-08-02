@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:19.634849Z",
-  "source_hash": "8fc57922f75e5104",
+  "generated_at": "2026-08-02T12:44:06.427806Z",
+  "source_hash": "cc91d8b9b7c3de3e",
   "cell_id": "runtime.projection",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -415,6 +415,12 @@
       ]
     },
     {
+      "type": "function",
+      "name": "reduce_project_outcome",
+      "description": "Reduce typed project facts into ProjectOutcomeV1.",
+      "defined_in": "polaris/cells/runtime/projection/internal/project_outcome.py"
+    },
+    {
       "type": "class",
       "name": "QARealtimeState",
       "description": "QA 实时状态",
@@ -651,6 +657,18 @@
     },
     {
       "type": "function",
+      "name": "_director_status_for_runtime_task_row",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_task_rows_payload",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
       "name": "_orchestration_task_rows",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
@@ -687,6 +705,12 @@
     },
     {
       "type": "function",
+      "name": "_task_boundary_status_projection",
+      "description": "Project one Run Ledger task-boundary verdict into runtime status fields.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
       "name": "_latest_task_boundary",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
@@ -699,8 +723,20 @@
     },
     {
       "type": "function",
+      "name": "_task_boundary_row_from_latest",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
       "name": "_apply_run_ledger_task_rows_overlay",
       "description": "Overlay terminal task-boundary verdicts onto visible task rows.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "select_task_rows",
+      "description": "Select live task rows from execution-control projections.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -789,8 +825,14 @@
     },
     {
       "type": "function",
+      "name": "select_task_rows_from_projection",
+      "description": "Select live task rows using projection priority rules.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
       "name": "load_runtime_task_rows",
-      "description": "Load canonical runtime task rows from runtime.state_owner storage.",
+      "description": "Load task-runtime-owned observable rows for runtime projection.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -1290,6 +1332,12 @@
     },
     {
       "type": "function",
+      "name": "build_workflow_task_rows",
+      "description": "Project merged workflow task state into the Director API/WebSocket task schema.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
       "name": "build_workflow_status_payload",
       "description": "Project merged workflow task state into the Director status schema.",
       "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
@@ -1348,6 +1396,190 @@
       "name": "resolve_workspace_runtime_context",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/workspace_runtime_context.py"
+    },
+    {
+      "type": "class",
+      "name": "RuntimeProjectionQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeProjectionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeProjectedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeObserverEventTypeV1",
+      "description": "Observer-facing projection event types carried by runtime.v2.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeObserverEventV1",
+      "description": "Structured observer event projected from canonical runtime facts.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeProjectionError",
+      "description": "Raised when projection assembly fails.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DeliveryAxisV1",
+      "description": "Independent delivery evidence axis for ProjectOutcomeV1.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChainAxisV1",
+      "description": "Independent PM→CE→Director→QA chain progress axis.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QaAxisV1",
+      "description": "Independent QA verdict axis.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskBoundaryAxisV1",
+      "description": "Independent TaskBoundary evidence axis.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeAxisV1",
+      "description": "Independent TaskRuntime convergence axis.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunLedgerAxisV1",
+      "description": "Independent Run Ledger release/evidence closedness axis.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RecommendedDispositionV1",
+      "description": "Advisory observer disposition. Not scheduling or write authority.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeValidationV1Error",
+      "description": "Typed fail-closed validation error for ProjectOutcome queries.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeEvidenceRefsV1",
+      "description": "Per-axis evidence reference tuples for ProjectOutcome completion.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "empty_axes",
+          "doc": "Return stable blocking axis names for empty per-axis evidence refs."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeQueryV1",
+      "description": "Typed fact bundle reduced into ProjectOutcomeV1.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "candidate_blocking_axes",
+          "doc": "Return deterministic blockers for the unbound completion candidate."
+        },
+        {
+          "name": "candidate_disposition",
+          "doc": "Return advisory handling for an unbound, caller-supplied query."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeV1",
+      "description": "Read-only multi-axis project outcome projection.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_normalize_token_tuple",
+      "description": "Validate, sort, and deduplicate string tokens deterministically.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_exact_int",
+      "description": "Accept only exact ``int`` values (reject bool, str, float, other types).",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleTaskContractV1",
+      "description": "Canonical task row consumed by PM/Director desktop workspaces.",
+      "defined_in": "polaris/cells/runtime/projection/public/role_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBlueprintSummaryV1",
+      "description": "Canonical Chief Engineer blueprint list item.",
+      "defined_in": "polaris/cells/runtime/projection/public/role_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBlueprintListV1",
+      "description": "Canonical Chief Engineer blueprint list response.",
+      "defined_in": "polaris/cells/runtime/projection/public/role_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBlueprintDetailV1",
+      "description": "Canonical Chief Engineer blueprint detail response.",
+      "defined_in": "polaris/cells/runtime/projection/public/role_contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "query_project_outcome",
+      "description": "Public pure projection of multi-axis project outcome facts.",
+      "defined_in": "polaris/cells/runtime/projection/public/service.py"
     },
     {
       "type": "class",

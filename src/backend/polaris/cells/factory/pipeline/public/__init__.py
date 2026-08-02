@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from .contracts import (
+    FACTORY_CHAIN_PROJECTION_SCHEMA_VERSION,
+    FACTORY_CHAIN_PROJECTION_SOURCE,
     FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
     CancelFactoryRunCommandV1,
+    FactoryChainProjectionV1,
     FactoryLifecycleOperationClaimV1,
     FactoryPipelineError,
     FactoryRunCompletedEventV1,
@@ -17,6 +20,7 @@ from .contracts import (
     FactoryWorkspaceRunLeaseStateV1,
     FactoryWorkspaceRunLeaseStorageError,
     FactoryWorkspaceRunLeaseV1,
+    GetFactoryChainProjectionQueryV1,
     GetFactoryRunStatusQueryV1,
     IFactoryPipeline,
     IFactoryProjectionLab,
@@ -42,6 +46,7 @@ from .service import (
     FactorySettlementRuntimeError,
     ProjectionChangeAnalysisService,
     create_factory_settlement_runtime,
+    get_factory_chain_projection,
     get_factory_workspace_run_lease,
     recover_stale_factory_workspace_owner,
     start_factory_settlement_runtime,
@@ -51,9 +56,12 @@ from .service import (
 )
 
 __all__ = [
+    "FACTORY_CHAIN_PROJECTION_SCHEMA_VERSION",
+    "FACTORY_CHAIN_PROJECTION_SOURCE",
     "FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY",
     "TERMINAL_RUN_STATUSES",
     "CancelFactoryRunCommandV1",
+    "FactoryChainProjectionV1",
     "FactoryConfig",
     "FactoryLifecycleOperationClaimV1",
     "FactoryPipelineError",
@@ -73,6 +81,7 @@ __all__ = [
     "FactoryWorkspaceRunLeaseStateV1",
     "FactoryWorkspaceRunLeaseStorageError",
     "FactoryWorkspaceRunLeaseV1",
+    "GetFactoryChainProjectionQueryV1",
     "GetFactoryRunStatusQueryV1",
     "IFactoryPipeline",
     "IFactoryProjectionLab",
@@ -88,6 +97,7 @@ __all__ = [
     "RunProjectionExperimentCommandV1",
     "StartFactoryRunCommandV1",
     "create_factory_settlement_runtime",
+    "get_factory_chain_projection",
     "get_factory_workspace_run_lease",
     "recover_stale_factory_workspace_owner",
     "start_factory_settlement_runtime",

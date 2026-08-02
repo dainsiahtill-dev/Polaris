@@ -29,6 +29,7 @@ from polaris.kernelone.fs.text_ops import open_text_log_append, write_text_atomi
 from polaris.kernelone.runtime import BoundedCache
 
 from .factory_event_chain import (
+    FACTORY_EVENT_CHAIN_MAX_BYTES,
     FactoryEventChainError,
     build_next_factory_event_record,
     decode_factory_event_chain,
@@ -184,9 +185,10 @@ async def _run_file_operation(
 class FactoryStore:
     """Durable storage for factory runs with atomic writes"""
 
-    def __init__(self, base_dir: Path) -> None:
+    def __init__(self, base_dir: Path, *, create_root: bool = True) -> None:
         self.base_dir = Path(base_dir).resolve()
-        self.base_dir.mkdir(parents=True, exist_ok=True)
+        if create_root:
+            self.base_dir.mkdir(parents=True, exist_ok=True)
         # A Factory store is itself the stable runtime root for its per-run
         # event streams.  This makes KernelOne's locked-regular-file authority
         # path-compatible without aliases or a second evidence location.
@@ -940,6 +942,46 @@ class FactoryStore:
                 "Authoritative Factory chain has no current regular run snapshot",
             )
         return list(await asyncio.to_thread(self._read_authoritative_events_sync, run_id))
+
+    def _read_authoritative_events_read_only_sync(self, run_id: str) -> tuple[dict[str, Any], ...]:
+        """Descriptor-safe strict read without lock-authority enrollment or writes."""
+
+        logical_path = self._authoritative_event_logical_path(run_id)
+        relative_path = logical_path.removeprefix("runtime/")
+        event_path = self.base_dir / relative_path
+        try:
+            event_path.lstat()
+        except FileNotFoundError:
+            return ()
+        try:
+            snapshot = read_guarded_regular_file_snapshot(
+                str(self.base_dir),
+                relative_path,
+                FACTORY_EVENT_CHAIN_MAX_BYTES,
+            )
+        except (GuardedRegularFileSnapshotError, ValueError) as exc:
+            raise FactoryEventChainError(
+                "factory_event_chain_guard_failed",
+                "Factory event chain failed descriptor-safe bounded reread",
+                details={"logical_path": logical_path, "guard_code": getattr(exc, "code", type(exc).__name__)},
+            ) from exc
+        return decode_factory_event_chain(snapshot.content, run_id=run_id)
+
+    async def get_authoritative_events_read_only(
+        self,
+        run_id: str,
+        *,
+        require_run_snapshot: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Strictly read the owner event prefix without creating directories or lock state."""
+
+        self.run_snapshot_ref(run_id)
+        if require_run_snapshot and not self._is_regular_snapshot(self.get_run_dir(run_id) / "run.json"):
+            raise FactoryEventChainError(
+                "factory_event_chain_run_snapshot_missing",
+                "Authoritative Factory chain has no current regular run snapshot",
+            )
+        return list(await asyncio.to_thread(self._read_authoritative_events_read_only_sync, run_id))
 
     async def _append_file(self, file_path: Path, content: str) -> None:
         """异步文件追加 helper"""

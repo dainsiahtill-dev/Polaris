@@ -1,0 +1,64 @@
+card_id: vc-20260802-factory-chain-projection-gr1a
+classification: factory_pipeline_owner_query
+status: implemented
+bench_status: not_schedulable
+defect:
+  symptom: project_outcome_cannot_bind_factory_chain_owner_facts
+  runtime_gap: no_typed_factory_chain_owner_query_on_factory_pipeline_public
+  impact: runtime.projection cannot prove Factory chain completion without private store access
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  bench_productization: forbidden
+  scheduling_authority: forbidden
+  command_execution: forbidden
+  provider_calls: forbidden
+ownership:
+  chain_owner_query: factory.pipeline
+  owner_store: FactoryStore.strict_zero_write_run_and_event_snapshot_reader
+  sealed_gr0: runtime.projection.ProjectOutcomeV1
+invariants:
+  - exact_query_str_types
+  - projection_dto_is_observation_not_authority_capability
+  - factory_ownership_requires_direct_owner_query_not_caller_supplied_dto
+  - missing_run_available_false_never_completes
+  - chain_completed_requires_status_completed
+  - chain_completed_requires_nonempty_configured_stages
+  - chain_completed_requires_empty_failed_stages
+  - chain_completed_requires_all_configured_completed
+  - chain_completed_requires_successful_terminal_completion_event_ref
+  - no_caller_supplied_evidence_refs
+  - no_public_owner_reader_injection
+  - missing_run_query_has_zero_filesystem_writes
+  - cold_cache_query_never_probes_writability_or_refreshes_storage_cache
+  - event_refs_prefer_chain_hash_then_event_id_content_id_append_id
+  - event_ref_hash_canonical_utf8_json_fallback
+  - projection_hash_binds_normalized_facts
+  - direct_result_construction_revalidates_invariants
+  - private_reader_constructor_patch_test_only
+  - no_bench_provider_http_ws
+validation:
+  focused_tests:
+    - polaris/cells/factory/pipeline/tests/test_factory_chain_projection.py
+  existing_public_tests:
+    - polaris/cells/factory/pipeline/tests/test_contracts.py
+    - polaris/cells/factory/pipeline/tests/test_stale_recovery_public.py
+  gates:
+    - ruff_check
+    - ruff_format_check
+    - mypy_changed_sources
+    - architecture_manifest_catalog_descriptor
+    - git_diff_check
+related_adrs:
+  - ADR-0099
+related_blueprint:
+  - docs/blueprints/FACTORY_CHAIN_PROJECTION_GR1A_20260802.md
+review_checklist:
+  get_factory_chain_projection_public: required
+  factory_chain_projection_v1_self_validating: required
+  missing_run_fail_closed: required
+  deterministic_normalization: required
+  projection_hash_bound: required
+  no_runtime_projection_gr0_edits: required
+closure: gr1a_implemented
+next_action: gr1b_project_outcome_owner_binding

@@ -10,8 +10,10 @@ purpose: 'Resolve global, workspace and runtime persistence layout and path poli
   '
 current_modules:
 - polaris.cells.storage.layout.public.contracts
+- polaris.cells.storage.layout.public.service
 tags: []
 owned_paths:
+- polaris/cells/storage/layout/public/**
 - polaris/cells/storage/layout/internal/**
 - polaris/kernelone/storage/layout.py
 - polaris/kernelone/storage/io_paths.py
@@ -22,6 +24,7 @@ public_contracts:
   commands:
   - RefreshStorageLayoutCommandV1
   queries:
+  - ResolveExistingRuntimeRootReadOnlyQueryV1
   - ResolveStorageLayoutQueryV1
   - ResolveRuntimePathQueryV1
   - ResolveWorkspacePathQueryV1
@@ -45,6 +48,7 @@ effects_allowed:
 - fs.write:workspace/meta/storage_layout/*
 verification:
   tests:
+  - polaris/cells/storage/layout/tests/test_storage_layout_cell.py
   - polaris/kernelone/storage/tests/test_storage_layout.py
   - tests/test_storage_layout_v4.py
   gaps:

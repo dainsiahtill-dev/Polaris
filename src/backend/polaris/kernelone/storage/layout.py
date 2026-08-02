@@ -270,6 +270,25 @@ def _get_cached_storage_roots(workspace: str, ramdisk_root: str | None = None) -
     return None
 
 
+def _peek_cached_storage_roots(workspace: str, ramdisk_root: str | None = None) -> StorageRoots | None:
+    """Return a live cached layout without mutating cache state.
+
+    Read-only query paths must not refresh LRU timestamps or cause any
+    filesystem probe.  This is intentionally separate from
+    :func:`_get_cached_storage_roots`, whose normal-resolution behavior is
+    allowed to update its cache recency.
+    """
+    cache_key = _storage_roots_cache_key(workspace, ramdisk_root)
+    with _storage_roots_cache_lock:
+        cached = _storage_roots_cache.get(cache_key)
+        if cached is None:
+            return None
+        roots, timestamp = cached
+        if time.monotonic() - timestamp < _storage_roots_cache_ttl_seconds:
+            return roots
+    return None
+
+
 def _set_cached_storage_roots(workspace: str, ramdisk_root: str | None, roots: StorageRoots) -> None:
     """Cache storage roots with current timestamp.
 
@@ -590,6 +609,114 @@ def _runtime_projects_root(runtime_base: str, metadata_dir_name: str) -> str:
     return os.path.join(runtime_base, metadata_dir_name, "projects")
 
 
+def _build_generic_storage_roots(
+    *,
+    workspace_abs: str,
+    runtime_base: str,
+    runtime_mode: str,
+) -> StorageRoots:
+    """Build the generic layout from already-selected, side-effect-free facts."""
+    key = workspace_key(workspace_abs)
+    home_root = kernelone_home()
+    metadata_dir_name = get_workspace_metadata_dir_name()
+    project_local_root = os.path.join(workspace_abs, metadata_dir_name)
+    runtime_projects_root = _runtime_projects_root(runtime_base, metadata_dir_name)
+    runtime_project_root = os.path.join(runtime_projects_root, key, "runtime")
+    return StorageRoots(
+        workspace_abs=workspace_abs,
+        workspace_key=key,
+        storage_layout_mode="project_local",
+        home_root=home_root,
+        global_root=home_root,
+        config_root=os.path.join(home_root, "config"),
+        projects_root=project_local_root,
+        project_root=project_local_root,
+        project_persistent_root=project_local_root,
+        runtime_projects_root=runtime_projects_root,
+        runtime_project_root=runtime_project_root,
+        workspace_persistent_root=project_local_root,
+        runtime_base=runtime_base,
+        runtime_root=runtime_project_root,
+        runtime_mode=runtime_mode,
+        history_root=os.path.join(project_local_root, "history"),
+    )
+
+
+def _existing_runtime_base_candidates(
+    workspace_abs: str,
+    ramdisk_root: str | None,
+) -> tuple[tuple[str, str], ...]:
+    """Return configured runtime bases that already exist, without probing writes."""
+    candidates: list[tuple[str, str]] = []
+
+    def add(base: str, mode: str) -> None:
+        if not base or _is_within_path(workspace_abs, base):
+            return
+        if os.path.isdir(base):
+            candidates.append((base, mode))
+
+    explicit_runtime_root = resolve_env_str("runtime_root")
+    if explicit_runtime_root:
+        add(
+            os.path.abspath(os.path.expanduser(os.path.expandvars(explicit_runtime_root))),
+            "explicit_runtime_root",
+        )
+    if state_to_ramdisk_enabled():
+        # This is an evidence-only path.  ``resolve_ramdisk_root()`` falls
+        # back to ``default_ramdisk_root()``, which probes a Windows drive and
+        # mutates its probe cache on a cold process.  A read-only lookup may
+        # use only an explicitly supplied/configured root; otherwise absence
+        # of an already-known namespace is intentionally unproven.
+        explicit_ramdisk_root = ""
+        if ramdisk_root is not None and str(ramdisk_root).strip():
+            explicit_ramdisk_root = normalize_ramdisk_root(str(ramdisk_root))
+        else:
+            configured_ramdisk_root = resolve_env_str("ramdisk_root")
+            if configured_ramdisk_root:
+                explicit_ramdisk_root = normalize_ramdisk_root(configured_ramdisk_root)
+        if explicit_ramdisk_root:
+            add(explicit_ramdisk_root, "ramdisk")
+    explicit_cache_root = resolve_env_str("runtime_cache_root")
+    if explicit_cache_root:
+        add(
+            os.path.abspath(os.path.expanduser(os.path.expandvars(explicit_cache_root))),
+            "explicit_runtime_cache",
+        )
+    add(default_kernelone_cache_base(), "system_cache")
+    return tuple(candidates)
+
+
+def resolve_existing_storage_roots_read_only(
+    workspace: str,
+    ramdisk_root: str | None = None,
+) -> StorageRoots | None:
+    """Resolve an existing workspace runtime layout without any filesystem writes.
+
+    This query is for evidence readers.  It never calls a business resolver,
+    creates directories, writes a probe file, refreshes caches, or tests
+    writability.  ``None`` means no already-existing runtime namespace can be
+    proven from configured roots; callers must treat that as unavailable rather
+    than initializing storage during a read.
+    """
+    normalized_workspace = os.path.abspath(os.path.expanduser(workspace or os.getcwd()))
+    cached = _peek_cached_storage_roots(normalized_workspace, ramdisk_root)
+    if cached is not None:
+        return cached
+
+    for runtime_base, runtime_mode in _existing_runtime_base_candidates(
+        normalized_workspace,
+        ramdisk_root,
+    ):
+        roots = _build_generic_storage_roots(
+            workspace_abs=normalized_workspace,
+            runtime_base=runtime_base,
+            runtime_mode=runtime_mode,
+        )
+        if os.path.isdir(roots.runtime_project_root):
+            return roots
+    return None
+
+
 def _resolve_storage_roots_impl(workspace: str, ramdisk_root: str | None = None) -> StorageRoots:
     """Internal resolver — replaceable via DI / patching for testing.
 
@@ -643,38 +770,11 @@ def _resolve_storage_roots_impl(workspace: str, ramdisk_root: str | None = None)
             )
 
     workspace_abs = normalized_workspace
-    key = workspace_key(workspace_abs)
-    home_root = kernelone_home()
     runtime_base, runtime_mode = _runtime_base_and_mode(workspace_abs, ramdisk_root)
-    metadata_dir_name = get_workspace_metadata_dir_name()
-    project_local_root = os.path.join(workspace_abs, metadata_dir_name)
-
-    global_root = home_root
-    config_root = os.path.join(home_root, "config")
-    projects_root = project_local_root
-    project_root = project_local_root
-    project_persistent_root = project_local_root
-    # Avoid double metadata-dir nesting when runtime_base already contains it.
-    runtime_projects_root = _runtime_projects_root(runtime_base, metadata_dir_name)
-    runtime_project_root = os.path.join(runtime_projects_root, key, "runtime")
-
-    roots = StorageRoots(
+    roots = _build_generic_storage_roots(
         workspace_abs=workspace_abs,
-        workspace_key=key,
-        storage_layout_mode="project_local",
-        home_root=home_root,
-        global_root=global_root,
-        config_root=config_root,
-        projects_root=projects_root,
-        project_root=project_root,
-        project_persistent_root=project_persistent_root,
-        runtime_projects_root=runtime_projects_root,
-        runtime_project_root=runtime_project_root,
-        workspace_persistent_root=project_persistent_root,
         runtime_base=runtime_base,
-        runtime_root=runtime_project_root,
         runtime_mode=runtime_mode,
-        history_root=os.path.join(project_persistent_root, "history"),
     )
 
     _set_cached_storage_roots(normalized_workspace, ramdisk_root, roots)

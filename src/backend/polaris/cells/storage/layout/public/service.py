@@ -19,7 +19,9 @@ from polaris.cells.storage.layout.internal.settings_utils import (
     sync_process_settings_environment,
 )
 from polaris.cells.storage.layout.public.contracts import (
+    ExistingRuntimeRootReadOnlyResultV1,
     RefreshStorageLayoutCommandV1,
+    ResolveExistingRuntimeRootReadOnlyQueryV1,
     ResolveRuntimePathQueryV1,
     ResolveStorageLayoutQueryV1,
     ResolveWorkspacePathQueryV1,
@@ -31,11 +33,11 @@ from polaris.cells.storage.layout.public.contracts import (
 _logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ExistingRuntimeRootReadOnlyResultV1",
     "PolarisStorageLayout",
-    "PolarisStorageLayout",
-    "PolarisStorageRoots",
     "PolarisStorageRoots",
     "RefreshStorageLayoutCommandV1",
+    "ResolveExistingRuntimeRootReadOnlyQueryV1",
     "ResolveRuntimePathQueryV1",
     "ResolveStorageLayoutQueryV1",
     "ResolveWorkspacePathQueryV1",
@@ -43,14 +45,12 @@ __all__ = [
     "StorageLayoutResolvedEventV1",
     "StorageLayoutResultV1",
     "default_polaris_cache_base",
-    "default_polaris_cache_base",
     "get_polaris_root",
     "get_settings_path",
     "load_persisted_settings",
     "polaris_home",
-    "polaris_home",
     "refresh_storage_layout",
-    "resolve_polaris_roots",
+    "resolve_existing_runtime_root_read_only",
     "resolve_polaris_roots",
     "resolve_storage_layout",
     "save_persisted_settings",
@@ -204,4 +204,24 @@ def resolve_storage_layout(query: ResolveStorageLayoutQueryV1) -> StorageLayoutR
             "runtime_base": roots.runtime_base,
             "workspace_persistent_root": roots.workspace_persistent_root,
         },
+    )
+
+
+def resolve_existing_runtime_root_read_only(
+    query: ResolveExistingRuntimeRootReadOnlyQueryV1,
+) -> ExistingRuntimeRootReadOnlyResultV1 | None:
+    """Return an existing runtime root without probes, cache writes, or initialization.
+
+    ``None`` is the only honest answer when a cold process cannot prove that
+    the workspace has a runtime namespace.  Readers use this to avoid turning
+    a missing-run query into a storage-creation side effect.
+    """
+    from polaris.kernelone.storage.layout import resolve_existing_storage_roots_read_only
+
+    roots = resolve_existing_storage_roots_read_only(query.workspace)
+    if roots is None:
+        return None
+    return ExistingRuntimeRootReadOnlyResultV1(
+        workspace=roots.workspace_abs,
+        runtime_root=roots.runtime_root,
     )

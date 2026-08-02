@@ -1,0 +1,111 @@
+card_id: vc-20260802-project-outcome-v1
+classification: runtime_projection_pure_reducer
+status: accepted
+bench_status: not_schedulable
+defect:
+  symptom: project_outcome_collapsed_or_missing_independent_axes
+  runtime_gap: no_pure_project_outcome_reducer_in_runtime_projection
+  impact: observers_cannot_distinguish_delivery_chain_qa_evidence_and_completion
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+  bench_productization: forbidden
+  scheduling_authority: forbidden
+  command_execution: forbidden
+ownership:
+  projection_reducer: runtime.projection
+  goal_state_future: resident.autonomy
+  activity_executor: factory.pipeline
+  task_facts: runtime.task_runtime
+  ledger_facts: control_plane.run_ledger
+invariants:
+  - completed_verified_fail_closed
+  - caller_supplied_refs_never_bind_authority
+  - gr0_emits_completion_candidate_only
+  - direct_result_construction_revalidates_invariants
+  - independent_axes_preserved
+  - per_axis_evidence_refs_required
+  - missing_modalities_distinct_from_failed_modalities
+  - control_plane_failure_does_not_erase_delivery
+  - pure_deterministic_no_io
+  - no_bench_vocabulary
+  - advisory_disposition_not_authority
+  - not_owner_fact_gathering_adapter
+validation:
+  focused_tests:
+    - polaris/cells/runtime/projection/tests/test_project_outcome.py
+  focused: 45_passed
+  focused_exit_code: 0
+  ruff: pass
+  ruff_exit_code: 0
+  ruff_format: pass
+  ruff_format_exit_code: 0
+  mypy: pass
+  mypy_exit_code: 0
+  git_diff_check: pass
+  git_diff_check_exit_code: 0
+  architecture_manifest_catalog:
+    status: pass
+    passed: 533
+    exit_code: 0
+    files:
+      - polaris/tests/architecture/test_manifest_schema_canonical.py
+      - polaris/tests/architecture/test_catalog_governance_gate.py::test_fitness_rules_document_depends_on_gate
+  architecture_pack_projection:
+    status: pass
+    passed: 3
+    exit_code: 0
+    files:
+      - polaris/tests/architecture/test_graph_reality.py
+      - polaris/tests/architecture/test_descriptor_pack_runtime_sources.py
+  generated_assets:
+    runtime_projection_context_pack: fresh_and_manifest_aligned
+    runtime_projection_descriptor_pack: regenerated
+    descriptor_generator_schema_warning: semantic_descriptor_schema_requires_descriptors
+    global_context_pack_gate: baseline_fail_3_of_45_fresh_41_stale_22_missing
+  provider_requests: 0
+  bench_runs: 0
+  independent_review:
+    status: clear
+    focused_recheck: 45_passed
+    closed_findings:
+      - arbitrary_evidence_refs_cannot_bind_authority
+      - direct_result_construction_revalidates_invariants
+      - exact_query_and_run_id_types
+      - cell_manifest_catalog_generated_metadata_alignment
+  regression_suite:
+    files:
+      - polaris/cells/runtime/projection/tests/test_projection_service.py
+      - polaris/cells/runtime/projection/tests/test_workflow_status_run_ledger.py
+    status: pass_in_locked_uv_environment
+    passed: 79
+    failed: 0
+    exit_code: 0
+    environment_note: system_python_lacked_numpy; uv_run_used_repository_lock
+    fixture_note: fact_stream_tests_explicitly_enroll_task_runtime_and_control_plane_stream_authorities
+related_adrs:
+  - ADR-0099
+  - ADR-0096
+  - ADR-0097
+related_blueprint:
+  - docs/blueprints/PROJECT_GOAL_RUNTIME_MODULAR_ARCHITECTURE_20260802.md
+review_checklist:
+  fully_green_claim_yields_unbound_candidate: main_acceptance_pass
+  completed_verified_remains_false_without_owner_adapter: main_acceptance_pass
+  arbitrary_ref_strings_cannot_bind_authority: main_acceptance_pass
+  direct_result_invariant_validation: main_acceptance_pass
+  exact_query_and_run_id_types: main_acceptance_pass
+  per_axis_evidence_refs_block: main_acceptance_pass
+  task_count_completion_rules: main_acceptance_pass
+  delivery_preserved_when_chain_incomplete: main_acceptance_pass
+  missing_vs_failed_modalities: main_acceptance_pass
+  qa_not_passed_blocks: main_acceptance_pass
+  task_boundary_unknown_or_failed_blocks: main_acceptance_pass
+  task_runtime_not_converged_blocks: main_acceptance_pass
+  run_ledger_not_closed_blocks: main_acceptance_pass
+  control_plane_failure_preserves_delivery: main_acceptance_pass
+  deterministic_normalization: main_acceptance_pass
+  invalid_query_typed_errors: main_acceptance_pass
+  canonical_public_import: main_acceptance_pass
+closure: gr0_closed
+next_action: gr1_owner_fact_read_adapter_blueprint

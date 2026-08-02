@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:18.939499Z",
-  "source_hash": "97025ce3109524fe",
+  "generated_at": "2026-08-02T14:16:59.930701Z",
+  "source_hash": "53dd7d7074e89d81",
   "cell_id": "factory.pipeline",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -367,6 +367,12 @@
     },
     {
       "type": "function",
+      "name": "_run_sandboxed_cargo_test",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "_run_language_build_gate",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
@@ -655,6 +661,60 @@
     },
     {
       "type": "function",
+      "name": "_iter_mapping_payloads",
+      "description": "Yield nested dict payloads without treating text projections as facts.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_dir_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_runtime_json",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_repair_plan_probe",
+      "description": "Return the first nested repair plan-probe payload with stable structure.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_repair_plan_probe_payload",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_repair_convergence_attribution",
+      "description": "Classify failures where runtime repair knows a concrete plan but convergence still failed.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_task_boundary_verdict",
+      "description": "Return an unresolved TaskBoundary verdict from the canonical projection.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_task_boundary_attribution",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_execution_control_plane_attribution",
+      "description": "Classify unresolved tool-transaction facts from the Run Ledger only.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "_check_failure_is_runtime_environment",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
@@ -679,6 +739,12 @@
     },
     {
       "type": "function",
+      "name": "_director_failure_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "_director_failure_reason",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
@@ -692,6 +758,48 @@
     {
       "type": "function",
       "name": "_record_has_explicit_director_execution_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_model_provider_invalid_request",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_model_provider_failure_text",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_llm_events",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_llm_event_error_text",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_has_model_provider_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_model_provider_failure_reason",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_model_provider_failure_evidence",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
     },
@@ -745,8 +853,86 @@
     },
     {
       "type": "function",
+      "name": "_mapping_copy",
+      "description": "Return a shallow mapping copy without coercing text into facts.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_mapping",
+      "description": "Return the first explicitly named mapping from ``source``.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_runtime_status",
+      "description": "Project TaskRuntime authority from its explicit typed audit surface.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_qa_verdict",
+      "description": "Read the final QA verdict from canonical Run Ledger gate events.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_task_boundary",
+      "description": "Read TaskBoundary state from the canonical Run Ledger projection.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_named_runtime_metadata",
+      "description": "Read an explicitly named runtime metadata mapping.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_factory_stage_failure",
+      "description": "Project a structured upstream Factory-stage failure without prose parsing.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_execution_verdict",
+      "description": "Resolve execution status from canonical control-plane authorities only.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "build_canonical_bench_projection",
+      "description": "Build the only execution-status projection consumed by Factory Bench.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
       "name": "_run_ledger_projection_integrity_available",
       "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_reason",
+      "description": "Normalize a machine field without regex or prose interpretation.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_failure_attribution",
+      "description": "Map structured canonical fields to one stable taxonomy attribution.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_independent_gate_attribution",
+      "description": "Classify independent measurements by explicit gate/check identifiers.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_legacy_display_attribution",
+      "description": "Classify historical audit records for degraded display only.",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
     },
     {
@@ -857,6 +1043,12 @@
     },
     {
       "type": "function",
+      "name": "_mapping_value",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "function",
       "name": "_empty_control_plane_projection",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
@@ -875,20 +1067,20 @@
     },
     {
       "type": "function",
-      "name": "_modality_summary_is_present_failed",
-      "description": "",
+      "name": "_legacy_project_view",
+      "description": "Expose old audit records as degraded, non-authoritative evidence.",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
     },
     {
       "type": "function",
-      "name": "_normalize_legacy_evidence_policy",
-      "description": "Normalize old audit snapshots without mutating the stored audit file.",
+      "name": "_canonical_project_view",
+      "description": "Return one validated canonical project projection or a legacy view.",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
     },
     {
       "type": "function",
       "name": "_control_plane_projection_from_audit",
-      "description": "Build a read-only control-plane projection from factory_audits.json.",
+      "description": "Build a read-only projection from canonical per-project records.",
       "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
     },
     {
@@ -969,6 +1161,1466 @@
     },
     {
       "type": "class",
+      "name": "FactoryDeadlineStageV1",
+      "description": "Factory stages governed by deadline admission.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryDeadlineDispositionV1",
+      "description": "The only outcomes of a deadline admission decision.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorWaveScheduleV1",
+      "description": "Immutable bounded-parallelism projection of active Director tasks.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py",
+      "methods": [
+        {
+          "name": "wave_count",
+          "doc": "Return the number of serial execution waves."
+        },
+        {
+          "name": "task_count",
+          "doc": "Return the number of tasks covered by the waves."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe audit projection."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskDependencyScheduleV1",
+      "description": "Validated PM DAG plus its bounded-parallel Director schedule.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py",
+      "methods": [
+        {
+          "name": "wave_count",
+          "doc": "Return the bounded-parallel Director wave count."
+        },
+        {
+          "name": "waves",
+          "doc": "Return the immutable Director waves."
+        },
+        {
+          "name": "max_parallelism",
+          "doc": "Return the Director concurrency bound used for scheduling."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe projection for audit evidence."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryDeadlineBudgetPolicyV1",
+      "description": "Integer-second stage requirements supplied by Factory configuration.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BudgetUnitV1",
+      "description": "One mandatory, integer-second reservation in a Factory run plan.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe audit projection."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RunBudgetPlanV1",
+      "description": "Proof that mandatory budget units fit inside one Factory horizon.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py",
+      "methods": [
+        {
+          "name": "required_seconds",
+          "doc": "Return the sum of all mandatory reservations."
+        },
+        {
+          "name": "conserved",
+          "doc": "Return whether the valid plan fits its horizon."
+        },
+        {
+          "name": "surplus_seconds",
+          "doc": "Return non-negative horizon budget left after all reservations."
+        },
+        {
+          "name": "shortfall_seconds",
+          "doc": "Return the missing budget needed to conserve the plan."
+        },
+        {
+          "name": "covered_task_ids",
+          "doc": "Return task ids covered by Director wave budget units."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Return the machine-checkable conservation proof."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryDeadlineAdmissionV1",
+      "description": "Immutable admission decision backed by a run-budget proof.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py",
+      "methods": [
+        {
+          "name": "executable",
+          "doc": "Return whether the governed stage may start real work."
+        },
+        {
+          "name": "required_budget_seconds",
+          "doc": "Return the budget required by the proof."
+        },
+        {
+          "name": "budget_conserved",
+          "doc": "Return whether every mandatory budget unit is conserved."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe audit projection."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_empty_wave_schedule",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_finite_number",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_identifier",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_identifier_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_blocker",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_cyclic_task_ids",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_waves",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_positive_integer",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "build_task_dependency_schedule",
+      "description": "Validate a PM DAG and build bounded Director waves in ``O(V + E)``.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_admission_inputs",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_invalid_admission",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_wave_units",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_and_safety_units",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_chief_engineer_portfolio_admission",
+      "description": "Admit one full project-level CE call only if the whole run fits.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_director_dispatch_admission",
+      "description": "Admit one Director wave while conserving all future run budget.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_deadline_policy.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryEventChainError",
+      "description": "Fail-closed event-chain validation or capacity error.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunAdmissionV1",
+      "description": "Detached immutable intent admitted before mutable ``run.json`` exists.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py",
+      "methods": [
+        {
+          "name": "to_payload",
+          "doc": "Return the exact four-field authority payload; metadata cannot enter."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_fail",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_text",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "build_factory_run_admitted_event",
+      "description": "Build the detached admission event before chain fields are assigned.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_hash",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "encode_factory_event_record",
+      "description": "Encode one record as canonical UTF-8 JSONL, including its final newline.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_record",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_admission_genesis",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_factory_event_chain",
+      "description": "Validate one complete in-memory prefix without skipping any record.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "_reject_json_constant",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "_strict_object",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "decode_factory_event_chain",
+      "description": "Decode and validate exact stored UTF-8 JSONL bytes as one strict prefix.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "function",
+      "name": "build_next_factory_event_record",
+      "description": "Validate the complete prefix, then assign the sole valid next CAS record.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_event_chain.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptControlError",
+      "description": "Stable fail-closed B3.4 admission error.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_ReservationState",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ReservationRecord",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_GrantState",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptRunDrainSnapshot",
+      "description": "Immutable process-local structural drain view for one Factory run.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptRecoveryTerminalWorkV1",
+      "description": "One replay-fenced cancelled terminal append; never a dispatch lease.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptCoordinator",
+      "description": "One explicit, run-scoped authority/budget coordinator.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "from_replay_candidate",
+          "doc": "Install a detached replay candidate as permanently closed state."
+        },
+        {
+          "name": "_install_replay_record_locked",
+          "doc": ""
+        },
+        {
+          "name": "register_grant",
+          "doc": "Register one exact Factory-owned live grant."
+        },
+        {
+          "name": "register_cutoff",
+          "doc": "Bind one exact Factory-owned final-request cutoff to its grant."
+        },
+        {
+          "name": "revoke_grant",
+          "doc": ""
+        },
+        {
+          "name": "close_grant",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        },
+        {
+          "name": "fence_admission",
+          "doc": "Publish a non-blocking local replay fence before durable replay I/O."
+        },
+        {
+          "name": "rollback_unexposed_grant",
+          "doc": "Remove a grant whose durable post-validation failed before exposure."
+        },
+        {
+          "name": "rollback_unexposed_reservation",
+          "doc": "Remove an unreturned reservation and any now-unreferenced cutoff."
+        },
+        {
+          "name": "rollback_unexposed_start_permit",
+          "doc": "Abort a start permit that never escaped the live control port."
+        },
+        {
+          "name": "rollback_unexposed_started_lease",
+          "doc": "Quarantine a committed start whose outbound lease never escaped."
+        },
+        {
+          "name": "reserve",
+          "doc": ""
+        },
+        {
+          "name": "begin_start",
+          "doc": ""
+        },
+        {
+          "name": "commit_started",
+          "doc": ""
+        },
+        {
+          "name": "abort_reservation",
+          "doc": ""
+        },
+        {
+          "name": "mark_start_ambiguous",
+          "doc": ""
+        },
+        {
+          "name": "settle",
+          "doc": ""
+        },
+        {
+          "name": "terminal_persistence_failed",
+          "doc": ""
+        },
+        {
+          "name": "budget_state",
+          "doc": ""
+        },
+        {
+          "name": "drain_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "provider_drain_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "wait_provider_settled",
+          "doc": ""
+        },
+        {
+          "name": "_require_command_type",
+          "doc": ""
+        },
+        {
+          "name": "_grant_locked",
+          "doc": ""
+        },
+        {
+          "name": "_require_grant_open_locked",
+          "doc": ""
+        },
+        {
+          "name": "_validate_reserve_authority_locked",
+          "doc": ""
+        },
+        {
+          "name": "_reservation_locked",
+          "doc": ""
+        },
+        {
+          "name": "_require_reservation_identity",
+          "doc": ""
+        },
+        {
+          "name": "_require_definite_start_absent_proof_locked",
+          "doc": ""
+        },
+        {
+          "name": "_abort_plain_reservations_locked",
+          "doc": ""
+        },
+        {
+          "name": "_fence_admission_locked",
+          "doc": ""
+        },
+        {
+          "name": "_grant_has_active_started_locked",
+          "doc": ""
+        },
+        {
+          "name": "_wait_for_started_locked",
+          "doc": ""
+        },
+        {
+          "name": "_lifecycle_identity_used_locked",
+          "doc": ""
+        },
+        {
+          "name": "_claim_lifecycle_identity_locked",
+          "doc": ""
+        },
+        {
+          "name": "_release_lifecycle_identity_locked",
+          "doc": ""
+        },
+        {
+          "name": "_composite_request_hash",
+          "doc": ""
+        },
+        {
+          "name": "_budget_state_locked",
+          "doc": ""
+        },
+        {
+          "name": "_drain_snapshot_locked",
+          "doc": ""
+        },
+        {
+          "name": "_provider_drain_snapshot_locked",
+          "doc": ""
+        },
+        {
+          "name": "_validated_timeout",
+          "doc": ""
+        },
+        {
+          "name": "_mint_identity_candidate",
+          "doc": "Mint outside coordinator locks; callers claim uniqueness inside."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptLiveControlPort",
+      "description": "Run-scoped Factory capability that wire-binds cutoffs before reserve.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "from_replay_candidate",
+          "doc": "Wrap one reconstructed coordinator in the exact live-port type."
+        },
+        {
+          "name": "reject_recovered_admission",
+          "doc": ""
+        },
+        {
+          "name": "verification_scope",
+          "doc": ""
+        },
+        {
+          "name": "scope_id",
+          "doc": ""
+        },
+        {
+          "name": "inflight_request_ids",
+          "doc": ""
+        },
+        {
+          "name": "admission_closed",
+          "doc": ""
+        },
+        {
+          "name": "_revalidate_durable_grant",
+          "doc": ""
+        },
+        {
+          "name": "register_grant",
+          "doc": ""
+        },
+        {
+          "name": "revoke_grant",
+          "doc": ""
+        },
+        {
+          "name": "close_grant",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        },
+        {
+          "name": "fence_admission_for_replay",
+          "doc": "Close local admission before Factory publishes a durable replay fence."
+        },
+        {
+          "name": "reserve",
+          "doc": ""
+        },
+        {
+          "name": "begin_start",
+          "doc": ""
+        },
+        {
+          "name": "commit_started",
+          "doc": ""
+        },
+        {
+          "name": "abort_reservation",
+          "doc": ""
+        },
+        {
+          "name": "mark_start_ambiguous",
+          "doc": ""
+        },
+        {
+          "name": "settle",
+          "doc": ""
+        },
+        {
+          "name": "terminal_persistence_failed",
+          "doc": ""
+        },
+        {
+          "name": "budget_state",
+          "doc": ""
+        },
+        {
+          "name": "drain_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "snapshot",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_identifier",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash64",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py"
+    },
+    {
+      "type": "function",
+      "name": "_identity_equal",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py"
+    },
+    {
+      "type": "function",
+      "name": "_cutoff_key",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py"
+    },
+    {
+      "type": "function",
+      "name": "canonical_factory_physical_attempt_composite_hash",
+      "description": "Factory-owned canonical binding for one physical attempt candidate.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_coordinator.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptReplayError",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_replay.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptReplayPolicyV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_replay.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptReplayFenceV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_replay.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptReplayRecordV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_replay.py",
+      "methods": [
+        {
+          "name": "recovery_terminal_required",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryPhysicalAttemptReplayCandidateV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_replay.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_text",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash64",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "build_factory_physical_attempt_replay_candidate",
+      "description": "Exact-match lifecycle facts to detached Factory cutoff authority.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_replay.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_start_against_cutoff",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_physical_attempt_replay.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceAuthorityError",
+      "description": "Stable fail-closed A009B1 authority error.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FactoryRoleEvidenceGrantState",
+      "description": "Factory-private capability registry row; never serialized or projected.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceStageAuthorityV1",
+      "description": "Factory-owned immutable fence/stage claim captured by RunService.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceSourceHeadV1",
+      "description": "Scalar-only current head for one Factory-owned canonical source.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceSourceItemV1",
+      "description": "One locator/hash-only item at or before its captured source head.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceSourceSlotV1",
+      "description": "One exact policy slot with explicit present/absent state.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceResolvedCutV1",
+      "description": "Exact role policy source cut returned synchronously by Factory authority.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceCutoffBodyV1",
+      "description": "Immutable locator-free cutoff body stored inside the authority event.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_CutoffFragmentPayload",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_CutoffCommitManifest",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceSourceAuthority",
+      "description": "Synchronous Factory-owned source resolver boundary for A009B2.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "resolve_source_cut",
+          "doc": "Capture canonical source facts and heads while the claim lock is held."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UnavailableFactoryRoleEvidenceSourceAuthority",
+      "description": "Production A009B1 default: no source authority until A009B2 exists.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "resolve_source_cut",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceFactStream",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "ensure",
+          "doc": ""
+        },
+        {
+          "name": "query_events",
+          "doc": ""
+        },
+        {
+          "name": "query_head",
+          "doc": ""
+        },
+        {
+          "name": "append",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_PublicFactoryRoleEvidenceFactStream",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "ensure",
+          "doc": ""
+        },
+        {
+          "name": "query_events",
+          "doc": ""
+        },
+        {
+          "name": "query_head",
+          "doc": ""
+        },
+        {
+          "name": "append",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_StoredFragment",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_PartialCutoff",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_StoredCutoff",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_AuthorityScan",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceAuthorityPort",
+      "description": "Factory-owned A009B1 implementation of the async cutoff port.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_authority_owner_loop",
+          "doc": "Return the Factory loop that owns ``_run_lock``."
+        },
+        {
+          "name": "_stage_role_and_cap",
+          "doc": ""
+        },
+        {
+          "name": "_grant_hash",
+          "doc": ""
+        },
+        {
+          "name": "mint_authority_binding",
+          "doc": "Mint one unique role-task grant under the immutable live-stage claim."
+        },
+        {
+          "name": "require_grant_capacity",
+          "doc": "Preflight a complete stage-local fanout before any child is created."
+        },
+        {
+          "name": "revoke_authority_binding",
+          "doc": "Revoke one minted grant whose role-task creation never completed."
+        },
+        {
+          "name": "close_authority",
+          "doc": "Publish closure, then wait until every registered acquisition drains."
+        },
+        {
+          "name": "_require_authorized_request_locked",
+          "doc": ""
+        },
+        {
+          "name": "_begin_acquisition",
+          "doc": "Atomically validate authority and register a close-drained lease."
+        },
+        {
+          "name": "_preflight_authorized_request",
+          "doc": "Reject invalid authority before awaiting run access or producing effects."
+        },
+        {
+          "name": "_end_acquisition",
+          "doc": ""
+        },
+        {
+          "name": "_end_acquisition_locked",
+          "doc": ""
+        },
+        {
+          "name": "_require_acquisition_live",
+          "doc": "Revalidate closure/revocation at every persistent-effect boundary."
+        },
+        {
+          "name": "_append_authorized_commit",
+          "doc": "Linearize authority validation and the durable cutoff commit append."
+        },
+        {
+          "name": "_publish_ack_and_end_acquisition",
+          "doc": "Atomically authorize ACK publication and release its acquisition lease."
+        },
+        {
+          "name": "_bind_live_request_identity",
+          "doc": "Bind child run/freeze only after the stage claim has been revalidated."
+        },
+        {
+          "name": "_finalize_cutoff_after_resolve",
+          "doc": "Claim + durable fragment/commit path; must run fully sync on one thread."
+        },
+        {
+          "name": "_proof_from_stored",
+          "doc": ""
+        },
+        {
+          "name": "_require_current_run",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_ledger",
+          "doc": ""
+        },
+        {
+          "name": "_validate_head",
+          "doc": ""
+        },
+        {
+          "name": "_scan_authority_events",
+          "doc": ""
+        },
+        {
+          "name": "_parse_event_locator",
+          "doc": ""
+        },
+        {
+          "name": "_parse_fragment_event",
+          "doc": ""
+        },
+        {
+          "name": "_parse_commit_event",
+          "doc": ""
+        },
+        {
+          "name": "_build_partial",
+          "doc": ""
+        },
+        {
+          "name": "_require_unchanged_head",
+          "doc": ""
+        },
+        {
+          "name": "_append_event",
+          "doc": ""
+        },
+        {
+          "name": "_append_commit",
+          "doc": ""
+        },
+        {
+          "name": "_strict_reread_ack",
+          "doc": ""
+        },
+        {
+          "name": "_same_request_and_authority",
+          "doc": ""
+        },
+        {
+          "name": "_ack",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceReplayCutoffV1",
+      "description": "One detached committed cutoff fact; carries no live grant capability.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRoleEvidenceReplaySnapshotV1",
+      "description": "Strict authority-ledger snapshot at one immutable captured head.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_FactoryRoleEvidenceReplayScanReader",
+      "description": "Read-only reuse of the exact live cutoff ledger codec and validators.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_text",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_locator",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "factory_role_evidence_authority_stream",
+      "description": "Return the one durable cutoff stream identity for a Factory run.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash64",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_non_negative_int",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_cutoff_body_bytes",
+      "description": "Return the exact bounded UTF-8 bytes fragmented into authority facts.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_request_authority_hash",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_encode_base64url",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_decode_base64url",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_fragment_cutoff_body",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_fragment_vector_hash",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "query_factory_role_evidence_replay_snapshot",
+      "description": "Strictly read all committed cutoff facts without creating live authority.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_authority.py"
+    },
+    {
+      "type": "class",
+      "name": "CanonicalFactoryRoleEvidenceSourceAuthority",
+      "description": "Resolve one immutable Factory-issued source cut without mutation.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_role_evidence_source_resolver.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_fail",
+          "doc": ""
+        },
+        {
+          "name": "_source_ref",
+          "doc": ""
+        },
+        {
+          "name": "_factory_chain",
+          "doc": ""
+        },
+        {
+          "name": "_admission_slot",
+          "doc": ""
+        },
+        {
+          "name": "_latest_successful_stage_event",
+          "doc": ""
+        },
+        {
+          "name": "_static_head",
+          "doc": ""
+        },
+        {
+          "name": "_pm_static_slots",
+          "doc": ""
+        },
+        {
+          "name": "_ce_static_slot",
+          "doc": ""
+        },
+        {
+          "name": "_non_empty",
+          "doc": ""
+        },
+        {
+          "name": "_has_verifier_receipt_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_validated_dynamic_event",
+          "doc": ""
+        },
+        {
+          "name": "_validate_dynamic_gate_binding",
+          "doc": ""
+        },
+        {
+          "name": "_capture_dynamic_slots",
+          "doc": ""
+        },
+        {
+          "name": "resolve_source_cut",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryWorkspaceRunAdmission",
+      "description": "Own durable workspace run admission, renewal, draining, and release.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_admission.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_ttl",
+          "doc": ""
+        },
+        {
+          "name": "_now",
+          "doc": ""
+        },
+        {
+          "name": "_ttl",
+          "doc": ""
+        },
+        {
+          "name": "_expires_at",
+          "doc": ""
+        },
+        {
+          "name": "_parse_timestamp",
+          "doc": ""
+        },
+        {
+          "name": "_is_expired",
+          "doc": ""
+        },
+        {
+          "name": "_read_locked",
+          "doc": ""
+        },
+        {
+          "name": "_write_locked",
+          "doc": ""
+        },
+        {
+          "name": "_raise_conflict",
+          "doc": ""
+        },
+        {
+          "name": "current",
+          "doc": "Return the current durable lease under the stable lock."
+        },
+        {
+          "name": "acquire",
+          "doc": "Acquire the workspace or return the same active run idempotently."
+        },
+        {
+          "name": "claim_lifecycle_operation",
+          "doc": "Atomically acquire workspace authority and one lifecycle mutation."
+        },
+        {
+          "name": "release_lifecycle_operation",
+          "doc": "Release exactly one lifecycle claim without changing ownership."
+        },
+        {
+          "name": "rollback_lifecycle_operation",
+          "doc": "Rollback an operation claim and any workspace acquired only for it."
+        },
+        {
+          "name": "_require_owned_locked",
+          "doc": ""
+        },
+        {
+          "name": "assert_active",
+          "doc": "Validate an unexpired ACTIVE owner without mutating the record."
+        },
+        {
+          "name": "claim_stage",
+          "doc": "CAS one durable stage claim under the workspace admission lock."
+        },
+        {
+          "name": "hold_active_lifecycle_operation_claim",
+          "doc": "Hold the exact lifecycle claim as a replay/mutation fence."
+        },
+        {
+          "name": "revalidate",
+          "doc": ""
+        },
+        {
+          "name": "hold_active_stage_claim",
+          "doc": "Hold the stable admission lock around one exact live stage claim."
+        },
+        {
+          "name": "revalidate",
+          "doc": ""
+        },
+        {
+          "name": "release_stage",
+          "doc": "Release an exact stage claim after its result is durably projected."
+        },
+        {
+          "name": "renew",
+          "doc": "Renew an unexpired ACTIVE or DRAINING lease owned by this fence."
+        },
+        {
+          "name": "begin_draining",
+          "doc": "Move an owned ACTIVE lease into DRAINING idempotently."
+        },
+        {
+          "name": "release",
+          "doc": "Release an owned DRAINING lease only with settlement evidence."
+        },
+        {
+          "name": "assert_stale_owner",
+          "doc": "Return an expired owner lease without renewing or mutating it."
+        },
+        {
+          "name": "recover_stale_owner",
+          "doc": "Release one expired owner under its exact recovery claim."
+        },
+        {
+          "name": "_state",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_admission.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_admission.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_exclusive_lock",
+      "description": "Hold one stable cross-process advisory lock without deleting its file.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_admission.py"
+    },
+    {
+      "type": "class",
+      "name": "RunCompletionAuthority",
+      "description": "Select the fact boundary required to settle an orchestration run.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_completion.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "RunCompletionWaiter",
       "description": "Builds orchestration services and waits for orchestration runs to settle.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_completion.py",
@@ -976,6 +2628,70 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "_observable_task_rows_projection",
+          "doc": "Read TaskRuntime rows through the typed public authority boundary."
+        },
+        {
+          "name": "_execution_rows",
+          "doc": "Return fact-projected TaskRuntime rows associated with one run."
+        },
+        {
+          "name": "_active_execution_rows",
+          "doc": "Return active, unexpired rows from the canonical TaskRuntime projection."
+        },
+        {
+          "name": "_projection_is_authoritative",
+          "doc": ""
+        },
+        {
+          "name": "_row_has_canonical_fact_source",
+          "doc": ""
+        },
+        {
+          "name": "_parse_utc_timestamp",
+          "doc": ""
+        },
+        {
+          "name": "_row_has_live_canonical_execution_fact",
+          "doc": "Require a positive fact sequence and a live owner-cell lease."
+        },
+        {
+          "name": "active_execution_progress_marker",
+          "doc": "Return a stable marker for observable progress in one active run."
+        },
+        {
+          "name": "_row_matches_run",
+          "doc": "Return whether an observable row belongs to ``run_id``."
+        },
+        {
+          "name": "_row_is_active",
+          "doc": "Return whether a fact-projected TaskRuntime row is active."
+        },
+        {
+          "name": "_canonical_row_status",
+          "doc": ""
+        },
+        {
+          "name": "_task_runtime_terminal_result",
+          "doc": "Project a terminal result from committed TaskRuntime facts."
+        },
+        {
+          "name": "_committed_turn_outcome_result",
+          "doc": "Project the latest committed TransactionKernel outcome."
+        },
+        {
+          "name": "canonical_terminal_result",
+          "doc": "Return the canonical terminal projection for one child run."
+        },
+        {
+          "name": "active_execution_barrier_result",
+          "doc": "Return a non-mutating cancellation result when TaskRuntime is active."
+        },
+        {
+          "name": "_active_task_runtime_barrier_result",
+          "doc": "Compatibility delegate for internal callers during barrier cutover."
         },
         {
           "name": "build_orchestration_service",
@@ -1078,6 +2794,49 @@
     },
     {
       "type": "class",
+      "name": "_FactoryStageCancellationCutError",
+      "description": "Internal cut proving outer cancellation won before marker append.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_FactoryStageCommitArbitration",
+      "description": "One shared linearization point for cancellation and marker durability.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "commit_permit",
+          "doc": "Hold the permit across marker fsync and strict post-append reread."
+        },
+        {
+          "name": "mark_cancelled",
+          "doc": "Linearize cancellation without ever blocking the asyncio event loop."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_FactoryProviderAttemptRecoveryFence",
+      "description": "Private non-serializable capability held under Factory admission lock.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "hold_recovery_terminal",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "FactoryRunService",
       "description": "Formal service for Factory runs with persistence and recovery.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py",
@@ -1091,11 +2850,119 @@
           "doc": "获取 run_id 对应的细粒度锁。"
         },
         {
+          "name": "_physical_attempt_coordinator",
+          "doc": "Return the one process-local coordinator owned by this Factory run."
+        },
+        {
+          "name": "_revalidate_active_physical_attempt_stage_claim",
+          "doc": "Re-read the exact durable workspace fence and stage claim."
+        },
+        {
+          "name": "_require_physical_attempt_admission_open",
+          "doc": ""
+        },
+        {
+          "name": "_ensure_physical_attempt_replay_ledgers",
+          "doc": "Pre-enrol both replay streams while the new run is being created."
+        },
+        {
+          "name": "_capture_physical_attempt_replay_fence",
+          "doc": "Capture the strict Factory-chain head under an exact lifecycle hold."
+        },
+        {
+          "name": "_capture_physical_attempt_replay_views",
+          "doc": ""
+        },
+        {
+          "name": "_require_physical_attempt_replay_deadline",
+          "doc": ""
+        },
+        {
+          "name": "_recover_physical_attempt_coordinator",
+          "doc": "Strictly replay one run or fail closed without restoring admission."
+        },
+        {
+          "name": "revalidate_recovery_fence",
+          "doc": ""
+        },
+        {
+          "name": "_attach_workspace_lease",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_lease_fencing_token",
+          "doc": ""
+        },
+        {
+          "name": "_expected_lifecycle_fencing_token",
+          "doc": "Return authority proof only while the run projects an owned lease."
+        },
+        {
+          "name": "_acquire_workspace_lease",
+          "doc": ""
+        },
+        {
+          "name": "_claim_lifecycle_operation",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_release_evidence",
+          "doc": ""
+        },
+        {
+          "name": "_renew_workspace_lease",
+          "doc": ""
+        },
+        {
+          "name": "_assert_active_workspace_lease",
+          "doc": ""
+        },
+        {
+          "name": "_claim_stage_execution",
+          "doc": ""
+        },
+        {
+          "name": "_build_factory_role_evidence_cutoff_port",
+          "doc": "Capture one live stage claim into an A009B1-private authority port."
+        },
+        {
+          "name": "_assert_no_factory_role_evidence_port_leak",
+          "doc": "Fail before persistence if StageResult projections capture private authority."
+        },
+        {
+          "name": "_stage_result_releases_execution_claim",
+          "doc": ""
+        },
+        {
+          "name": "_query_child_session_settlement",
+          "doc": ""
+        },
+        {
           "name": "_build_abort_checker",
           "doc": ""
         },
         {
           "name": "_resolve_heartbeat_interval_seconds",
+          "doc": ""
+        },
+        {
+          "name": "automatic_router_mutation_guard_matrix",
+          "doc": "Return a detached audit projection of the Service-owned matrix."
+        },
+        {
+          "name": "_automatic_router_mutation_families",
+          "doc": ""
+        },
+        {
+          "name": "_validate_checkpoint_ref_from_typed_run",
+          "doc": "Reconstruct the sole checkpoint ref from a strict typed checkpoint."
+        },
+        {
+          "name": "_copy_run_state",
+          "doc": ""
+        },
+        {
+          "name": "_apply_stage_result_to_run",
           "doc": ""
         },
         {
@@ -1117,6 +2984,1221 @@
       "name": "_factory_jetstream_fanout_timeout_seconds",
       "description": "Resolve the JetStream fanout timeout for ``_append_event``.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementConsumerError",
+      "description": "Base error raised by the settlement consumer boundary.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementLifecycleError",
+      "description": "Raised when a lifecycle method is used before start or after stop.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SourceFactNotFoundError",
+      "description": "Raised when a wake hint references no durable source fact.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SourceFactValidationError",
+      "description": "Raised when an authoritative source fact cannot be safely interpreted.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UnsupportedSourceSchemaError",
+      "description": "Raised for a well-formed future schema that may become readable later.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementPortError",
+      "description": "Base error translated by the FactoryRunService adapter.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementRetryableError",
+      "description": "A transient settlement failure that must remain pending.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementPermanentError",
+      "description": "A permanent service rejection that is safe to dead-letter.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementFencedError",
+      "description": "The requested Factory workspace authority has been fenced.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementRecoveryRequiredError",
+      "description": "The lease expired and requires explicit stale-owner recovery.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementBarrierQuery",
+      "description": "Exact source fact and Factory scope required for a barrier read.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementBarrierSnapshot",
+      "description": "Composed Run Ledger barrier plus current lease authority.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementBarrierPort",
+      "description": "Read-only Run Ledger barrier dependency.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": [
+        {
+          "name": "query",
+          "doc": "Return the current barrier and workspace fencing authority."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunSettlementPort",
+      "description": "Mutation boundary implemented by a FactoryRunService adapter.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ValidatedTaskRuntimeSourceFact",
+      "description": "Fully validated TaskRuntime fact plus its durable envelope identity.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_SourceReplaySnapshot",
+      "description": "One replay-scoped immutable projection of task-runtime FactStream pages.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeSettlementFact",
+      "description": "Validated terminal TaskRuntime fact used as settlement evidence.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": [
+        {
+          "name": "identity",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SettlementOutcome",
+      "description": "Consumer decision states exposed to wake adapters.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementDecision",
+      "description": "One durable source-fact decision and its ACK safety.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementReplayReport",
+      "description": "Result of one finite startup replay or wake drain.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": [
+        {
+          "name": "ack_safe",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementConsumer",
+      "description": "Finite, event-woken consumer over durable TaskRuntime facts.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "_require_running",
+          "doc": ""
+        },
+        {
+          "name": "_query_barrier",
+          "doc": ""
+        },
+        {
+          "name": "_validate_task_runtime_fact",
+          "doc": ""
+        },
+        {
+          "name": "_to_settlement_fact",
+          "doc": ""
+        },
+        {
+          "name": "_ignored_decision",
+          "doc": ""
+        },
+        {
+          "name": "_dead_letter_invalid_source",
+          "doc": ""
+        },
+        {
+          "name": "_validate_source_page",
+          "doc": ""
+        },
+        {
+          "name": "_find_source_fact",
+          "doc": ""
+        },
+        {
+          "name": "_read_source_replay_snapshot",
+          "doc": "Read task-runtime FactStream pages once and index immutable events."
+        },
+        {
+          "name": "_checkpoint",
+          "doc": ""
+        },
+        {
+          "name": "_terminal_decision",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_run_lock",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_barrier_evidence_refs",
+      "description": "Validate and detach evidence references from one barrier snapshot.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_envelope_version",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_task_runtime_schema",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_source_event_identity",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_fencing_token",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_consumer.py"
+    },
+    {
+      "type": "class",
+      "name": "SettlementJournalValidationError",
+      "description": "Raised when durable journal state cannot be trusted.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactStreamPort",
+      "description": "Narrow FactStream dependency used by the settlement core.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": [
+        {
+          "name": "query",
+          "doc": "Return one immutable page from a FactStream."
+        },
+        {
+          "name": "append",
+          "doc": "Append one immutable event, honoring idempotency and CAS."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SettlementJournalStatus",
+      "description": "Persisted settlement state names.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementPendingPhase",
+      "description": "Reason a durable settlement remains pending.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementIdentity",
+      "description": "Fenced idempotency identity for one source fact.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": [
+        {
+          "name": "digest",
+          "doc": "Return the stable journal key digest."
+        },
+        {
+          "name": "to_payload",
+          "doc": "Project the identity into journal payload fields."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SettlementJournalRecord",
+      "description": "Validated projection of one journal fact.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": [
+        {
+          "name": "pending_phase",
+          "doc": "Return the pending phase when this is a pending record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SettlementClaim",
+      "description": "A successfully persisted CAS claim.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_CheckpointChainEntry",
+      "description": "One validated checkpoint and its durable source cursor.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementJournalReplaySnapshot",
+      "description": "One replay-scoped, read-only FactStream projection with mutable indexes.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": [
+        {
+          "name": "create",
+          "doc": ""
+        },
+        {
+          "name": "current_seq",
+          "doc": "Return the journal head observed or appended in this replay."
+        },
+        {
+          "name": "records",
+          "doc": "Return the replay-local journal records in event sequence order."
+        },
+        {
+          "name": "state_for",
+          "doc": "Return terminal state preferentially, otherwise the latest state."
+        },
+        {
+          "name": "latest_checkpoint_offset",
+          "doc": "Return the contiguous checkpoint head already validated for replay."
+        },
+        {
+          "name": "checkpoint_chain",
+          "doc": "Return the validated checkpoint chain for one replay source stream."
+        },
+        {
+          "name": "record_append",
+          "doc": "Advance local indexes from one successful FactStream append receipt."
+        },
+        {
+          "name": "replace",
+          "doc": "Install one bounded CAS-drift reload of the derived projection."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementJournal",
+      "description": "Append and query settlement state in ``factory.settlement``.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "records",
+          "doc": "Read all journal records or fail closed on the first invalid fact."
+        },
+        {
+          "name": "open_replay_snapshot",
+          "doc": "Read and index the journal once for a lifecycle-locked replay."
+        },
+        {
+          "name": "state_for",
+          "doc": "Return terminal state preferentially, otherwise the latest pending state."
+        },
+        {
+          "name": "latest_checkpoint_offset",
+          "doc": "Return the durable, contiguous source cursor for one stream."
+        },
+        {
+          "name": "append_waiting_barrier",
+          "doc": "Persist an idempotent pending barrier state."
+        },
+        {
+          "name": "append_waiting_retry",
+          "doc": "Persist a retryable outcome without acknowledging the wake signal."
+        },
+        {
+          "name": "try_claim",
+          "doc": "CAS-append an applying claim, returning ``None`` on contention."
+        },
+        {
+          "name": "append_applied",
+          "doc": "Persist the terminal applied state before transport acknowledgement."
+        },
+        {
+          "name": "append_dead_letter",
+          "doc": "Persist a terminal dead letter for a validated identity."
+        },
+        {
+          "name": "append_invalid_dead_letter",
+          "doc": "Persist an invalid source fact without inventing a valid fenced identity."
+        },
+        {
+          "name": "append_checkpoint",
+          "doc": "Persist a source cursor only after an ACK-safe terminal decision."
+        },
+        {
+          "name": "_base_payload",
+          "doc": ""
+        },
+        {
+          "name": "_append",
+          "doc": ""
+        },
+        {
+          "name": "_append_checkpoint_event",
+          "doc": "Append one checkpoint through the FactStream CAS and idempotency gate."
+        },
+        {
+          "name": "_recover_checkpoint_append_after_drift",
+          "doc": "Return a concurrent idempotent checkpoint or fail closed on a real conflict."
+        },
+        {
+          "name": "_reload_replay_snapshot_after_drift",
+          "doc": "Perform one bounded journal reload after a FactStream CAS drift."
+        },
+        {
+          "name": "_read_checkpoint_drift_state",
+          "doc": "Reload and validate FactStream journal facts for a CAS-drift decision."
+        },
+        {
+          "name": "_read_records",
+          "doc": ""
+        },
+        {
+          "name": "_record_from_event",
+          "doc": ""
+        },
+        {
+          "name": "_validate_status_payload",
+          "doc": ""
+        },
+        {
+          "name": "_checkpoint_at_offset",
+          "doc": "Return the checkpoint for one source offset, if already committed."
+        },
+        {
+          "name": "_checkpoint_matches_request",
+          "doc": "Check whether a committed cursor is the same idempotent request."
+        },
+        {
+          "name": "_checkpoint_decision_provenance",
+          "doc": "Bind a checkpoint to its terminal decision or explicit ignored outcome."
+        },
+        {
+          "name": "_validate_checkpoint_chain",
+          "doc": "Validate one source cursor chain in linear journal time and space."
+        },
+        {
+          "name": "_verify_checkpoint_sources",
+          "doc": "Verify all checkpoint source facts in one forward source-stream scan."
+        },
+        {
+          "name": "_verify_checkpoint_decision_provenance",
+          "doc": "Ensure checkpoint decision provenance names a prior terminal journal fact."
+        },
+        {
+          "name": "_verify_checkpoint_source",
+          "doc": ""
+        },
+        {
+          "name": "_verify_checkpoint_source_event",
+          "doc": "Validate one source fact already obtained from a durable page."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_canonical_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py"
+    },
+    {
+      "type": "function",
+      "name": "_strict_int",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_digest",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py"
+    },
+    {
+      "type": "function",
+      "name": "_barrier_audit_payload",
+      "description": "Return deterministic, JSON-safe Run Ledger barrier audit fields.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_journal.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunServicePort",
+      "description": "Narrow Factory service surface required by settlement.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementWakeMessage",
+      "description": "One JetStream delivery whose ACK follows durable FactStream progress.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementWakeSubscription",
+      "description": "Manual-ACK JetStream subscription used by Factory settlement.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementConsumerInfo",
+      "description": "Public consumer-info projection returned by nats-py subscriptions.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementJetStreamContext",
+      "description": "Minimal JetStream context required to establish a durable consumer.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettlementWakeClient",
+      "description": "Connected NATS client exposing its JetStream context.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "jetstream",
+          "doc": "Return the active JetStream context."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SettlementAuthoritySink",
+      "description": "Bind source-fact authority before a Factory service mutation.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "bind",
+          "doc": "Bind authority and return the current Factory fencing token."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactStreamPublicServiceAdapter",
+      "description": "Adapt the FactStream public service to the settlement core port.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "query",
+          "doc": ""
+        },
+        {
+          "name": "append",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_SettlementAuthority",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunServiceSettlementAdapter",
+      "description": "Fence and translate Factory service calls for the settlement consumer.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "bind",
+          "doc": "Bind source authority and return current Factory fencing token."
+        },
+        {
+          "name": "_assert_current_authority",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RunLedgerFactorySettlementBarrierAdapter",
+      "description": "Map the Run Ledger public no-wait query to the settlement core port.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "query",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DurableJetStreamSettlementWakeBridge",
+      "description": "Durable explicit-ACK wake bridge for Factory settlement.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "subject",
+          "doc": ""
+        },
+        {
+          "name": "durable_name",
+          "doc": ""
+        },
+        {
+          "name": "last_report",
+          "doc": ""
+        },
+        {
+          "name": "failure",
+          "doc": "Return the terminal transport failure, if delivery has stopped."
+        },
+        {
+          "name": "is_healthy",
+          "doc": "Return whether the subscribed delivery task remains live."
+        },
+        {
+          "name": "_consumer_config",
+          "doc": "Build the versioned durable's complete server-side safety contract."
+        },
+        {
+          "name": "_assert_consumer_config_matches",
+          "doc": ""
+        },
+        {
+          "name": "_observe_completion",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementRuntime",
+      "description": "Own one workspace consumer and its optional wake subscription.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "wake_bridge",
+          "doc": ""
+        },
+        {
+          "name": "is_running",
+          "doc": "Return false when the required durable transport has failed."
+        },
+        {
+          "name": "_assert_wake_bridge_healthy",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementRuntimeError",
+      "description": "Typed production-runtime lifecycle failure.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementWakeBridgeError",
+      "description": "Terminal JetStream wake-transport failure with structured evidence.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactorySettlementRuntimeRegistry",
+      "description": "Process-local workspace index for one durable consumer per backend.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_canonical_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_consumer_safety_evidence",
+      "description": "Project public nats-py config fields into stable drift evidence.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_consumer_safety_values_match",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_translate_factory_service_error",
+      "description": "Translate Factory service failures without masking their machine code.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_create_factory_run_service",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_wake_binding",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryStageArtifactBindingError",
+      "description": "Typed strict-validation failure for Factory stage artifact bindings.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PMContractArtifactBindingV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PMStageEventArtifactBindingV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CEReviewManifestArtifactBindingV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "CEBlueprintArtifactBindingV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryStageArtifactBindingsV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "_construct_unchecked",
+          "doc": "Construct only after the shared parser has proven all invariants."
+        },
+        {
+          "name": "create",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RevalidatedPMStageArtifactBindingV1",
+      "description": "Pure read-only proof of one successful PM stage binding.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RevalidatedCEStageArtifactBindingV1",
+      "description": "Pure read-only proof of one ordered CE manifest/blueprint binding.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_fail",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_object",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_identity",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_filename_identity",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_hash",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_int",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_logical_path",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_strict_json",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "pairs_hook",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "reject_constant",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_factory_stage_artifact_json",
+      "description": "Parse one strict UTF-8 Factory artifact object without mutation.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_source_relative_path",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_expected_snapshot_ref",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_source",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_persist_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_canonical_hash",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_projection",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_pm_document",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_item_hashes",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_vector_hash",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_item_from_bytes",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "build_pm_stage_artifact_bindings",
+      "description": "Freeze the exact persisted PM plan before its successful stage fact.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_review_document",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_binding_from_committed_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_tasks_by_id",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_task_canonical_hash",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_task_projection_hash",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "build_chief_engineer_stage_artifact_bindings",
+      "description": "Freeze the exact PM link, CE review, and ordered CE blueprints.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "revalidate_pm_stage_artifact_binding",
+      "description": "Strictly reread a PM immutable snapshot without persisting anything.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "function",
+      "name": "revalidate_chief_engineer_stage_artifact_binding",
+      "description": "Strictly reread one CE review and ordered blueprint vector, read-only.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_artifact_bindings.py"
+    },
+    {
+      "type": "class",
+      "name": "_ChiefEngineerExecutionAttemptLeaseBudget",
+      "description": "One bounded lease policy derived from the admitted CE timeout.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ChiefEngineerExecutionAttemptHeartbeatFailure",
+      "description": "One observable CE lease-keeper incident or unresolved failure.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ChiefEngineerExecutionAttemptKeeperStopResult",
+      "description": "Stop result that gates terminal settlement on confirmed thread exit.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_ChiefEngineerExecutionAttemptLeaseKeeper",
+      "description": "Threaded TaskRuntime heartbeat covering async and synchronous CE work.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "failure",
+          "doc": ""
+        },
+        {
+          "name": "incidents",
+          "doc": "Return every keeper incident without retaining stale failure authority."
+        },
+        {
+          "name": "heartbeat_count",
+          "doc": ""
+        },
+        {
+          "name": "task_id",
+          "doc": ""
+        },
+        {
+          "name": "execution_attempt",
+          "doc": ""
+        },
+        {
+          "name": "is_alive",
+          "doc": ""
+        },
+        {
+          "name": "start",
+          "doc": "Start exactly one bounded heartbeat thread for this claim."
+        },
+        {
+          "name": "stop",
+          "doc": "Request exit and return only after bounded confirmation or failure."
+        },
+        {
+          "name": "_thread_entry",
+          "doc": "Contain every thread-boundary failure as an auditable keeper incident."
+        },
+        {
+          "name": "_run_loop",
+          "doc": ""
+        },
+        {
+          "name": "_record_failure",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_ChiefEngineerExecutionAttemptLeaseScope",
+      "description": "Claim-bound keeper state enforcing stop-before-settle and settle-once.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "bind_claim",
+          "doc": ""
+        },
+        {
+          "name": "start_keeper",
+          "doc": ""
+        },
+        {
+          "name": "stop_keeper",
+          "doc": ""
+        },
+        {
+          "name": "begin_settlement",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
@@ -1142,6 +4224,10 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_factory_role_evidence_cutoff_port",
           "doc": ""
         },
         {
@@ -1337,6 +4423,10 @@
           "doc": ""
         },
         {
+          "name": "_persist_normalized_pm_plan_validation_contracts",
+          "doc": "Persist the exact normalized PM tasks consumed by CE provenance."
+        },
+        {
           "name": "_pm_plan_tasks_from_payload",
           "doc": ""
         },
@@ -1367,6 +4457,10 @@
         {
           "name": "_materialize_pm_plan_taskboard",
           "doc": ""
+        },
+        {
+          "name": "_factory_workspace_run_lease_task_metadata",
+          "doc": "Detach Factory-owned workspace authority for TaskRuntime facts."
         },
         {
           "name": "_compact_text_for_prompt",
@@ -1469,16 +4563,28 @@
           "doc": ""
         },
         {
+          "name": "_query_observable_task_rows",
+          "doc": "Return authoritative rows or one typed fail-closed diagnostic."
+        },
+        {
+          "name": "_read_observable_task_rows",
+          "doc": "Return only authoritative TaskRuntime fact-projected rows."
+        },
+        {
           "name": "_read_claimable_director_task_ids",
           "doc": "Return TaskBoard PM/external ids that can be claimed in this round."
         },
         {
-          "name": "_terminal_status_from_task_counts",
-          "doc": ""
+          "name": "_task_projection_external_id",
+          "doc": "Return the PM identity represented by one TaskRuntime projection."
         },
         {
-          "name": "_count",
-          "doc": ""
+          "name": "_director_dependency_settle_grace_seconds",
+          "doc": "Return the bounded grace for dependency-unblock fact propagation."
+        },
+        {
+          "name": "_remaining_director_task_count",
+          "doc": "Return unresolved PM task owners from the observable projection."
         },
         {
           "name": "_is_taskboard_converged",
@@ -1486,14 +4592,6 @@
         },
         {
           "name": "_has_director_progress",
-          "doc": ""
-        },
-        {
-          "name": "_has_director_execution_evidence",
-          "doc": ""
-        },
-        {
-          "name": "_metadata_indicates_execution",
           "doc": ""
         },
         {
@@ -1509,12 +4607,40 @@
           "doc": ""
         },
         {
+          "name": "_factory_deadline_budget_policy",
+          "doc": "Resolve infrastructure configuration into the pure deadline policy."
+        },
+        {
+          "name": "_unresolved_task_ids_from_rows",
+          "doc": "Return non-terminal task identifiers from authoritative projections."
+        },
+        {
+          "name": "_is_internal_chief_engineer_task_row",
+          "doc": "Identify a trusted Factory-owned CE execution row."
+        },
+        {
+          "name": "_director_dependency_schedule",
+          "doc": "Project the remaining Director critical path from TaskRuntime facts."
+        },
+        {
+          "name": "_director_admission_failure_projection",
+          "doc": "Project one admission rejection without misreporting its cause."
+        },
+        {
+          "name": "_director_dispatch_deadline_admission_decision",
+          "doc": "Return the canonical typed admission for one Director dispatch."
+        },
+        {
           "name": "_director_first_materialization_min_budget_seconds",
           "doc": ""
         },
         {
           "name": "_quality_gate_reserved_budget_seconds",
           "doc": ""
+        },
+        {
+          "name": "_director_downstream_reserved_budget_seconds",
+          "doc": "Reserve only executable downstream work at the Director boundary."
         },
         {
           "name": "_director_dispatch_timeout_settle_grace_seconds",
@@ -1529,8 +4655,12 @@
           "doc": ""
         },
         {
+          "name": "_chief_engineer_execution_attempt_lease_budget",
+          "doc": "Derive one bounded TaskRuntime TTL and heartbeat cadence."
+        },
+        {
           "name": "_chief_engineer_deadline_projection_decision",
-          "doc": ""
+          "doc": "Return admission for one project-level Chief Engineer LLM call."
         },
         {
           "name": "_chief_engineer_projection_semantic_terms",
@@ -1589,10 +4719,6 @@
           "doc": ""
         },
         {
-          "name": "_workspace_taskboard_terminal_result",
-          "doc": "Fail-closed when the shared taskboard is already terminal."
-        },
-        {
           "name": "_build_per_binding_route_events",
           "doc": ""
         },
@@ -1609,6 +4735,18 @@
           "doc": ""
         },
         {
+          "name": "_director_provider_health_failure_signal",
+          "doc": ""
+        },
+        {
+          "name": "_director_provider_health_failure_signal_from_events",
+          "doc": ""
+        },
+        {
+          "name": "_llm_event_error_text",
+          "doc": ""
+        },
+        {
           "name": "_ce_extract_llm_evidence",
           "doc": ""
         },
@@ -1621,7 +4759,11 @@
           "doc": ""
         },
         {
-          "name": "_ce_llm_failure_allows_blueprint_projection",
+          "name": "_ce_portfolio_result_allows_schema_repair",
+          "doc": "Whether one failed CE portfolio result may consume the single repair."
+        },
+        {
+          "name": "_ce_schema_repair_failure_class",
           "doc": ""
         },
         {
@@ -1641,44 +4783,44 @@
           "doc": ""
         },
         {
-          "name": "_is_director_no_materialized_changes",
+          "name": "_chief_engineer_portfolio_tasks",
+          "doc": "Project validated PM facts into the CE portfolio contract."
+        },
+        {
+          "name": "_chief_engineer_portfolio_context",
+          "doc": "Build one structured final-request evidence payload for all PM tasks."
+        },
+        {
+          "name": "_chief_engineer_portfolio_objective",
+          "doc": "Return a natural-language project design objective for one CE call."
+        },
+        {
+          "name": "_chief_engineer_structured_output_contract",
+          "doc": "Build the caller-owned provider schema for one CE portfolio."
+        },
+        {
+          "name": "_claim_chief_engineer_execution_attempt",
+          "doc": "Claim TaskRuntime's durable owner for one CE portfolio execution."
+        },
+        {
+          "name": "_settle_chief_engineer_execution_attempt",
+          "doc": "Complete successful CE work or suspend it for a new TaskRuntime claim."
+        },
+        {
+          "name": "_chief_engineer_portfolio_output_errors",
+          "doc": "Validate the nested project-level CE output contract."
+        },
+        {
+          "name": "_settle_chief_engineer_execution_attempt_after_exception",
           "doc": ""
         },
         {
-          "name": "_fanout_all_active_bindings_failed",
-          "doc": ""
+          "name": "_chief_engineer_schema_repair_objective",
+          "doc": "Build one bounded CE reconstruction objective without replaying corrupt bytes."
         },
         {
-          "name": "_fanout_failure_mentions_materialization_quality",
-          "doc": ""
-        },
-        {
-          "name": "_failure_metadata_mentions_materialization_quality",
-          "doc": ""
-        },
-        {
-          "name": "_failed_task_records_indicate_materialization_quality_handoff",
-          "doc": ""
-        },
-        {
-          "name": "_failed_task_records_indicate_quality_handoff",
-          "doc": "Return true when failed task records show artifacts that should enter QA."
-        },
-        {
-          "name": "_taskboard_idle_with_unresolved_work",
-          "doc": "Return true when no work is active and only blocked residue remains."
-        },
-        {
-          "name": "_workspace_has_materialized_delivery_evidence",
-          "doc": ""
-        },
-        {
-          "name": "_fanout_quality_failure_can_enter_quality_gate",
-          "doc": ""
-        },
-        {
-          "name": "_downgrade_quality_handoff_blocking_signals",
-          "doc": ""
+          "name": "_settle_chief_engineer_attempt_before_schema_repair",
+          "doc": "Suspend the invalid primary CE attempt before claiming its repair task."
         },
         {
           "name": "_bool_from_context_or_env",
@@ -1691,6 +4833,18 @@
         {
           "name": "_workspace_quality_commands",
           "doc": ""
+        },
+        {
+          "name": "_canonical_project_id",
+          "doc": ""
+        },
+        {
+          "name": "_canonical_factory_projection",
+          "doc": "Load the canonical Factory run-tree projection."
+        },
+        {
+          "name": "_workspace_quality_task_boundary_blocker",
+          "doc": "Block workspace validation until canonical task boundaries settle."
         },
         {
           "name": "_trim_command_output",
@@ -1709,6 +4863,10 @@
           "doc": ""
         },
         {
+          "name": "_workspace_quality_repair_issue_payloads",
+          "doc": ""
+        },
+        {
           "name": "_workspace_quality_repair_coverage_report",
           "doc": ""
         },
@@ -1719,6 +4877,46 @@
         {
           "name": "_workspace_quality_repair_plan_probe_base_files",
           "doc": ""
+        },
+        {
+          "name": "_director_stage_should_run_materialization_quality_settle",
+          "doc": "Whether director_dispatch should run a final materialization settle pass."
+        },
+        {
+          "name": "_workspace_has_delivery_surface",
+          "doc": "True when package + source surface exists (real-run-capable scaffold)."
+        },
+        {
+          "name": "_recover_director_stage_authority_after_delivery_settle",
+          "doc": "Re-append disk-reconciled boundary verdicts and re-evaluate authority."
+        },
+        {
+          "name": "_seal_director_stage_missing_tool_lifecycles",
+          "doc": "R177/M06: seal blocked lifecycle for claimed materialization without tools."
+        },
+        {
+          "name": "_collect_director_stage_materialization_diagnostics",
+          "doc": "Best-effort tsc/compiler diagnostics for settle-time materialization."
+        },
+        {
+          "name": "_ensure_director_stage_materialization_typescript_toolchain",
+          "doc": "Best-effort npm install so settle can collect tsc diagnostics (R167)."
+        },
+        {
+          "name": "_claim_director_stage_materialization_settle_attempt",
+          "doc": "Claim a short director TaskRuntime attempt so settle repairs can write."
+        },
+        {
+          "name": "_settle_director_stage_materialization_attempt",
+          "doc": "Best-effort close of the settle claim so leases do not stick open."
+        },
+        {
+          "name": "_director_stage_materialization_settle_target_files",
+          "doc": "Resolve write scope for settle DEO commit (plan targets + workspace surface)."
+        },
+        {
+          "name": "_director_stage_materialization_settle_commit_context",
+          "doc": "Build DEO commit context with control-plane JobToken evidence (M06)."
         },
         {
           "name": "_apply_workspace_quality_repairs",
@@ -1789,6 +4987,14 @@
           "doc": ""
         },
         {
+          "name": "workspace_checks_deadline_blocker",
+          "doc": ""
+        },
+        {
+          "name": "workspace_quality_command_timeout_seconds",
+          "doc": ""
+        },
+        {
           "name": "workspace_repair_deadline_blocker",
           "doc": ""
         },
@@ -1833,6 +5039,26 @@
           "doc": ""
         },
         {
+          "name": "_inflight_director_run_ids",
+          "doc": "Return child run ids that explicitly crossed the soft-timeout barrier."
+        },
+        {
+          "name": "_active_director_execution_progress_marker",
+          "doc": "Read the TaskRuntime-owned progress marker for a child run."
+        },
+        {
+          "name": "_with_execution_barrier_progress",
+          "doc": "Attach hard-deadline and progress evidence to a barrier result."
+        },
+        {
+          "name": "_execution_barrier_timeout_result",
+          "doc": "Project a still-active child as an explicit control-plane timeout."
+        },
+        {
+          "name": "_active_director_task_barrier_result",
+          "doc": "Leave an active Director lease intact while external cancellation settles."
+        },
+        {
           "name": "_resolve_cancel_event",
           "doc": ""
         },
@@ -1841,6 +5067,42 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_call_accepts_keyword",
+      "description": "Return whether ``callable_obj`` can accept a keyword argument.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_new_monotonic_deadline",
+      "description": "Return one absolute deadline for a bounded Factory operation.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_remaining_monotonic_seconds",
+      "description": "Return non-negative wall time left in an absolute operation lease.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_whole_wait_seconds",
+      "description": "Return whole seconds safe to pass to an integer-timeout dependency.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_empty_taskboard_stats",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_taskboard_stat",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
     },
     {
       "type": "function",
@@ -1853,6 +5115,40 @@
       "name": "_is_workspace_quality_repair_path",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    },
+    {
+      "type": "class",
+      "name": "CanonicalFactoryAuthority",
+      "description": "Read-only authority projected from the canonical Run Ledger.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py",
+      "methods": [
+        {
+          "name": "director_stage_authorized",
+          "doc": "Return whether all owned tasks reached ``completed_verified``."
+        },
+        {
+          "name": "quality_stage_authorized",
+          "doc": "Return whether canonical QA and evidence authorize final success."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_alternate_task_id_token",
+      "description": "Map ``TASK-3`` ↔ ``3`` for boundary/runtime id alignment.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_row_delivery_complete",
+      "description": "Whether a TaskRuntime row is delivery-complete for stage authority.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_canonical_factory_authority",
+      "description": "Evaluate Factory transition authority from one Run Ledger projection.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
     },
     {
       "type": "function",
@@ -1940,24 +5236,6 @@
     },
     {
       "type": "function",
-      "name": "has_director_execution_evidence",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
-    },
-    {
-      "type": "function",
-      "name": "metadata_indicates_execution",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
-    },
-    {
-      "type": "function",
-      "name": "is_director_no_materialized_changes",
-      "description": "",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
-    },
-    {
-      "type": "function",
       "name": "bool_from_context_or_env",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_helpers.py"
@@ -1982,6 +5260,208 @@
     },
     {
       "type": "class",
+      "name": "FactoryStagePersistenceError",
+      "description": "Typed fail-closed Factory stage-persistence error.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryStagePersistenceIntentV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py",
+      "methods": [
+        {
+          "name": "_hash_payload",
+          "doc": ""
+        },
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "create",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryStagePersistenceCommittedV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py",
+      "methods": [
+        {
+          "name": "to_event_payload",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryLastStageCommitV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        },
+        {
+          "name": "from_commit",
+          "doc": ""
+        },
+        {
+          "name": "from_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryStagePersistenceStateV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py",
+      "methods": [
+        {
+          "name": "is_quarantined",
+          "doc": ""
+        },
+        {
+          "name": "latest_commit",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_fail",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_bytes",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_document_hash",
+      "description": "Hash every frozen document with one exact domain-separated shape.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "canonical_stage_result_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "canonical_run_snapshot_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "canonical_checkpoint_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_object",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_object",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_text",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_identity",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_checkpoint_ref",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "build_stage_persistence_intent",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_stage_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "reduce_factory_stage_persistence",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_current_stage_commit_pointer",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_committed_checkpoint_hashes",
+      "description": "Recompute both frozen hash domains from the same immutable checkpoint.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "bounded_redacted_error",
+      "description": "Return one control-safe UTF-8 string bounded without splitting code points.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_stage_persistence.py"
+    },
+    {
+      "type": "class",
       "name": "FileLockTimeoutError",
       "description": "Raised when file lock acquisition times out.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py",
@@ -1991,6 +5471,37 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryArtifactSnapshotError",
+      "description": "Typed fail-closed error for Factory-owned immutable artifact snapshots.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunSnapshotError",
+      "description": "Typed failure for strict mutable-run and immutable-checkpoint reads.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryArtifactSnapshotV1",
+      "description": "One exact-byte content-addressed snapshot committed by FactoryStore.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py",
+      "methods": []
     },
     {
       "type": "class",
@@ -2007,16 +5518,128 @@
           "doc": "Get directory for a run"
         },
         {
+          "name": "run_snapshot_ref",
+          "doc": ""
+        },
+        {
+          "name": "checkpoint_ref",
+          "doc": ""
+        },
+        {
+          "name": "_validated_artifact_snapshot_run_id",
+          "doc": ""
+        },
+        {
+          "name": "_validated_artifact_snapshot_hash",
+          "doc": ""
+        },
+        {
+          "name": "stage_artifact_snapshot_ref",
+          "doc": "Return the sole content-addressed logical ref for one run/hash pair."
+        },
+        {
+          "name": "_validated_artifact_snapshot_content",
+          "doc": ""
+        },
+        {
+          "name": "_validated_artifact_snapshot_byte_count",
+          "doc": ""
+        },
+        {
+          "name": "persist_stage_artifact_snapshot",
+          "doc": "Commit or exactly reuse one immutable content-addressed snapshot."
+        },
+        {
+          "name": "read_stage_artifact_snapshot",
+          "doc": "Strictly re-read one expected immutable snapshot under its sole key."
+        },
+        {
+          "name": "write_and_replace",
+          "doc": ""
+        },
+        {
           "name": "_write_temp_file",
           "doc": "同步文件写入（在线程池中执行）"
+        },
+        {
+          "name": "_replace_with_retry_sync",
+          "doc": "Synchronously replace a file inside one lock-owning worker."
+        },
+        {
+          "name": "_strict_json_object",
+          "doc": ""
+        },
+        {
+          "name": "reject_duplicate",
+          "doc": ""
+        },
+        {
+          "name": "reject_constant",
+          "doc": ""
+        },
+        {
+          "name": "_read_strict_snapshot_sync",
+          "doc": ""
         },
         {
           "name": "_read_file_sync",
           "doc": "同步文件读取（在线程池中执行）"
         },
         {
+          "name": "_persist_immutable_checkpoint_sync",
+          "doc": ""
+        },
+        {
           "name": "_write_file_sync",
           "doc": "同步文件写入 helper（在线程池中执行）"
+        },
+        {
+          "name": "_authoritative_event_logical_path",
+          "doc": ""
+        },
+        {
+          "name": "_provision_authoritative_event_authority",
+          "doc": "Provision/revalidate the stable OS lock authority without enrolling a stream."
+        },
+        {
+          "name": "_enroll_authoritative_event_lock",
+          "doc": "Enroll one stable logical stream lock key in an existing authority."
+        },
+        {
+          "name": "_provision_authoritative_event_lock",
+          "doc": "Provision/revalidate the stable OS lock authority for one stream."
+        },
+        {
+          "name": "_remaining_event_lock_budget",
+          "doc": ""
+        },
+        {
+          "name": "_acquire_authoritative_event_lock",
+          "doc": "Acquire an enrolled stream within five seconds, provisioning only when absent."
+        },
+        {
+          "name": "acquire",
+          "doc": ""
+        },
+        {
+          "name": "_append_authoritative_event_sync",
+          "doc": ""
+        },
+        {
+          "name": "_preflight_authoritative_events_sync",
+          "doc": "Prove the exact current chain has capacity for candidate records."
+        },
+        {
+          "name": "_read_authoritative_events_sync",
+          "doc": ""
+        },
+        {
+          "name": "_is_regular_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_read_authoritative_events_read_only_sync",
+          "doc": "Descriptor-safe strict read without lock-authority enrollment or writes."
         },
         {
           "name": "_append_file_sync",
@@ -2046,37 +5669,18 @@
     },
     {
       "type": "function",
-      "name": "_release_acquired_lock_from_task",
-      "description": "",
+      "name": "_run_locked_file_operation",
+      "description": "Acquire, execute, and release one file operation in the same worker.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py"
     },
     {
       "type": "class",
-      "name": "WorkspaceQualityFilePatch",
-      "description": "Controlled local patch emitted by workspace-quality repair helpers.",
-      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py",
-      "methods": []
-    },
-    {
-      "type": "class",
       "name": "WorkspaceQualityRunner",
-      "description": "Builds and runs workspace quality (npm test/build) commands.",
+      "description": "Build and run quality commands without mutating target artifacts.",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality.py",
       "methods": [
         {
           "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "consume_repair_receipts",
-          "doc": ""
-        },
-        {
-          "name": "_workspace_relative_path",
-          "doc": ""
-        },
-        {
-          "name": "_apply_workspace_quality_patch",
           "doc": ""
         },
         {
@@ -2132,19 +5736,11 @@
           "doc": ""
         },
         {
-          "name": "repair_hallucinated_npm_dependencies",
-          "doc": "Remove hallucinated dependencies from package.json."
-        },
-        {
-          "name": "repair_cjs_export_import_mismatch",
-          "doc": "Fix CJS destructuring imports that target direct-export modules."
-        },
-        {
-          "name": "repair_test_trim_mismatch",
-          "doc": "Fix test assertions that fail due to whitespace/trim differences."
-        },
-        {
           "name": "run_command",
+          "doc": ""
+        },
+        {
+          "name": "_run_resolved_command",
           "doc": ""
         }
       ]
@@ -2342,6 +5938,111 @@
       "name": "_normalize_verification_commands",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/models.py"
+    },
+    {
+      "type": "class",
+      "name": "NativeValidationSandboxError",
+      "description": "Raised when native validation cannot be isolated safely.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "NativeValidationContractError",
+      "description": "Raised when project configuration can forge validation evidence.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SandboxedNativeCommand",
+      "description": "A command prepared for isolated execution.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "is_cargo_test_command",
+      "description": "Return whether ``command`` invokes Cargo's native test runner.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "cargo_native_test_count",
+      "description": "Count successful tests from paired standard-libtest stdout records.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_project_toml",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_cargo_manifest_targets",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_expand_workspace_entries",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_dependencies_from_table",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_cargo_path_dependencies",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_dependency_manifest",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_member_manifest_paths",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_cargo_project_contract",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_optional_ro_bind",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "_bubblewrap_command",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
+    },
+    {
+      "type": "function",
+      "name": "sandboxed_cargo_test_command",
+      "description": "Yield an isolated Cargo test invocation or fail closed.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/native_validation_sandbox.py"
     },
     {
       "type": "class",
@@ -2872,8 +6573,535 @@
     {
       "type": "function",
       "name": "load_run_ledger_projection",
-      "description": "Read a run ledger file and return the canonical projection.",
+      "description": "Read the canonical control-plane projection for one Factory run tree.",
       "defined_in": "polaris/cells/factory/pipeline/internal/run_ledger.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryWorkspaceRunLeaseStateV1",
+      "description": "Durable workspace admission lifecycle owned by ``factory.pipeline``.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryStageExecutionClaimV1",
+      "description": "Durable CAS claim for one in-flight Factory stage execution.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryLifecycleOperationClaimV1",
+      "description": "Durable CAS claim for one Factory run lifecycle mutation.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryWorkspaceReleaseEvidenceV1",
+      "description": "Structured proof required before workspace authority is released.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryTerminalTaskRuntimeProjectionV1",
+      "description": "Run-bound authority snapshot captured before destructive TaskRuntime reset.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryWorkspaceRunLeaseV1",
+      "description": "One fenced Factory run authority for a workspace.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return the canonical UTF-8 JSON-compatible lease record."
+        },
+        {
+          "name": "from_dict",
+          "doc": "Validate and restore one durable lease record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RecoverStaleFactoryWorkspaceOwnerCommandV1",
+      "description": "Explicit authority proof for releasing one stale Factory owner.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RecoverStaleFactoryWorkspaceOwnerResultV1",
+      "description": "Released lease returned after stale-owner recovery succeeds.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return the canonical UTF-8 JSON-compatible recovery result."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StartFactoryRunCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CancelFactoryRunCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetFactoryRunStatusQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetFactoryChainProjectionQueryV1",
+      "description": "Exact workspace/run query for the Factory chain owner projection.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryChainProjectionV1",
+      "description": "Read-only Factory-owned chain projection for one workspace run.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return the canonical UTF-8 JSON-compatible projection payload."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ListFactoryRunsQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunProjectionExperimentCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RefreshProjectionBackMappingCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReprojectProjectionExperimentCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunStartedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectionExperimentResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectionBackMappingRefreshResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectionReprojectionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryPipelineError",
+      "description": "Raised when `factory.pipeline` contract processing fails.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryWorkspaceRunLeaseConflictError",
+      "description": "Raised when workspace admission or draining must fail closed.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FactoryWorkspaceRunLeaseStorageError",
+      "description": "Raised when durable workspace lease state cannot be trusted.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IFactoryPipeline",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "IFactoryProjectionLab",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py",
+      "methods": [
+        {
+          "name": "run_projection_experiment",
+          "doc": "Compile one controlled projection experiment into a workspace."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_exact_str",
+      "description": "Accept only exact ``str`` values (reject Path/bytes/bool/int coercion).",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_order_preserving_str_tuple",
+      "description": "Normalize an exact tuple while rejecting ambiguous owner facts.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_chain_missing_stages",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_factory_chain_completed",
+      "description": "Return True only when every owner completion invariant holds.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_factory_chain_projection_hash",
+      "description": "Bind normalized owner facts into a deterministic SHA-256 projection hash.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "stable_factory_event_ref",
+      "description": "Derive one stable event ref from owner event identity fields.",
+      "defined_in": "polaris/cells/factory/pipeline/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "_FactoryChainProjectionReader",
+      "description": "Factory-owned zero-write reader for strict run and event snapshots.",
+      "defined_in": "polaris/cells/factory/pipeline/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_create_factory_run_service",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_create_factory_chain_projection_reader",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_factory_workspace_run_lease",
+      "description": "Return the durable Factory admission projection for one workspace.",
+      "defined_in": "polaris/cells/factory/pipeline/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_owner_stage_tuple",
+      "description": "Normalize typed owner stages while rejecting malformed or duplicated facts.",
+      "defined_in": "polaris/cells/factory/pipeline/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_owner_event_projection",
+      "description": "Derive stable refs plus the sole successful terminal completion event.",
+      "defined_in": "polaris/cells/factory/pipeline/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_factory_chain_projection",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "RunPhase",
+      "description": "Run 阶段枚举",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunLifecycleStatus",
+      "description": "Run 生命周期状态。",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FailureType",
+      "description": "失败类型分类",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunLevel",
+      "description": "事件级别",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GateStatus",
+      "description": "质量门禁状态",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryStartRequest",
+      "description": "Factory 启动请求",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryControlRequest",
+      "description": "Factory 控制请求",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AgentTurnRequest",
+      "description": "Agent 单轮对话请求",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AgentTurnResponse",
+      "description": "Agent 单轮对话响应",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunEvent",
+      "description": "统一事件结构",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GateResult",
+      "description": "质量门禁结果",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArtifactRef",
+      "description": "产物引用",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RecoveryCheckpoint",
+      "description": "恢复检查点",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FailureInfo",
+      "description": "失败信息",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleStatus",
+      "description": "角色运行状态",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRun",
+      "description": "Factory Run 核心对象",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunStatus",
+      "description": "Factory Run 状态响应",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryRunList",
+      "description": "Factory Run 列表",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EventType",
+      "description": "事件类型常量",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "is_valid_transition",
+      "description": "检查阶段转移是否合法",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py"
+    },
+    {
+      "type": "function",
+      "name": "get_next_phases",
+      "description": "获取当前阶段的所有合法下一阶段",
+      "defined_in": "polaris/cells/factory/pipeline/public/types.py"
     },
     {
       "type": "function",
@@ -2950,12 +7178,6 @@
       "type": "function",
       "name": "_get_service",
       "description": "Get a service instance bound to the current workspace.",
-      "defined_in": "polaris/delivery/http/routers/factory.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_director_dispatch_timeout_seconds",
-      "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
     {
@@ -3068,6 +7290,12 @@
     },
     {
       "type": "function",
+      "name": "_stable_field",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_json_safe_metadata",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -3104,6 +7332,18 @@
     },
     {
       "type": "function",
+      "name": "_director_resume_task_payloads",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_resume_task_rows_mtime",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_taskboard_record_count",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -3116,7 +7356,7 @@
     },
     {
       "type": "function",
-      "name": "_director_resume_legacy_task_dirs",
+      "name": "_director_resume_source_task_dirs",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -3128,7 +7368,7 @@
     },
     {
       "type": "function",
-      "name": "_director_resume_reset_task_payload",
+      "name": "_raise_director_resume_task_runtime_failure",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -3242,6 +7482,30 @@
     },
     {
       "type": "function",
+      "name": "_ownership_handoff_requests_from_repair_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_quality_gate_owner_handoff_index",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_quality_gate_owner_handoff_routing",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_task_identifier",
+      "description": "Return the first display-stable task identifier from known payload shapes.",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_safe_rework_int",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -3250,6 +7514,12 @@
       "type": "function",
       "name": "_task_boundary_rework_evidence",
       "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_factory_task_runtime_transition_failure",
+      "description": "Record a failed TaskRuntime transition before Factory advances rework state.",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
     {
@@ -3285,6 +7555,12 @@
     {
       "type": "function",
       "name": "_resolve_quality_rework_max_cycles",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_quality_gate_handoff_summary_from_payload",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -3434,6 +7710,12 @@
     },
     {
       "type": "function",
+      "name": "apply_summary",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_classify_factory_failure_code",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -3446,13 +7728,43 @@
     },
     {
       "type": "function",
+      "name": "apply_quality_rework",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "apply_run_configuration",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_quality_rework_stage_names",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
     {
       "type": "function",
+      "name": "apply_delivery_loop",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "apply_failure",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_schedule_factory_run_task",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_log_orphaned_factory_task_exception",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },

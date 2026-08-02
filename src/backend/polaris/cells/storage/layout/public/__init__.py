@@ -1,9 +1,11 @@
 """Public boundary for `storage.layout` cell."""
 
 from polaris.cells.storage.layout.public.service import (
+    ExistingRuntimeRootReadOnlyResultV1,
     PolarisStorageLayout,
     PolarisStorageRoots,
     RefreshStorageLayoutCommandV1,
+    ResolveExistingRuntimeRootReadOnlyQueryV1,
     ResolveRuntimePathQueryV1,
     ResolveStorageLayoutQueryV1,
     ResolveWorkspacePathQueryV1,
@@ -16,6 +18,7 @@ from polaris.cells.storage.layout.public.service import (
     load_persisted_settings,
     polaris_home,
     refresh_storage_layout,
+    resolve_existing_runtime_root_read_only,
     resolve_polaris_roots,
     resolve_storage_layout,
     save_persisted_settings,
@@ -23,11 +26,11 @@ from polaris.cells.storage.layout.public.service import (
 )
 
 __all__ = [
+    "ExistingRuntimeRootReadOnlyResultV1",
     "PolarisStorageLayout",
-    "PolarisStorageLayout",
-    "PolarisStorageRoots",
     "PolarisStorageRoots",
     "RefreshStorageLayoutCommandV1",
+    "ResolveExistingRuntimeRootReadOnlyQueryV1",
     "ResolveRuntimePathQueryV1",
     "ResolveStorageLayoutQueryV1",
     "ResolveWorkspacePathQueryV1",
@@ -35,14 +38,12 @@ __all__ = [
     "StorageLayoutResolvedEventV1",
     "StorageLayoutResultV1",
     "default_polaris_cache_base",
-    "default_polaris_cache_base",
     "get_polaris_root",
     "get_settings_path",
     "load_persisted_settings",
     "polaris_home",
-    "polaris_home",
     "refresh_storage_layout",
-    "resolve_polaris_roots",
+    "resolve_existing_runtime_root_read_only",
     "resolve_polaris_roots",
     "resolve_storage_layout",
     "save_persisted_settings",

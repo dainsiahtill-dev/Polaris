@@ -27,8 +27,14 @@ Example::
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
+
+from polaris.cells.storage.layout.public import (
+    ResolveExistingRuntimeRootReadOnlyQueryV1,
+    resolve_existing_runtime_root_read_only,
+)
 
 from ..internal.bench_gates import build_real_run_gate
 from ..internal.factory_run_admission import FactoryWorkspaceRunAdmission
@@ -48,6 +54,7 @@ from ..internal.factory_settlement_runtime import (
     stop_factory_settlement_runtime,
     wake_factory_settlement_runtime,
 )
+from ..internal.factory_store import FactoryStore
 from ..internal.projection_change_analysis import ProjectionChangeAnalysisService
 from ..internal.projection_lab import FactoryProjectionLabService
 from ..internal.run_ledger import (
@@ -63,6 +70,7 @@ from ..internal.run_ledger import (
 )
 from .contracts import (
     CancelFactoryRunCommandV1,
+    FactoryChainProjectionV1,
     FactoryLifecycleOperationClaimV1,
     FactoryPipelineError,
     FactoryRunCompletedEventV1,
@@ -74,6 +82,7 @@ from .contracts import (
     FactoryWorkspaceRunLeaseStateV1,
     FactoryWorkspaceRunLeaseStorageError,
     FactoryWorkspaceRunLeaseV1,
+    GetFactoryChainProjectionQueryV1,
     GetFactoryRunStatusQueryV1,
     IFactoryPipeline,
     IFactoryProjectionLab,
@@ -87,6 +96,9 @@ from .contracts import (
     ReprojectProjectionExperimentCommandV1,
     RunProjectionExperimentCommandV1,
     StartFactoryRunCommandV1,
+    compute_factory_chain_completed,
+    compute_factory_chain_projection_hash,
+    stable_factory_event_ref,
 )
 
 FactoryRunServiceFactory = Callable[[str], FactoryRunService]
@@ -96,10 +108,277 @@ def _create_factory_run_service(workspace: str) -> FactoryRunService:
     return FactoryRunService(workspace=Path(workspace))
 
 
+class _FactoryChainProjectionReader:
+    """Factory-owned zero-write reader for strict run and event snapshots."""
+
+    def __init__(self, workspace: str) -> None:
+        self.workspace = Path(workspace).resolve()
+        runtime = resolve_existing_runtime_root_read_only(
+            ResolveExistingRuntimeRootReadOnlyQueryV1(workspace=str(self.workspace)),
+        )
+        self._store = (
+            FactoryStore(Path(runtime.runtime_root) / "factory", create_root=False) if runtime is not None else None
+        )
+
+    async def get_run(self, run_id: str) -> FactoryRun | None:
+        if self._store is None:
+            return None
+        logical_ref = self._store.run_snapshot_ref(run_id)
+        snapshot_path = self._store.base_dir / logical_ref.removeprefix("runtime/")
+        try:
+            snapshot_path.lstat()
+        except FileNotFoundError:
+            return None
+        payload = await self._store.read_strict_run_snapshot(run_id)
+        return FactoryRun.from_dict(payload)
+
+    async def get_authoritative_run_events(self, run_id: str) -> Sequence[Mapping[str, Any]]:
+        if self._store is None:
+            return ()
+        return await self._store.get_authoritative_events_read_only(run_id)
+
+
+def _create_factory_chain_projection_reader(workspace: str) -> _FactoryChainProjectionReader:
+    return _FactoryChainProjectionReader(workspace)
+
+
 def get_factory_workspace_run_lease(workspace: str) -> FactoryWorkspaceRunLeaseV1 | None:
     """Return the durable Factory admission projection for one workspace."""
 
     return FactoryWorkspaceRunAdmission(workspace).current()
+
+
+def _normalize_owner_stage_tuple(values: object, field_name: str) -> tuple[str, ...]:
+    """Normalize typed owner stages while rejecting malformed or duplicated facts."""
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        raise FactoryPipelineError(
+            "Factory chain stage facts are not a sequence",
+            code="factory_chain_projection_owner_facts_invalid",
+            details={"field": field_name},
+        )
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in values:
+        if type(item) is not str or not item.strip():
+            raise FactoryPipelineError(
+                "Factory chain stage facts contain a non-string or empty item",
+                code="factory_chain_projection_owner_facts_invalid",
+                details={"field": field_name},
+            )
+        token = item.strip()
+        if token in seen:
+            raise FactoryPipelineError(
+                "Factory chain stage facts contain a duplicate item",
+                code="factory_chain_projection_owner_facts_invalid",
+                details={"field": field_name, "stage": token},
+            )
+        seen.add(token)
+        out.append(token)
+    return tuple(out)
+
+
+def _normalize_owner_event_projection(events: object) -> tuple[tuple[str, ...], str | None]:
+    """Derive stable refs plus the sole successful terminal completion event."""
+    if not isinstance(events, Sequence) or isinstance(events, (str, bytes)):
+        raise FactoryPipelineError(
+            "Factory chain events are not a sequence",
+            code="factory_chain_projection_owner_events_invalid",
+        )
+    seen: set[str] = set()
+    out: list[str] = []
+    completion_refs: list[str] = []
+    for event in events:
+        if not isinstance(event, Mapping):
+            raise FactoryPipelineError(
+                "Factory chain contains a non-object event",
+                code="factory_chain_projection_owner_events_invalid",
+            )
+        try:
+            ref = stable_factory_event_ref(event)
+        except (TypeError, ValueError) as exc:
+            raise FactoryPipelineError(
+                "Factory chain event identity is invalid",
+                code="factory_chain_projection_owner_events_invalid",
+            ) from exc
+        if ref in seen:
+            raise FactoryPipelineError(
+                "Factory chain contains a duplicate event identity",
+                code="factory_chain_projection_owner_events_invalid",
+                details={"event_ref": ref},
+            )
+        seen.add(ref)
+        out.append(ref)
+        if event.get("type") == "completed":
+            if event.get("success") is not True:
+                raise FactoryPipelineError(
+                    "Factory completion event does not carry success=true",
+                    code="factory_chain_projection_terminal_event_invalid",
+                    details={"event_ref": ref},
+                )
+            completion_refs.append(ref)
+    if len(completion_refs) > 1:
+        raise FactoryPipelineError(
+            "Factory chain contains multiple completion events",
+            code="factory_chain_projection_terminal_event_invalid",
+            details={"completion_event_refs": completion_refs},
+        )
+    return tuple(out), completion_refs[0] if completion_refs else None
+
+
+def _build_factory_chain_projection(
+    *,
+    workspace: str,
+    run_id: str,
+    available: bool,
+    status: str,
+    configured_stages: Sequence[str],
+    completed_stages: Sequence[str],
+    failed_stages: Sequence[str],
+    event_refs: Sequence[str],
+    completion_event_ref: str | None,
+) -> FactoryChainProjectionV1:
+    configured = tuple(configured_stages)
+    completed = tuple(completed_stages)
+    failed = tuple(failed_stages)
+    refs = tuple(event_refs)
+    missing = tuple(stage for stage in configured if stage not in set(completed))
+    chain_completed = compute_factory_chain_completed(
+        available=available,
+        status=status,
+        configured_stages=configured,
+        completed_stages=completed,
+        failed_stages=failed,
+        event_refs=refs,
+        completion_event_ref=completion_event_ref,
+    )
+    event_count = len(refs)
+    projection_hash = compute_factory_chain_projection_hash(
+        workspace=workspace,
+        run_id=run_id,
+        available=available,
+        status=status,
+        configured_stages=configured,
+        completed_stages=completed,
+        failed_stages=failed,
+        missing_stages=missing,
+        chain_completed=chain_completed,
+        event_count=event_count,
+        event_refs=refs,
+        completion_event_ref=completion_event_ref,
+    )
+    return FactoryChainProjectionV1(
+        workspace=workspace,
+        run_id=run_id,
+        available=available,
+        status=status,
+        configured_stages=configured,
+        completed_stages=completed,
+        failed_stages=failed,
+        missing_stages=missing,
+        chain_completed=chain_completed,
+        event_count=event_count,
+        event_refs=refs,
+        completion_event_ref=completion_event_ref,
+        projection_hash=projection_hash,
+    )
+
+
+async def get_factory_chain_projection(
+    query: GetFactoryChainProjectionQueryV1,
+) -> FactoryChainProjectionV1:
+    """Return the typed, read-only Factory chain owner projection for one run.
+
+    Reads exact Factory-owned run/event snapshots through a zero-write reader.
+    No caller dependency injection, retries, Provider calls, Bench work, or
+    caller-supplied evidence refs are accepted. Missing runs return
+    ``available=False`` and never complete.
+    """
+    if type(query) is not GetFactoryChainProjectionQueryV1:
+        raise TypeError("query must be an exact GetFactoryChainProjectionQueryV1 instance")
+
+    workspace = str(Path(query.workspace).expanduser().resolve())
+    run_id = query.run_id
+    service = _create_factory_chain_projection_reader(workspace)
+    service_workspace = str(Path(service.workspace).expanduser().resolve())
+    if service_workspace != workspace:
+        raise FactoryPipelineError(
+            "Factory chain projection service is bound to another workspace",
+            code="factory_workspace_binding_mismatch",
+            details={
+                "requested_workspace": workspace,
+                "service_workspace": service_workspace,
+                "run_id": run_id,
+            },
+        )
+
+    run = await service.get_run(run_id)
+    if run is None:
+        return _build_factory_chain_projection(
+            workspace=workspace,
+            run_id=run_id,
+            available=False,
+            status="",
+            configured_stages=(),
+            completed_stages=(),
+            failed_stages=(),
+            event_refs=(),
+            completion_event_ref=None,
+        )
+
+    owner_run_id_raw = getattr(run, "id", None)
+    if type(owner_run_id_raw) is not str:
+        raise FactoryPipelineError(
+            "Factory run identity is not an exact string",
+            code="factory_chain_projection_run_identity_invalid",
+            details={"requested_run_id": run_id, "workspace": workspace},
+        )
+    owner_run_id = owner_run_id_raw.strip()
+    if owner_run_id != run_id:
+        raise FactoryPipelineError(
+            "Factory run identity does not match the requested run_id",
+            code="factory_chain_projection_run_identity_mismatch",
+            details={
+                "requested_run_id": run_id,
+                "owner_run_id": owner_run_id,
+                "workspace": workspace,
+            },
+        )
+
+    if isinstance(run.status, FactoryRunStatus):
+        status_value = run.status.value
+    elif type(run.status) is str:
+        status_value = run.status.strip()
+    else:
+        status_value = ""
+    if not status_value:
+        raise FactoryPipelineError(
+            "Factory run status is missing",
+            code="factory_chain_projection_status_missing",
+            details={"run_id": run_id, "workspace": workspace},
+        )
+
+    config = getattr(run, "config", None)
+    configured_raw = getattr(config, "stages", None) if config is not None else None
+    configured = _normalize_owner_stage_tuple(configured_raw, "configured_stages")
+    completed_raw = getattr(run, "stages_completed", None)
+    failed_raw = getattr(run, "stages_failed", None)
+    completed = _normalize_owner_stage_tuple(completed_raw, "completed_stages")
+    failed = _normalize_owner_stage_tuple(failed_raw, "failed_stages")
+
+    events = await service.get_authoritative_run_events(run_id)
+    event_refs, completion_event_ref = _normalize_owner_event_projection(events)
+
+    return _build_factory_chain_projection(
+        workspace=workspace,
+        run_id=run_id,
+        available=True,
+        status=status_value,
+        configured_stages=configured,
+        completed_stages=completed,
+        failed_stages=failed,
+        event_refs=event_refs,
+        completion_event_ref=completion_event_ref,
+    )
 
 
 async def recover_stale_factory_workspace_owner(
@@ -147,6 +426,7 @@ async def recover_stale_factory_workspace_owner(
 __all__ = [
     "TERMINAL_RUN_STATUSES",
     "CancelFactoryRunCommandV1",
+    "FactoryChainProjectionV1",
     "FactoryConfig",
     "FactoryLifecycleOperationClaimV1",
     "FactoryPipelineError",
@@ -165,6 +445,7 @@ __all__ = [
     "FactoryWorkspaceRunLeaseStateV1",
     "FactoryWorkspaceRunLeaseStorageError",
     "FactoryWorkspaceRunLeaseV1",
+    "GetFactoryChainProjectionQueryV1",
     "GetFactoryRunStatusQueryV1",
     "IFactoryPipeline",
     "IFactoryProjectionLab",
@@ -186,6 +467,7 @@ __all__ = [
     "build_real_run_gate",
     "build_run_ledger_projection",
     "create_factory_settlement_runtime",
+    "get_factory_chain_projection",
     "get_factory_workspace_run_lease",
     "load_run_ledger_projection",
     "persist_real_run_gate_ledger",

@@ -9,10 +9,14 @@ purpose: 'Read-only runtime/status projection and transport payload assembly for
 
   '
 current_modules:
+- polaris.cells.runtime.projection.internal.runtime_projection_service
+- polaris.cells.runtime.projection.internal.project_outcome
 - polaris.cells.runtime.projection.public.contracts
+- polaris.cells.runtime.projection.public.service
+- polaris.delivery.http.routers.runtime
 tags: []
 owned_paths:
-- polaris/cells/runtime/projection/internal/**
+- polaris/cells/runtime/projection/**
 - polaris/delivery/http/routers/runtime.py
 - polaris/delivery/ws/runtime_endpoint.py
 - polaris/delivery/ws/runtime_event_query.py
@@ -22,13 +26,16 @@ public_contracts:
   commands: []
   queries:
   - RuntimeProjectionQueryV1
+  - ProjectOutcomeQueryV1
   events:
   - RuntimeProjectedEventV1
   - RuntimeObserverEventV1
   results:
   - RuntimeProjectionResultV1
+  - ProjectOutcomeV1
   errors:
   - RuntimeProjectionErrorV1
+  - ProjectOutcomeValidationV1Error
 depends_on:
 - audit.evidence
 - control_plane.run_ledger
@@ -58,6 +65,7 @@ verification:
   tests:
   - tests/test_realtime_single_rail_static_guard.py
   - tests/test_runtime_projection_observability.py
+  - polaris/cells/runtime/projection/tests/test_project_outcome.py
   gaps:
   - Projection still contains projection read-joins pending cleanup.
   smoke_commands: []

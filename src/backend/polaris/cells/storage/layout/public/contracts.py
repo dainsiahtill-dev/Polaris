@@ -36,6 +36,16 @@ class ResolveStorageLayoutQueryV1:
 
 
 @dataclass(frozen=True)
+class ResolveExistingRuntimeRootReadOnlyQueryV1:
+    """Resolve only an already-existing runtime namespace; no initialization is allowed."""
+
+    workspace: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+
+
+@dataclass(frozen=True)
 class ResolveRuntimePathQueryV1:
     workspace: str
     relative_path: str
@@ -85,6 +95,18 @@ class StorageLayoutResultV1:
         object.__setattr__(self, "extras", _to_dict_copy(self.extras))
 
 
+@dataclass(frozen=True)
+class ExistingRuntimeRootReadOnlyResultV1:
+    """Read-only evidence that one workspace runtime namespace already exists."""
+
+    workspace: str
+    runtime_root: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "runtime_root", _require_non_empty("runtime_root", self.runtime_root))
+
+
 class StorageLayoutErrorV1(RuntimeError):  # noqa: N818
     """Raised when ``storage.layout`` contract processing fails."""
 
@@ -99,8 +121,11 @@ class StorageLayoutErrorV1(RuntimeError):  # noqa: N818
         self.code = _require_non_empty("code", code)
         self.details = _to_dict_copy(details)
 
+
 __all__ = [
+    "ExistingRuntimeRootReadOnlyResultV1",
     "RefreshStorageLayoutCommandV1",
+    "ResolveExistingRuntimeRootReadOnlyQueryV1",
     "ResolveRuntimePathQueryV1",
     "ResolveStorageLayoutQueryV1",
     "ResolveWorkspacePathQueryV1",

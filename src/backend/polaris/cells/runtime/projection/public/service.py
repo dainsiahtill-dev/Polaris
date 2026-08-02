@@ -38,6 +38,7 @@ from polaris.cells.runtime.projection.internal.io_helpers import (
 )
 from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 from polaris.cells.runtime.projection.internal.memos_query_service import list_memos
+from polaris.cells.runtime.projection.internal.project_outcome import reduce_project_outcome
 from polaris.cells.runtime.projection.internal.runtime_projection_service import (
     RuntimeProjection,
     RuntimeProjectionService,
@@ -97,6 +98,29 @@ from polaris.cells.runtime.projection.internal.workspace_runtime_context import 
     WorkspaceRuntimeContext,
     resolve_workspace_runtime_context,
 )
+from polaris.cells.runtime.projection.public.contracts import (
+    ProjectOutcomeQueryV1,
+    ProjectOutcomeV1,
+    ProjectOutcomeValidationV1Error,
+)
+
+
+def query_project_outcome(query: ProjectOutcomeQueryV1) -> ProjectOutcomeV1:
+    """Public pure projection of multi-axis project outcome facts.
+
+    Read-only and side-effect free. Inputs are caller-supplied claims: this
+    entry is not the owner-fact gathering adapter and therefore emits at most an
+    unbound completion candidate, never authoritative ``completed_verified``.
+    It does not schedule goals, execute commands, persist state, or write Run
+    Ledger / TaskRuntime facts. ``recommended_disposition`` is advisory only.
+    """
+    if type(query) is not ProjectOutcomeQueryV1:
+        raise ProjectOutcomeValidationV1Error(
+            "invalid_project_outcome_query_type",
+            "query must be an exact ProjectOutcomeQueryV1 instance",
+        )
+    return reduce_project_outcome(query)
+
 
 __all__ = [
     "AGENTS_DRAFT_REL",
@@ -167,6 +191,7 @@ __all__ = [
     "list_memos",
     "load_runtime_task_rows",
     "merge_director_status",
+    "query_project_outcome",
     "read_file_head",
     "read_file_tail",
     "read_incremental",

@@ -11,7 +11,12 @@ from polaris.cells.control_plane.run_ledger.public import (
     append_run_ledger_event,
     build_tool_call_lifecycle_receipt,
 )
-from polaris.cells.events.fact_stream.public.service import AppendFactEventCommandV1, append_fact_event
+from polaris.cells.events.fact_stream.public.contracts import ProvisionFactStreamLockAuthorityCommandV1
+from polaris.cells.events.fact_stream.public.service import (
+    AppendFactEventCommandV1,
+    append_fact_event,
+    provision_fact_stream_lock_authority,
+)
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     OrchestrationMode,
     OrchestrationSnapshot,
@@ -49,6 +54,20 @@ from polaris.cells.workspace.integrity.public.service import write_workspace_sta
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@pytest.fixture
+def fact_stream_workspace(tmp_path: Path) -> Path:
+    """Provision the explicit FactStream authority required by projection facts."""
+    provision_fact_stream_lock_authority(
+        ProvisionFactStreamLockAuthorityCommandV1(
+            workspace=str(tmp_path),
+            streams=("task_runtime.execution", "execution.control_plane"),
+            maintenance_reason="runtime projection test fixture bootstrap",
+        )
+    )
+    return tmp_path
+
 
 # =============================================================================
 # Helper function unit tests
@@ -430,8 +449,9 @@ def test_snapshot_task_rows_project_run_ledger_boundary_when_rows_are_missing(
 
 
 def test_snapshot_task_rows_project_task_runtime_execution_facts_when_rows_are_missing(
-    tmp_path: Path,
+    fact_stream_workspace: Path,
 ) -> None:
+    tmp_path = fact_stream_workspace
     append_fact_event(
         AppendFactEventCommandV1(
             workspace=str(tmp_path),
@@ -488,8 +508,9 @@ def test_snapshot_task_rows_project_task_runtime_execution_facts_when_rows_are_m
 
 
 def test_snapshot_task_rows_prefer_task_runtime_execution_facts_over_projection_rows(
-    tmp_path: Path,
+    fact_stream_workspace: Path,
 ) -> None:
+    tmp_path = fact_stream_workspace
     append_fact_event(
         AppendFactEventCommandV1(
             workspace=str(tmp_path),
@@ -1163,7 +1184,11 @@ class TestLoadRuntimeTaskRows:
         # Should return empty list (no exception)
         assert rows == []
 
-    def test_workspace_without_state_owner_uses_execution_fact_rows(self, tmp_path: Path) -> None:
+    def test_workspace_without_state_owner_uses_execution_fact_rows(
+        self,
+        fact_stream_workspace: Path,
+    ) -> None:
+        tmp_path = fact_stream_workspace
         append_fact_event(
             AppendFactEventCommandV1(
                 workspace=str(tmp_path),
@@ -1297,8 +1322,9 @@ class TestRuntimeProjectionServiceBuildAsync:
     async def test_build_async_run_ledger_dropped_dispatch_overrides_local_idle(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
+        fact_stream_workspace: Path,
     ) -> None:
+        tmp_path = fact_stream_workspace
         lifecycle = build_tool_call_lifecycle_receipt(
             run_id="director-run-1",
             task_id="TASK-1",

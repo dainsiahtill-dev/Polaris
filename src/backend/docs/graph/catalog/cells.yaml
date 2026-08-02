@@ -739,9 +739,12 @@ cells:
       introducing hidden writes on query paths.
     current_modules:
       - polaris.cells.runtime.projection.internal.runtime_projection_service
+      - polaris.cells.runtime.projection.internal.project_outcome
+      - polaris.cells.runtime.projection.public.contracts
+      - polaris.cells.runtime.projection.public.service
       - polaris.delivery.http.routers.runtime
     owned_paths:
-      - polaris/cells/runtime/projection/internal/**
+      - polaris/cells/runtime/projection/**
       - polaris/delivery/http/routers/runtime.py
       - polaris/delivery/ws/runtime_endpoint.py
       - polaris/delivery/ws/runtime_event_query.py
@@ -751,13 +754,16 @@ cells:
       commands: []
       queries:
         - RuntimeProjectionQueryV1
+        - ProjectOutcomeQueryV1
       events:
         - RuntimeProjectedEventV1
         - RuntimeObserverEventV1
       results:
         - RuntimeProjectionResultV1
+        - ProjectOutcomeV1
       errors:
         - RuntimeProjectionErrorV1
+        - ProjectOutcomeValidationV1Error
     depends_on:
       - runtime.task_runtime
       - runtime.state_owner
@@ -796,11 +802,15 @@ cells:
       tests:
         - tests/test_websocket_signal_hub.py
         - tests/test_runtime_projection_observability.py
+        - polaris/cells/runtime/projection/tests/test_project_outcome.py
       gaps:
         - "Projection read paths still include legacy compatibility joins."
         - >
           Added missing cross-cell dependencies: "llm.evaluation", "llm.provider_runtime",
           "storage.layout", "docs.court_workflow".
+        - >
+          ProjectOutcomeV1 is a pure reducer only; transport adapters that gather
+          TaskRuntime/Run Ledger/QA facts into ProjectOutcomeQueryV1 remain future work.
 
 
   - id: audit.evidence
@@ -2274,6 +2284,8 @@ cells:
       - polaris.delivery.cli.factory.projection_lab
       - polaris.delivery.cli.factory.projection_change_analysis
       - polaris.delivery.cli.factory.projection_reproject
+      - polaris.cells.factory.pipeline.public.contracts
+      - polaris.cells.factory.pipeline.public.service
       - polaris.cells.factory.pipeline.internal.factory_event_chain
       - polaris.cells.factory.pipeline.internal.factory_role_evidence_authority
       - polaris.cells.factory.pipeline.internal.factory_run_admission
@@ -2287,6 +2299,7 @@ cells:
     owned_paths:
       - polaris/delivery/http/routers/factory.py
       - polaris/delivery/cli/factory/**
+      - polaris/cells/factory/pipeline/public/**
       - polaris/cells/factory/pipeline/internal/**
       - polaris/cells/factory/pipeline/tests/**
     public_contracts:
@@ -2301,6 +2314,7 @@ cells:
       queries:
         - GetFactoryRunStatusQueryV1
         - ListFactoryRunsQueryV1
+        - GetFactoryChainProjectionQueryV1
       events:
         - FactoryRunStartedEventV1
         - FactoryRunCompletedEventV1
@@ -2309,6 +2323,7 @@ cells:
         - ProjectionExperimentResultV1
         - ProjectionBackMappingRefreshResultV1
         - ProjectionReprojectionResultV1
+        - FactoryChainProjectionV1
       errors:
         - FactoryPipelineErrorV1
     depends_on:
@@ -3790,11 +3805,14 @@ cells:
       Resolve global/workspace/runtime persistence layout and path policies as a
       single canonical storage contract for all cells.
     current_modules:
+      - polaris.cells.storage.layout.public.contracts
+      - polaris.cells.storage.layout.public.service
       - polaris.cells.storage.layout.internal.settings_utils
       - polaris.kernelone.storage.layout
       - polaris.kernelone.storage.io_paths
       - polaris.kernelone.storage.policy
     owned_paths:
+      - polaris/cells/storage/layout/public/**
       - polaris/cells/storage/layout/internal/**
       - polaris/kernelone/storage/layout.py
       - polaris/kernelone/storage/io_paths.py
@@ -3805,6 +3823,7 @@ cells:
       commands:
         - RefreshStorageLayoutCommandV1
       queries:
+        - ResolveExistingRuntimeRootReadOnlyQueryV1
         - ResolveStorageLayoutQueryV1
         - ResolveRuntimePathQueryV1
         - ResolveWorkspacePathQueryV1
@@ -3828,6 +3847,7 @@ cells:
       - fs.write:workspace/meta/storage_layout/*
     verification:
       tests:
+        - polaris/cells/storage/layout/tests/test_storage_layout_cell.py
         - polaris/kernelone/storage/tests/test_storage_layout.py
         - tests/test_storage_layout_v4.py
       gaps:

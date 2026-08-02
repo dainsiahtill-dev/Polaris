@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping
+import hashlib
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -19,6 +21,143 @@ def _require_non_empty(name: str, value: str) -> str:
 
 def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
+
+
+def _require_exact_str(name: str, value: object) -> str:
+    """Accept only exact ``str`` values (reject Path/bytes/bool/int coercion)."""
+    if type(value) is not str:
+        raise ValueError(f"{name} must be an exact string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{name} must be a non-empty string")
+    return normalized
+
+
+def _normalize_order_preserving_str_tuple(
+    values: object,
+    field_name: str,
+) -> tuple[str, ...]:
+    """Normalize an exact tuple while rejecting ambiguous owner facts."""
+    if type(values) is not tuple:
+        raise ValueError(f"{field_name} must be an exact tuple of strings")
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in values:
+        if type(item) is not str:
+            raise ValueError(f"{field_name} items must be exact strings")
+        token = item.strip()
+        if not token:
+            raise ValueError(f"{field_name} items must be non-empty strings")
+        if token in seen:
+            raise ValueError(f"{field_name} must not contain duplicate items")
+        seen.add(token)
+        out.append(token)
+    return tuple(out)
+
+
+FACTORY_CHAIN_PROJECTION_SOURCE = "factory.pipeline"
+FACTORY_CHAIN_PROJECTION_SCHEMA_VERSION = "factory.chain-projection.v1"
+
+
+def _factory_chain_missing_stages(
+    configured_stages: Sequence[str],
+    completed_stages: Sequence[str],
+) -> tuple[str, ...]:
+    completed_set = set(completed_stages)
+    return tuple(stage for stage in configured_stages if stage not in completed_set)
+
+
+def compute_factory_chain_completed(
+    *,
+    available: bool,
+    status: str,
+    configured_stages: Sequence[str],
+    completed_stages: Sequence[str],
+    failed_stages: Sequence[str],
+    event_refs: Sequence[str],
+    completion_event_ref: str | None,
+) -> bool:
+    """Return True only when every owner completion invariant holds."""
+    if not available:
+        return False
+    if not configured_stages:
+        return False
+    if status != "completed":
+        return False
+    if failed_stages:
+        return False
+    completed_set = set(completed_stages)
+    if any(stage not in completed_set for stage in configured_stages):
+        return False
+    return bool(completion_event_ref and completion_event_ref in event_refs)
+
+
+def compute_factory_chain_projection_hash(
+    *,
+    workspace: str,
+    run_id: str,
+    available: bool,
+    status: str,
+    configured_stages: Sequence[str],
+    completed_stages: Sequence[str],
+    failed_stages: Sequence[str],
+    missing_stages: Sequence[str],
+    chain_completed: bool,
+    event_count: int,
+    event_refs: Sequence[str],
+    completion_event_ref: str | None,
+    source: str = FACTORY_CHAIN_PROJECTION_SOURCE,
+    schema_version: str = FACTORY_CHAIN_PROJECTION_SCHEMA_VERSION,
+) -> str:
+    """Bind normalized owner facts into a deterministic SHA-256 projection hash."""
+    payload = {
+        "available": bool(available),
+        "chain_completed": bool(chain_completed),
+        "completed_stages": list(completed_stages),
+        "configured_stages": list(configured_stages),
+        "event_count": int(event_count),
+        "event_refs": list(event_refs),
+        "completion_event_ref": completion_event_ref,
+        "failed_stages": list(failed_stages),
+        "missing_stages": list(missing_stages),
+        "run_id": run_id,
+        "schema_version": schema_version,
+        "source": source,
+        "status": status,
+        "workspace": workspace,
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def stable_factory_event_ref(event: Mapping[str, Any]) -> str:
+    """Derive one stable event ref from owner event identity fields.
+
+    Prefer the strict chain event hash, then ``event_id``, ``content_id``, and
+    ``append_id``. When none exist, hash canonical UTF-8 JSON of the event.
+    """
+    if not isinstance(event, Mapping):
+        raise TypeError("event must be a mapping")
+    for key in ("chain_event_hash", "event_id", "content_id", "append_id"):
+        if key not in event:
+            continue
+        value = event.get(key)
+        if type(value) is not str or not value.strip():
+            raise ValueError(f"factory event {key} must be a non-empty exact string")
+        token = value.strip()
+        if key == "chain_event_hash" and (len(token) != 64 or any(char not in "0123456789abcdef" for char in token)):
+            raise ValueError("factory event chain_event_hash must be lowercase SHA-256")
+        return token
+    try:
+        canonical = json.dumps(
+            dict(event),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("factory event cannot be serialized for stable ref hashing") from exc
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY = "factory_terminal_task_runtime_projection"
@@ -519,6 +658,189 @@ class GetFactoryRunStatusQueryV1:
         object.__setattr__(self, "run_id", _require_non_empty("run_id", self.run_id))
 
 
+@dataclass(frozen=True, slots=True)
+class GetFactoryChainProjectionQueryV1:
+    """Exact workspace/run query for the Factory chain owner projection."""
+
+    workspace: str
+    run_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_str("workspace", self.workspace))
+        object.__setattr__(self, "run_id", _require_exact_str("run_id", self.run_id))
+
+
+@dataclass(frozen=True, slots=True)
+class FactoryChainProjectionV1:
+    """Read-only Factory-owned chain projection for one workspace run.
+
+    ``chain_completed`` is fail-closed and self-validating: construction that
+    contradicts completion evidence or the bound ``projection_hash`` is
+    rejected.  This value is an *observation*, never an authorization
+    capability; consumers needing Factory ownership must issue the public query
+    themselves rather than accept a caller-supplied instance.
+    """
+
+    workspace: str
+    run_id: str
+    available: bool
+    status: str
+    configured_stages: tuple[str, ...]
+    completed_stages: tuple[str, ...]
+    failed_stages: tuple[str, ...]
+    missing_stages: tuple[str, ...]
+    chain_completed: bool
+    event_count: int
+    event_refs: tuple[str, ...]
+    completion_event_ref: str | None
+    projection_hash: str
+    source: str = FACTORY_CHAIN_PROJECTION_SOURCE
+    schema_version: str = FACTORY_CHAIN_PROJECTION_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        workspace = _require_exact_str("workspace", self.workspace)
+        run_id = _require_exact_str("run_id", self.run_id)
+        if type(self.available) is not bool:
+            raise ValueError("available must be an exact bool")
+        if type(self.chain_completed) is not bool:
+            raise ValueError("chain_completed must be an exact bool")
+        if type(self.status) is not str:
+            raise ValueError("status must be an exact string")
+        status = self.status.strip()
+        if type(self.event_count) is not int or isinstance(self.event_count, bool):
+            raise ValueError("event_count must be an exact int")
+        if self.event_count < 0:
+            raise ValueError("event_count must be >= 0")
+        source = _require_exact_str("source", self.source)
+        schema_version = _require_exact_str("schema_version", self.schema_version)
+        if source != FACTORY_CHAIN_PROJECTION_SOURCE:
+            raise ValueError("source must be factory.pipeline")
+        if schema_version != FACTORY_CHAIN_PROJECTION_SCHEMA_VERSION:
+            raise ValueError("unsupported factory chain projection schema_version")
+
+        configured = _normalize_order_preserving_str_tuple(
+            self.configured_stages,
+            "configured_stages",
+        )
+        completed = _normalize_order_preserving_str_tuple(
+            self.completed_stages,
+            "completed_stages",
+        )
+        failed = _normalize_order_preserving_str_tuple(
+            self.failed_stages,
+            "failed_stages",
+        )
+        missing = _normalize_order_preserving_str_tuple(
+            self.missing_stages,
+            "missing_stages",
+        )
+        event_refs = _normalize_order_preserving_str_tuple(
+            self.event_refs,
+            "event_refs",
+        )
+        completion_event_ref = self.completion_event_ref
+        if completion_event_ref is not None:
+            completion_event_ref = _require_exact_str("completion_event_ref", completion_event_ref)
+            if completion_event_ref not in event_refs:
+                raise ValueError("completion_event_ref must identify one event_ref")
+            if status != "completed":
+                raise ValueError("completion_event_ref requires completed Factory status")
+        configured_set = set(configured)
+        unknown_completed = tuple(stage for stage in completed if stage not in configured_set)
+        if unknown_completed:
+            raise ValueError("completed_stages must be a subset of configured_stages")
+        unknown_failed = tuple(stage for stage in failed if stage not in configured_set)
+        if unknown_failed:
+            raise ValueError("failed_stages must be a subset of configured_stages")
+        if set(completed).intersection(failed):
+            raise ValueError("completed_stages and failed_stages must be disjoint")
+        expected_missing = _factory_chain_missing_stages(configured, completed)
+        if missing != expected_missing:
+            raise ValueError(
+                f"missing_stages must equal configured stages absent from completed; expected {expected_missing!r}"
+            )
+        if self.event_count != len(event_refs):
+            raise ValueError("event_count must equal the number of stable event_refs")
+
+        if not self.available:
+            if status:
+                raise ValueError("unavailable projection status must be empty")
+            if configured or completed or failed or missing:
+                raise ValueError("unavailable projection stages must be empty")
+            if event_refs or self.event_count:
+                raise ValueError("unavailable projection must not carry event refs")
+            if self.chain_completed is not False:
+                raise ValueError("unavailable projection cannot be chain_completed")
+        else:
+            if not status:
+                raise ValueError("available projection status must be non-empty")
+
+        expected_completed = compute_factory_chain_completed(
+            available=self.available,
+            status=status,
+            configured_stages=configured,
+            completed_stages=completed,
+            failed_stages=failed,
+            event_refs=event_refs,
+            completion_event_ref=completion_event_ref,
+        )
+        if self.chain_completed is not expected_completed:
+            raise ValueError(f"chain_completed must be {expected_completed!r} for the provided owner facts")
+
+        projection_hash = _require_exact_str("projection_hash", self.projection_hash)
+        expected_hash = compute_factory_chain_projection_hash(
+            workspace=workspace,
+            run_id=run_id,
+            available=self.available,
+            status=status,
+            configured_stages=configured,
+            completed_stages=completed,
+            failed_stages=failed,
+            missing_stages=missing,
+            chain_completed=expected_completed,
+            event_count=self.event_count,
+            event_refs=event_refs,
+            completion_event_ref=completion_event_ref,
+            source=source,
+            schema_version=schema_version,
+        )
+        if projection_hash != expected_hash:
+            raise ValueError("projection_hash must bind the normalized Factory chain projection")
+
+        object.__setattr__(self, "workspace", workspace)
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "configured_stages", configured)
+        object.__setattr__(self, "completed_stages", completed)
+        object.__setattr__(self, "failed_stages", failed)
+        object.__setattr__(self, "missing_stages", missing)
+        object.__setattr__(self, "event_refs", event_refs)
+        object.__setattr__(self, "completion_event_ref", completion_event_ref)
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "schema_version", schema_version)
+        object.__setattr__(self, "projection_hash", projection_hash)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the canonical UTF-8 JSON-compatible projection payload."""
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "workspace": self.workspace,
+            "run_id": self.run_id,
+            "available": self.available,
+            "status": self.status,
+            "configured_stages": list(self.configured_stages),
+            "completed_stages": list(self.completed_stages),
+            "failed_stages": list(self.failed_stages),
+            "missing_stages": list(self.missing_stages),
+            "chain_completed": self.chain_completed,
+            "event_count": self.event_count,
+            "event_refs": list(self.event_refs),
+            "completion_event_ref": self.completion_event_ref,
+            "projection_hash": self.projection_hash,
+        }
+
+
 @dataclass(frozen=True)
 class ListFactoryRunsQueryV1:
     workspace: str
@@ -816,7 +1138,10 @@ class IFactoryProjectionLab(Protocol):
 
 
 __all__ = [
+    "FACTORY_CHAIN_PROJECTION_SCHEMA_VERSION",
+    "FACTORY_CHAIN_PROJECTION_SOURCE",
     "CancelFactoryRunCommandV1",
+    "FactoryChainProjectionV1",
     "FactoryLifecycleOperationClaimV1",
     "FactoryPipelineError",
     "FactoryRunCompletedEventV1",
@@ -828,6 +1153,7 @@ __all__ = [
     "FactoryWorkspaceRunLeaseStateV1",
     "FactoryWorkspaceRunLeaseStorageError",
     "FactoryWorkspaceRunLeaseV1",
+    "GetFactoryChainProjectionQueryV1",
     "GetFactoryRunStatusQueryV1",
     "IFactoryPipeline",
     "IFactoryProjectionLab",

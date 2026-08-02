@@ -7,6 +7,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     append_run_ledger_event,
 )
+from polaris.cells.events.fact_stream.public import (
+    ProvisionFactStreamLockAuthorityCommandV1,
+    provision_fact_stream_lock_authority,
+)
 from polaris.cells.runtime.projection.internal.workflow_status import (
     _derive_terminal_failure_status,
     _derive_terminal_success_status,
@@ -42,6 +46,13 @@ def _write_success_artifacts(cache_root: Path) -> None:
 
 
 def _append_success_ledger(workspace: Path, run_id: str) -> None:
+    provision_fact_stream_lock_authority(
+        ProvisionFactStreamLockAuthorityCommandV1(
+            workspace=str(workspace),
+            streams=("task_runtime.execution", "execution.control_plane"),
+            maintenance_reason="run ledger projection test fixture bootstrap",
+        )
+    )
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=str(workspace),

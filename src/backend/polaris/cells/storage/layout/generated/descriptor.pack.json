@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-07-02T03:43:19.679575Z",
-  "source_hash": "01f219ad1b8cb02d",
+  "generated_at": "2026-08-02T14:16:58.934680Z",
+  "source_hash": "1baae8fdccd19810",
   "cell_id": "storage.layout",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -73,7 +73,7 @@
     },
     {
       "type": "function",
-      "name": "get_legacy_settings_path",
+      "name": "get_migration_settings_path",
       "description": "",
       "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
     },
@@ -172,6 +172,116 @@
       "name": "save_persisted_settings",
       "description": "",
       "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "class",
+      "name": "RefreshStorageLayoutCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResolveStorageLayoutQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResolveExistingRuntimeRootReadOnlyQueryV1",
+      "description": "Resolve only an already-existing runtime namespace; no initialization is allowed.",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResolveRuntimePathQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResolveWorkspacePathQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StorageLayoutResolvedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StorageLayoutResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExistingRuntimeRootReadOnlyResultV1",
+      "description": "Read-only evidence that one workspace runtime namespace already exists.",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StorageLayoutErrorV1",
+      "description": "Raised when ``storage.layout`` contract processing fails.",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_log_storage_layout_audit",
+      "description": "Emit structured audit log for a storage layout resolution.",
+      "defined_in": "polaris/cells/storage/layout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_invalidate_cache",
+      "description": "Clear all storage-roots caches (KernelOne + ramdisk cache).",
+      "defined_in": "polaris/cells/storage/layout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "refresh_storage_layout",
+      "description": "Refresh the storage layout for *command.workspace*.",
+      "defined_in": "polaris/cells/storage/layout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_storage_layout",
+      "description": "Resolve the full storage layout for *query.workspace*.",
+      "defined_in": "polaris/cells/storage/layout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_existing_runtime_root_read_only",
+      "description": "Return an existing runtime root without probes, cache writes, or initialization.",
+      "defined_in": "polaris/cells/storage/layout/public/service.py"
     },
     {
       "type": "function",
@@ -310,6 +420,18 @@
     },
     {
       "type": "class",
+      "name": "WorkspaceRuntimeIdentity",
+      "description": "Immutable binding between one workspace and its runtime storage root.",
+      "defined_in": "polaris/kernelone/storage/layout.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached JSON-safe storage binding record."
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "StorageLayout",
       "description": "Path resolver for runtime/workspace/config storage domains.",
       "defined_in": "polaris/kernelone/storage/layout.py",
@@ -370,6 +492,12 @@
       "type": "function",
       "name": "_get_cached_storage_roots",
       "description": "Get cached storage roots if available and not expired.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_peek_cached_storage_roots",
+      "description": "Return a live cached layout without mutating cache state.",
       "defined_in": "polaris/kernelone/storage/layout.py"
     },
     {
@@ -482,6 +610,30 @@
     },
     {
       "type": "function",
+      "name": "_build_generic_storage_roots",
+      "description": "Build the generic layout from already-selected, side-effect-free facts.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_existing_runtime_base_candidates",
+      "description": "Return configured runtime bases that already exist, without probing writes.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "add",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_existing_storage_roots_read_only",
+      "description": "Resolve an existing workspace runtime layout without any filesystem writes.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_storage_roots_impl",
       "description": "Internal resolver — replaceable via DI / patching for testing.",
       "defined_in": "polaris/kernelone/storage/layout.py"
@@ -490,6 +642,12 @@
       "type": "function",
       "name": "resolve_storage_roots",
       "description": "Resolve storage roots with caching to avoid repeated filesystem probing.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_workspace_runtime_identity",
+      "description": "Resolve the explicit workspace/runtime identity for durable runtime data.",
       "defined_in": "polaris/kernelone/storage/layout.py"
     },
     {

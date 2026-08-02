@@ -29,6 +29,7 @@ from polaris.cells.storage.layout import (
     PolarisStorageLayout,
     PolarisStorageRoots,
     RefreshStorageLayoutCommandV1,
+    ResolveExistingRuntimeRootReadOnlyQueryV1,
     ResolveRuntimePathQueryV1,
     ResolveStorageLayoutQueryV1,
     ResolveWorkspacePathQueryV1,
@@ -38,6 +39,7 @@ from polaris.cells.storage.layout import (
     load_persisted_settings,
     polaris_home,
     refresh_storage_layout,
+    resolve_existing_runtime_root_read_only,
     resolve_polaris_roots,
     resolve_storage_layout,
     save_persisted_settings,
@@ -90,6 +92,94 @@ class TestResolveStorageLayoutQueryV1:
     def test_whitespace_only_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
             ResolveStorageLayoutQueryV1(workspace="   ")
+
+
+class TestResolveExistingRuntimeRootReadOnlyQueryV1:
+    def test_valid_workspace_strips_whitespace(self) -> None:
+        query = ResolveExistingRuntimeRootReadOnlyQueryV1(workspace="  /tmp/foo  ")
+        assert query.workspace == "/tmp/foo"
+
+
+def test_read_only_layout_does_not_probe_or_create_cold_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The evidence query returns None rather than creating a runtime namespace."""
+    from unittest.mock import patch
+
+    workspace = tmp_path / "workspace"
+    runtime_base = tmp_path / "runtime-base"
+    workspace.mkdir()
+    runtime_base.mkdir()
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_base))
+    clear_storage_roots_cache()
+    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+
+    with patch(
+        "polaris.kernelone.storage.layout._is_runtime_base_writable",
+        side_effect=AssertionError("read-only query must not probe writability"),
+    ):
+        result = resolve_existing_runtime_root_read_only(
+            ResolveExistingRuntimeRootReadOnlyQueryV1(workspace=str(workspace)),
+        )
+
+    after = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+    assert result is None
+    assert after == before
+
+
+def test_read_only_layout_never_probes_default_ramdisk_or_mutates_probe_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cold read-only lookup must not invoke the Windows default-drive probe.
+
+    The default RamDisk resolver checks ``X:\\`` on Windows and populates a
+    process cache.  That is legitimate for a write-capable resolver, but an
+    evidence query must remain observational even when RAM-disk mode is on.
+    """
+    from unittest.mock import patch
+
+    import polaris.kernelone.storage.layout as kernel_layout
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    clear_storage_roots_cache()
+    before_probe_cache = dict(kernel_layout._ramdisk_check_cache)
+    before_roots_cache = dict(kernel_layout._storage_roots_cache)
+
+    with (
+        patch.object(kernel_layout, "state_to_ramdisk_enabled", return_value=True),
+        patch.object(
+            kernel_layout,
+            "default_ramdisk_root",
+            side_effect=AssertionError("read-only lookup must not probe the default RamDisk"),
+        ),
+        patch.object(kernel_layout, "resolve_env_str", return_value=""),
+    ):
+        result = resolve_existing_runtime_root_read_only(
+            ResolveExistingRuntimeRootReadOnlyQueryV1(workspace=str(workspace)),
+        )
+
+    assert result is None
+    assert kernel_layout._ramdisk_check_cache == before_probe_cache
+    assert kernel_layout._storage_roots_cache == before_roots_cache
+
+
+def test_descriptor_advertises_read_only_runtime_root_contract() -> None:
+    """The Cell descriptor must expose the only cross-Cell read-only boundary."""
+    from pathlib import Path
+
+    descriptor_path = Path(__file__).resolve().parents[1] / "generated" / "descriptor.pack.json"
+    descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    capabilities = descriptor["capabilities"]
+    public_names = {
+        item["name"] for item in capabilities if item["defined_in"].startswith("polaris/cells/storage/layout/public/")
+    }
+
+    assert "ResolveExistingRuntimeRootReadOnlyQueryV1" in public_names
+    assert "ExistingRuntimeRootReadOnlyResultV1" in public_names
+    assert "resolve_existing_runtime_root_read_only" in public_names
 
 
 class TestPersistedSettings:

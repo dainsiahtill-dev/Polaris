@@ -5,7 +5,7 @@
   "purpose": "Build read-only runtime status projections and transport payloads without hidden writes.",
   "summary": "Owns projection-only runtime reads and outbound runtime status payloads for HTTP and WebSocket consumers.",
   "owned_paths": [
-    "polaris/application/projection/**",
+    "polaris/cells/runtime/projection/**",
     "polaris/delivery/http/routers/runtime.py",
     "polaris/delivery/ws/runtime_endpoint.py",
     "polaris/delivery/ws/runtime_event_query.py"
@@ -13,21 +13,40 @@
   "public_contracts": {
     "commands": [],
     "queries": [
-      "RuntimeProjectionQueryV1"
+      "RuntimeProjectionQueryV1",
+      "ProjectOutcomeQueryV1"
     ],
     "events": [
-      "RuntimeProjectedEventV1"
+      "RuntimeProjectedEventV1",
+      "RuntimeObserverEventV1"
     ],
     "results": [
-      "RuntimeProjectionResultV1"
+      "RuntimeProjectionResultV1",
+      "ProjectOutcomeV1"
     ],
     "errors": [
-      "RuntimeProjectionErrorV1"
+      "RuntimeProjectionErrorV1",
+      "ProjectOutcomeValidationV1Error"
     ]
   },
   "neighbors": [
+    "audit.evidence",
+    "control_plane.run_ledger",
+    "director.execution",
+    "docs.court_workflow",
+    "events.fact_stream",
+    "llm.evaluation",
+    "llm.provider_runtime",
+    "orchestration.pm_planning",
+    "orchestration.workflow_runtime",
+    "qa.audit_verdict",
+    "resident.autonomy",
+    "runtime.artifact_store",
     "runtime.state_owner",
-    "audit.evidence"
+    "runtime.task_market",
+    "runtime.task_runtime",
+    "storage.layout",
+    "workspace.integrity"
   ],
   "state_owners": [],
   "effects_allowed": [
@@ -41,12 +60,15 @@
     "all text reads use explicit UTF-8"
   ],
   "hotspots": [
-    "polaris/application/projection/runtime_projection_service.py",
+    "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
+    "polaris/cells/runtime/projection/internal/project_outcome.py",
+    "polaris/cells/runtime/projection/public/contracts.py",
     "polaris/delivery/http/routers/runtime.py"
   ],
   "test_targets": [
     "tests/test_realtime_single_rail_static_guard.py",
-    "tests/test_runtime_projection_observability.py"
+    "tests/test_runtime_projection_observability.py",
+    "polaris/cells/runtime/projection/tests/test_project_outcome.py"
   ],
   "change_guidance": {
     "read_order": [
